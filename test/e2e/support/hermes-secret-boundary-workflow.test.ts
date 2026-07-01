@@ -49,7 +49,7 @@ it("routes Hermes sandbox secret-boundary selective dispatch to its free-standin
   });
 });
 
-it("rejects Hermes sandbox secret-boundary workflow secret and Docker-auth drift", () => {
+it("rejects broad Hermes sandbox secret-boundary workflow secret scope", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hermes-secret-boundary-workflow-"));
   const workflowPath = path.join(tmp, "workflow.yaml");
   const workflow = readWorkflow() as {
@@ -64,14 +64,6 @@ it("rejects Hermes sandbox secret-boundary workflow secret and Docker-auth drift
     DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
     DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
   };
-  job.steps.splice(1, 0, {
-    name: "Authenticate to Docker Hub",
-    env: {
-      DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-      DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-    },
-    run: "docker login docker.io --username $DOCKERHUB_USERNAME --password $DOCKERHUB_TOKEN",
-  });
   const runVitest = job.steps.find(
     (step) => step.name === "Run Hermes sandbox secret-boundary live test",
   );
@@ -87,10 +79,6 @@ it("rejects Hermes sandbox secret-boundary workflow secret and Docker-auth drift
         "hermes-sandbox-secret-boundary job env must not include NVIDIA_INFERENCE_API_KEY",
         "hermes-sandbox-secret-boundary job env must not include DOCKERHUB_USERNAME",
         "hermes-sandbox-secret-boundary job env must not include DOCKERHUB_TOKEN",
-        "hermes-sandbox-secret-boundary must not authenticate to Docker Hub before branch-controlled test code runs",
-        "hermes-sandbox-secret-boundary step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
-        "hermes-sandbox-secret-boundary step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-        "hermes-sandbox-secret-boundary step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
         "hermes-sandbox-secret-boundary step 'Run Hermes sandbox secret-boundary live test' env must not include NVIDIA_INFERENCE_API_KEY",
       ]),
     );

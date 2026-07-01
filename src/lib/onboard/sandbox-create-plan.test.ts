@@ -235,4 +235,83 @@ describe("prepareSandboxCreatePlan", () => {
       "/tmp/policy.yaml",
     ]);
   });
+
+  it("appends extra providers via --provider after messaging and Hermes tool providers", () => {
+    const result = prepareSandboxCreatePlan({
+      basePolicyPath: "/repo/policy.yaml",
+      buildCtx: "/tmp/nemoclaw-build-1",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: [],
+      disabledChannelNames: new Set(),
+      messagingTokenDefs: [],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      extraProviders: ["tavily-search", "tavily-search", "custom-provider"],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      dockerDriverGateway: true,
+      appendResourceFlags: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => []),
+      getMessagingChannelForEnvKey: () => null,
+      getHermesToolGatewayProviderName: vi.fn(),
+      deps: {
+        resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
+          useDockerGpuPatch: false,
+          logMessage: null,
+        })),
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: [],
+        })),
+        buildSandboxGpuCreateArgs: vi.fn(() => []),
+      },
+    });
+
+    const providerArgs = result.createArgs
+      .map((arg, index) => (arg === "--provider" ? result.createArgs[index + 1] : null))
+      .filter((value): value is string => value !== null);
+    expect(providerArgs).toEqual(["tavily-search", "custom-provider"]);
+  });
+
+  it("does not duplicate an extra provider that is already a messaging provider", () => {
+    const result = prepareSandboxCreatePlan({
+      basePolicyPath: "/repo/policy.yaml",
+      buildCtx: "/tmp/nemoclaw-build-1",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingTokenDefs: [{ envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" }],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      extraProviders: ["sandbox-telegram-bridge", "tavily-search"],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      dockerDriverGateway: true,
+      appendResourceFlags: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders: vi.fn(() => ["sandbox-telegram-bridge"]),
+      getMessagingChannelForEnvKey: (envKey) =>
+        envKey === "TELEGRAM_BOT_TOKEN" ? "telegram" : null,
+      getHermesToolGatewayProviderName: vi.fn(),
+      deps: {
+        resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
+          useDockerGpuPatch: false,
+          logMessage: null,
+        })),
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: [],
+        })),
+        buildSandboxGpuCreateArgs: vi.fn(() => []),
+      },
+    });
+
+    const providerArgs = result.createArgs
+      .map((arg, index) => (arg === "--provider" ? result.createArgs[index + 1] : null))
+      .filter((value): value is string => value !== null);
+    expect(providerArgs).toEqual(["sandbox-telegram-bridge", "tavily-search"]);
+  });
 });

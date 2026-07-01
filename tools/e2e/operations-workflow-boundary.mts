@@ -17,7 +17,8 @@ const GITHUB_SCRIPT_NODE24_ACTION =
 const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
-const GENERIC_GITHUB_WRITE_SURFACE = /github\.(?:graphql|request)\s*\(|\bfetch\s*\(|\bgh\s+api\b/u;
+const GENERIC_GITHUB_WRITE_SURFACE =
+  /github\s*(?:(?:\?\.|\.)\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s+(?:[A-Za-z_$][\w$]*\s*=\s*github\b|\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github(?:\.rest)?\b)|\bfetch\b|\bgh\s+api\b/u;
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
@@ -126,6 +127,12 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
   ) {
     errors.push("E2E workflow must not grant top-level issues: write");
   }
+  if (
+    workflow.permissions === "write-all" ||
+    permissionMap(workflow.permissions)["pull-requests"] === "write"
+  ) {
+    errors.push("E2E workflow must not grant top-level pull-requests: write");
+  }
 
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const permissions = permissionMap(job.permissions);
@@ -169,12 +176,28 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       continue;
     }
 
+    if (job.permissions === "write-all" || permissions["pull-requests"] === "write") {
+      errors.push(`${name} must not hold pull-requests: write`);
+    }
+
+    // Deny these generic API clients by default. The scorecard's single fixed
+    // Slack webhook call is the only allowlisted use outside report-to-pr;
+    // validateScorecard binds webhookUrl to a step-scoped Slack secret. This
+    // textual scan is defense in depth; token permissions are the hard boundary.
+    const sourceWithoutSlackPublisher =
+      name === "scorecard"
+        ? jobSource.replace(/\bfetch\s*\(\s*webhookUrl\s*,/u, "validatedSlackFetch(")
+        : jobSource;
+
     if (
       ISSUE_API_REFERENCE.test(jobSource) ||
       GENERIC_ISSUE_REST_MUTATION.test(jobSource) ||
       GENERIC_ISSUE_GRAPHQL_MUTATION.test(jobSource)
     ) {
       errors.push(`${name} must not mutate GitHub issues`);
+    }
+    if (GENERIC_GITHUB_WRITE_SURFACE.test(sourceWithoutSlackPublisher)) {
+      errors.push(`${name} must not use unvalidated generic write surfaces`);
     }
   }
 }
@@ -267,6 +290,8 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "Invalid precomputed Slack payload",
     "Selective dispatch without post_to_slack",
     "SLACK_WEBHOOK_URL_PREVIEW",
+    "const webhookUrl = process.env[envByChannel[channel]];",
+    "await fetch(webhookUrl, {",
   ]) {
     if (!slackScript.includes(fragment))
       errors.push(`scorecard Slack publisher must retain ${fragment}`);

@@ -1200,6 +1200,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "\\bbot\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
       "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
       "\\b[A-Za-z0-9]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}\\b::g",
+      "tvly-[A-Za-z0-9_-]{10,}::g",
     ]);
   });
 

@@ -266,6 +266,50 @@ jobs:
         with:
           persist-credentials: false
 
+      # Keep only the credential-bearing step anchored. Cleanup mappings stay
+      # explicit because strict YAML decoders reject 100 or more aliases here.
+      - &dockerhub-auth
+        name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_AUTH_REQUIRED: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
+          DOCKERHUB_USERNAME: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}
+          DOCKERHUB_TOKEN: ${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"
+          chmod 700 "${docker_config}"
+          export DOCKER_CONFIG="${docker_config}"
+          printf 'DOCKER_CONFIG=%s\n' "${DOCKER_CONFIG}" >> "${GITHUB_ENV}"
+
+          if [[ "${DOCKERHUB_AUTH_REQUIRED}" != "1" ]]; then
+            echo "::notice::Docker Hub credentials are withheld for this ref; continuing with anonymous pulls."
+            exit 0
+          fi
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::error::Docker Hub credentials are required for trusted E2E runs."
+            exit 1
+          fi
+
+          auth_marker="${DOCKER_CONFIG}/.nemoclaw-docker-login-attempted"
+          : > "${auth_marker}"
+          chmod 600 "${auth_marker}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if printf '%s' "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "${attempt}" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "${login_succeeded}" -ne 1 ]]; then
+            echo "::error::Docker Hub login failed after 3 attempts."
+            exit 1
+          fi
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -346,6 +390,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   # Free-standing live tests under test/e2e/live/ that don't fit the
   # registry-driven steady-state probe model. Each gets a discrete job here
   # because the matrix above only runs registry-targets.test.ts. Modeled on
@@ -416,6 +465,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -463,6 +514,11 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   onboard-negative-paths:
     needs: generate-matrix
@@ -529,31 +585,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -615,6 +647,12 @@ jobs:
           retention-days: 14
 
   # Direct OpenClaw skills CLI contract.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   openclaw-skill-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-skill-cli,') || contains(format(',{0},', inputs.targets), ',openclaw-skill-cli,') }}
@@ -634,31 +672,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -694,8 +708,7 @@ jobs:
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Checkout-local CLI/docs parity and deterministic local Markdown/MDX link
   # validation. Keep this discrete until the focused docs workflows are
@@ -757,6 +770,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -786,6 +801,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   hermes-sandbox-secret-boundary:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-sandbox-secret-boundary,') || contains(format(',{0},', inputs.targets), ',hermes-sandbox-secret-boundary,') }}
@@ -800,6 +820,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -829,6 +851,11 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   inference-routing:
     needs: generate-matrix
@@ -899,6 +926,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -934,6 +963,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   gpu-e2e:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gpu-e2e,') || contains(format(',{0},', inputs.targets), ',gpu-e2e,') }}
@@ -957,6 +991,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -995,6 +1031,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   agent-turn-latency:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',agent-turn-latency,') || contains(format(',{0},', inputs.targets), ',agent-turn-latency,') }}
@@ -1019,6 +1060,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -1060,6 +1103,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   kimi-inference-compat:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',kimi-inference-compat,') || contains(format(',{0},', inputs.targets), ',kimi-inference-compat,') }}
@@ -1080,6 +1128,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -1108,6 +1158,11 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-inference-switch:
     needs: generate-matrix
@@ -1152,6 +1207,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -1181,6 +1238,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   brave-search:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',brave-search,') || contains(format(',{0},', inputs.targets), ',brave-search,') }}
@@ -1201,6 +1263,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1247,6 +1311,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   ollama-auth-proxy:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',ollama-auth-proxy,') || contains(format(',{0},', inputs.targets), ',ollama-auth-proxy,') }}
@@ -1263,6 +1332,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1288,6 +1359,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   cron-preflight-inference-local:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',cron-preflight-inference-local,') || contains(format(',{0},', inputs.targets), ',cron-preflight-inference-local,') }}
@@ -1308,6 +1384,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1353,6 +1431,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   issue-4434-tui-unreachable-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-4434-tui-unreachable-inference,') || contains(format(',{0},', inputs.targets), ',issue-4434-tui-unreachable-inference,') }}
@@ -1373,6 +1456,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       # This free-standing job checks out and executes the PR target ref. It
       # keeps privileged host dependency setup inline in trusted workflow YAML
@@ -1396,32 +1481,6 @@ jobs:
             sleep $((attempt * 5))
           done
           sudo apt-get install -y --no-install-recommends expect iptables
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1470,6 +1529,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   credential-sanitization:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',credential-sanitization,') || contains(format(',{0},', inputs.targets), ',credential-sanitization,') }}
@@ -1489,31 +1553,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1553,8 +1593,7 @@ jobs:
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   credential-migration:
     needs: generate-matrix
@@ -1574,31 +1613,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1641,6 +1656,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   sessions-agents-cli:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sessions-agents-cli,') || contains(format(',{0},', inputs.targets), ',sessions-agents-cli,') }}
@@ -1660,31 +1680,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1728,6 +1724,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   runtime-overrides:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',runtime-overrides,') || contains(format(',{0},', inputs.targets), ',runtime-overrides,') }}
@@ -1742,6 +1743,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1771,6 +1774,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   hermes-slack:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-slack,') || contains(format(',{0},', inputs.targets), ',hermes-slack,') }}
@@ -1795,36 +1803,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-slack" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1864,10 +1843,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   hermes-e2e:
     needs: generate-matrix
@@ -1891,6 +1868,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1923,6 +1902,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   hermes-dashboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-dashboard,') || contains(format(',{0},', inputs.targets), ',hermes-dashboard,') }}
@@ -1946,6 +1930,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -1978,6 +1964,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   hermes-discord:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-discord,') || contains(format(',{0},', inputs.targets), ',hermes-discord,') }}
@@ -1999,34 +1990,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Isolate Docker auth
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-discord" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2068,10 +2032,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG:-}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   network-policy:
     needs: generate-matrix
@@ -2093,6 +2055,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       # Expect is a reviewed host-tool consumer for the interactive policy-add
       # test. Keep this privileged setup inline in trusted workflow YAML. This
@@ -2158,6 +2122,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   common-egress-agent:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',common-egress-agent,') || contains(format(',{0},', inputs.targets), ',common-egress-agent,') }}
@@ -2178,6 +2147,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2236,6 +2207,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   shields-config:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',shields-config,') || contains(format(',{0},', inputs.targets), ',shields-config,') }}
@@ -2256,31 +2232,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2314,6 +2266,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   rebuild-openclaw:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-openclaw,') || contains(format(',{0},', inputs.targets), ',rebuild-openclaw,') }}
@@ -2331,31 +2288,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2409,6 +2342,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   rebuild-hermes:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes,') }}
@@ -2435,31 +2373,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2492,6 +2406,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   rebuild-hermes-stale-base:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',rebuild-hermes-stale-base,') || contains(format(',{0},', inputs.targets), ',rebuild-hermes-stale-base,') }}
@@ -2519,31 +2438,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2575,6 +2470,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   sandbox-rebuild:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',sandbox-rebuild,') || contains(format(',{0},', inputs.targets), ',sandbox-rebuild,') }}
@@ -2595,31 +2495,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2671,6 +2547,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   sandbox-rlimits-connect:
     needs: generate-matrix
     if: ${{ contains(format(',{0},', inputs.jobs), ',sandbox-rlimits-connect,') || contains(format(',{0},', inputs.targets), ',sandbox-rlimits-connect,') }}
@@ -2693,31 +2574,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2769,6 +2626,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   overlayfs-autofix:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',overlayfs-autofix,') || contains(format(',{0},', inputs.targets), ',overlayfs-autofix,') }}
@@ -2791,36 +2653,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-overlayfs-autofix" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2853,9 +2686,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Clean Docker auth
+      - name: Clean up Docker auth
         if: always()
-        run: rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   state-backup-restore:
     needs: generate-matrix
@@ -2878,31 +2712,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2954,6 +2764,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   upgrade-stale-sandbox:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox,') || contains(format(',{0},', inputs.targets), ',upgrade-stale-sandbox,') }}
@@ -2975,36 +2790,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-upgrade-stale-sandbox" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3057,10 +2843,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   double-onboard:
     needs: generate-matrix
@@ -3080,31 +2864,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3151,6 +2911,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   jetson-nvmap-gpu:
     needs: generate-matrix
     # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
@@ -3163,7 +2928,6 @@ jobs:
       E2E_JOB: "1"
       E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "jetson-nvmap-gpu"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -3178,33 +2942,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3253,10 +2991,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   concurrent-gateway-ports:
     needs: generate-matrix
@@ -3276,31 +3012,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3347,6 +3059,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   onboard-resume:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-resume,') || contains(format(',{0},', inputs.targets), ',onboard-resume,') }}
@@ -3365,6 +3082,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3409,6 +3128,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   full-e2e:
     # Keep the load-sensitive agent-mediated proof out of the peak hosted
     # lifecycle burst. always() preserves targeted dispatch when the
@@ -3431,6 +3155,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3477,6 +3203,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   security-posture:
     permissions:
       contents: read
@@ -3518,6 +3249,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -3553,6 +3286,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   cloud-onboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',cloud-onboard,') || contains(format(',{0},', inputs.targets), ',cloud-onboard,') }}
@@ -3573,6 +3311,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Configure cloud-onboard trace directory
         shell: bash
@@ -3652,6 +3392,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   gpu-double-onboard:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gpu-double-onboard,') || contains(format(',{0},', inputs.targets), ',gpu-double-onboard,') }}
@@ -3672,6 +3417,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3716,6 +3463,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   onboard-repair:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',onboard-repair,') || contains(format(',{0},', inputs.targets), ',onboard-repair,') }}
@@ -3734,6 +3486,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3778,6 +3532,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   issue-4462-scope-upgrade-approval:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',issue-4462-scope-upgrade-approval,') || contains(format(',{0},', inputs.targets), ',issue-4462-scope-upgrade-approval,') }}
@@ -3797,6 +3556,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3843,6 +3604,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   token-rotation:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',token-rotation,') || contains(format(',{0},', inputs.targets), ',token-rotation,') }}
@@ -3859,31 +3625,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3927,6 +3669,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   messaging-compatible-endpoint:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',messaging-compatible-endpoint,') || contains(format(',{0},', inputs.targets), ',messaging-compatible-endpoint,') }}
@@ -3944,6 +3691,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -3981,6 +3730,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   openshell-gateway-upgrade:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-upgrade,') }}
@@ -4001,34 +3755,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openshell-gateway-upgrade" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4069,9 +3796,7 @@ jobs:
       - name: Clean up Docker auth
         if: always()
         shell: bash
-        run: |
-          docker logout docker.io >/dev/null 2>&1 || true
-          rm -rf "${DOCKER_CONFIG}"
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   messaging-providers:
     needs: generate-matrix
@@ -4093,31 +3818,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4163,6 +3864,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   launchable-smoke:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',launchable-smoke,') || contains(format(',{0},', inputs.targets), ',launchable-smoke,') }}
@@ -4187,31 +3893,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4243,6 +3925,12 @@ jobs:
           retention-days: 14
 
   # Provider-routed Model Router inference contract.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   model-router-provider-routed-inference:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',model-router-provider-routed-inference,') || contains(format(',{0},', inputs.targets), ',model-router-provider-routed-inference,') }}
@@ -4260,36 +3948,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-model-router-provider-routed-inference" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4327,10 +3986,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   snapshot-commands:
     needs: generate-matrix
@@ -4352,36 +4009,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4416,10 +4044,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-operations:
     needs: generate-matrix
@@ -4446,6 +4072,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4474,37 +4102,6 @@ jobs:
             -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
-
       - name: Run sandbox operations live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
@@ -4527,10 +4124,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   sandbox-survival:
     needs: generate-matrix
@@ -4540,7 +4135,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "sandbox-survival"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-sandbox-survival
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-survival
       NEMOCLAW_RUN_LIVE_E2E: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
@@ -4553,33 +4147,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4618,10 +4186,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   diagnostics:
     needs: generate-matrix
@@ -4643,6 +4209,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4676,6 +4244,11 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gateway-drift-preflight:
     needs: generate-matrix
@@ -4752,31 +4325,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4819,6 +4368,12 @@ jobs:
   # First failing-test-first guard for #2701 (gateway recovery does not
   # restore the /tmp guard chain after pod recreate). Will fail on `main`
   # until the #2701 fix lands; flips green afterwards.
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   gateway-guard-recovery:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',gateway-guard-recovery,') || contains(format(',{0},', inputs.targets), ',gateway-guard-recovery,') }}
@@ -4846,6 +4401,8 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -4904,6 +4461,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
   openclaw-inference-switch:
     needs: generate-matrix
     if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch,') || contains(format(',{0},', inputs.targets), ',openclaw-inference-switch,') }}
@@ -4948,6 +4510,8 @@ jobs:
         with:
           persist-credentials: false
 
+      - *dockerhub-auth
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -4959,41 +4523,6 @@ jobs:
 
       - name: Build CLI
         run: npm run build:cli
-
-      - name: Configure isolated Docker auth directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}"
-          mkdir -p "${docker_config}"
-          chmod 700 "${docker_config}"
-          echo "DOCKER_CONFIG=${docker_config}" >> "${GITHUB_ENV}"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
 
       - name: Run OpenClaw inference switch live test
         # Preserves
@@ -5008,15 +4537,6 @@ jobs:
             test/e2e/live/openclaw-inference-switch.test.ts \
             --silent=false --reporter=default
 
-      - name: Clean up Docker auth
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker_config="${DOCKER_CONFIG:-${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}}"
-          DOCKER_CONFIG="${docker_config}" docker logout docker.io >/dev/null 2>&1 || true
-          rm -rf "${docker_config}"
-
       - name: Upload OpenClaw inference switch artifacts
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -5026,6 +4546,11 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # Bedrock Runtime compatible Anthropic endpoint contract.
   bedrock-runtime-compatible-anthropic:
@@ -5054,36 +4579,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5121,10 +4617,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   gateway-health-honest:
     needs: generate-matrix
@@ -5201,36 +4695,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-device-auth-health" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5278,10 +4743,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   channels-add-remove:
     needs: generate-matrix
@@ -5291,7 +4754,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-add-remove"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-channels-add-remove
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/channels-add-remove
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5310,33 +4772,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5398,10 +4834,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   telegram-injection:
     needs: generate-matrix
@@ -5424,36 +4858,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-telegram-injection" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5510,10 +4915,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   channels-stop-start:
     needs: generate-matrix
@@ -5527,7 +4930,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "channels-stop-start"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5543,20 +4945,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin || echo "::warning::Docker Hub login failed; continuing with anonymous pulls."
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5618,10 +5007,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-slack-pairing:
     needs: generate-matrix
@@ -5644,25 +5031,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: |
-          set -euo pipefail
-          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin || echo "::warning::Docker Hub login failed; continuing with anonymous pulls."
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5719,10 +5088,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   issue-2478-crash-loop-recovery:
     needs: generate-matrix
@@ -5744,36 +5111,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-issue-2478-crash-loop-recovery" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5822,10 +5160,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   openclaw-discord-pairing:
     needs: generate-matrix
@@ -5848,36 +5184,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-discord-pairing" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5933,10 +5240,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   tunnel-lifecycle:
     needs: generate-matrix
@@ -5959,36 +5264,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-tunnel-lifecycle" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
-            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
-            exit 0
-          fi
-          mkdir -p "${DOCKER_CONFIG}"
-          chmod 700 "${DOCKER_CONFIG}"
-          login_succeeded=0
-          for attempt in 1 2 3; do
-            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
-              login_succeeded=1
-              break
-            fi
-            if [[ "$attempt" -lt 3 ]]; then
-              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
-              sleep 5
-            fi
-          done
-          if [[ "$login_succeeded" -ne 1 ]]; then
-            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
-          fi
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -6055,10 +5331,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   spark-install:
     needs: generate-matrix
@@ -6083,18 +5357,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Configure isolated Docker auth directory
-        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"
-
-      - name: Authenticate to Docker Hub
-        if: github.ref == 'refs/heads/main'
-        # Authentication only accelerates pulls; anonymous pulls remain valid.
-        continue-on-error: true
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - *dockerhub-auth
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -6130,12 +5393,8 @@ jobs:
 
       - name: Clean up Docker auth
         if: always()
-        run: |
-          set -euo pipefail
-          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install" ]]; then
-            docker logout docker.io || true
-            rm -rf -- "${DOCKER_CONFIG}"
-          fi
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
 
   # ── PR result comment ─────────────────────────────────────────────────────
   # Posts a results table on the open PR for the dispatching branch (or the
