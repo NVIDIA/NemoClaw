@@ -9,6 +9,7 @@ import {
   hasOpenShellGatewayUserService,
   startOpenShellGatewayUserService,
   stopOpenShellGatewayUserService,
+  type SpawnSyncLike,
   type SpawnSyncLikeResult,
 } from "./openshell-gateway-user-service";
 
@@ -29,6 +30,15 @@ function spawnResult(status = 0, stderr = "", stdout = ""): SpawnSyncLikeResult 
     stderr,
     stdout,
   };
+}
+
+type SpawnSyncMock = SpawnSyncLike & { mock: { calls: Array<[string, string[]]> } };
+
+function spawnResultsByAction(results: Record<string, SpawnSyncLikeResult>): SpawnSyncMock {
+  return vi.fn<SpawnSyncLike>((_command: string, args: string[]) => {
+    const action = args.find((arg) => Object.hasOwn(results, arg));
+    return action ? results[action] : spawnResult();
+  }) as unknown as SpawnSyncMock;
 }
 
 describe("OpenShell gateway user service", () => {
@@ -115,10 +125,9 @@ describe("OpenShell gateway user service", () => {
       env: {},
       existsSync: () => true,
       platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "Failed to connect to bus");
-        return spawnResult();
+      spawnSyncImpl: spawnResultsByAction({
+        show: spawnResult(0, "", trustedShowOutput()),
+        restart: spawnResult(1, "Failed to connect to bus"),
       }),
     });
 
@@ -136,10 +145,9 @@ describe("OpenShell gateway user service", () => {
       env: {},
       existsSync: () => true,
       platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "Job failed");
-        return spawnResult();
+      spawnSyncImpl: spawnResultsByAction({
+        show: spawnResult(0, "", trustedShowOutput()),
+        restart: spawnResult(1, "Job failed"),
       }),
     });
 
@@ -157,10 +165,9 @@ describe("OpenShell gateway user service", () => {
       env: {},
       existsSync: () => true,
       platform: "linux",
-      spawnSyncImpl: vi.fn((_command: string, args: string[]) => {
-        if (args.includes("show")) return spawnResult(0, "", trustedShowOutput());
-        if (args.includes("restart")) return spawnResult(1, "No such file or directory");
-        return spawnResult();
+      spawnSyncImpl: spawnResultsByAction({
+        show: spawnResult(0, "", trustedShowOutput()),
+        restart: spawnResult(1, "No such file or directory"),
       }),
     });
 
@@ -173,15 +180,12 @@ describe("OpenShell gateway user service", () => {
   });
 
   it("falls back instead of trusting an unverified service identity", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.includes("show")) {
-        return spawnResult(
-          0,
-          "",
-          trustedShowOutput("/home/nvidia/.config/systemd/user/openshell-gateway.service"),
-        );
-      }
-      return spawnResult();
+    const spawnSyncImpl = spawnResultsByAction({
+      show: spawnResult(
+        0,
+        "",
+        trustedShowOutput("/home/nvidia/.config/systemd/user/openshell-gateway.service"),
+      ),
     });
 
     const result = startOpenShellGatewayUserService({
@@ -204,18 +208,12 @@ describe("OpenShell gateway user service", () => {
   });
 
   it("falls back instead of trusting package units that execute untrusted wrappers", () => {
-    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
-      if (args.includes("show")) {
-        return spawnResult(
-          0,
-          "",
-          trustedShowOutput(
-            "/lib/systemd/user/openshell-gateway.service",
-            "/tmp/openshell-gateway",
-          ),
-        );
-      }
-      return spawnResult();
+    const spawnSyncImpl = spawnResultsByAction({
+      show: spawnResult(
+        0,
+        "",
+        trustedShowOutput("/lib/systemd/user/openshell-gateway.service", "/tmp/openshell-gateway"),
+      ),
     });
 
     const result = startOpenShellGatewayUserService({
