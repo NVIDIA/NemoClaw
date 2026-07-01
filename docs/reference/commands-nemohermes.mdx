@@ -607,7 +607,9 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 
 ### `nemohermes <name> status`
 
-Show sandbox status, health, and inference configuration.
+Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
+Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints.
+Do not pass a sandbox name to `nemohermes status`; that command is the global all-sandbox/service overview.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
@@ -1586,7 +1588,9 @@ This command remains as a compatibility alias to `nemohermes tunnel stop`.
 
 ### `nemohermes status`
 
-Show the sandbox list and the status of host auxiliary services (for example cloudflared).
+Show the global sandbox list and the status of host auxiliary services (for example cloudflared).
+This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, messaging overlap warnings, gateway health, and host services.
+Use `nemohermes <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
