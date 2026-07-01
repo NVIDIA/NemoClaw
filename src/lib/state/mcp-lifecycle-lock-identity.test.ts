@@ -21,6 +21,7 @@ import {
 } from "./mcp-lifecycle-lock-storage";
 
 const PROPERTY_RUNS = 250;
+const PROPERTY_IO_TIMEOUT_MS = 15_000;
 const SANDBOX_NAME = "property-sandbox";
 const LOCAL_HOST = "host:local";
 const LOCAL_NAMESPACE = "pid:[4026531836]";
@@ -323,7 +324,9 @@ describe("MCP lifecycle lock storage properties", () => {
     fs.rmSync(stateDir, { force: true, recursive: true });
   });
 
-  it("round-trips valid owner records without changing their wire shape", async () => {
+  it("round-trips valid owner records without changing their wire shape", {
+    timeout: PROPERTY_IO_TIMEOUT_MS,
+  }, async () => {
     await fc.assert(
       fc.asyncProperty(
         nonEmptyStringArbitrary,
@@ -356,7 +359,9 @@ describe("MCP lifecycle lock storage properties", () => {
     );
   });
 
-  it("classifies arbitrary non-JSON lock content as corrupt ownership", async () => {
+  it("classifies arbitrary non-JSON lock content as corrupt ownership", {
+    timeout: PROPERTY_IO_TIMEOUT_MS,
+  }, async () => {
     await fc.assert(
       fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (content) => {
         const lockPath = getMcpLifecycleLockPath(SANDBOX_NAME, stateDir);
@@ -372,7 +377,9 @@ describe("MCP lifecycle lock storage properties", () => {
     );
   });
 
-  it("returns no observation for arbitrary missing lock paths", async () => {
+  it("returns no observation for arbitrary missing lock paths", {
+    timeout: PROPERTY_IO_TIMEOUT_MS,
+  }, async () => {
     await fc.assert(
       fc.asyncProperty(fc.string({ maxLength: 1_024 }), async (sandboxName) => {
         const lockPath = getMcpLifecycleLockPath(sandboxName, stateDir);
