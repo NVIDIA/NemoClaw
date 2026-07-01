@@ -15,6 +15,7 @@ const TRANSITION_LOCK_MODULE = "./transition-lock.js";
 describe("shields policy transition", () => {
   let homeDir: string;
   let runSpy: MockInstance;
+  let runCaptureSpy: MockInstance;
   let shields: typeof import("./index.js");
 
   beforeEach(() => {
@@ -27,7 +28,7 @@ describe("shields policy transition", () => {
     const sandboxConfig = requireSource("../sandbox/config.js");
     vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
-    vi.spyOn(runner, "runCapture").mockImplementation(() => {
+    runCaptureSpy = vi.spyOn(runner, "runCapture").mockImplementation(() => {
       throw new Error("policy get failed with status 42");
     });
     vi.spyOn(sandboxConfig, "resolveAgentConfig").mockReturnValue({
@@ -51,6 +52,24 @@ describe("shields policy transition", () => {
   });
 
   it("never relaxes policy or persists mutable state when the base-policy read fails", () => {
+    expect(() => shields.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
+      "Cannot capture current policy",
+    );
+    expect(runSpy).not.toHaveBeenCalled();
+
+    const stateFiles = fs.readdirSync(path.join(homeDir, ".nemoclaw", "state"));
+    expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    ["message", "message: gateway unavailable"],
+    ["details", "details: grpc unavailable"],
+    ["arbitrary diagnostic", "reason: gateway unavailable\nretryable: true"],
+  ])("never relaxes policy or persists mutable state for exit-zero %s output", (_name, output) => {
+    runCaptureSpy.mockReturnValue(output);
+
     expect(() => shields.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
       "Cannot capture current policy",
     );

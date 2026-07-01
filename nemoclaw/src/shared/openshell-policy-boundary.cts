@@ -10,15 +10,6 @@ export interface ParsedOpenShellPolicy {
   readonly policy: OpenShellPolicyMapping;
 }
 
-export interface ParseOpenShellPolicyOptions {
-  /**
-   * Preserve only the root CLI's legacy acceptance of versionless policy
-   * mappings. The plugin mutation path remains strict; all marked, malformed,
-   * scalar, sequence, version, and network-policy shapes have parity.
-   */
-  readonly allowUnmarkedPolicyBody?: boolean;
-}
-
 const MISSING_POLICY_DOCUMENT =
   "Current policy from openshell policy get --base does not contain a policy YAML document";
 
@@ -49,13 +40,10 @@ function parseYaml(source: string, invalidMessage: string): unknown {
 // tests cover the fail-soft and strict consumers.
 // removalCondition: remove only when no NemoClaw consumer parses OpenShell
 // policy command output or OpenShell provides an equivalent typed API.
-export function parseOpenShellPolicy(
-  raw: string,
-  options: ParseOpenShellPolicyOptions = {},
-): ParsedOpenShellPolicy {
+export function parseOpenShellPolicy(raw: string): ParsedOpenShellPolicy {
   const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/.exec(raw);
   const yamlBody = (separator ? raw.slice(separator.index + separator[0].length) : raw).trim();
-  if (!yamlBody || /^(error|failed|invalid|warning|status)\b/i.test(yamlBody)) {
+  if (!yamlBody) {
     throw new Error(MISSING_POLICY_DOCUMENT);
   }
 
@@ -80,26 +68,12 @@ export function parseOpenShellPolicy(
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
 
-  // invalidState: a legacy root-CLI response contains a valid versionless
-  // mapping, while relaxing the plugin path would admit an unmarked document at
-  // a security-sensitive mutation boundary.
-  // sourceBoundary: the root CLI owns its legacy output compatibility; the
-  // plugin owns strict acceptance of marked OpenShell policy output.
-  // whyNotSourceFix: supported CLI outputs can predate the marker contract, so
-  // removing compatibility here would break those root-CLI mutations.
-  // regressionTest: canonical and package-contract tests prove parity for every
-  // input class except the explicitly accepted legacy versionless mapping.
-  // removalCondition: remove this option when all supported OpenShell CLI
-  // versions emit marked policy documents and the root compatibility path ends.
-  if (options.allowUnmarkedPolicyBody) {
-    if (!/^[a-z_][a-z0-9_]*\s*:/m.test(yamlBody)) {
-      throw new Error(MISSING_POLICY_DOCUMENT);
-    }
-  } else if (
-    !separator &&
-    !("version" in parsed) &&
-    !("network_policies" in parsed)
-  ) {
+  // Unmarked output is accepted only when it has a positive policy-root
+  // identity. OpenShell diagnostic mappings are otherwise indistinguishable
+  // from policy YAML and must never reach a read-modify-write caller. A marked
+  // document may contain only future top-level fields because the marker is the
+  // policy identity; versionless network_policies remains compatible.
+  if (!separator && !("version" in parsed) && !("network_policies" in parsed)) {
     throw new Error(MISSING_POLICY_DOCUMENT);
   }
 

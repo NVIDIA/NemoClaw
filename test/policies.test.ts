@@ -1324,13 +1324,11 @@ exit 1
   describe("mergePresetIntoPolicy", () => {
     const sampleEntries = "  example:\n    endpoints:\n      - host: example.com";
 
-    it("appends network_policies when current policy has content but no version header", () => {
+    it("refuses an unmarked current mapping without a policy root", () => {
       const versionless = "some_key:\n  foo: bar";
-      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
-      expect(merged).toContain("version:");
-      expect(merged).toContain("some_key:");
-      expect(merged).toContain("network_policies:");
-      expect(merged).toContain("example.com");
+      expect(() => policies.mergePresetIntoPolicy(versionless, sampleEntries)).toThrow(
+        /current policy is not a valid YAML mapping/,
+      );
     });
 
     it("appends preset entries when current policy has network_policies but no version", () => {

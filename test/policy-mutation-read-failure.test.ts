@@ -19,6 +19,11 @@ const MALFORMED_BASE_POLICIES = [
   ["string version", 'version: "1"\nnetwork_policies: {}\n'],
   ["fractional version", "version: 1.5\nnetwork_policies: {}\n"],
 ] as const;
+const UNMARKED_NON_POLICY_MAPPINGS = [
+  ["message diagnostic", "message: gateway unavailable\n"],
+  ["details diagnostic", "details: connection refused\n"],
+  ["arbitrary diagnostic", "reason: gateway unavailable\nretryable: true\n"],
+] as const;
 
 describe("OpenShell policy mutation read failures", () => {
   const tempDirs: string[] = [];
@@ -93,6 +98,39 @@ describe("OpenShell policy mutation read failures", () => {
     for (const [shapeName, policyOutput] of MALFORMED_BASE_POLICIES) {
       it(`${mutation} refuses to set policy when the base-policy read has ${shapeName}`, () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-malformed-read-"));
+        tempDirs.push(tempDir);
+        const callsPath = path.join(tempDir, "calls.log");
+        const outputPath = path.join(tempDir, "policy-output.yaml");
+        const fakeOpenshell = path.join(tempDir, "openshell");
+        fs.writeFileSync(outputPath, policyOutput);
+        fs.writeFileSync(
+          fakeOpenshell,
+          [
+            "#!/bin/sh",
+            `printf '%s\\n' "$*" >>${JSON.stringify(callsPath)}`,
+            `cat ${JSON.stringify(outputPath)}`,
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
+        const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
+        const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        expect(apply()).toBe(false);
+        const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
+        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
+        expect(
+          mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
+        ).toEqual([]);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+      });
+    }
+
+    for (const [shapeName, policyOutput] of UNMARKED_NON_POLICY_MAPPINGS) {
+      it(`${mutation} refuses to set policy when the successful base-policy read is an unmarked ${shapeName}`, () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-read-"));
         tempDirs.push(tempDir);
         const callsPath = path.join(tempDir, "calls.log");
         const outputPath = path.join(tempDir, "policy-output.yaml");

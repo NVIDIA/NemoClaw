@@ -12,86 +12,93 @@ import {
 
 type PolicyDecision = "accepted" | "rejected";
 
-function parseDecision(raw: string, allowUnmarkedPolicyBody: boolean): PolicyDecision {
+function parseDecision(raw: string): PolicyDecision {
   try {
-    parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody });
+    parseOpenShellPolicy(raw);
     return "accepted";
   } catch {
     return "rejected";
   }
 }
 
-const CROSS_MODE_CASES = [
+const POLICY_CASES = [
   {
     name: "valid marked policy",
     raw: "Version: 1\n---\nversion: 1\nnetwork_policies:\n  safe: {}",
-    strict: "accepted",
-    legacy: "accepted",
+    decision: "accepted",
   },
   {
-    name: "documented versionless mapping exception",
+    name: "unmarked mapping without a policy root",
     raw: "future_policy:\n  keep: true",
-    strict: "rejected",
-    legacy: "accepted",
+    decision: "rejected",
   },
-  { name: "missing document", raw: "", strict: "rejected", legacy: "rejected" },
+  {
+    name: "versionless network policy",
+    raw: "network_policies:\n  safe: {}",
+    decision: "accepted",
+  },
+  { name: "missing document", raw: "", decision: "rejected" },
   {
     name: "diagnostic output",
     raw: "error: gateway unavailable",
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
+  },
+  {
+    name: "diagnostic message mapping",
+    raw: "message: gateway unavailable\ndetails: connection refused",
+    decision: "rejected",
+  },
+  {
+    name: "arbitrary lowercase diagnostic mapping",
+    raw: "reason: gateway unavailable\nretryable: true",
+    decision: "rejected",
   },
   {
     name: "malformed YAML",
     raw: "version: [unterminated",
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
   },
-  { name: "scalar document", raw: "---\nscalar", strict: "rejected", legacy: "rejected" },
+  { name: "scalar document", raw: "---\nscalar", decision: "rejected" },
   {
     name: "sequence document",
     raw: "---\n- item",
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
   },
   {
     name: "null network policies",
     raw: "version: 1\nnetwork_policies: null",
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
   },
   {
     name: "string version",
     raw: 'version: "1"\nnetwork_policies: {}',
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
   },
   {
     name: "fractional version",
     raw: "version: 1.5\nnetwork_policies: {}",
-    strict: "rejected",
-    legacy: "rejected",
+    decision: "rejected",
   },
 ] as const;
 
 describe("canonical OpenShell policy boundary", () => {
-  it("parses metadata output and supports the CLI's versionless compatibility mode", () => {
+  it("parses marked output and versionless network policies", () => {
     const body = "version: 1\nnetwork_policies:\n  safe: {}";
     expect(parseOpenShellPolicy(`Version: 1\n---\n${body}`)).toEqual({
       yamlBody: body,
       policy: YAML.parse(body),
     });
 
-    const versionless = "future_policy:\n  keep: true";
-    expect(() => parseOpenShellPolicy(versionless)).toThrow(/does not contain a policy/);
-    expect(parseOpenShellPolicy(versionless, { allowUnmarkedPolicyBody: true }).yamlBody).toBe(
-      versionless,
-    );
+    const versionless = "network_policies:\n  safe: {}";
+    expect(parseOpenShellPolicy(versionless).yamlBody).toBe(versionless);
 
     const inlineSeparator = 'version: 1\nmetadata:\n  marker: "a---b"\nnetwork_policies: {}';
-    expect(parseOpenShellPolicy(inlineSeparator, { allowUnmarkedPolicyBody: true }).yamlBody).toBe(
-      inlineSeparator,
-    );
+    expect(parseOpenShellPolicy(inlineSeparator).yamlBody).toBe(inlineSeparator);
+
+    const markedFuturePolicy = "Version: 1\n---\nfuture_policy:\n  keep: true";
+    expect(parseOpenShellPolicy(markedFuturePolicy).policy).toEqual({
+      future_policy: { keep: true },
+    });
   });
 
   it("rejects missing, diagnostic, malformed, scalar, and unmarked policy output", () => {
@@ -113,14 +120,11 @@ describe("canonical OpenShell policy boundary", () => {
     ]) {
       expect(() => parseOpenShellPolicy(raw)).toThrow(/version must be a positive integer/);
     }
-    expect(() =>
-      parseOpenShellPolicy("FutureKey: value", { allowUnmarkedPolicyBody: true }),
-    ).toThrow(/does not contain a policy/);
+    expect(() => parseOpenShellPolicy("FutureKey: value")).toThrow(/does not contain a policy/);
   });
 
-  it.each(CROSS_MODE_CASES)("keeps cross-mode parity for $name", ({ raw, strict, legacy }) => {
-    expect(parseDecision(raw, false)).toBe(strict);
-    expect(parseDecision(raw, true)).toBe(legacy);
+  it.each(POLICY_CASES)("returns $decision for $name", ({ raw, decision }) => {
+    expect(parseDecision(raw)).toBe(decision);
   });
 
   it("removes provider-composed policies without mutating other policy fields", () => {
