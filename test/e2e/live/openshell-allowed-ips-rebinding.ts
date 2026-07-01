@@ -58,9 +58,7 @@ function parseRawPolicy(yaml: string): RawOpenShellPolicy {
 export function parseRawOpenShellAllowedIpsRebindingEndpoint(
   effectivePolicyOutput: string,
 ): RawOpenShellEndpoint {
-  const policy = parseOpenShellPolicy(effectivePolicyOutput, {
-    allowUnmarkedPolicyBody: true,
-  }).policy;
+  const policy = parseOpenShellPolicy(effectivePolicyOutput).policy;
   const networkPolicies = policy.network_policies;
   if (!isMapping(networkPolicies)) {
     throw new Error("effective OpenShell policy must contain network_policies");
@@ -248,9 +246,7 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       },
     );
     expect(basePolicy.exitCode, resultText(basePolicy)).toBe(0);
-    const basePolicyYaml = parseOpenShellPolicy(basePolicy.stdout, {
-      allowUnmarkedPolicyBody: true,
-    }).yamlBody;
+    const basePolicyYaml = parseOpenShellPolicy(basePolicy.stdout).yamlBody;
     basePolicyPath = options.artifacts.pathFor(
       "policies/raw-openshell-allowed-ips-rebinding.base.yaml",
     );

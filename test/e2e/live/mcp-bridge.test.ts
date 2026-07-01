@@ -82,7 +82,7 @@ function expectExitNonZero(result: ShellProbeResult, label: string, pattern: Reg
 }
 
 function parseCurrentPolicy(raw: string): string {
-  return parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true }).yamlBody;
+  return parseOpenShellPolicy(raw).yamlBody;
 }
 
 async function bestEffortRemoveBridge(
