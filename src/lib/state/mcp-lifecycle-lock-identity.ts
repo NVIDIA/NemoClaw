@@ -34,6 +34,14 @@ export interface LockObservation {
 
 export type McpLifecycleLockDisposition = "active" | "stale" | "wait";
 
+/** Injectable OS evidence keeps ownership classification deterministic under test. */
+export interface McpLifecycleLockIdentityProbes {
+  localHostIdentity: string;
+  localPidNamespaceIdentity: string | null;
+  processIsAlive(pid: number): boolean;
+  readProcessIdentity(pid: number, fresh?: boolean): string | null;
+}
+
 const processIdentityCache = new Map<number, { checkedAt: number; identity: string | null }>();
 
 export function isMcpLifecycleLockOwner(value: unknown): value is McpLifecycleLockOwner {
@@ -157,6 +165,13 @@ export function readMcpLockPidNamespaceIdentity(): string | null {
 const LOCAL_HOST_IDENTITY = readMcpLockHostIdentity();
 const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
 
+const LOCAL_IDENTITY_PROBES: McpLifecycleLockIdentityProbes = {
+  localHostIdentity: LOCAL_HOST_IDENTITY,
+  localPidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
+  processIsAlive,
+  readProcessIdentity: readMcpLockProcessIdentity,
+};
+
 export function createMcpLifecycleLockOwner(
   sandboxName: string,
   token: string,
@@ -179,6 +194,7 @@ export function classifyMcpLifecycleLock(
   sandboxName: string,
   nowMs: number,
   corruptLockGraceMs: number,
+  probes: McpLifecycleLockIdentityProbes = LOCAL_IDENTITY_PROBES,
 ): McpLifecycleLockDisposition {
   const { owner } = observation;
   if (!owner || owner.sandboxName !== sandboxName) {
@@ -189,18 +205,18 @@ export function classifyMcpLifecycleLock(
   // wait for operator/distributed-lease resolution instead of risking overlap.
   // Legacy or incomplete records have unknown provenance. Treat them as
   // foreign instead of using this host's PID table to reap them.
-  if (!owner.hostIdentity || owner.hostIdentity !== LOCAL_HOST_IDENTITY) return "active";
+  if (!owner.hostIdentity || owner.hostIdentity !== probes.localHostIdentity) return "active";
   if (
-    (LOCAL_PID_NAMESPACE_IDENTITY !== null && !owner.pidNamespaceIdentity) ||
+    (probes.localPidNamespaceIdentity !== null && !owner.pidNamespaceIdentity) ||
     (owner.pidNamespaceIdentity !== null &&
       owner.pidNamespaceIdentity !== undefined &&
-      owner.pidNamespaceIdentity !== LOCAL_PID_NAMESPACE_IDENTITY)
+      owner.pidNamespaceIdentity !== probes.localPidNamespaceIdentity)
   ) {
     return "active";
   }
-  if (!processIsAlive(owner.pid)) return "stale";
+  if (!probes.processIsAlive(owner.pid)) return "stale";
 
-  const observedIdentity = readMcpLockProcessIdentity(owner.pid);
+  const observedIdentity = probes.readProcessIdentity(owner.pid);
   if (
     owner.processIdentity !== null &&
     observedIdentity !== null &&
@@ -208,7 +224,7 @@ export function classifyMcpLifecycleLock(
   ) {
     // PID identities are cached briefly. Confirm a mismatch without the cache
     // before reaping so rapid PID reuse cannot evict a newly live owner.
-    const refreshedIdentity = readMcpLockProcessIdentity(owner.pid, true);
+    const refreshedIdentity = probes.readProcessIdentity(owner.pid, true);
     if (refreshedIdentity !== null && owner.processIdentity !== refreshedIdentity) {
       return "stale";
     }

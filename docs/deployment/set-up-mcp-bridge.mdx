@@ -268,6 +268,11 @@ Before any credential or provider side effect, the MCP command loads the exact g
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed Hermes service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
 
+If a mutating MCP command times out waiting for the per-sandbox lifecycle lock, first confirm that no `mcp add`, `mcp restart`, `mcp remove`, `rebuild`, or `destroy` command for that sandbox is still running, then retry the original command.
+Every mutating command automatically recovers a lock whose local process is provably dead or whose PID now has a different process-start identity, including locks left while stale-lock cleanup was in progress.
+NemoClaw deliberately does not expose a force-unlock flag: a live owner, a different host or PID namespace, or an incomplete legacy owner record fails closed because removing it could overlap a provider, policy, or adapter mutation.
+For a state directory shared across hosts or PID namespaces, resolve the owner on that host or stop sharing the state directory before retrying; do not delete the lock file while ownership is ambiguous.
+
 Stdio-only MCP servers are not supported.
 NemoClaw does not start, wrap, or translate them, so configure a native Streamable HTTP MCP endpoint.
 
