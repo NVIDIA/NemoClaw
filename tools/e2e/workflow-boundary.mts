@@ -371,6 +371,24 @@ function requireRunContains(
   }
 }
 
+function requireRunFragmentBefore(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex === -1 || afterIndex === -1) return;
+  if (beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
+    );
+  }
+}
+
 function requireRunDoesNotContain(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -3866,6 +3884,18 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
   );
   requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
   requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
   requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
 

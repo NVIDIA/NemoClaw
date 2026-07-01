@@ -1097,6 +1097,41 @@ jobs:
     }
   });
 
+  it("rejects live trace sanitizer when the source guard moves after Python reads traces", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const sanitizeStep = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Build trusted live E2E timing summary",
+    );
+    expect(sanitizeStep?.run).toEqual(expect.any(String));
+    const guardBlock =
+      'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n' +
+      'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
+      '  echo "::error::Refusing to sanitize unexpected raw trace path" >&2\n' +
+      "  exit 1\n" +
+      "fi\n";
+    sanitizeStep!.run = String(sanitizeStep!.run).replace(guardBlock, "") + guardBlock;
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "step 'Build trusted live E2E timing summary' run script must include " +
+            'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" before ' +
+            "python3 scripts/e2e/sanitize-trace-timing.py",
+          "step 'Build trusted live E2E timing summary' run script must include " +
+            '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ] before ' +
+            "python3 scripts/e2e/sanitize-trace-timing.py",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requires snapshot commands workflow boundary coverage", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
