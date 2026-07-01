@@ -175,7 +175,7 @@ describe("gateway supervisor tracked PID handling", () => {
     expect(result.status).toBe(0);
     // macOS bash 3.2 reports SIGTERM job-control notifications to stderr
     // (e.g. "Terminated: 15  sleep 30") despite set +m; filter them out.
-    expect(result.stderr.replace(/^[^\n]*(?:Terminated|Killed)[^\n]*\n?/gm, "")).toBe("");
+    expect(result.stderr.replace(/^(?:Terminated|Killed): \d+[^\n]*\n?/gm, "")).toBe("");
     expect(result.stdout).toMatch(/^\d+$/);
   });
 
