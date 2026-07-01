@@ -777,6 +777,9 @@ restore_openclaw_config_after_write() {
 # mode openclaw.json is root-owned and immutable, so an empty file there
 # implies tampering (which integrity check should catch) rather than the
 # #3118 trigger (which requires a writable config).
+# Remove this recovery only after upstream writes can no longer truncate
+# openclaw.json and regression coverage proves the empty-config state cannot
+# recur at any supported inference-update boundary.
 
 # Capture a known-good copy of openclaw.json for later restore. A pristine
 # root-owned baseline is retained; a sandbox-owned candidate is replaced from
