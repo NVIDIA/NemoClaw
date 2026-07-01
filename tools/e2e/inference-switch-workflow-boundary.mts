@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -116,7 +117,7 @@ function validateOpenClawDockerAuthOrder(errors: string[], job: WorkflowJob): vo
 
   const stepOrder = [
     "Authenticate to Docker Hub",
-    "Build CLI",
+    PREPARE_E2E_STEP,
     "Run OpenClaw inference switch live test",
     "Upload OpenClaw inference switch artifacts",
     "Clean up Docker auth",
@@ -127,7 +128,7 @@ function validateOpenClawDockerAuthOrder(errors: string[], job: WorkflowJob): vo
     )
   ) {
     errors.push(
-      "openclaw-inference-switch must authenticate, build, test, upload artifacts, then clean credentials",
+      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
     );
   }
 }
