@@ -202,12 +202,14 @@ describe("MCP lifecycle lock classifier properties", () => {
         (pid, identity, freshResult) => {
           const reads: Array<{ pid: number; fresh: boolean }> = [];
           const replacementIdentity = `${identity}:replacement`;
+          const freshIdentityByResult = {
+            match: identity,
+            mismatch: replacementIdentity,
+            unavailable: null,
+          } as const;
           const readProcessIdentity = (readPid: number, fresh = false): string | null => {
             reads.push({ pid: readPid, fresh });
-            if (!fresh) return replacementIdentity;
-            if (freshResult === "match") return identity;
-            if (freshResult === "mismatch") return replacementIdentity;
-            return null;
+            return fresh ? freshIdentityByResult[freshResult] : replacementIdentity;
           };
 
           expect(
