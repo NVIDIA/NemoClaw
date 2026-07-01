@@ -491,9 +491,10 @@ interface SandboxBridgeVerifierOptions {
   sleepMsImpl?: (ms: number) => Promise<void>;
   /**
    * Invoked once, just before aborting, when the probe proves the gateway is
-   * genuinely unreachable. Not called for a soft `probe_unavailable` skip or a
-   * successful probe. Onboard uses this to tear down a gateway it started this
-   * run so onboarding does not leave it orphaned and bound (#5513).
+   * genuinely unreachable, including after an opted-in UFW auto-apply re-probe
+   * still fails. Not called for a skipped probe, a soft `probe_unavailable`, or
+   * a successful probe. Onboard uses this to tear down a gateway it started
+   * this run so onboarding does not leave it orphaned and bound (#5513).
    */
   onUnreachable?: () => Promise<void> | void;
 }
@@ -581,16 +582,20 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   }
 
   console.error(message);
+  let cleanupError: unknown;
   try {
     await options.onUnreachable?.();
   } catch (error) {
+    cleanupError = error;
     const detail = error instanceof Error ? error.message : String(error);
     console.warn(`  ⚠ Gateway cleanup after sandbox-bridge failure failed: ${detail}`);
   }
   if (exitOnFailure) {
     process.exit(1);
   }
-  throw new Error(`Docker-driver sandbox-bridge unreachable (${reach.reason})`);
+  throw new Error(`Docker-driver sandbox-bridge unreachable (${reach.reason})`, {
+    cause: cleanupError,
+  });
 }
 
 export const __test = {
