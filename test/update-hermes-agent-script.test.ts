@@ -28,7 +28,7 @@ const CURRENT_INSTALLED_BASE = [
 ].join("\n");
 
 const CURRENT_INSTALLED_DOCKERFILE = [
-  "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+  "COPY agents/hermes/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
   "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
   "COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
   "COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json",

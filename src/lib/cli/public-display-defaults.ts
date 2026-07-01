@@ -451,7 +451,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 4,
-      description: "Sandbox health + NIM status",
+      description: "One sandbox's health, gateway, inference, and NIM status",
     },
   ],
   setup: [
@@ -479,6 +479,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Services",
       order: 36,
+      description: "Global sandbox and host service status",
       flags: "[--json]",
     },
   ],

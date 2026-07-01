@@ -94,9 +94,11 @@ export function isSandboxPortForwardHealthy(
 }
 
 export function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boolean {
-  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
+  let forwardHealth = isSandboxPortForwardHealthy(sandboxName, port);
   if (forwardHealth === true) return true;
   if (forwardHealth === "occupied") return false;
+  const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
+  const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
 
   const stopResult = runOpenshell(["forward", "stop", String(port), sandboxName], {
     ignoreError: true,
@@ -107,6 +109,37 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
       `  Warning: openshell forward stop ${port} ${sandboxName} exited ${stopResult.status}; attempting restart anyway.`,
     );
   }
+
+  // OpenShell v0.0.72 removes the forward PID file shortly after SIGTERM,
+  // before the old SSH listener is guaranteed to release its host port. A
+  // blind stop -> start can therefore collide with the just-stopped process.
+  // Preserve authoritative owner metadata while waiting: accept a target-
+  // owned forward that recovered on its own, reject another sandbox, and only
+  // start after an otherwise-unowned local listener has actually quiesced.
+  if (waitMs > 0 && isLocalForwardReachable(port)) {
+    const stopState: { health: SandboxForwardHealth; portReleased: boolean } = {
+      health: forwardHealth,
+      portReleased: false,
+    };
+    const stopSettled = waitUntil(
+      () => {
+        stopState.health = isSandboxPortForwardHealthy(sandboxName, port);
+        stopState.portReleased = !isLocalForwardReachable(port);
+        return (
+          stopState.health === true || stopState.health === "occupied" || stopState.portReleased
+        );
+      },
+      {
+        deadlineMs: Date.now() + waitMs,
+        initialIntervalMs: 100,
+        maxIntervalMs: 500,
+        backoffFactor: 1.5,
+      },
+    );
+    if (stopState.health === true) return true;
+    if (stopState.health === "occupied" || !stopSettled || !stopState.portReleased) return false;
+  }
+
   const startResult = runOpenshell(
     ["forward", "start", "--background", String(port), sandboxName],
     {
@@ -122,8 +155,6 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
   let health = isSandboxPortForwardHealthy(sandboxName, port);
   if (health === true) return true;
   if (health === "occupied") return false;
-  const configuredWaitMs = Number(process.env.NEMOCLAW_FORWARD_RECOVERY_WAIT_MS ?? "3000");
-  const waitMs = Number.isFinite(configuredWaitMs) ? Math.max(0, configuredWaitMs) : 3000;
   if (waitMs === 0) return false;
 
   let occupied = false;

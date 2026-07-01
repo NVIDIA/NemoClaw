@@ -252,17 +252,32 @@ if [ -e "$HERMES_STARTUP_READY_FILE" ] && ! rm -f "$HERMES_STARTUP_READY_FILE"; 
 fi
 
 # The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
-# base-image python3 that is first on PATH at container boot. (An interactive
-# login shell activates the venv, masking this: `python3` there resolves to
-# /opt/hermes/.venv/bin/python3 and has yaml, but the entrypoint that runs this
-# script does not.) Invoked with bare python3, the seeder hits its "PyYAML
-# unavailable; skipping model seed" branch and returns 0, so the model routing
-# is silently never mirrored into the dashboard home and the Models page shows
-# no models. Resolve the venv interpreter explicitly, falling back to python3.
-_HERMES_PYTHON="/opt/hermes/.venv/bin/python"
-if [ ! -x "$_HERMES_PYTHON" ]; then
-  _HERMES_PYTHON="$(command -v python3 || echo python3)"
-fi
+# base-image python3 that is first on PATH at container boot. Invoked with
+# the base python3, the seeder hits its "PyYAML unavailable; skipping model
+# seed" branch and returns 0, so the model routing is silently never mirrored
+# into the dashboard home and the Models page shows no models.
+#
+# Pick the venv interpreter from a fixed trusted absolute-path list so a
+# PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
+# entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
+# The list scans first-wins ordered most-preferred first (venv > local >
+# system) so the venv python3 is selected when present and falls back to
+# system python3 when the sandbox image has no venv yet. The same priority
+# is mirrored in `agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3` and
+# `src/lib/agent/hermes-recovery-boundary.ts:buildTrustedPython3Picker` so
+# all three entry points pick the same interpreter when several are present.
+# The deprecated `/opt/hermes/.venv/bin/python` symlink path is intentionally
+# not consulted: it is a symlink an attacker with write access to
+# /opt/hermes/.venv could repoint, while the regular files in the trusted
+# list cannot be substituted without breaking the image.
+_HERMES_PYTHON=""
+for _candidate in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$_candidate" ]; then
+    _HERMES_PYTHON="$_candidate"
+    break
+  fi
+done
+unset _candidate
 
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
@@ -1709,13 +1724,15 @@ validate_hermes_env_secret_boundary() {
     echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
     return 1
   fi
+  # `_HERMES_PYTHON` was resolved from the trusted absolute-path list earlier;
+  # use it here so a PATH-shadowed `python3` cannot substitute the validator.
   "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
-    python3 "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
+    "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
 }
 
 validate_hermes_runtime_env_secret_boundary() {
   "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
-    python3 "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
+    "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
 hermes_gateway_healthy() {
