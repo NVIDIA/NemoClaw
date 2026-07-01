@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type DestroySandbox = typeof import("./destroy")["destroySandbox"];
+type DestroySandbox = (typeof import("./destroy"))["destroySandbox"];
 
 const requireDist = createRequire(import.meta.url);
 const destroyModulePath = "./destroy.js";
@@ -106,7 +106,10 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
             bridges: Object.fromEntries(
               options.mcpServers.map((server) => [
                 server,
-                { server, ...(options.mcpAddState ? { addState: options.mcpAddState } : {}) },
+                {
+                  server,
+                  ...(options.mcpAddState ? { addState: options.mcpAddState } : {}),
+                },
               ]),
             ),
           },
@@ -115,7 +118,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockReturnValue(true);
-  vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
+  vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+    sandboxName: "alpha",
+  });
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     const session = { sandboxName: "alpha" };
     expect(typeof mutator).toBe("function");
@@ -147,7 +152,10 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
         return { status: 0, stdout: "", stderr: "" };
     }
   });
-  vi.spyOn(runtime, "captureOpenshell").mockReturnValue({ status: 0, output: "" });
+  vi.spyOn(runtime, "captureOpenshell").mockReturnValue({
+    status: 0,
+    output: "",
+  });
   const selectGatewaySpy = vi
     .spyOn(destroyGateway, "selectGatewayForSandboxDestroy")
     .mockImplementation(() => undefined);
@@ -185,7 +193,11 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   );
   vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
     events.push("harden");
-    if (options.shieldsUpError) throw options.shieldsUpError;
+    options.shieldsUpError === undefined
+      ? undefined
+      : (() => {
+          throw options.shieldsUpError;
+        })();
   });
   vi.spyOn(shields, "isShieldsDown").mockReturnValue(options.shieldsDown ?? true);
   const shieldsDownSpy = vi.spyOn(shields, "shieldsDown").mockImplementation(() => {
@@ -224,7 +236,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     .spyOn(mcpBridge, "restoreMcpBridgesAfterDestroyAbort")
     .mockImplementation(async () => {
       events.push("mcp-restore");
-      if (options.restoreMcpError) throw new Error(options.restoreMcpError);
+      return options.restoreMcpError === undefined
+        ? undefined
+        : Promise.reject(new Error(options.restoreMcpError));
     });
   const finalizeMcpBridgesAfterSandboxDeleteSpy = vi
     .spyOn(mcpBridge, "finalizeMcpBridgesAfterSandboxDelete")
@@ -270,8 +284,9 @@ describe("destroySandbox flow", () => {
   });
 
   afterEach(() => {
-    if (originalGatewayEnv === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = originalGatewayEnv;
+    originalGatewayEnv === undefined
+      ? delete process.env.OPENSHELL_GATEWAY
+      : (process.env.OPENSHELL_GATEWAY = originalGatewayEnv);
     vi.restoreAllMocks();
     delete require.cache[requireDist.resolve(destroyModulePath)];
   });
@@ -358,7 +373,10 @@ describe("destroySandbox flow", () => {
   });
 
   it("stops before local cleanup when OpenShell fails to delete the live sandbox", async () => {
-    const harness = createDestroyHarness({ deleteStatus: 7, deleteOutput: "delete failed" });
+    const harness = createDestroyHarness({
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+    });
 
     await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
 

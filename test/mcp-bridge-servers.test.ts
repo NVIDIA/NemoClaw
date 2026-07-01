@@ -137,10 +137,12 @@ describe("authenticated MCP live fixtures", () => {
     } finally {
       await cleanupProcess?.();
       fetchMock.mockRestore();
-      if (priorAmbientSecret === undefined) delete process.env.MCP_TUNNEL_MUST_NOT_LEAK;
-      else process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret;
-      if (priorOpenShellSecret === undefined) delete process.env.OPENSHELL_OIDC_CLIENT_SECRET;
-      else process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret;
+      priorAmbientSecret === undefined
+        ? delete process.env.MCP_TUNNEL_MUST_NOT_LEAK
+        : (process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret);
+      priorOpenShellSecret === undefined
+        ? delete process.env.OPENSHELL_OIDC_CLIENT_SECRET
+        : (process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret);
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
@@ -345,7 +347,9 @@ describe("authenticated MCP live fixtures", () => {
     });
     const firstBody = (await first.json()) as {
       choices: Array<{
-        message: { tool_calls: Array<{ function: { name: string; arguments: string } }> };
+        message: {
+          tool_calls: Array<{ function: { name: string; arguments: string } }>;
+        };
       }>;
     };
     expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({
@@ -444,7 +448,9 @@ describe("authenticated MCP live fixtures", () => {
     });
     const firstBody = (await first.json()) as {
       choices: Array<{
-        message: { tool_calls: Array<{ function: { name: string; arguments: string } }> };
+        message: {
+          tool_calls: Array<{ function: { name: string; arguments: string } }>;
+        };
       }>;
     };
     expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({

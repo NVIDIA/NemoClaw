@@ -21,8 +21,8 @@ describe("MCP workflow artifact boundary", () => {
       const upload = workflow.jobs["mcp-bridge"].steps.find(
         (step) => step.name === "Upload MCP server artifacts",
       );
-      if (!upload?.with) throw new Error("MCP artifact upload fixture is missing");
-      upload.with.path = "e2e-artifacts/live/unscanned/";
+      expect(upload?.with, "MCP artifact upload fixture is missing").toBeDefined();
+      upload!.with!.path = "e2e-artifacts/live/unscanned/";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
@@ -52,9 +52,9 @@ describe("MCP workflow artifact boundary", () => {
       const cloudflared = workflow.jobs["mcp-bridge-dev"].steps.find(
         (step) => step.name === "Install and verify cloudflared prerequisite",
       );
-      if (!cloudflared?.env) throw new Error("MCP cloudflared installer fixture is missing");
-      cloudflared.env.CLOUDFLARED_DEB_SHA256 = "mutable";
-      cloudflared.run = "sudo apt-get install -y cloudflared";
+      expect(cloudflared?.env, "MCP cloudflared installer fixture is missing").toBeDefined();
+      cloudflared!.env!.CLOUDFLARED_DEB_SHA256 = "mutable";
+      cloudflared!.run = "sudo apt-get install -y cloudflared";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
       expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(

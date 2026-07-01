@@ -252,8 +252,12 @@ print(json.dumps(accepted))
         `model: !!python/object/apply:os.system ["touch ${sentinel}"]\n`,
         { mode: 0o600 },
       );
-      fs.writeFileSync(path.join(hermesDir, ".env"), "HERMES_TEST=1\n", { mode: 0o600 });
-      fs.writeFileSync(path.join(hermesDir, ".config-hash"), "untrusted\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(hermesDir, ".env"), "HERMES_TEST=1\n", {
+        mode: 0o600,
+      });
+      fs.writeFileSync(path.join(hermesDir, ".config-hash"), "untrusted\n", {
+        mode: 0o600,
+      });
       const yamlResult = runPython(
         `
 import importlib.util, json, os, sys
@@ -601,10 +605,10 @@ print(json.dumps(results, sort_keys=True))
     for (const [name, scenario] of Object.entries(scenarios)) {
       expect(scenario.blocked, name).toBe(true);
       expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
-      for (const [property, value] of Object.entries(scenario)) {
-        if (property.endsWith("preserved") || property === "temp_cleaned") {
-          expect(value, `${name}.${property}`).toBe(true);
-        }
+      for (const [property, value] of Object.entries(scenario).filter(
+        ([property]) => property.endsWith("preserved") || property === "temp_cleaned",
+      )) {
+        expect(value, `${name}.${property}`).toBe(true);
       }
     }
   });
@@ -854,7 +858,11 @@ print(json.dumps(observed, sort_keys=True))
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const lines = result.stdout.trim().split("\n");
-    expect(JSON.parse(lines[0] ?? "{}")).toEqual({ changed: true, ok: true, reloaded: true });
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual({
+      changed: true,
+      ok: true,
+      reloaded: true,
+    });
     expect(JSON.parse(lines[1] ?? "{}")).toEqual({
       action: "add",
       entrypoint_uid: 1000,
@@ -1017,7 +1025,11 @@ print(json.dumps({str(pid): module._is_service_manager_process(pid) for pid in a
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ "1": true, "2": false, "3": false });
+    expect(JSON.parse(result.stdout)).toEqual({
+      "1": true,
+      "2": false,
+      "3": false,
+    });
   });
 
   it("runs a one-shot mutation through the stock OpenShell exec topology", () => {
@@ -1044,7 +1056,11 @@ print(json.dumps(result, sort_keys=True))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ changed: true, ok: true, reloaded: true });
+    expect(JSON.parse(result.stdout)).toEqual({
+      changed: true,
+      ok: true,
+      reloaded: true,
+    });
   });
 
   it("probes the same-UID helper without mutating config", () => {

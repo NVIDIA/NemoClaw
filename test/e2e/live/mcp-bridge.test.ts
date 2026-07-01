@@ -11,10 +11,9 @@ import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
-} from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
-import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy";
+} from "../../../src/lib/actions/sandbox/mcp-bridge-adapter-status";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
-import { parseCurrentPolicy } from "../../../src/lib/policy";
+import { parseOpenShellPolicy } from "../../../src/lib/policy/merge";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -42,8 +41,10 @@ const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-brid
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
 const DEEPAGENTS_SANDBOX_NAME = process.env.NEMOCLAW_MCP_DEEPAGENTS_SANDBOX_NAME ?? "e2e-mcp-dcode";
 const SERVER_NAME = "fake";
+const SERVER_POLICY_KEY = "mcp_bridge_fake";
 const CONCURRENT_SERVER_NAME = "concurrent";
 const REBIND_SERVER_NAME = "rebind";
+const REBIND_POLICY_KEY = "mcp_bridge_rebind";
 const REBIND_HOSTNAME = "mcp-rebind.example.test";
 const REBIND_PUBLIC_IP = "1.1.1.1";
 const REBIND_CREDENTIAL_KEY = "REBIND_MCP_SECRET";
@@ -77,6 +78,10 @@ function expectExitNonZero(result: ShellProbeResult, label: string, pattern: Reg
     `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   ).not.toBe(0);
   expect(resultText(result)).toMatch(pattern);
+}
+
+function parseCurrentPolicy(raw: string): string {
+  return parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true }).yamlBody;
 }
 
 async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
@@ -191,7 +196,9 @@ async function assertAdapterDnsRebindingDenied(
     secretPaths: string[];
   },
 ): Promise<void> {
-  const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
+  const rebindMcp = await startFakeMcpHttpsServer({
+    secret: REBIND_HOST_SECRET,
+  });
   cleanup.add(`stop ${options.artifactPrefix} DNS rebinding fake MCP HTTPS server`, () =>
     rebindMcp.close(),
   );
@@ -276,9 +283,10 @@ async function assertAdapterDnsRebindingDenied(
       { endpoints?: Array<{ host?: string; allowed_ips?: string[] }> }
     >;
   };
-  expect(
-    policyJson.network_policies?.[buildMcpBridgePolicyKey(REBIND_SERVER_NAME)]?.endpoints?.[0],
-  ).toMatchObject({ host: REBIND_HOSTNAME, allowed_ips: [REBIND_PUBLIC_IP] });
+  expect(policyJson.network_policies?.[REBIND_POLICY_KEY]?.endpoints?.[0]).toMatchObject({
+    host: REBIND_HOSTNAME,
+    allowed_ips: [REBIND_PUBLIC_IP],
+  });
   await assertSecretAbsentFromSandbox(
     sandbox,
     options.sandboxName,
@@ -534,7 +542,7 @@ async function assertBridgeInfrastructure(
     timeoutMs: 60_000,
   });
   expectExitZero(policy, `${options.artifactPrefix} openshell policy get --full`);
-  expect(resultText(policy)).toContain(buildMcpBridgePolicyKey(SERVER_NAME));
+  expect(resultText(policy)).toContain(SERVER_POLICY_KEY);
   expect(resultText(policy)).toContain("protocol: mcp");
   expect(resultText(policy)).not.toContain("tls: require");
   expect(resultText(policy)).not.toContain("credential_keys");
