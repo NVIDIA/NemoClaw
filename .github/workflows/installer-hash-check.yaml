@@ -33,6 +33,9 @@ jobs:
         with:
           node-version: 22.16.0
 
+      # The full PR-head checkout below supplies data only. Its checker and pin
+      # parser are never executed: later steps run exclusively from either
+      # .trusted-installer-hash or .bootstrap-installer-hash.
       - name: Checkout pull request head
         if: github.event_name == 'pull_request'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
