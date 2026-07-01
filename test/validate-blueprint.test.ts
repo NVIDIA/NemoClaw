@@ -29,6 +29,10 @@ const TAVILY_PROVIDER_PROFILE_PATH = new URL(
   "../nemoclaw-blueprint/provider-profiles/tavily.yaml",
   import.meta.url,
 );
+const TAVILY_POLICY_PRESET_PATH = new URL(
+  "../nemoclaw-blueprint/policies/presets/tavily.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
@@ -479,6 +483,7 @@ describe("Brave Search provider profile", () => {
 
 describe("Tavily Search provider profile", () => {
   const profile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_PATH);
+  const preset = loadYaml<PolicyPreset>(TAVILY_POLICY_PRESET_PATH);
 
   it("routes TAVILY_API_KEY through a bearer authorization header", () => {
     expect(profile.id).toBe("tavily");
@@ -511,6 +516,11 @@ describe("Tavily Search provider profile", () => {
       "/usr/local/bin/curl",
       "/usr/bin/curl",
     ]);
+  });
+
+  it("keeps its binary allowlist aligned with the Tavily policy preset", () => {
+    const presetBinaries = preset.network_policies?.tavily?.binaries?.map(({ path }) => path);
+    expect(profile.binaries).toEqual(presetBinaries);
   });
 });
 

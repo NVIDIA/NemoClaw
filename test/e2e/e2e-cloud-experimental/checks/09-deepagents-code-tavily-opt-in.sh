@@ -93,13 +93,14 @@ PY
 
 python_probe() {
   local url="$1"
+  local python_bin="${2:-python3}"
   local encoded remote_cmd
   if [ -n "${NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE+x}" ]; then
     printf '%s\n' "$NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE"
     return 0
   fi
   encoded="$(python_probe_source | base64 | tr -d '\n')"
-  remote_cmd="python3 -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
+  remote_cmd="${python_bin@Q} -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
   sandbox_exec "$remote_cmd"
 }
 
@@ -165,6 +166,15 @@ elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
   fail_test "managed Deep Agents Code python is still policy-blocked after policy-add: $PROBE_OUTPUT"
 else
   fail_test "Tavily probe lacked reachability evidence after policy-add: $PROBE_OUTPUT"
+fi
+
+SYSTEM_PROBE_OUTPUT="$(python_probe "https://api.tavily.com/" "/usr/bin/python3" || true)"
+if echo "$SYSTEM_PROBE_OUTPUT" | grep -q "BLOCKED:" && ! echo "$SYSTEM_PROBE_OUTPUT" | grep -q "REACHED:"; then
+  pass "system Python remains blocked from Tavily after policy-add"
+elif echo "$SYSTEM_PROBE_OUTPUT" | grep -q "REACHED:"; then
+  fail_test "system Python reached Tavily unexpectedly after policy-add: $SYSTEM_PROBE_OUTPUT"
+else
+  fail_test "system Python Tavily probe lacked denial evidence after policy-add: $SYSTEM_PROBE_OUTPUT"
 fi
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
