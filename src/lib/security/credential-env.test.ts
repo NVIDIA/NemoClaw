@@ -8,6 +8,7 @@ import {
   buildScrubbedCurlProbeEnv,
   CREDENTIAL_ENV_EXPLICIT_DENY,
   isCredentialShapedName,
+  scrubCredentialEnv,
   shouldStripCredentialEnv,
 } from "./credential-env";
 
@@ -57,6 +58,24 @@ describe("shouldStripCredentialEnv", () => {
   it("keeps benign vars", () => {
     expect(shouldStripCredentialEnv("PATH")).toBe(false);
     expect(shouldStripCredentialEnv("NO_PROXY")).toBe(false);
+  });
+});
+
+describe("scrubCredentialEnv", () => {
+  it("drops only credential-shaped keys from the supplied env and never re-adds process.env", () => {
+    const scrubbed = scrubCredentialEnv({
+      PATH: "/usr/bin",
+      NO_PROXY: "localhost",
+      HTTP_PROXY: "http://proxy.internal:3128",
+      NVIDIA_API_KEY: "nvapi-leak",
+      MY_SECRET_TOKEN: "sk-leak",
+    });
+    expect(scrubbed.PATH).toBe("/usr/bin");
+    expect(scrubbed.NO_PROXY).toBe("localhost");
+    expect(scrubbed.HTTP_PROXY).toBe("http://proxy.internal:3128");
+    expect(scrubbed.NVIDIA_API_KEY).toBeUndefined();
+    expect(scrubbed.MY_SECRET_TOKEN).toBeUndefined();
+    expect(Object.keys(scrubbed).sort()).toEqual(["HTTP_PROXY", "NO_PROXY", "PATH"]);
   });
 });
 

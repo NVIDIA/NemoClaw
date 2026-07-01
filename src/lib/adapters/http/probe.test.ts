@@ -427,6 +427,37 @@ describe("http-probe helpers", () => {
     expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
   });
 
+  it("strips credential-shaped opts.env while preserving PATH and NO_PROXY when replaceEnv is true", () => {
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", "https://example.test/models"], {
+      replaceEnv: true,
+      env: {
+        PATH: "/usr/bin",
+        NO_PROXY: "localhost",
+        HTTP_PROXY: "http://proxy.internal:3128",
+        NVIDIA_API_KEY: "nvapi-should-not-leak",
+        MY_SECRET_TOKEN: "should-not-leak",
+      },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(spawnedEnv?.PATH).toBe("/usr/bin");
+    expect(spawnedEnv?.NO_PROXY).toBe("localhost");
+    expect(spawnedEnv?.HTTP_PROXY).toBe("http://proxy.internal:3128");
+    expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+    expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+  });
+
   it("scrubs credential-shaped env even when trustedConfigFiles is not supplied", () => {
     const original = {
       MY_PROBE_SECRET_TOKEN: process.env.MY_PROBE_SECRET_TOKEN,

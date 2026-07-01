@@ -12,7 +12,7 @@ import path from "node:path";
 import { isErrnoException } from "../../core/errno";
 import { compactText } from "../../core/url-utils";
 import type { ProbeResult } from "../../onboard/types";
-import { buildScrubbedCurlProbeEnv } from "../../security/credential-env";
+import { buildScrubbedCurlProbeEnv, scrubCredentialEnv } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
 import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
@@ -43,7 +43,7 @@ const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
 const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
 
 function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {
-  if (opts.replaceEnv) return opts.env ?? {};
+  if (opts.replaceEnv) return scrubCredentialEnv(opts.env ?? {});
   return buildScrubbedCurlProbeEnv(opts.env ?? {});
 }
 

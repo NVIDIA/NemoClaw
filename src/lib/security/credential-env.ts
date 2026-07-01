@@ -45,17 +45,23 @@ export function shouldStripCredentialEnv(name: string): boolean {
   return CREDENTIAL_SHAPED_NAME_PATTERN.test(name);
 }
 
-// Builds an environment for a curl probe child that drops credential-shaped
-// variables. Defence-in-depth so a future provider env var that follows the
-// convention is automatically scrubbed without an allowlist update.
-export function buildScrubbedCurlProbeEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+// Drops credential-shaped variables from a single environment map without
+// pulling in anything else. Benign replacement values such as PATH, proxy
+// variables, and NO_PROXY are not credential-shaped, so they survive.
+export function scrubCredentialEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const scrubbed: NodeJS.ProcessEnv = {};
-  for (const source of [process.env, extra]) {
-    for (const [name, value] of Object.entries(source)) {
-      if (value !== undefined && !shouldStripCredentialEnv(name)) {
-        scrubbed[name] = value;
-      }
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && !shouldStripCredentialEnv(name)) {
+      scrubbed[name] = value;
     }
   }
   return scrubbed;
+}
+
+// Builds an environment for a curl probe child that inherits process.env plus
+// an optional overlay, dropping credential-shaped variables. Defence-in-depth
+// so a future provider env var that follows the convention is automatically
+// scrubbed without an allowlist update.
+export function buildScrubbedCurlProbeEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return scrubCredentialEnv({ ...process.env, ...extra });
 }
