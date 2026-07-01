@@ -19,6 +19,9 @@ Thumbs.db
 
 # Project-specific
 .nemoclaw-maintainer/
+.tmp/
+e2e-artifacts/
+worktrees/
 draft_newsletter_*
 research/
 specs/
