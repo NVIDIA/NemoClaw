@@ -35,20 +35,22 @@ vi.mock("../adapters/openshell/client.js", () => ({
   captureSandboxSshConfigCommand: vi.fn(),
 }));
 
+const { EXPECTED_VERSION_BY_AGENT } = vi.hoisted(() => ({
+  EXPECTED_VERSION_BY_AGENT: {
+    openclaw: "2026.5.27",
+    "hermes-calendar-pin": "2026.6.19",
+  } as Record<string, string>,
+}));
+
 vi.mock("../agent/defs.js", () => ({
-  loadAgent: vi.fn((name: string) => {
-    let expectedVersion = "0.17.0";
-    if (name === "openclaw") expectedVersion = "2026.5.27";
-    else if (name === "hermes-calendar-pin") expectedVersion = "2026.6.19";
-    return {
-      name,
-      displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
-      versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
-      expectedVersion,
-      stateDirs: [],
-      configPaths: { dir: "/sandbox/.openclaw" },
-    };
-  }),
+  loadAgent: vi.fn((name: string) => ({
+    name,
+    displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
+    versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
+    expectedVersion: EXPECTED_VERSION_BY_AGENT[name] ?? "0.17.0",
+    stateDirs: [],
+    configPaths: { dir: "/sandbox/.openclaw" },
+  })),
 }));
 
 vi.mock("child_process", async (importOriginal) => {
