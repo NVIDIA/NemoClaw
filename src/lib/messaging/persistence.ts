@@ -22,7 +22,7 @@ import {
 } from "./compiler/engines/template";
 import type { ManifestCompilerContext } from "./compiler/types";
 import type { MessagingHookInputMap, MessagingHookOutputMap } from "./hooks";
-import { BUILT_IN_MESSAGING_HOOK_REGISTRY, runMessagingHookSync } from "./hooks";
+import { getBuiltInMessagingHookRegistry, runMessagingHookSync } from "./hooks";
 import type {
   ChannelHookSpec,
   ChannelInputSpec,
@@ -546,7 +546,7 @@ function buildHookOutputs(
   hook: ChannelHookSpec,
   channel: SandboxMessagingChannelPlan,
 ): MessagingHookOutputMap {
-  return runMessagingHookSync(hook, BUILT_IN_MESSAGING_HOOK_REGISTRY, {
+  return runMessagingHookSync(hook, getBuiltInMessagingHookRegistry(), {
     channelId: manifest.id,
     inputs: selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
   }).outputs;

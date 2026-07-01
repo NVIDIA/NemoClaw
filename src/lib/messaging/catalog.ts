@@ -4,8 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { BUILT_IN_CHANNEL_MANIFESTS, createBuiltInRenderTemplateResolver } from "./channels";
-import { type BuiltInMessagingHookOptions, createBuiltInMessagingHookRegistrations } from "./hooks";
+import { BUILT_IN_CHANNEL_MODULES } from "./channels";
+import { type BuiltInMessagingHookOptions } from "./hooks";
+import { createCommonHookRegistrations } from "./hooks";
 import { MessagingHookRegistry, type MessagingHookRegistration } from "./hooks";
 import {
   type ChannelManifest,
@@ -18,11 +19,7 @@ import {
 } from "./manifest";
 import type { RenderTemplateReferenceResolver } from "./compiler/engines/template";
 import { MessagingWorkflowPlanner } from "./compiler";
-import {
-  defineMessagingChannel,
-  type MessagingChannelModule,
-  type MessagingPolicyContribution,
-} from "./channels/module";
+import { type MessagingChannelModule, type MessagingPolicyContribution } from "./channels/module";
 
 export interface MessagingWorkflowPlannerOptions {
   readonly hookOptions?: BuiltInMessagingHookOptions;
@@ -62,6 +59,10 @@ export interface StaticMessagingCatalogOptions {
   readonly createHookRegistrations?: (
     options?: BuiltInMessagingHookOptions,
   ) => readonly MessagingHookRegistration[];
+  readonly resolveModuleHookOptions?: (
+    module: MessagingChannelModule,
+    options?: BuiltInMessagingHookOptions,
+  ) => unknown;
   readonly templateResolver?: RenderTemplateReferenceResolver;
   readonly policyRoot?: string;
 }
@@ -71,12 +72,17 @@ export class StaticMessagingCatalog implements MessagingCatalog {
   private readonly createHookRegistrations: (
     options?: BuiltInMessagingHookOptions,
   ) => readonly MessagingHookRegistration[];
+  private readonly resolveModuleHookOptions: (
+    module: MessagingChannelModule,
+    options?: BuiltInMessagingHookOptions,
+  ) => unknown;
   private readonly templateResolver: RenderTemplateReferenceResolver;
   private readonly policyRoot: string;
 
   constructor(options: StaticMessagingCatalogOptions) {
     this.modules = validateChannelModules(options.modules);
     this.createHookRegistrations = options.createHookRegistrations ?? (() => []);
+    this.resolveModuleHookOptions = options.resolveModuleHookOptions ?? (() => undefined);
     this.templateResolver = options.templateResolver ?? (() => undefined);
     this.policyRoot =
       options.policyRoot ?? path.resolve(process.cwd(), "nemoclaw-blueprint/policies/presets");
@@ -101,7 +107,9 @@ export class StaticMessagingCatalog implements MessagingCatalog {
   createHookRegistry(options?: BuiltInMessagingHookOptions): MessagingHookRegistry {
     return new MessagingHookRegistry([
       ...this.createHookRegistrations(options),
-      ...this.modules.flatMap((module) => module.hooks?.() ?? []),
+      ...this.modules.flatMap(
+        (module) => module.hooks?.(this.resolveModuleHookOptions(module, options)) ?? [],
+      ),
     ]);
   }
 
@@ -175,19 +183,45 @@ export function createMessagingCatalog(options: StaticMessagingCatalogOptions): 
 
 export function createBuiltInMessagingCatalog(): MessagingCatalog {
   return new StaticMessagingCatalog({
-    modules: BUILT_IN_CHANNEL_MANIFESTS.map(createManifestBackedChannelModule),
-    createHookRegistrations: createBuiltInMessagingHookRegistrations,
-    templateResolver: createBuiltInRenderTemplateResolver(),
+    modules: BUILT_IN_CHANNEL_MODULES,
+    createHookRegistrations: (options) => createCommonHookRegistrations(options?.common),
+    resolveModuleHookOptions: resolveBuiltInModuleHookOptions,
   });
 }
 
-function createManifestBackedChannelModule(manifest: ChannelManifest): MessagingChannelModule {
-  return defineMessagingChannel({
-    kind: "nemoclaw.messaging.channel",
-    apiVersion: 1,
-    id: manifest.id,
-    manifest: () => manifest,
-  });
+function resolveBuiltInModuleHookOptions(
+  module: MessagingChannelModule,
+  options?: BuiltInMessagingHookOptions,
+): unknown {
+  switch (module.id) {
+    case "discord":
+      return withOpenClawBridgeHealthOptions(options?.discord, options?.openclawBridgeHealth);
+    case "slack":
+      return withOpenClawBridgeHealthOptions(options?.slack, options?.openclawBridgeHealth);
+    case "teams":
+      return options?.teams;
+    case "telegram":
+      return withOpenClawBridgeHealthOptions(options?.telegram, options?.openclawBridgeHealth);
+    case "wechat":
+      return options?.wechat;
+    default:
+      return undefined;
+  }
+}
+
+function withOpenClawBridgeHealthOptions<
+  T extends { readonly openclawBridgeHealth?: BuiltInMessagingHookOptions["openclawBridgeHealth"] },
+>(
+  options: T | undefined,
+  openclawBridgeHealth: BuiltInMessagingHookOptions["openclawBridgeHealth"] | undefined,
+): T {
+  return {
+    ...options,
+    openclawBridgeHealth: {
+      ...openclawBridgeHealth,
+      ...options?.openclawBridgeHealth,
+    },
+  } as T;
 }
 
 function validateChannelModules(

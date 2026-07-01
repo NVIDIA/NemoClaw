@@ -49,7 +49,12 @@ export function createBuiltInMessagingHookRegistry(
   return new MessagingHookRegistry(createBuiltInMessagingHookRegistrations(options));
 }
 
-export const BUILT_IN_MESSAGING_HOOK_REGISTRY = createBuiltInMessagingHookRegistry();
+let builtInMessagingHookRegistry: MessagingHookRegistry | null = null;
+
+export function getBuiltInMessagingHookRegistry(): MessagingHookRegistry {
+  builtInMessagingHookRegistry ??= createBuiltInMessagingHookRegistry();
+  return builtInMessagingHookRegistry;
+}
 
 function withOpenClawBridgeHealthOptions<
   T extends { readonly openclawBridgeHealth?: OpenClawBridgeHealthHookOptions },

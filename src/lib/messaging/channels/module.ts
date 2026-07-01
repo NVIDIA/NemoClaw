@@ -47,7 +47,7 @@ export interface MessagingChannelModule {
   readonly id: MessagingChannelId;
 
   manifest(): ChannelManifest;
-  hooks?(): readonly MessagingHookRegistration[];
+  hooks?(options?: unknown): readonly MessagingHookRegistration[];
   templates?(): readonly MessagingTemplateResolver[];
   policies?(): readonly MessagingPolicyContribution[];
   renderParsers?(): readonly MessagingRenderConfigParser[];

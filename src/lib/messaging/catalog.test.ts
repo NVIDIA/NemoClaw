@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   BUILT_IN_CHANNEL_MANIFESTS,
+  BUILT_IN_CHANNEL_MODULES,
   createBuiltInMessagingCatalog,
   createMessagingCatalog,
   defineMessagingChannel,
@@ -18,6 +19,7 @@ describe("MessagingCatalog", () => {
     expect(catalog.listChannels().map((module) => module.id)).toEqual(
       BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => manifest.id),
     );
+    expect(catalog.listChannels()).toEqual(BUILT_IN_CHANNEL_MODULES);
     expect(
       catalog
         .createManifestRegistry()
@@ -33,9 +35,23 @@ describe("MessagingCatalog", () => {
 
   it("creates built-in hook registries and workflow planners", () => {
     const catalog = createBuiltInMessagingCatalog();
+    const hookIds = catalog.createHookRegistry().listIds();
 
-    expect(catalog.createHookRegistry().listIds()).toContain("common.tokenPaste");
+    expect(hookIds).toContain("common.tokenPaste");
+    for (const manifest of BUILT_IN_CHANNEL_MANIFESTS) {
+      for (const hook of manifest.hooks) {
+        expect(hookIds, `${manifest.id}.${hook.handler}`).toContain(hook.handler);
+      }
+    }
     expect(catalog.createWorkflowPlanner()).toBeTruthy();
+  });
+
+  it("resolves built-in templates through channel modules", () => {
+    const catalog = createBuiltInMessagingCatalog();
+
+    expect(catalog.createTemplateResolver()("proxyUrl", { inputs: [], env: {} })?.value).toBe(
+      "http://10.200.0.1:3128",
+    );
   });
 
   it("derives agent-aware policy keys from current manifests", () => {
