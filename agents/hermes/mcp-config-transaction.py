@@ -38,6 +38,7 @@ import stat
 import sys
 import time
 import unicodedata
+from pathlib import Path
 from types import ModuleType
 from urllib.parse import urlsplit
 
@@ -53,8 +54,9 @@ SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ENV_PLACEHOLDER_RE = re.compile(
-    r"^Bearer openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]{0,127}$"
+    r"^Bearer openshell:resolve:env:([A-Za-z_][A-Za-z0-9_]{0,127})$"
 )
+BOUNDARY_MANIFEST_NAME = "openshell-child-visible-credentials.v0.0.72.json"
 ANSI_ESCAPE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
 )
@@ -102,6 +104,58 @@ TRUSTED_HERMES_GATEWAY_LAUNCHERS = {
     b"/usr/local/lib/nemoclaw/hermes",
     b"/opt/hermes/.venv/bin/hermes",
 }
+
+
+def _load_credential_boundary_manifest() -> dict[str, object]:
+    candidates = (
+        Path(__file__).with_name(BOUNDARY_MANIFEST_NAME),
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "lib"
+        / "actions"
+        / "sandbox"
+        / BOUNDARY_MANIFEST_NAME,
+    )
+    manifest_path = next((path for path in candidates if path.is_file()), None)
+    if manifest_path is None:
+        raise RuntimeError("Hermes MCP credential boundary manifest is missing")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("openshellVersion") != "0.0.72":
+        raise RuntimeError("Hermes MCP credential boundary manifest is invalid")
+    return manifest
+
+
+def _manifest_strings(manifest: dict[str, object], key: str) -> frozenset[str]:
+    values = manifest.get(key)
+    if not isinstance(values, list) or not values or not all(
+        isinstance(value, str) and value for value in values
+    ):
+        raise RuntimeError(f"Hermes MCP credential boundary manifest has invalid {key}")
+    return frozenset(values)
+
+
+_CREDENTIAL_BOUNDARY_MANIFEST = _load_credential_boundary_manifest()
+_RAW_CHILD_VALUE_KEYS = _manifest_strings(
+    _CREDENTIAL_BOUNDARY_MANIFEST, "rawChildValueKeys"
+)
+_REWRITTEN_CHILD_VALUE_KEYS = _manifest_strings(
+    _CREDENTIAL_BOUNDARY_MANIFEST, "rewrittenChildValueKeys"
+)
+_RUNTIME_CONTROL_KEYS = _manifest_strings(
+    _CREDENTIAL_BOUNDARY_MANIFEST, "runtimeControlKeys"
+)
+_RUNTIME_CONTROL_PREFIXES = _manifest_strings(
+    _CREDENTIAL_BOUNDARY_MANIFEST, "runtimeControlPrefixes"
+)
+
+
+def _credential_name_is_reserved(name: str) -> bool:
+    return (
+        name in _RAW_CHILD_VALUE_KEYS
+        or name in _REWRITTEN_CHILD_VALUE_KEYS
+        or name in _RUNTIME_CONTROL_KEYS
+        or any(name.startswith(prefix) for prefix in _RUNTIME_CONTROL_PREFIXES)
+    )
 
 
 def _load_guard() -> ModuleType:
@@ -278,11 +332,18 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         raise ValueError("MCP mutation payload must contain one Authorization header")
     authorization = headers.get("Authorization")
-    if not isinstance(authorization, str) or not ENV_PLACEHOLDER_RE.fullmatch(
-        authorization
-    ):
+    authorization_match = (
+        ENV_PLACEHOLDER_RE.fullmatch(authorization)
+        if isinstance(authorization, str)
+        else None
+    )
+    if authorization_match is None:
         raise ValueError(
             "Hermes MCP Authorization must contain an OpenShell environment placeholder"
+        )
+    if action == "add" and _credential_name_is_reserved(authorization_match.group(1)):
+        raise ValueError(
+            "Hermes MCP Authorization uses a reserved credential environment name"
         )
 
 

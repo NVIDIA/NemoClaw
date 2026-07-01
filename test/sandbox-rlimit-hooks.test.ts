@@ -409,6 +409,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
+    const mcpCredentialBoundary = path.join(
+      localLib,
+      "openshell-child-visible-credentials.v0.0.72.json",
+    );
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
@@ -429,6 +433,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
+      fs.writeFileSync(mcpCredentialBoundary, "{}\n");
       fs.mkdirSync(preloadDir, { mode: 0o777 });
       fs.writeFileSync(safetyNet, "module.exports = 'safety net fixture';\n", { mode: 0o666 });
       fs.writeFileSync(ciaoGuard, "module.exports = 'ciao guard fixture';\n", { mode: 0o666 });
@@ -455,6 +460,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json",
+          mcpCredentialBoundary,
+        )
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
         .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
@@ -481,6 +490,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedDir.mode & 0o777).toBe(0o755);
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
+      expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);

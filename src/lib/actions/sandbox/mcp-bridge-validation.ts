@@ -42,52 +42,8 @@ const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
 // runtime before the requested command starts (for example, PYTHONHOME makes
 // Python fail during initialization). Require operators to use a dedicated
 // service credential alias instead of a process-control name.
-const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set([
-  "_JAVA_OPTIONS",
-  "ALL_PROXY",
-  "all_proxy",
-  "API_SERVER_KEY",
-  "BASH_ENV",
-  "BASHOPTS",
-  "CDPATH",
-  "CLASSPATH",
-  "CONDA_PREFIX",
-  "DENO_CERT",
-  "ENV",
-  "GCONV_PATH",
-  "GLOBIGNORE",
-  "grpc_proxy",
-  "IFS",
-  "LOCPATH",
-  "NLSPATH",
-  "PROMPT_COMMAND",
-  "PS4",
-  "SHELLOPTS",
-  "VIRTUAL_ENV",
-  "ZDOTDIR",
-]);
-const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = [
-  "DEEPAGENTS_",
-  "DYLD_",
-  "GATEWAY_",
-  "GLIBC_",
-  "HERMES_",
-  "JAVA_",
-  "JDK_",
-  "LANGCHAIN_",
-  "LANGGRAPH_",
-  "LANGSMITH_",
-  "LD_",
-  "MALLOC_",
-  "NEMOCLAW_",
-  "NODE_",
-  "OPENAI_",
-  "OPENCLAW_",
-  "PERL",
-  "PYTHON",
-  "RUBY",
-  "UV_",
-];
+const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set(childVisibleCredentialManifest.runtimeControlKeys);
+const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = childVisibleCredentialManifest.runtimeControlPrefixes;
 const MCP_PROVIDER_HASH_BYTES = 8;
 export function validateSandboxName(name: string): void {
   if (!name || name.length > 63 || !VALID_SANDBOX_RE.test(name)) {

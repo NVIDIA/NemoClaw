@@ -9,7 +9,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { normalizeMcpServerUrl } from "../src/lib/actions/sandbox/mcp-bridge-validation";
+import {
+  normalizeMcpServerUrl,
+  validateMcpCredentialEnvName,
+} from "../src/lib/actions/sandbox/mcp-bridge-validation";
+import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json";
 
 const TRANSACTION = path.resolve(
   import.meta.dirname,
@@ -171,6 +175,66 @@ print(json.dumps({"ok": True}))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({ ok: true });
+  });
+
+  it("shares the host credential-name boundary while preserving exact cleanup", () => {
+    const blockedNames = [
+      ...credentialBoundaryManifest.rawChildValueKeys,
+      ...credentialBoundaryManifest.rewrittenChildValueKeys,
+      ...credentialBoundaryManifest.runtimeControlKeys,
+      ...credentialBoundaryManifest.runtimeControlPrefixes.map((prefix) => `${prefix}MCP_TOKEN`),
+    ];
+    const result = runPython(
+      `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+def payload(name, action):
+    return {
+        "server": "fake",
+        "url": "https://mcp.example.test/mcp",
+        "headers": {"Authorization": f"Bearer openshell:resolve:env:{name}"},
+        "replace_existing" if action == "add" else "force": False,
+    }
+
+blocked = json.loads(sys.argv[3])
+add_rejected = []
+cleanup_accepted = []
+for name in blocked:
+    try:
+        module._validate_payload("add", payload(name, "add"))
+    except ValueError:
+        add_rejected.append(name)
+    try:
+        module._validate_payload("remove", payload(name, "remove"))
+    except ValueError:
+        pass
+    else:
+        cleanup_accepted.append(name)
+module._validate_payload("add", payload("MY_SERVICE_MCP_TOKEN", "add"))
+print(json.dumps({
+    "addRejected": add_rejected,
+    "cleanupAccepted": cleanup_accepted,
+    "safeAccepted": True,
+}))
+`,
+      [JSON.stringify(blockedNames)],
+    );
+
+    expect(credentialBoundaryManifest.openshellVersion).toBe("0.0.72");
+    for (const name of blockedNames) {
+      expect(() => validateMcpCredentialEnvName(name)).toThrow();
+    }
+    expect(() => validateMcpCredentialEnvName("MY_SERVICE_MCP_TOKEN")).not.toThrow();
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      addRejected: blockedNames,
+      cleanupAccepted: blockedNames,
+      safeAccepted: true,
+    });
   });
 
   it("accepts only HTTPS endpoint definitions with one OpenShell placeholder", () => {

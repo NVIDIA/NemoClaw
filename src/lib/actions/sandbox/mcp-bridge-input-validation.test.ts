@@ -4,6 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  SUBPROCESS_ENV_ALLOWED_NAMES,
+  SUBPROCESS_ENV_ALLOWED_PREFIXES,
+} from "../../subprocess-env";
+import {
   buildMcpBridgeProviderArgs,
   MCP_SERVER_URL_MAX_LENGTH,
   normalizeMcpServerUrl,
@@ -77,6 +81,12 @@ describe("MCP CLI input validation", () => {
   });
 
   it("rejects host subprocess control and allowlist names as MCP credentials", () => {
+    for (const name of SUBPROCESS_ENV_ALLOWED_NAMES) {
+      expect(childVisibleCredentialManifest.runtimeControlKeys).toContain(name);
+    }
+    for (const prefix of SUBPROCESS_ENV_ALLOWED_PREFIXES) {
+      expect(childVisibleCredentialManifest.runtimeControlPrefixes).toContain(prefix);
+    }
     for (const name of [
       "PATH",
       "HOME",
