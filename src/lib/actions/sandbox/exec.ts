@@ -200,6 +200,15 @@ function repairFailureDetail(
  * `nemoclaw <sandbox> exec` command boundary. OpenShell executes the requested
  * process directly, so the sandbox entrypoint's one-shot cleanup does not run
  * on this path. Hermes and custom agents are deliberately left unchanged.
+ *
+ * Each production inspect/repair call takes the cross-process, timer-bound
+ * shields transition lock and rechecks posture while holding it. The repair is
+ * idempotent, so two CLI processes may interleave only between those protected
+ * steps: they can repeat a repair or make one caller report conservative drift,
+ * but host-side repair mutations cannot overlap or weaken shields-up. A
+ * process-local mutex would not serialize separate CLI invocations, while a
+ * lock inside the sandbox-owned config tree would put lock authority on the
+ * wrong trust side.
  */
 export function cleanupOpenClawAfterExec(
   sandboxName: string,
