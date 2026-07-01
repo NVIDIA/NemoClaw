@@ -9,6 +9,15 @@ import { ROOT } from "../../state/paths";
 import type { MessagingAgentId } from "../manifest";
 import { listMessagingPolicyPresetMetadata } from "./metadata";
 
+type PolicyPresetLocator = {
+  readonly channelId: string;
+  readonly presetName: string;
+};
+
+type PolicyPresetMetadataReader = (options: {
+  readonly agent?: MessagingAgentId;
+}) => readonly PolicyPresetLocator[];
+
 const CHANNELS_ROOT = path.join(ROOT, "src", "lib", "messaging", "channels");
 const POLICY_FILE_BY_AGENT: Readonly<Record<MessagingAgentId, string>> = {
   openclaw: "openclaw.yaml",
@@ -21,6 +30,26 @@ export interface MessagingChannelPolicyPresetInfo {
   readonly description: string;
   readonly channelId: string;
   readonly agent: MessagingAgentId;
+}
+
+export interface MessagingChannelPolicyResolver {
+  readonly resolveMessagingChannelPolicyPresetPath: (
+    presetName: string,
+    agent?: MessagingAgentId | string | null | undefined,
+  ) => string | null;
+  readonly loadMessagingChannelPolicyPreset: (
+    presetName: string,
+    options?: { readonly agent?: MessagingAgentId | string | null },
+  ) => string | null;
+  readonly listMessagingChannelPolicyPresets: (options?: {
+    readonly agent?: MessagingAgentId | string | null;
+  }) => MessagingChannelPolicyPresetInfo[];
+}
+
+export interface MessagingChannelPolicyResolverDeps {
+  readonly existsSync: (file: string) => boolean;
+  readonly readFileSync: (file: string, encoding: BufferEncoding) => string;
+  readonly listPresetMetadata: PolicyPresetMetadataReader;
 }
 
 function normalizeAgent(
@@ -60,10 +89,11 @@ function readChannelPolicyInfo(
   channelId: string,
   expectedPresetName: string,
   agent: MessagingAgentId,
+  deps: MessagingChannelPolicyResolverDeps,
 ): MessagingChannelPolicyPresetInfo | null {
   const file = channelPolicyPath(channelId, agent);
-  if (!file || !fs.existsSync(file)) return null;
-  const content = fs.readFileSync(file, "utf-8");
+  if (!file || !deps.existsSync(file)) return null;
+  const content = deps.readFileSync(file, "utf-8");
   const header = readPresetHeader(content);
   if (!header || header.name !== expectedPresetName) return null;
   return {
@@ -75,46 +105,82 @@ function readChannelPolicyInfo(
   };
 }
 
+export function createMessagingChannelPolicyResolver(
+  deps: MessagingChannelPolicyResolverDeps,
+): MessagingChannelPolicyResolver {
+  function resolveMessagingChannelPolicyPresetPath(
+    presetName: string,
+    agent: MessagingAgentId | string | null | undefined = "openclaw",
+  ): string | null {
+    const normalizedAgent = normalizeAgent(agent);
+    if (!normalizedAgent) return null;
+    for (const preset of deps.listPresetMetadata({ agent: normalizedAgent })) {
+      if (preset.presetName !== presetName) continue;
+      const file = channelPolicyPath(preset.channelId, normalizedAgent);
+      if (file && deps.existsSync(file)) return file;
+    }
+    return null;
+  }
+
+  function loadMessagingChannelPolicyPreset(
+    presetName: string,
+    options: { readonly agent?: MessagingAgentId | string | null } = {},
+  ): string | null {
+    const file = resolveMessagingChannelPolicyPresetPath(presetName, options.agent);
+    if (!file) return null;
+    const content = deps.readFileSync(file, "utf-8");
+    const header = readPresetHeader(content);
+    return header?.name === presetName ? content : null;
+  }
+
+  function listMessagingChannelPolicyPresets(
+    options: { readonly agent?: MessagingAgentId | string | null } = {},
+  ): MessagingChannelPolicyPresetInfo[] {
+    const agent = normalizeAgent(options.agent);
+    if (!agent) return [];
+    const result: MessagingChannelPolicyPresetInfo[] = [];
+    const seen = new Set<string>();
+    for (const preset of deps.listPresetMetadata({ agent })) {
+      if (seen.has(preset.presetName)) continue;
+      const info = readChannelPolicyInfo(preset.channelId, preset.presetName, agent, deps);
+      if (!info) continue;
+      result.push(info);
+      seen.add(preset.presetName);
+    }
+    return result;
+  }
+
+  return {
+    listMessagingChannelPolicyPresets,
+    loadMessagingChannelPolicyPreset,
+    resolveMessagingChannelPolicyPresetPath,
+  };
+}
+
+const defaultPolicyResolver = createMessagingChannelPolicyResolver({
+  existsSync: (file) => fs.existsSync(file),
+  readFileSync: (file, encoding) => fs.readFileSync(file, encoding),
+  listPresetMetadata: listMessagingPolicyPresetMetadata,
+});
+
 export function resolveMessagingChannelPolicyPresetPath(
   presetName: string,
   agent: MessagingAgentId | string | null | undefined = "openclaw",
 ): string | null {
-  const normalizedAgent = normalizeAgent(agent);
-  if (!normalizedAgent) return null;
-  for (const preset of listMessagingPolicyPresetMetadata({ agent: normalizedAgent })) {
-    if (preset.presetName !== presetName) continue;
-    const file = channelPolicyPath(preset.channelId, normalizedAgent);
-    if (file && fs.existsSync(file)) return file;
-  }
-  return null;
+  return defaultPolicyResolver.resolveMessagingChannelPolicyPresetPath(presetName, agent);
 }
 
 export function loadMessagingChannelPolicyPreset(
   presetName: string,
   options: { readonly agent?: MessagingAgentId | string | null } = {},
 ): string | null {
-  const file = resolveMessagingChannelPolicyPresetPath(presetName, options.agent);
-  if (!file) return null;
-  const content = fs.readFileSync(file, "utf-8");
-  const header = readPresetHeader(content);
-  return header?.name === presetName ? content : null;
+  return defaultPolicyResolver.loadMessagingChannelPolicyPreset(presetName, options);
 }
 
 export function listMessagingChannelPolicyPresets(
   options: { readonly agent?: MessagingAgentId | string | null } = {},
 ): MessagingChannelPolicyPresetInfo[] {
-  const agent = normalizeAgent(options.agent);
-  if (!agent) return [];
-  const result: MessagingChannelPolicyPresetInfo[] = [];
-  const seen = new Set<string>();
-  for (const preset of listMessagingPolicyPresetMetadata({ agent })) {
-    if (seen.has(preset.presetName)) continue;
-    const info = readChannelPolicyInfo(preset.channelId, preset.presetName, agent);
-    if (!info) continue;
-    result.push(info);
-    seen.add(preset.presetName);
-  }
-  return result;
+  return defaultPolicyResolver.listMessagingChannelPolicyPresets(options);
 }
 
 export function isMessagingChannelPolicyPreset(presetName: string): boolean {
