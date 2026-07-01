@@ -566,13 +566,10 @@ jobs:
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-mcp-bridge
           path: e2e-artifacts/live/mcp-bridge/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -671,13 +668,10 @@ jobs:
 
       - name: Upload MCP server artifacts
         if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-mcp-bridge-dev
           path: e2e-artifacts/live/mcp-bridge-dev/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()

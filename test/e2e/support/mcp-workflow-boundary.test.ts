@@ -12,22 +12,29 @@ import YAML from "yaml";
 import { validateMcpOpenShellWorkflowBoundary } from "../../../tools/e2e/mcp-workflow-boundary.mts";
 
 describe("MCP workflow artifact boundary", () => {
-  it("rejects uploads outside the directory that passed secret scanning", () => {
+  it("rejects upload action or path drift from the reviewed shared boundary", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");
     try {
       const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
-        jobs: Record<string, { steps: Array<{ name?: string; with?: Record<string, unknown> }> }>;
+        jobs: Record<
+          string,
+          { steps: Array<{ name?: string; uses?: string; with?: Record<string, unknown> }> }
+        >;
       };
       const upload = workflow.jobs["mcp-bridge"].steps.find(
         (step) => step.name === "Upload MCP server artifacts",
       );
       assert(upload?.with, "MCP artifact upload fixture is missing");
+      upload.uses = "NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@main";
       upload.with.path = "e2e-artifacts/live/unscanned/";
       fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
-      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
-        "mcp-bridge artifact upload must use exactly the scanned directory",
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "mcp-bridge artifact upload must use the reviewed shared uploader",
+          "mcp-bridge artifact upload must use exactly the scanned directory",
+        ]),
       );
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });

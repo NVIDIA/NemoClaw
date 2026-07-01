@@ -4,6 +4,7 @@
 import fs from "node:fs";
 
 import YAML from "yaml";
+import { UPLOAD_E2E_ARTIFACTS_ACTION } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
@@ -40,6 +41,11 @@ function asSteps(job: UnknownRecord): UnknownRecord[] {
 
 function namedStep(job: UnknownRecord, name: string): UnknownRecord {
   return asSteps(job).find((step) => step.name === name) ?? {};
+}
+
+function isArtifactUploadStep(step: UnknownRecord): boolean {
+  const uses = asString(step.uses);
+  return uses === UPLOAD_E2E_ARTIFACTS_ACTION || uses.startsWith("actions/upload-artifact@");
 }
 
 function jobNeeds(job: UnknownRecord): string[] {
@@ -215,9 +221,7 @@ function validateJobExecution(
   const install = namedStep(job, "Install OpenShell CLI");
   const run = namedStep(job, "Run MCP OpenShell provider live test");
   const scan = namedStep(job, "Scan MCP artifacts for fixture credentials");
-  const uploads = steps.filter((step) =>
-    asString(step.uses).startsWith("actions/upload-artifact@"),
-  );
+  const uploads = steps.filter(isArtifactUploadStep);
   const upload = namedStep(job, "Upload MCP server artifacts");
   if (uploads.length !== 1 || uploads[0] !== upload) {
     errors.push(`${jobName} must use exactly one reviewed MCP artifact upload step`);
@@ -314,6 +318,12 @@ function validateJobExecution(
   }
   requireEqual(
     errors,
+    upload.uses,
+    UPLOAD_E2E_ARTIFACTS_ACTION,
+    `${jobName} artifact upload must use the reviewed shared uploader`,
+  );
+  requireEqual(
+    errors,
     upload.if,
     "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}",
     `${jobName} artifact upload must be gated by the secret scanner`,
@@ -331,24 +341,9 @@ function validateJobExecution(
     `e2e-${jobName}`,
     `${jobName} artifact upload must use its isolated artifact name`,
   );
-  requireEqual(
-    errors,
-    uploadOptions["include-hidden-files"],
-    false,
-    `${jobName} artifact upload must exclude hidden files`,
-  );
-  requireEqual(
-    errors,
-    uploadOptions["if-no-files-found"],
-    "ignore",
-    `${jobName} artifact upload must tolerate an empty sanitized directory`,
-  );
-  requireEqual(
-    errors,
-    uploadOptions["retention-days"],
-    14,
-    `${jobName} artifact upload must keep the reviewed retention period`,
-  );
+  if (Object.keys(uploadOptions).sort().join(",") !== "name,path") {
+    errors.push(`${jobName} artifact upload must delegate policy to the reviewed shared uploader`);
+  }
   if (steps.indexOf(scan) < 0 || steps.indexOf(upload) <= steps.indexOf(scan)) {
     errors.push(`${jobName} must scan artifacts before upload`);
   }
