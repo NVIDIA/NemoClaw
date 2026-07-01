@@ -106,9 +106,9 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
 //   - Regression coverage: `findMultilineExecArg`, `multilineExecMessage`, and
 //     the `execSandbox multi-line guard (#5980)` suite in exec.test.ts.
 //   - Removal condition: if a future OpenShell release accepts multi-line argv
-//     elements, this guard and the matching docs notice in
-//     docs/reference/commands.mdx + commands-nemohermes.mdx become unnecessary
-//     and should be removed together.
+//     elements (tracked upstream in NVIDIA/OpenShell#2110), this guard and the
+//     matching docs notice in docs/reference/commands.mdx +
+//     commands-nemohermes.mdx become unnecessary and should be removed together.
 //
 // The pattern is intentionally limited to \r and \n: OpenShell rejects only
 // "newline or carriage return characters", so Unicode line separators (U+2028
