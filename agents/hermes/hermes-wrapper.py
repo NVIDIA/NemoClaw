@@ -78,15 +78,18 @@ import sys
 
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
-_GUARD_FILENAME = "validate-hermes-env-secret-boundary.py"
+# The Dockerfile installs the validator under the hermes-prefixed name even
+# though the repository source stays at `validate-env-secret-boundary.py`.
+# Mirror the same dev-fallback `start.sh` uses so an ad-hoc bash invocation
+# over a checkout still finds the guard.
+_GUARD_DEV_FILENAME = "validate-env-secret-boundary.py"
 # Trusted absolute paths for the python3 interpreter, ordered most-preferred
 # first. The resolver returns the first executable match (first-wins); the
 # same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
-# and `src/lib/agent/hermes-recovery-boundary.ts:buildTrustedPython3Picker`
-# so all three entry points pick the same interpreter when several are
-# present. Venv first matches the security principle of preferring the most
-# controlled environment; fall back to system python3 when the sandbox image
-# has no venv yet.
+# so both entry points pick the same interpreter when several are present.
+# Venv first matches the security principle of preferring the most controlled
+# environment; fall back to system python3 when the sandbox image has no venv
+# yet.
 _TRUSTED_PYTHON3 = (
     "/opt/hermes/.venv/bin/python3",
     "/usr/local/bin/python3",
@@ -107,7 +110,7 @@ def _resolve_real_hermes() -> str:
 def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
-    return os.path.join(_self_dir(), _GUARD_FILENAME)
+    return os.path.join(_self_dir(), _GUARD_DEV_FILENAME)
 
 
 def _resolve_trusted_python3() -> str | None:

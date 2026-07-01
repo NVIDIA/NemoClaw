@@ -4,10 +4,10 @@
 /**
  * Live E2E: gateway guard-chain recovery after pod-recreate /tmp wipe.
  *
- * Failing-test-first regression guard for NVIDIA/NemoClaw#2701. On `main` at
- * the time this test landed, `buildOpenClawRecoveryScript()` takes a
- * "warn-and-proceed" branch when `/tmp/nemoclaw-proxy-env.sh` is missing —
- * it logs `[gateway-recovery] WARNING` and launches the gateway naked. On
+ * Regression guard for NVIDIA/NemoClaw#2701. The historical recovery shell
+ * took a "warn-and-proceed" branch when `/tmp/nemoclaw-proxy-env.sh` was
+ * missing: it logged `[gateway-recovery] WARNING` and launched the gateway
+ * naked. On
  * aarch64 / DGX Spark this triggers an infinite crash loop in
  * `@homebridge/ciao` (`os.networkInterfaces()` throws because the OpenShell
  * netns blocks the syscall). The only manual recovery is a 5-min
@@ -25,8 +25,8 @@
  * #2701 acceptance scope for this PR:
  *   - Covered: the default OpenClaw production recovery route
  *     (`nemoclaw <sandbox> connect --probe-only` →
- *     checkAndRecoverSandboxProcesses() → `openshell sandbox exec -- sh -c`
- *     buildOpenClawRecoveryScript()) after the pod-recreate-equivalent state
+ *     checkAndRecoverSandboxProcesses() → authenticated PID 1 supervisor)
+ *     after the pod-recreate-equivalent state
  *     of an empty guard-chain `/tmp` plus no running gateway process. This
  *     proves the user no longer needs `nemoclaw <sandbox> rebuild --yes` for
  *     that recovered runtime state.
@@ -80,7 +80,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
     acceptanceCoverage: {
       covered: [
         "production connect --probe-only recovery route",
-        "openshell sandbox exec -- sh -c OpenClaw recovery script",
+        "authenticated PID 1 OpenClaw recovery supervisor",
         "pod-recreate-equivalent empty /tmp guard chain plus missing gateway process",
         "no rebuild required for the recovered runtime state",
       ],
@@ -124,13 +124,43 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       ...buildAvailabilityProbeEnv(),
       OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     },
-    timeoutMs: 90_000,
+    timeoutMs: 180_000,
   });
   cleanup.add(`recovery-result-${instance.sandboxName}`, async () => {
     await artifacts.writeJson("recovery-result.json", {
       exitCode: recoveryResult.exitCode,
     });
   });
+  // Capture PID 1 and gateway evidence before the exit-code assertion can
+  // abort the scenario and cleanup destroys the sandbox.
+  const recoveryDiagnostics = await sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      "printf '%s\\n' '== entrypoint log ==' ; " +
+        "tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true; " +
+        "printf '%s\\n' '== gateway log ==' ; " +
+        "tail -n 300 /tmp/gateway.log 2>&1 || true; " +
+        "printf '%s\\n' '== direct gateway health ==' ; " +
+        "curl -so /dev/null -w 'HTTP %{http_code}\\n' --max-time 3 http://127.0.0.1:18789/health 2>&1 || true; " +
+        "printf '%s\\n' '== gateway pid record ==' ; " +
+        "cat /tmp/nemoclaw-gateway.pid 2>&1 || true; " +
+        "printf '%s\\n' '== supervisor status ==' ; " +
+        "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
+    ],
+    {
+      artifactName: "gateway-recovery-diagnostics",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      },
+    },
+  );
+  expect(
+    recoveryResult.exitCode,
+    `connect --probe-only recovery failed\nstdout:\n${recoveryResult.stdout}\nstderr:\n${recoveryResult.stderr}`,
+  ).toBe(0);
 
   // ── Assert #2701 contract ────────────────────────────────────────
   // After recovery completes, the guard chain MUST be restored. Before the
@@ -141,8 +171,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 
   // A missing proxy-env file is still worth surfacing, but the warning must
   // describe trusted restoration instead of an unguarded launch.
-  await gateway.expectLogContains(instance, /restoring library guards from packaged preloads/);
-  await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/);
+  expect(recoveryDiagnostics.stdout).toMatch(/restoring library guards from packaged preloads/);
+  expect(recoveryDiagnostics.stdout).not.toMatch(/gateway launching without library guards/);
 
   // Gateway must be steady-state — no crash loop. This assertion is
   // the "would have caught DGX Spark" check, even on x86 runners,

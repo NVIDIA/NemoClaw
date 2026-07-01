@@ -12,7 +12,7 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "..",
   "agents",
   "hermes",
-  "validate-hermes-env-secret-boundary.py",
+  "validate-env-secret-boundary.py",
 );
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),

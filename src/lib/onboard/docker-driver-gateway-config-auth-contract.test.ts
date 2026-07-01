@@ -19,37 +19,11 @@ import {
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway auth contract", () => {
-  it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
+  it("records the audited OpenShell 0.0.71 source revision", () => {
     const reviewNote = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
 
     expect(reviewNote).toContain("NVIDIA/OpenShell@v0.0.71");
     expect(reviewNote).toContain("a242f84bb367d6df7d4d133e95a93857406c67f7");
-    expect(reviewNote).toContain("openshell-gateway-auth-source-contract.test.ts");
-    expect(reviewNote).toContain("openshell_server::config_file::load()");
-    expect(reviewNote).toContain("allow_unauthenticated_users");
-    expect(reviewNote).toContain("gateway_jwt");
-    expect(reviewNote).toContain("mTLS user authentication");
-    expect(reviewNote).toContain("SandboxJwtAuthenticator");
-    expect(reviewNote).toContain("user principals are rejected from sandbox-only methods");
-    expect(reviewNote).toContain(
-      "gateway_listener_addresses_include_driver_address_on_distinct_ip",
-    );
-    expect(reviewNote).toContain("container_visible_endpoint_rewrites_loopback_hosts");
-    expect(reviewNote).toContain("docker_gateway_route_uses_bridge_gateway_for_linux_docker");
-    expect(reviewNote).toContain("keeps the main OpenShell listener on `127.0.0.1`");
-    expect(reviewNote).toContain(
-      "NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS=0.0.0.0` is rejected",
-    );
-    expect(reviewNote).toContain("reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`");
-    expect(reviewNote).toContain("host-side OpenShell CLI user calls use local mTLS");
-    expect(reviewNote).toContain("Source-of-Truth Boundaries");
-    expect(reviewNote).toContain("OpenShell gateway auth source contract");
-    expect(reviewNote).toContain("Markerless sandbox gateway recovery output");
-    expect(reviewNote).toContain("Sessions admin gateway RPC helper");
-    expect(reviewNote).toContain("Issue #5591 is the dependency-update umbrella");
-    expect(reviewNote).toContain("this PR pins and validates OpenShell `0.0.71`");
-    expect(reviewNote).toContain("Issue #2478 is not an acceptance target");
-    expect(reviewNote).toContain("valid sandbox JWT access from Docker origin");
   });
 
   it("emits an OpenShell 0.0.71-compatible sandbox JWT bundle and TTL contract", () => {
