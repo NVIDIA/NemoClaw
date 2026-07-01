@@ -2748,7 +2748,8 @@ main() {
     fi
     if run_installer_host_preflight; then
       if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
-        error "Installation incomplete: one or more existing sandboxes failed to recover before onboarding."
+        finalize_install
+        return 1
       fi
       run_onboard || error "Onboarding did not complete successfully."
       ONBOARD_RAN=true

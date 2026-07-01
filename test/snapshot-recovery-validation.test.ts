@@ -55,6 +55,16 @@ beforeEach(() => {
 });
 
 describe("prepared rebuild backup recovery validation (#6114)", () => {
+  it("does not expose a latest backup with a missing or malformed manifest", () => {
+    const backupPath = path.join(BACKUPS_ROOT, "alpha", "2026-07-01T06-50-41-044Z");
+    fs.mkdirSync(backupPath, { recursive: true });
+
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+
+    fs.writeFileSync(path.join(backupPath, "rebuild-manifest.json"), "{malformed");
+    expect(sandboxState.getLatestBackup("alpha")).toBeNull();
+  });
+
   it("accepts an exact sandbox and agent identity from its timestamped backup path", () => {
     writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
       agentVersion: "2026.5.27",

@@ -43,6 +43,7 @@ function createRecoveryHarness(
     gatewayNames?: Record<string, string>;
     liveOutput?: string;
     latestBackup?: ReturnType<typeof makeManifest> | null;
+    staleNames?: string[];
   } = {},
 ): {
   upgradeSandboxes: UpgradeSandboxes;
@@ -83,11 +84,14 @@ function createRecoveryHarness(
       nemoclawVersion: "0.0.71",
     })),
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
-    sandboxVersion: "2026.5.27",
-    expectedVersion: "2026.5.27",
-    isStale: false,
-    detectionMethod: "registry",
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
+    const name = String(args[0]);
+    return {
+      sandboxVersion: options.staleNames?.includes(name) === true ? "2026.5.26" : "2026.5.27",
+      expectedVersion: "2026.5.27",
+      isStale: options.staleNames?.includes(name) === true,
+      detectionMethod: "registry",
+    };
   });
   const latestBackupSpy = vi
     .spyOn(sandboxState, "getLatestBackup")
@@ -165,10 +169,10 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
   });
 
-  it("does not recover a Ready sandbox registered on a different gateway", async () => {
-    const harness = createRecoveryHarness(["ready-on-gateway-b"], {
-      gatewayNames: { "ready-on-gateway-b": "gateway-b" },
-      liveOutput: "No sandboxes found.",
+  it("does not recover a registered sandbox absent from the selected gateway", async () => {
+    const harness = createRecoveryHarness(["registered-elsewhere"], {
+      gatewayNames: { "registered-elsewhere": "gateway-b" },
+      liveOutput: "selected-gateway-box Ready",
       latestBackup: null,
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -180,6 +184,25 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
     expect(harness.latestBackupSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("attempts both a live stale rebuild and a prepared non-Ready recovery", async () => {
+    const harness = createRecoveryHarness(["stale-box", "recovery-box"], {
+      liveOutput: "stale-box Ready\nrecovery-box Error",
+      staleNames: ["stale-box"],
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(1, "stale-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: undefined,
+    });
+    expect(harness.rebuildSpy).toHaveBeenNthCalledWith(2, "recovery-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "recovery-box" }),
+    });
   });
 
   it("fails closed for a live Error sandbox with no latest backup", async () => {

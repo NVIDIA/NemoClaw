@@ -60,7 +60,7 @@ exit 0
     run_installer_host_preflight() { return 0; }
     run_onboard() { "${cli}" onboard; }
     restore_onboard_forward_after_post_checks() { return 0; }
-    finalize_install() { :; }
+    print_done() { printf 'PRINT_DONE\n'; }
     main --non-interactive --yes-i-accept-third-party-software
   `;
   const result = spawnSync("bash", ["-c", snippet], {
@@ -96,6 +96,9 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
     expect(result.status).toBe(1);
     expect(result.calls).toEqual(["restore=1 argv=upgrade-sandboxes --auto"]);
     expect(result.output).toContain("Generic onboarding will not run");
+    expect(result.output).toContain(
+      "Installation incomplete: one or more existing sandboxes failed to upgrade",
+    );
   });
 
   it("leaves fresh installs unchanged", () => {
