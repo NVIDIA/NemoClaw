@@ -20,6 +20,9 @@ endpoints:
     access: read-write
     enforcement: enforce
 binaries:
+  # Keep managed Deep Agents Python behind the explicit `policy-add tavily`
+  # opt-in. Attaching a credential provider alone must not widen interpreter
+  # egress for the coding harness.
   - /usr/local/bin/node
   - /usr/bin/node
   - /usr/local/bin/curl

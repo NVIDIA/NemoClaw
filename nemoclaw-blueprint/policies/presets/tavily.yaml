@@ -17,6 +17,10 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
+      # Deep Agents Code executes network clients through its managed,
+      # read-only Python environment. Keep this scoped to that interpreter;
+      # arbitrary system and project Python remain denied.
+      - { path: /opt/venv/bin/python3* }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
       - { path: /usr/local/bin/curl }

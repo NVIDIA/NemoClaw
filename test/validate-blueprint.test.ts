@@ -503,13 +503,14 @@ describe("Tavily Search provider profile", () => {
     ]);
   });
 
-  it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
+  it("keeps managed Deep Agents Python behind the explicit Tavily policy opt-in", () => {
     expect(profile.binaries).toEqual([
       "/usr/local/bin/node",
       "/usr/bin/node",
       "/usr/local/bin/curl",
       "/usr/bin/curl",
     ]);
+    expect(profile.binaries).not.toContain("/opt/venv/bin/python3*");
   });
 });
 
