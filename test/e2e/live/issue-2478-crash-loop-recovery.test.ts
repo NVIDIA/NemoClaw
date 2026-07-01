@@ -370,12 +370,41 @@ async function restoreProxyEnv(
   sandboxName: string,
   snapshot: { b64: string; size: number },
 ): Promise<void> {
+  const encodedPath = "/tmp/nemoclaw-proxy-env.sh.b64";
+  const targetPath = "/tmp/nemoclaw-proxy-env.sh";
+  const init = await sandbox.exec(
+    sandboxName,
+    ["sh", "-c", `rm -f ${targetPath} ${encodedPath} 2>/dev/null || true; : > ${encodedPath}`],
+    { artifactName: "restore-proxy-env-init", env: probeEnv(), timeoutMs: 30_000 },
+  );
+  expect(init.exitCode, init.stderr).toBe(0);
+
+  // OpenShell 0.0.72 limits each sandbox-exec argument to 32,768 bytes. The
+  // proxy environment can exceed that after its guard chain is embedded, so
+  // write bounded base64 chunks before decoding instead of placing the whole
+  // snapshot in one shell argument. Keep the chunk size aligned to base64's
+  // four-character blocks.
+  const chunkSize = 16 * 1024;
+  for (let offset = 0, index = 0; offset < snapshot.b64.length; offset += chunkSize, index += 1) {
+    const chunk = snapshot.b64.slice(offset, offset + chunkSize);
+    const append = await sandbox.exec(
+      sandboxName,
+      ["sh", "-c", `printf '%s' '${chunk}' >> ${encodedPath}`],
+      {
+        artifactName: `restore-proxy-env-chunk-${index}`,
+        env: probeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(append.exitCode, append.stderr).toBe(0);
+  }
+
   const result = await sandbox.exec(
     sandboxName,
     [
       "sh",
       "-c",
-      `rm -f /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; (printf '%s' '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh 2>/dev/null && chmod 444 /tmp/nemoclaw-proxy-env.sh) || true; wc -c < /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true`,
+      `(base64 -d ${encodedPath} > ${targetPath} 2>/dev/null && chmod 444 ${targetPath}) || true; rm -f ${encodedPath}; wc -c < ${targetPath} 2>/dev/null || true`,
     ],
     { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
   );
