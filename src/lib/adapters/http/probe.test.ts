@@ -443,9 +443,13 @@ describe("http-probe helpers", () => {
     expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
   });
 
-  it("keeps the parent env intact when trustedConfigFiles is not supplied", () => {
-    const original = process.env.MY_PROBE_PARITY_KEY_VAR;
-    process.env.MY_PROBE_PARITY_KEY_VAR = "stays";
+  it("scrubs credential-shaped env even when trustedConfigFiles is not supplied", () => {
+    const original = {
+      MY_PROBE_SECRET_TOKEN: process.env.MY_PROBE_SECRET_TOKEN,
+      MY_PROBE_PARITY_VAR: process.env.MY_PROBE_PARITY_VAR,
+    };
+    process.env.MY_PROBE_SECRET_TOKEN = "should-not-leak";
+    process.env.MY_PROBE_PARITY_VAR = "stays";
     try {
       let spawnedEnv: NodeJS.ProcessEnv | undefined;
       runCurlProbe(["-sS", "https://example.test/models"], {
@@ -462,9 +466,10 @@ describe("http-probe helpers", () => {
         },
       });
 
-      expect(spawnedEnv?.MY_PROBE_PARITY_KEY_VAR).toBe("stays");
+      expect(spawnedEnv?.MY_PROBE_SECRET_TOKEN).toBeUndefined();
+      expect(spawnedEnv?.MY_PROBE_PARITY_VAR).toBe("stays");
     } finally {
-      restoreEnv("MY_PROBE_PARITY_KEY_VAR", original);
+      restoreEnvBulk(original);
     }
   });
 });

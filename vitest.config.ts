@@ -52,6 +52,14 @@ export default defineConfig({
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
+          // The integration suite shells out heavily, and stacking multiple
+          // forks of the require-hook transpile cache on the 7 GiB ubuntu
+          // runner reliably exhausts physical RAM when coverage is on.
+          // Disable file parallelism for the integration project so the test
+          // files run serially against a single worker (vitest 4 dropped
+          // poolOptions.forks.singleFork; fileParallelism: false is the
+          // documented replacement).
+          fileParallelism: false,
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
