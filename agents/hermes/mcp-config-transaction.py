@@ -620,6 +620,17 @@ def _assert_non_root_lifecycle_identity() -> None:
     workload and gateway as the sandbox uid. Direct sandbox execution cannot
     cross from the former topology into the latter.
     """
+    # invalidState: an ordinary sandbox process claims same-UID mutation
+    # authority while Hermes actually runs in the legacy root-separated
+    # topology.
+    # sourceBoundary: OpenShell owns workload topology; NemoClaw owns the
+    # immutable root-lifecycle marker and validates it before mutation.
+    # whyNotSourceFix: OpenShell 0.0.72 supports both topologies but exposes no
+    # attested same-UID capability that this packaged helper can query.
+    # regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe
+    # and add when the root-lifecycle marker identifies the legacy topology.
+    # removalCondition: remove this marker check when OpenShell unifies the
+    # topology or exposes an attested execution-identity capability.
     try:
         root_marker = os.lstat(ROOT_LIFECYCLE_MARKER)
     except FileNotFoundError:

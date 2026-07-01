@@ -8,6 +8,17 @@ import path from "node:path";
 
 import { OPENSHELL_MCP_POLICY_CAPABILITY_MARKER } from "../adapters/openshell/runtime-capabilities";
 
+/**
+ * Installation-integrity preflight shared by onboarding and install repair.
+ *
+ * This stays separate from either caller because it validates the selected
+ * host-visible OpenShell component set, rejects mixed or stale installations,
+ * and is also the single migration point for a future native capability
+ * command. Supervisor artifacts that are not host-visible remain subject to
+ * authoritative runtime policy verification. This gate does not authorize MCP
+ * mutations.
+ */
+
 export const REQUIRED_OPENSHELL_MCP_FEATURES = [
   "request-body-credential-rewrite",
   "websocket-credential-rewrite",

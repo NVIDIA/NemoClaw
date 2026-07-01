@@ -3,7 +3,7 @@
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
-import { D, G, R } from "../../cli/terminal-style";
+import { RD as _RD, D, G, R } from "../../cli/terminal-style";
 import type {
   MessagingHookApplyRequest,
   MessagingHookOutputMap,
@@ -20,6 +20,7 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import type { SandboxEntry } from "../../state/registry";
+import type { RebuildBail } from "./rebuild-credential-preflight";
 
 /** Build and stage the manifest-derived messaging recreate contract. */
 export async function stageMessagingManifestPlanForRebuild(
@@ -74,6 +75,34 @@ export async function stageMessagingManifestPlanForRebuild(
       .join(",")}`,
   );
   return plan;
+}
+
+/** Stage the manifest plan while preserving rebuild's fail-before-delete boundary. */
+export async function stageRebuildMessagingPlanOrBail(
+  sandboxName: string,
+  sandboxEntry: SandboxEntry,
+  rebuildAgent: string | null,
+  log: (message: string) => void,
+  bail: RebuildBail,
+): Promise<SandboxMessagingPlan | null> {
+  try {
+    return await stageMessagingManifestPlanForRebuild(sandboxName, sandboxEntry, rebuildAgent, log);
+  } catch (err) {
+    // Source boundary: persisted registry messaging plans and current channel
+    // manifests are host-side inputs. If they drift or become invalid, rebuild
+    // must fail here before backup/delete; remove this boundary only if manifest
+    // staging becomes total over all persisted registry states.
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} messaging manifest plan could not be staged.`,
+    );
+    console.error(`  ${message}`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(message);
+    return null;
+  }
 }
 
 const runMessagingOpenshell: MessagingOpenShellRunner = (args, options = {}) =>
