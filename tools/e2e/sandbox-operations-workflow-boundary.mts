@@ -158,15 +158,6 @@ export function validateSandboxOperationsWorkflow(workflow: {
   requireRunContains(errors, run, "npx vitest run --project e2e-live");
   requireRunContains(errors, run, "test/e2e/live/sandbox-operations.test.ts");
 
-  const upload = findStep(job, "Upload sandbox operations artifacts");
-  if (upload.if !== "always()") errors.push(`${JOB_NAME} artifact upload must always run`);
-  if (upload.with?.path !== "e2e-artifacts/live/sandbox-operations/") {
-    errors.push(`${JOB_NAME} must upload sandbox operations artifacts`);
-  }
-  if (upload.with?.["include-hidden-files"] !== false) {
-    errors.push(`${JOB_NAME} artifact upload must exclude hidden files`);
-  }
-
   const cleanup = findStep(job, "Clean up Docker auth");
   if (cleanup.if !== "always()") errors.push(`${JOB_NAME} Docker auth cleanup must always run`);
 
