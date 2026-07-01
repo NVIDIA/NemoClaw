@@ -75,7 +75,50 @@ jobs:
       # regressionTest: test/pr-workflow-contract.test.ts rejects mutable
       # checker execution and any non-immutable bootstrap ref.
       # removalCondition: remove the bootstrap checkout after this workflow has
-      # landed on every supported PR base and the availability fallback expires.
+      # landed on every supported PR base. The fallback is refused after the
+      # explicit 180-day review window ending 2026-12-27T23:26:13Z.
+      - name: Enforce immutable installer hash bootstrap expiry
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        shell: bash
+        env:
+          BOOTSTRAP_COMMIT: 6571063796e1f31648dfd63c7aee91d22612020d
+          BOOTSTRAP_EXPIRES_AT: "2026-12-27T23:26:13Z"
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const commit = process.env.BOOTSTRAP_COMMIT ?? "";
+          const expiresAt = process.env.BOOTSTRAP_EXPIRES_AT ?? "";
+          const expiresAtMs = Date.parse(expiresAt);
+          const canonicalExpiresAt =
+            Number.isFinite(expiresAtMs) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(expiresAt)
+              ? new Date(expiresAtMs).toISOString().replace(".000Z", "Z")
+              : "";
+
+          if (!/^[a-f0-9]{40}$/u.test(commit) || canonicalExpiresAt !== expiresAt) {
+            console.error(
+              "::error::Immutable installer hash bootstrap expiry configuration is invalid; " +
+                "refusing the fallback. Expected a 40-character commit SHA and canonical UTC expiry.",
+            );
+            process.exit(1);
+          }
+
+          if (Date.now() >= expiresAtMs) {
+            console.error(
+              `::error::Immutable installer hash bootstrap ${commit} expired at ${expiresAt}. ` +
+                "Remove the bootstrap fallback or replace it with newly reviewed immutable checker code.",
+            );
+            process.exit(1);
+          }
+
+          const daysRemaining = Math.ceil((expiresAtMs - Date.now()) / 86_400_000);
+          console.log(
+            `Immutable installer hash bootstrap ${commit} remains valid for ${daysRemaining} day(s), ` +
+              `until ${expiresAt}.`,
+          );
+          NODE
+
       - name: Checkout immutable installer hash bootstrap
         if: >-
           github.event_name == 'pull_request' &&

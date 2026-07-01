@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
@@ -51,6 +52,9 @@ const trustedPrActionPaths = {
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const installerHashBootstrapCommit = "6571063796e1f31648dfd63c7aee91d22612020d";
+const installerHashBootstrapCreatedAt = "2026-06-30T23:26:13Z";
+const installerHashBootstrapExpiresAt = "2026-12-27T23:26:13Z";
 
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
@@ -103,6 +107,22 @@ function requiredWorkflowStepIndex(job: WorkflowJob, stepName: string): number {
     throw new Error(`Missing workflow step: ${stepName}`);
   }
   return stepIndex;
+}
+
+function runWorkflowShellStep(
+  step: WorkflowStep,
+  env: Record<string, string>,
+): { status: number | null; stdout: string; stderr: string } {
+  const result = spawnSync("bash", ["-c", step.run ?? ""], {
+    encoding: "utf8",
+    env: { ...process.env, ...step.env, ...env },
+    timeout: 5_000,
+  });
+  return {
+    status: result.status,
+    stdout: String(result.stdout),
+    stderr: String(result.stderr),
+  };
 }
 
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
@@ -177,6 +197,10 @@ describe("pull request and main workflow contracts", () => {
       job,
       "Checkout immutable installer hash bootstrap",
     );
+    const bootstrapExpiry = requiredWorkflowStep(
+      job,
+      "Enforce immutable installer hash bootstrap expiry",
+    );
     const baseVerification = requiredWorkflowStep(
       job,
       "Verify pull request installer hashes from base-trusted code",
@@ -220,9 +244,25 @@ describe("pull request and main workflow contracts", () => {
       ".trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml",
     );
     expect(trustedActionProbe.run).not.toContain("scripts/check-installer-hash.sh");
-    expect(bootstrapCheckout.with?.ref).toBe("6571063796e1f31648dfd63c7aee91d22612020d");
+    expect(bootstrapCheckout.with?.ref).toBe(installerHashBootstrapCommit);
     expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
     expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
+    expect((bootstrapExpiry as WorkflowStep & { shell?: string }).shell).toBe("bash");
+    expect(bootstrapExpiry.env).toEqual({
+      BOOTSTRAP_COMMIT: installerHashBootstrapCommit,
+      BOOTSTRAP_EXPIRES_AT: installerHashBootstrapExpiresAt,
+    });
+    expect(bootstrapExpiry.if).toBe(bootstrapCheckout.if);
+    expect(bootstrapExpiry.if).toBe(bootstrapVerification.if);
+    expect(
+      requiredWorkflowStepIndex(job, "Enforce immutable installer hash bootstrap expiry"),
+    ).toBeLessThan(requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"));
+    expect(
+      (Date.parse(installerHashBootstrapExpiresAt) - Date.parse(installerHashBootstrapCreatedAt)) /
+        86_400_000,
+    ).toBe(180);
+    expect(bootstrapExpiry.run).toContain("Date.now() >= expiresAtMs");
+    expect(bootstrapExpiry.run).toContain("Remove the bootstrap fallback");
 
     expect(baseVerification.uses).toBe(
       "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
@@ -250,6 +290,36 @@ describe("pull request and main workflow contracts", () => {
       false,
     );
     expect(stepRuns(job).join("\n")).not.toContain("bash scripts/check-installer-hash.sh");
+  });
+
+  it("fails closed when the immutable installer hash bootstrap expiry is mutated", () => {
+    const expiryStep = requiredWorkflowStep(
+      installerHashWorkflow.jobs["check-hash"],
+      "Enforce immutable installer hash bootstrap expiry",
+    );
+    const valid = runWorkflowShellStep(expiryStep, {
+      BOOTSTRAP_EXPIRES_AT: "2999-12-27T23:26:13Z",
+    });
+    const expired = runWorkflowShellStep(expiryStep, {
+      BOOTSTRAP_EXPIRES_AT: "2000-12-27T23:26:13Z",
+    });
+    const malformedExpiry = runWorkflowShellStep(expiryStep, {
+      BOOTSTRAP_EXPIRES_AT: "not-a-canonical-utc-date",
+    });
+    const mutableRef = runWorkflowShellStep(expiryStep, {
+      BOOTSTRAP_COMMIT: "main",
+      BOOTSTRAP_EXPIRES_AT: "2999-12-27T23:26:13Z",
+    });
+
+    expect(valid.status).toBe(0);
+    expect(valid.stdout).toContain("remains valid");
+    expect(expired.status).not.toBe(0);
+    expect(expired.stderr).toContain("expired at 2000-12-27T23:26:13Z");
+    expect(expired.stderr).toContain("Remove the bootstrap fallback");
+    expect(malformedExpiry.status).not.toBe(0);
+    expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
+    expect(mutableRef.status).not.toBe(0);
+    expect(mutableRef.stderr).toContain("refusing the fallback");
   });
 
   it("keeps the installer verifier inside the trusted composite action", () => {
