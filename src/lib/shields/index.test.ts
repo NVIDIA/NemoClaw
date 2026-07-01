@@ -54,7 +54,13 @@ vi.mock("./audit", () => ({
 }));
 
 vi.mock("child_process", () => ({
-  fork: vi.fn(() => ({ pid: 12345, disconnect: vi.fn(), unref: vi.fn() })),
+  fork: vi.fn(() => ({
+    pid: 12345,
+    disconnect: vi.fn(),
+    unref: vi.fn(),
+    send: vi.fn(() => true),
+    kill: vi.fn(() => true),
+  })),
   execFileSync: vi.fn(),
   spawnSync: vi.fn(() => ({
     status: 0,
@@ -287,8 +293,8 @@ describe("shields — unit logic", () => {
 
   // NOTE: Integration tests that call the real shieldsDown/shieldsUp are not
   // feasible here because shields.ts uses CJS require() which doesn't resolve
-  // through vitest's ESM mock system. The full call chain is exercised by the
-  // E2E test (test/e2e/test-shields-config.sh) against a live sandbox.
+  // through vitest's ESM mock system. The full call chain is exercised by
+  // `test/e2e/live/shields-config.test.ts` against a live sandbox.
 
   // -------------------------------------------------------------------
   // NC-2227-02: Three-state shields model

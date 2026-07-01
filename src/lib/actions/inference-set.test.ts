@@ -4,11 +4,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import type { AgentConfigTarget } from "../sandbox/config";
-import type { ConfigObject } from "../security/credential-filter";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 
 vi.mock("../adapters/openshell/runtime", () => ({
+  getOpenshellBinary: vi.fn(() => "openshell"),
   runOpenshell: vi.fn(),
 }));
 
@@ -29,6 +30,7 @@ vi.mock("../sandbox/config", () => ({
   readSandboxConfig: vi.fn(),
   recomputeSandboxConfigHash: vi.fn(),
   resolveAgentConfig: vi.fn(),
+  rewriteConfigUrlsWithDnsPinning: vi.fn(async (value: ConfigValue) => value),
   writeSandboxConfig: vi.fn(),
 }));
 
@@ -117,6 +119,9 @@ function createDeps(options: {
   localValidation?: ValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
+  shieldsMutable?: boolean;
+  prepareRunOpenshell?: () => void;
+  rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
 }): InferenceSetDeps & {
   calls: {
     runOpenshell: ReturnType<typeof vi.fn>;
@@ -130,6 +135,8 @@ function createDeps(options: {
     validateLocalProvider: ReturnType<typeof vi.fn>;
     ensureLocalProviderReachable: ReturnType<typeof vi.fn>;
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
+    prepareRunOpenshell: ReturnType<typeof vi.fn>;
+    rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -159,6 +166,10 @@ function createDeps(options: {
     resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
       options.contextWindow === undefined ? null : options.contextWindow,
     ),
+    prepareRunOpenshell: vi.fn(options.prepareRunOpenshell ?? (() => undefined)),
+    rewriteConfigUrlsWithDnsPinning: vi.fn(
+      options.rewriteConfigUrlsWithDnsPinning ?? (async (value: ConfigValue) => value),
+    ),
   };
   return {
     getDefaultSandbox: () => defaultSandbox,
@@ -172,6 +183,7 @@ function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
+    prepareRunOpenshell: calls.prepareRunOpenshell,
     runOpenshell: calls.runOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
@@ -180,6 +192,8 @@ function createDeps(options: {
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
+    isSandboxConfigMutable: () => options.shieldsMutable ?? true,
+    rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     calls,
     getSession: () => session,
   };
@@ -244,6 +258,11 @@ describe("patchOpenClawInferenceConfig", () => {
 
   it("is a no-op when OpenClaw already matches the requested route", () => {
     const config: ConfigObject = {
+      _nemoclaw_upstream: {
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        base_url: "https://inference.local/v1",
+      },
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
       models: {
         mode: "merge",
@@ -413,6 +432,34 @@ describe("patchHermesInferenceConfig", () => {
 });
 
 describe("runInferenceSet", () => {
+  it("resolves the OpenShell runner before entering the async mutation lock", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      prepareRunOpenshell: () => {
+        throw new Error("openshell CLI not found");
+      },
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        deps,
+      ),
+    ).rejects.toThrow("openshell CLI not found");
+    expect(deps.calls.prepareRunOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+
+    // A failed preflight cannot leave a transition lock behind: retrying with
+    // a valid runner proceeds immediately in the same process.
+    deps.calls.prepareRunOpenshell.mockImplementation(() => undefined);
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        deps,
+      ),
+    ).resolves.toMatchObject({ sandboxName: "alpha" });
+  });
+
   it("updates OpenShell, OpenClaw config, registry, and the matching onboard session", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
@@ -590,6 +637,58 @@ describe("runInferenceSet", () => {
       configChanged: true,
       sessionUpdated: true,
     });
+  });
+
+  it("refuses a Hermes switch while shields are up before changing route or registry state", async () => {
+    const deps = createDeps({
+      config: { model: { default: "moonshotai/kimi-k2.6" } },
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      shieldsMutable: false,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "hermes-provider",
+          model: "openai/gpt-5.4-mini",
+          sandboxName: "hermes",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("shields are up");
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("refuses an OpenClaw switch while shields are up before changing route or registry state", async () => {
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      },
+      shieldsMutable: false,
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          sandboxName: "alpha",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(/OpenClaw inference changes.*shields are up/);
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it("syncs OpenClaw compatible Anthropic switches to Anthropic Messages when changing provider families", async () => {
@@ -843,7 +942,55 @@ describe("runInferenceSet", () => {
       preferredInferenceApi: "anthropic-messages",
       nimContainer: null,
     });
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
   });
+
+  for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {
+    it.each([
+      ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],
+      ["localhost", "http://localhost:8000/v1", "93.184.216.34"],
+      ["link-local", "http://169.254.169.254/latest", "93.184.216.34"],
+      ["RFC1918", "http://10.0.0.1:8000/v1", "93.184.216.34"],
+      ["non-allowlisted internal", "http://evil.host.openshell.internal:18767/v1", "93.184.216.34"],
+      ["HTTPS bridge", "https://host.openshell.internal:18767/v1", "93.184.216.34"],
+      ["privileged-port bridge", "http://host.openshell.internal:80/v1", "93.184.216.34"],
+      ["DNS-private", "https://private-resolution.example/v1", "10.0.0.8"],
+    ])(`rejects %s endpoint metadata for ${provider}`, async (_kind, endpointUrl, resolvedAddress) => {
+      const actualConfig =
+        await vi.importActual<typeof import("../sandbox/config")>("../sandbox/config");
+      const lookup = vi.fn(async () => [{ address: resolvedAddress, family: 4 }]);
+      const deps = createDeps({
+        config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        rewriteConfigUrlsWithDnsPinning: (value) =>
+          actualConfig.rewriteConfigUrlsWithDnsPinning(value, lookup),
+      });
+
+      await expect(
+        runInferenceSet(
+          {
+            provider,
+            model: "mock-model",
+            noVerify: true,
+            endpointUrl,
+            credentialEnv:
+              provider === "compatible-endpoint"
+                ? "COMPATIBLE_API_KEY"
+                : "COMPATIBLE_ANTHROPIC_API_KEY",
+          },
+          deps,
+        ),
+      ).rejects.toThrow(/endpoint-url is not allowed:.*private\/internal address/i);
+
+      expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    });
+  }
 
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {
     const config: ConfigObject = {

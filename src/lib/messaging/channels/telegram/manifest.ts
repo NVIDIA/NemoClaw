@@ -187,26 +187,6 @@ export const telegramManifest = {
       ],
     },
   },
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
-      telegramConfig: ["requireMention", "groupPolicy"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.telegram",
-        env: "TELEGRAM_ALLOWED_IDS",
-      },
-      {
-        statePath: "telegramConfig.requireMention",
-        env: "TELEGRAM_REQUIRE_MENTION",
-      },
-      {
-        statePath: "telegramConfig.groupPolicy",
-        env: "TELEGRAM_GROUP_POLICY",
-      },
-    ],
-  },
   hooks: [
     {
       id: "telegram-token-paste",

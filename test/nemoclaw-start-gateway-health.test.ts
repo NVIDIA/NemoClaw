@@ -17,6 +17,13 @@ import * as path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const GATEWAY_SUPERVISOR = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "gateway-supervisor.sh",
+);
 
 // Read a file that may legitimately be absent without a check-then-read
 // race (CodeQL js/file-system-race): attempt the read and treat a missing
@@ -48,13 +55,51 @@ function safeTmpHelpers(src: string): string {
   return src.slice(start, end);
 }
 
+function pidIdentityFunctions(src: string): string {
+  const supervisor = fs.readFileSync(GATEWAY_SUPERVISOR, "utf-8");
+  return [
+    extractShellFunction(src, "openclaw_load_pid_identity"),
+    extractShellFunction(src, "openclaw_pid_start_identity"),
+    extractShellFunction(src, "capture_openclaw_pid_start_identity"),
+    extractShellFunction(src, "openclaw_supervised_pid_is_live"),
+    extractShellFunction(supervisor, "gateway_control_proc_root"),
+    extractShellFunction(supervisor, "gateway_control_proc_root_is_explicit"),
+    extractShellFunction(supervisor, "gateway_control_pid_state"),
+    extractShellFunction(supervisor, "gateway_control_pid_is_live"),
+  ].join("\n");
+}
+
+const writeProcStatFunction = [
+  "write_proc_stat() {",
+  '  local pid="$1" parent="$2" start="$3"',
+  '  printf \'%s (test-process) S %s\' "$pid" "$parent"',
+  "  for _ in {1..17}; do printf ' 0'; done",
+  "  printf ' %s\\n' \"$start\"",
+  "}",
+].join("\n");
+
 function watchdogFunctions(): string {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   return [
     safeTmpHelpers(src),
+    pidIdentityFunctions(src),
     extractShellFunction(src, "record_gateway_pid"),
     extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
+    extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
     extractShellFunction(src, "start_gateway_serving_watchdog"),
+  ].join("\n");
+}
+
+function rootGatewayLifecycleFunctions(src: string, gatewayLog: string): string {
+  return [
+    pidIdentityFunctions(src),
+    extractShellFunction(src, "launch_openclaw_gateway").replaceAll("/tmp/gateway.log", gatewayLog),
+    extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
+    extractShellFunction(src, "stop_openclaw_supervised_gateway"),
+    extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
+    extractShellFunction(src, "mark_openclaw_gateway_stopped"),
+    extractShellFunction(src, "stop_openclaw_gateway_fail_closed"),
+    extractShellFunction(src, "openclaw_reap_exited_gateway"),
   ].join("\n");
 }
 
@@ -91,6 +136,7 @@ function runWatchdog(opts: {
     "_DASHBOARD_PORT=18789",
     `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
     `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(wedgeLogFile)}`,
+    writeProcStatFunction,
     // Throttle rather than no-op so the spinning loop stays cheap but the
     // test still completes in well under a second per cycle.
     "sleep() { command sleep 0.01; }",
@@ -108,10 +154,15 @@ function runWatchdog(opts: {
     // exercised for real; its claimed cmdline comes from the proc fixture.
     "command sleep 60 &",
     "FAKE_GATEWAY_PID=$!",
+    "FAKE_GATEWAY_START=1001",
     `mkdir -p ${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID`,
     `printf '%s' ${JSON.stringify(opts.cmdline ?? "openclaw-gateway")} >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/cmdline`,
+    `write_proc_stat "$FAKE_GATEWAY_PID" "$$" "$FAKE_GATEWAY_START" >${JSON.stringify(procRoot)}/$FAKE_GATEWAY_PID/stat`,
     watchdogFunctions(),
-    'record_gateway_pid "$FAKE_GATEWAY_PID"',
+    // The watchdog itself is outside the fake proc fixture. Its launch
+    // identity is irrelevant to these gateway-target tests.
+    'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
+    'record_gateway_pid "$FAKE_GATEWAY_PID" "$FAKE_GATEWAY_START"',
     "start_gateway_serving_watchdog",
     'printf "WATCHDOG_PID=%s\\n" "$GATEWAY_WATCHDOG_PID"',
     ...(opts.expectKill
@@ -223,7 +274,7 @@ describe("gateway serving watchdog (#4710)", () => {
       curlPlan: [0, 7, 7, 7, 7],
       cmdline: "vim notes.txt",
       expectKill: false,
-      settleSeconds: 0.8,
+      settleSeconds: 1.2,
     });
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
@@ -300,6 +351,7 @@ describe("gateway serving watchdog (#4710)", () => {
         "_DASHBOARD_PORT=18789",
         `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
         `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(path.join(tmpDir, "gateway.log"))}`,
+        writeProcStatFunction,
         // A low threshold makes an inherited armed state lethal within a few
         // cycles, so survival proves the per-PID reset.
         "export NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD=2",
@@ -312,22 +364,28 @@ describe("gateway serving watchdog (#4710)", () => {
         '  rest="$(tail -n +2 "$_CURL_PLAN" 2>/dev/null)"',
         '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
         `  printf 'probe\\n' >> ${JSON.stringify(probeLog)}`,
+        '  case "$next" in',
+        '    0) record_gateway_pid "$GATEWAY_B" "$GATEWAY_B_START" ;;',
+        "  esac",
         '  return "$next"',
         "}",
         "command sleep 60 &",
         "GATEWAY_A=$!",
         "command sleep 60 &",
         "GATEWAY_B=$!",
+        "GATEWAY_A_START=2001",
+        "GATEWAY_B_START=2002",
         `mkdir -p ${JSON.stringify(procRoot)}/$GATEWAY_A ${JSON.stringify(procRoot)}/$GATEWAY_B`,
         `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_A/cmdline`,
         `printf 'openclaw-gateway' >${JSON.stringify(procRoot)}/$GATEWAY_B/cmdline`,
+        `write_proc_stat "$GATEWAY_A" "$$" "$GATEWAY_A_START" >${JSON.stringify(procRoot)}/$GATEWAY_A/stat`,
+        `write_proc_stat "$GATEWAY_B" "$$" "$GATEWAY_B_START" >${JSON.stringify(procRoot)}/$GATEWAY_B/stat`,
         watchdogFunctions(),
-        'record_gateway_pid "$GATEWAY_A"',
+        'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
+        'record_gateway_pid "$GATEWAY_A" "$GATEWAY_A_START"',
         "start_gateway_serving_watchdog",
-        // Wait until gateway A has been probed (and armed via the plan's 0),
-        // then swap the pidfile to gateway B while refusals continue.
-        `for _ in $(command seq 1 200); do [ -s ${JSON.stringify(probeLog)} ] && break; command sleep 0.02; done`,
-        'record_gateway_pid "$GATEWAY_B"',
+        // The curl stub swaps to gateway B during A's successful probe,
+        // before the watchdog can start counting refused probes again.
         'printf "B_PID=%s\\n" "$GATEWAY_B"',
         "command sleep 0.6",
         'if kill -0 "$GATEWAY_B" 2>/dev/null; then printf "B_ALIVE=1\\n"; else printf "B_ALIVE=0\\n"; fi',
@@ -355,6 +413,281 @@ describe("gateway serving watchdog (#4710)", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("tracks the replacement before a termination signal interrupts restart health wait", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-restart-signal-race-"));
+    const eventLog = path.join(tmpDir, "events.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `EVENT_LOG=${JSON.stringify(eventLog)}`,
+        "GATEWAY_PID=101",
+        "GATEWAY_PID_START_IDENTITY=old-start",
+        "SANDBOX_WAIT_PID=101",
+        "SANDBOX_CHILD_PIDS=(101)",
+        "GATEWAY_CONTROL_ACTION=restart",
+        "GATEWAY_CONTROL_SIGNAL_PENDING=0",
+        "gateway_control_take_request() { :; }",
+        'openclaw_supervised_pid_is_live() { case "$1:$2" in "101:old-start"|"202:new-start") return 0 ;; *) return 1 ;; esac; }',
+        "gateway_control_stop_tracked_pid() {",
+        '  printf "stop:%s:%s\\n" "$1" "$2" >>"$EVENT_LOG"',
+        "  return 0",
+        "}",
+        "prepare_openclaw_gateway_restart() { :; }",
+        "run_openclaw_config_guard() { :; }",
+        "restore_openclaw_restart_config() { :; }",
+        "cleanup_openclaw_gateway_locks() { :; }",
+        "launch_openclaw_gateway() {",
+        "  GATEWAY_PID=202",
+        "  GATEWAY_PID_START_IDENTITY=new-start",
+        "  SANDBOX_WAIT_PID=202",
+        "}",
+        "wait_for_openclaw_gateway_internal() {",
+        '  kill -TERM "$$"',
+        "  return 1",
+        "}",
+        "start_plugin_registry_refresh() { :; }",
+        "gateway_control_complete() { :; }",
+        "gateway_control_fail() { :; }",
+        "cleanup_on_signal() {",
+        '  printf "cleanup:wait=%s:children=%s\\n" "$SANDBOX_WAIT_PID" "${SANDBOX_CHILD_PIDS[*]}" >>"$EVENT_LOG"',
+        '  [ "$SANDBOX_WAIT_PID" -eq 202 ]',
+        '  [ "${SANDBOX_CHILD_PIDS[*]}" = "202" ]',
+        "  exit 0",
+        "}",
+        "trap cleanup_on_signal SIGTERM SIGINT",
+        extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
+        extractShellFunction(src, "stop_openclaw_supervised_gateway"),
+        extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
+        extractShellFunction(src, "mark_openclaw_gateway_stopped"),
+        extractShellFunction(src, "stop_openclaw_gateway_fail_closed"),
+        extractShellFunction(src, "retire_openclaw_supervised_gateway"),
+        extractShellFunction(src, "handle_openclaw_gateway_control_request"),
+        "handle_openclaw_gateway_control_request",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(eventLog, "utf-8")).toBe(
+        "stop:101:old-start\ncleanup:wait=202:children=202\n",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("OpenClaw supervised child PID identity", () => {
+  it("does not re-admit a recycled plugin-refresh PID owned by another process", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-aux-pid-identity-"));
+    const procRoot = path.join(tmpDir, "proc");
+    const scriptPath = path.join(tmpDir, "run.sh");
+
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
+        writeProcStatFunction,
+        'mkdir -p "$_NEMOCLAW_PROC_ROOT/303" "$_NEMOCLAW_PROC_ROOT/404"',
+        'write_proc_stat 303 "$$" 3003 >"$_NEMOCLAW_PROC_ROOT/303/stat"',
+        'write_proc_stat 404 "$$" 4999 >"$_NEMOCLAW_PROC_ROOT/404/stat"',
+        pidIdentityFunctions(src),
+        'gateway_control_pid_is_live() { case "$1" in 303|404) return 0 ;; *) return 1 ;; esac; }',
+        "GATEWAY_PID=",
+        "GATEWAY_PID_START_IDENTITY=",
+        "AUTO_PAIR_PID=303",
+        "AUTO_PAIR_PID_START_IDENTITY=3003",
+        "GATEWAY_LOG_TAIL_PID=",
+        "GATEWAY_LOG_TAIL_PID_START_IDENTITY=",
+        "GATEWAY_LOG_PERSIST_PID=",
+        "GATEWAY_LOG_PERSIST_PID_START_IDENTITY=",
+        "PLUGIN_REFRESH_PID=404",
+        "PLUGIN_REFRESH_PID_START_IDENTITY=4004",
+        "GATEWAY_WATCHDOG_PID=",
+        "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
+        'gateway_control_stop_tracked_pid() { printf "unsafe-stop\\n"; }',
+        extractShellFunction(src, "openclaw_supervised_aux_pid_is_live"),
+        extractShellFunction(src, "stop_openclaw_supervised_gateway"),
+        extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
+        "refresh_openclaw_supervised_child_pids",
+        'printf "%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
+        'if stop_openclaw_supervised_gateway 404 4004; then printf "STOPPED\\n"; else printf "STOP_REJECTED\\n"; fi',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(result.stdout).toBe("303\nSTOP_REJECTED\n");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a tracked-stop success while the numeric gateway PID remains live", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -uo pipefail",
+      "openclaw_supervised_pid_is_live() { return 0; }",
+      'gateway_control_stop_tracked_pid() { printf "stop:%s:%s\\n" "$1" "$2"; return 0; }',
+      'kill() { [ "$1" = "-0" ] && return 0; printf "unexpected-signal\\n"; }',
+      extractShellFunction(source, "stop_openclaw_supervised_gateway"),
+      "rc=0; stop_openclaw_supervised_gateway 4242 777 || rc=$?",
+      'printf "rc:%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("stop:4242:777\nrc:1\n");
+    expect(result.stderr).toContain("remains live after tracked stop");
+    expect(result.stdout).not.toContain("unexpected-signal");
+  });
+
+  it("exits PID 1 instead of marking an unproven OpenClaw gateway stopped", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -uo pipefail",
+      "GATEWAY_PID=4242",
+      'GATEWAY_PID_START_IDENTITY="777"',
+      "stop_openclaw_supervised_gateway() { printf 'stop-refused\\n'; return 1; }",
+      "mark_openclaw_gateway_stopped() { printf 'unexpected-mark\\n'; }",
+      extractShellFunction(source, "stop_openclaw_gateway_fail_closed"),
+      "stop_openclaw_gateway_fail_closed",
+      "printf 'unexpected-return\\n'",
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("stop-refused\n");
+    expect(result.stderr).toContain("exiting PID 1 for whole-container cleanup");
+    expect(result.stdout).not.toContain("unexpected-mark");
+    expect(result.stdout).not.toContain("unexpected-return");
+  });
+
+  it.each([
+    ["a live PID with a different start identity", 'printf "888\\n"', "S"],
+    ["a live PID whose identity is temporarily unavailable", "return 1", "S"],
+  ])("refuses to reap %s", (_label, identityBody, state) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -euo pipefail",
+      "GATEWAY_PID=4242",
+      'GATEWAY_PID_START_IDENTITY="777"',
+      "GATEWAY_CONTROL_SIGNAL_PENDING=0",
+      `openclaw_pid_start_identity() { ${identityBody}; }`,
+      'kill() { [ "$1" = "-0" ] && return 0; return 1; }',
+      `gateway_control_pid_state() { printf "${state}\\n"; }`,
+      'wait() { printf "unexpected-wait:%s\\n" "$1"; }',
+      "openclaw_supervised_pid_is_live() { return 1; }",
+      "gateway_pid_is_openclaw_gateway() { return 1; }",
+      "mark_openclaw_gateway_stopped() { printf 'unexpected-mark\\n'; }",
+      extractShellFunction(source, "openclaw_reap_exited_gateway"),
+      "rc=0; openclaw_reap_exited_gateway || rc=$?",
+      'printf "rc:%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("rc:2\n");
+    expect(result.stderr).toContain("refusing to");
+    expect(result.stdout).not.toContain("unexpected-wait");
+    expect(result.stdout).not.toContain("unexpected-mark");
+  });
+});
+
+describe("managed gateway restart config boundary", () => {
+  it("routes unrecoverable seal failure through whole-container gateway revocation", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -uo pipefail",
+      "GATEWAY_PID=4242",
+      'GATEWAY_PID_START_IDENTITY="777"',
+      "gateway_control_take_request() { GATEWAY_CONTROL_ACTION=restart; printf 'take-request\\n'; }",
+      "prepare_openclaw_gateway_restart() { printf 'prepare\\n'; return 0; }",
+      'run_openclaw_config_guard() { printf "guard:%s\\n" "$1"; [ "$1" != "seal-restart" ]; }',
+      "restore_openclaw_restart_config() { printf 'restore-failed\\n'; return 1; }",
+      "stop_openclaw_gateway_fail_closed() { printf 'fail-closed-stop\\n'; }",
+      'gateway_control_fail() { printf "fail:%s:%s\\n" "$1" "$2"; }',
+      extractShellFunction(source, "handle_openclaw_gateway_control_request"),
+      "rc=0; handle_openclaw_gateway_control_request || rc=$?",
+      'printf "rc:%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "take-request",
+      "prepare",
+      "guard:seal-restart",
+      "restore-failed",
+      "fail-closed-stop",
+      "fail:unsafe-config:4242",
+      "rc:1",
+    ]);
+  });
+
+  it("removes only regular gateway locks and refuses a matching attacker directory", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-lock-cleanup-"));
+    const parent = path.join(tmpDir, "openclaw-test");
+    const regularLock = path.join(parent, "gateway.good.lock");
+    const plantedDirectory = path.join(parent, "gateway.evil.lock");
+    const sentinel = path.join(plantedDirectory, "sentinel");
+    fs.mkdirSync(plantedDirectory, { recursive: true });
+    fs.writeFileSync(regularLock, "lock\n");
+    fs.writeFileSync(sentinel, "keep\n");
+
+    const cleanup = extractShellFunction(source, "cleanup_openclaw_gateway_locks").replace(
+      'os.open("/tmp", directory_flags)',
+      `os.open(${JSON.stringify(tmpDir)}, directory_flags)`,
+    );
+    const script = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      script,
+      ["#!/usr/bin/env bash", "set -euo pipefail", cleanup, "cleanup_openclaw_gateway_locks"].join(
+        "\n",
+      ),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 10_000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(regularLock)).toBe(false);
+      expect(fs.readFileSync(sentinel, "utf-8")).toBe("keep\n");
+      expect(result.stderr).toContain("refusing non-regular lock entry");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("record_gateway_pid", () => {
@@ -378,7 +711,7 @@ describe("record_gateway_pid", () => {
           `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
           safeTmpHelpers(fs.readFileSync(START_SCRIPT, "utf-8")),
           extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "record_gateway_pid"),
-          "record_gateway_pid 4242",
+          "record_gateway_pid 4242 987654",
         ].join("\n"),
         { mode: 0o755 },
       );
@@ -389,7 +722,7 @@ describe("record_gateway_pid", () => {
       // the content read — no check-then-use window.
       const fd = fs.openSync(pidFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
       try {
-        expect(fs.readFileSync(fd, "utf-8")).toBe("4242\n");
+        expect(fs.readFileSync(fd, "utf-8")).toBe("4242 987654\n");
       } finally {
         fs.closeSync(fd);
       }
@@ -417,15 +750,51 @@ describe("record_gateway_pid", () => {
           `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
           safeTmpHelpers(fs.readFileSync(START_SCRIPT, "utf-8")),
           extractShellFunction(fs.readFileSync(START_SCRIPT, "utf-8"), "record_gateway_pid"),
-          "record_gateway_pid 4242",
+          "record_gateway_pid 4242 987654",
         ].join("\n"),
         { mode: 0o755 },
       );
 
       const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
-      expect(fs.readFileSync(pidFile, "utf-8")).toBe("4242\n");
+      expect(fs.readFileSync(pidFile, "utf-8")).toBe("4242 987654\n");
       expect((fs.statSync(pidFile).mode & 0o777).toString(8)).toBe("600");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears the pid/starttime record when the tracked gateway is marked stopped", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-watchdog-pid-clear-"));
+    const pidFile = path.join(tmpDir, "gateway.pid");
+    const script = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      script,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
+        "GATEWAY_PID=4242",
+        "GATEWAY_PID_START_IDENTITY=987654",
+        "SANDBOX_WAIT_PID=4242",
+        safeTmpHelpers(src),
+        extractShellFunction(src, "record_gateway_pid"),
+        extractShellFunction(src, "clear_gateway_pid_record"),
+        "refresh_openclaw_supervised_child_pids() { SANDBOX_CHILD_PIDS=(); }",
+        extractShellFunction(src, "mark_openclaw_gateway_stopped"),
+        'record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"',
+        "mark_openclaw_gateway_stopped",
+        'printf "PID=%s ID=%s WAIT=%s\\n" "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY" "$SANDBOX_WAIT_PID"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [script], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("PID=0 ID= WAIT=\n");
+      expect(fs.readFileSync(pidFile, "utf-8")).toBe("");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -481,6 +850,106 @@ describe("gateway_pid_is_openclaw_gateway", () => {
   });
 });
 
+describe("openclaw_gateway_healthy listener ownership", () => {
+  function checkHealth(listenerOwned: boolean): {
+    result: ReturnType<typeof spawnSync>;
+    events: string;
+  } {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-health-owner-"));
+    const eventLog = path.join(tmpDir, "events.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "_DASHBOARD_PORT=19000",
+        `EVENT_LOG=${JSON.stringify(eventLog)}`,
+        `LISTENER_OWNED=${listenerOwned ? "1" : "0"}`,
+        "openclaw_gateway_pid_owns_listener() {",
+        '  printf "owner-check:%s:%s\\n" "$1" "$2" >>"$EVENT_LOG"',
+        '  [ "$LISTENER_OWNED" -eq 1 ]',
+        "}",
+        "curl() {",
+        '  printf "http-probe\\n" >>"$EVENT_LOG"',
+        '  printf "200"',
+        "}",
+        'openclaw_supervised_pid_is_live() { [ "$1:$2" = "4242:valid-start" ]; }',
+        extractShellFunction(src, "openclaw_gateway_healthy"),
+        'if openclaw_gateway_healthy 4242 valid-start; then printf "healthy\\n"; else printf "unhealthy\\n"; fi',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      return { result, events: readFileIfPresent(eventLog) ?? "" };
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }
+
+  it("rejects HTTP 200 from a listener not owned by the tracked gateway process", () => {
+    const { result, events } = checkHealth(false);
+    expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("unhealthy\n");
+    expect(events).toBe("http-probe\nowner-check:4242:19000\n");
+  });
+
+  it("accepts HTTP 200 only after listener ownership is established", () => {
+    const { result, events } = checkHealth(true);
+    expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("healthy\n");
+    expect(events).toBe("http-probe\nowner-check:4242:19000\n");
+  });
+
+  it("rejects a PID1-adopted recycled PID even when its cmdline and listener look valid", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-reused-identity-"));
+    const procRoot = path.join(tmpDir, "proc");
+    const eventLog = path.join(tmpDir, "events.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.mkdirSync(path.join(procRoot, "4242"), { recursive: true });
+    fs.writeFileSync(path.join(procRoot, "4242", "cmdline"), "openclaw-gateway\0");
+
+    const supervisedAsPid1 = extractShellFunction(src, "openclaw_supervised_pid_is_live").replace(
+      '"$$"',
+      '"1"',
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `_NEMOCLAW_PROC_ROOT=${JSON.stringify(procRoot)}`,
+        `_DASHBOARD_PORT=19000`,
+        `EVENT_LOG=${JSON.stringify(eventLog)}`,
+        writeProcStatFunction,
+        'write_proc_stat 4242 1 222222 >"$_NEMOCLAW_PROC_ROOT/4242/stat"',
+        pidIdentityFunctions(src),
+        supervisedAsPid1,
+        extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
+        'openclaw_gateway_pid_owns_listener() { printf "listener-called\\n" >>"$EVENT_LOG"; return 0; }',
+        'curl() { printf "200"; }',
+        extractShellFunction(src, "openclaw_gateway_healthy"),
+        'gateway_pid_is_openclaw_gateway 4242 && printf "LOOKS_OPENCLAW=1\\n"',
+        'if openclaw_gateway_healthy 4242 111111; then printf "HEALTHY=1\\n"; else printf "HEALTHY=0\\n"; fi',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("LOOKS_OPENCLAW=1\nHEALTHY=0\n");
+      expect(readFileIfPresent(eventLog)).toBeNull();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("healthcheck marker (#4503, #4710)", () => {
   // Behavioral test of the marker function: confirms the helper itself writes
   // an empty file at the target path and is a no-op when the path is already
@@ -523,13 +992,50 @@ describe("healthcheck marker (#4503, #4710)", () => {
 // behaviorally: OPENSHELL_DRIVERS is exported during the run and must have
 // no influence on whether the marker is dropped.
 describe("gateway launch wiring (#4710)", () => {
+  it("exits PID 1 without signaling when gateway identity capture fails", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const launch = extractShellFunction(src, "launch_openclaw_gateway");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launch-capture-failure-"));
+    const eventLog = path.join(tmpDir, "events.log");
+    const result = spawnSync(
+      "bash",
+      [
+        "--noprofile",
+        "--norc",
+        "-c",
+        [
+          "set -uo pipefail",
+          `EVENT_LOG=${JSON.stringify(eventLog)}`,
+          "STEP_DOWN_PREFIX_GATEWAY=()",
+          "OPENCLAW=/usr/bin/true",
+          "_DASHBOARD_PORT=19000",
+          "GATEWAY_PID=0",
+          "GATEWAY_PID_START_IDENTITY=",
+          "mark_in_container_gateway() { :; }",
+          "capture_openclaw_pid_start_identity() { return 1; }",
+          'clear_gateway_pid_record() { printf "clear\\n" >>"$EVENT_LOG"; }',
+          'kill() { printf "unexpected-kill:%s\\n" "$*" >>"$EVENT_LOG"; }',
+          'wait() { printf "unexpected-wait:%s\\n" "$*" >>"$EVENT_LOG"; }',
+          launch,
+          "launch_openclaw_gateway",
+        ].join("\n"),
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("could not capture gateway process identity");
+    expect(fs.readFileSync(eventLog, "utf-8")).toBe("clear\n");
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   function launchBlock(src: string, kind: "non-root" | "root"): string {
     const startMarker =
       kind === "non-root"
         ? "# Start gateway in background, auto-pair, then wait"
         : "# Start the gateway as the 'gateway' user.";
     const start = src.indexOf(startMarker);
-    const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
+    const trap = src.indexOf("trap cleanup_openclaw_on_signal SIGTERM SIGINT", start);
     expect(start, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(
       -1,
     );
@@ -565,7 +1071,9 @@ describe("gateway launch wiring (#4710)", () => {
       ),
       extractShellFunction(src, "record_gateway_pid"),
       extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
+      extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
       extractShellFunction(src, "start_gateway_serving_watchdog"),
+      rootGatewayLifecycleFunctions(src, gatewayLog),
     ].join("\n");
 
     fs.writeFileSync(
@@ -582,8 +1090,8 @@ describe("gateway launch wiring (#4710)", () => {
         `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
         // Keep the watchdog idle for the duration of the test run.
         "export NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS=300",
-        "start_persistent_gateway_log_mirror() { command sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
-        "start_auto_pair() { command sleep 30 & AUTO_PAIR_PID=$!; }",
+        'start_persistent_gateway_log_mirror() { command sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; capture_openclaw_pid_start_identity "$GATEWAY_LOG_PERSIST_PID" GATEWAY_LOG_PERSIST_PID_START_IDENTITY; }',
+        'start_auto_pair() { command sleep 30 & AUTO_PAIR_PID=$!; capture_openclaw_pid_start_identity "$AUTO_PAIR_PID" AUTO_PAIR_PID_START_IDENTITY; }',
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
@@ -623,7 +1131,7 @@ describe("gateway launch wiring (#4710)", () => {
     expect(run.markerExists).toBe(true);
     // The watchdog reads the gateway PID from the pidfile each cycle.
     expect(run.gatewayPid).toBeDefined();
-    expect(run.pidFileContent).toBe(run.gatewayPid);
+    expect(run.pidFileContent?.split(" ")[0]).toBe(run.gatewayPid);
     // The watchdog runs and is registered for SIGTERM cleanup.
     expect(run.watchdogPid).toBeDefined();
     expect(run.stdout).toContain("WATCHDOG_ALIVE=1");
@@ -659,11 +1167,12 @@ describe("respawn loop pidfile refresh (#4710)", () => {
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const pidFile = path.join(tmpDir, "gateway.pid");
     const initialPidFile = path.join(tmpDir, "initial.pid");
+    const restoreSentinel = path.join(tmpDir, "runtime-guards-restored");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\n[ -f ${JSON.stringify(restoreSentinel)} ] || exit 97\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(path.join(fakeBin, "gosu"), `#!/usr/bin/env bash\nshift\nexec "$@"\n`, {
@@ -680,18 +1189,29 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         '_DASHBOARD_PORT="19000"',
         `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        `prepare_openclaw_automatic_respawn() { printf restored >${JSON.stringify(restoreSentinel)}; }`,
         // The loop sleeps 2s between respawns; keep the test fast.
         "sleep() { command sleep 0.05; }",
         safeTmpHelpers(src),
         extractShellFunction(src, "record_gateway_pid"),
+        extractShellFunction(src, "clear_gateway_pid_record"),
+        rootGatewayLifecycleFunctions(src, gatewayLog),
+        kind === "root" ? "mark_in_container_gateway() { :; }" : "",
+        kind === "root" ? "GATEWAY_CONTROL_SIGNAL_PENDING=0" : "",
+        kind === "root" ? "handle_openclaw_gateway_control_request() { :; }" : "",
+        kind === "root"
+          ? 'openclaw_supervised_pid_is_live() { local current; gateway_control_pid_is_live "$1" || return 1; current="$(openclaw_pid_start_identity "$1")" || return 1; [ "$current" = "$2" ]; }'
+          : "",
+        kind === "root" ? "gateway_pid_is_openclaw_gateway() { return 0; }" : "",
         "SANDBOX_CHILD_PIDS=()",
         "SANDBOX_WAIT_PID=",
         "(",
         // A gateway that dies immediately with a non-zero status drives
         // exactly one respawn iteration.
-        '  bash -c "exit 7" &',
+        '  bash -c "sleep 0.1; exit 7" &',
         "  GATEWAY_PID=$!",
-        '  record_gateway_pid "$GATEWAY_PID"',
+        '  GATEWAY_PID_START_IDENTITY="$(openclaw_pid_start_identity "$GATEWAY_PID")"',
+        '  record_gateway_pid "$GATEWAY_PID" "$GATEWAY_PID_START_IDENTITY"',
         `  printf '%s' "$GATEWAY_PID" > ${JSON.stringify(initialPidFile)}`,
         respawnLoop(src, kind).replaceAll("/tmp/gateway.log", gatewayLog),
         ") &",
@@ -699,7 +1219,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         'INITIAL=""; CURRENT=""',
         "for _ in $(command seq 1 200); do",
         `  INITIAL="$(cat ${JSON.stringify(initialPidFile)} 2>/dev/null || true)"`,
-        `  CURRENT="$(cat ${JSON.stringify(pidFile)} 2>/dev/null || true)"`,
+        `  CURRENT="$(awk '{ print $1 }' ${JSON.stringify(pidFile)} 2>/dev/null || true)"`,
         '  if [ -n "$INITIAL" ] && [ -n "$CURRENT" ] && [ "$CURRENT" != "$INITIAL" ]; then break; fi',
         "  command sleep 0.05",
         "done",
@@ -729,7 +1249,98 @@ describe("respawn loop pidfile refresh (#4710)", () => {
       expect(current, `no current pid in: ${stdout}`).toBeDefined();
       expect(current).not.toBe(initial);
       expect(stdout).toContain("RESPAWNED_ALIVE=1");
+      expect(fs.readFileSync(restoreSentinel, "utf-8")).toBe("restored");
       expect(fs.readFileSync(openclawLog, "utf-8")).toContain("gateway run --port 19000");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("services a supervisor request that interrupts root respawn backoff before relaunch", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const supervisor = fs.readFileSync(GATEWAY_SUPERVISOR, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-respawn-control-race-"));
+    const eventLog = path.join(tmpDir, "events.log");
+    const launchPidFile = path.join(tmpDir, "automatic-launch.pid");
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `EVENT_LOG=${JSON.stringify(eventLog)}`,
+        `LAUNCH_PID_FILE=${JSON.stringify(launchPidFile)}`,
+        "GATEWAY_CONTROL_SIGNAL_PENDING=0",
+        "GATEWAY_PID_START_IDENTITY=reused-start",
+        "GATEWAY_REAPED=0",
+        "REUSED_GATEWAY_PID=0",
+        // Model USR1 interrupting the two-second crash backoff. Returning a
+        // signal-like status also proves the production sleep is guarded from
+        // errexit before it inspects the pending flag.
+        "sleep() {",
+        '  if [ "${1:-}" = "2" ]; then',
+        '    printf "backoff-interrupted\\n" >>"$EVENT_LOG"',
+        "    GATEWAY_CONTROL_SIGNAL_PENDING=1",
+        "    return 130",
+        "  fi",
+        "  command sleep 0.02",
+        "}",
+        extractShellFunction(supervisor, "gateway_control_pid_is_live").replace(
+          "gateway_control_pid_is_live() {",
+          "gateway_control_pid_is_live_real() {",
+        ),
+        "gateway_control_pid_is_live() {",
+        '  if [ "$GATEWAY_REAPED" -eq 1 ] && [ "$1" = "$REUSED_GATEWAY_PID" ]; then return 0; fi',
+        '  gateway_control_pid_is_live_real "$1"',
+        "}",
+        "gateway_control_pid_state() { printf 'Z\\n'; }",
+        'openclaw_pid_start_identity() { printf "%s\\n" "$GATEWAY_PID_START_IDENTITY"; }',
+        "openclaw_supervised_pid_is_live() { return 1; }",
+        "gateway_pid_is_openclaw_gateway() { return 1; }",
+        "wait() {",
+        "  local rc=0",
+        '  builtin wait "$@" || rc=$?',
+        "  GATEWAY_REAPED=1",
+        '  return "$rc"',
+        "}",
+        "handle_openclaw_gateway_control_request() {",
+        '  printf "request-handled:tracked=%s\\n" "$GATEWAY_PID" >>"$EVENT_LOG"',
+        '  [ "$GATEWAY_PID" -eq 0 ] || exit 91',
+        // End the extracted infinite PID 1 loop once the assertion event has
+        // occurred. The surrounding subshell lets the harness continue.
+        "  exit 0",
+        "}",
+        "launch_openclaw_gateway() {",
+        '  printf "automatic-relaunch\\n" >>"$EVENT_LOG"',
+        "  command sleep 30 &",
+        "  GATEWAY_PID=$!",
+        '  printf "%s\\n" "$GATEWAY_PID" >"$LAUNCH_PID_FILE"',
+        "}",
+        "refresh_openclaw_supervised_child_pids() { :; }",
+        extractShellFunction(src, "mark_openclaw_gateway_stopped"),
+        extractShellFunction(src, "openclaw_reap_exited_gateway"),
+        "(",
+        '  bash -c "exit 7" &',
+        "  GATEWAY_PID=$!",
+        '  REUSED_GATEWAY_PID="$GATEWAY_PID"',
+        respawnLoop(src, "root").replaceAll("/tmp/gateway.log", gatewayLog),
+        ")",
+        // Defensive cleanup makes the harness safe against a regression that
+        // performs the automatic relaunch before servicing the request.
+        'if [ -s "$LAUNCH_PID_FILE" ]; then kill -9 "$(cat "$LAUNCH_PID_FILE")" 2>/dev/null || true; fi',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, `script failed: ${result.stderr}`).toBe(0);
+      expect(fs.readFileSync(eventLog, "utf-8")).toBe(
+        "backoff-interrupted\nrequest-handled:tracked=0\n",
+      );
+      expect(readFileIfPresent(launchPidFile)).toBeNull();
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -748,7 +1359,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         ? "# Start gateway in background, auto-pair, then wait"
         : "# Start the gateway as the 'gateway' user.";
     const start = src.indexOf(startMarker);
-    const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
+    const trap = src.indexOf("trap cleanup_openclaw_on_signal SIGTERM SIGINT", start);
     expect(start, `Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`).not.toBe(
       -1,
     );
@@ -792,8 +1403,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
         "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
         '_DASHBOARD_PORT="19000"',
-        "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
-        "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
+        'start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; capture_openclaw_pid_start_identity "$GATEWAY_LOG_PERSIST_PID" GATEWAY_LOG_PERSIST_PID_START_IDENTITY; }',
+        'start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; capture_openclaw_pid_start_identity "$AUTO_PAIR_PID" AUTO_PAIR_PID_START_IDENTITY; }',
         "start_plugin_registry_refresh() { :; }",
         "cleanup_on_signal() { :; }",
         safeTmpHelpers(src),
@@ -806,7 +1417,8 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         // background services. Stub both — watchdog behavior has its own
         // suite in test/nemoclaw-start-gateway-health.test.ts.
         "record_gateway_pid() { :; }",
-        "start_gateway_serving_watchdog() { :; }",
+        'start_gateway_serving_watchdog() { sleep 30 & GATEWAY_WATCHDOG_PID=$!; capture_openclaw_pid_start_identity "$GATEWAY_WATCHDOG_PID" GATEWAY_WATCHDOG_PID_START_IDENTITY; }',
+        rootGatewayLifecycleFunctions(src, gatewayLog),
         "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
         launchBlock(kind, gatewayLog),
@@ -854,7 +1466,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(stdout).toMatch(/AUTO_PAIR_PID=\d+/);
     expect(stdout).toMatch(/TAIL_PID=\d+/);
     expect(stdout).toMatch(/PERSIST_PID=\d+/);
-    expect(stdout).toContain("cleanup_on_signal");
+    expect(stdout).toContain("cleanup_openclaw_on_signal");
   });
 
   it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
@@ -874,6 +1486,6 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     expect(result.stdout).toMatch(/AUTO_PAIR_PID=\d+/);
     expect(result.stdout).toMatch(/TAIL_PID=\d+/);
     expect(result.stdout).toMatch(/PERSIST_PID=\d+/);
-    expect(result.stdout).toContain("cleanup_on_signal");
+    expect(result.stdout).toContain("cleanup_openclaw_on_signal");
   });
 });

@@ -226,6 +226,11 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha", "latest"],
     );
     expectNative(
+      translatePublicSandboxArgv("alpha", "gateway", ["restart", "--quiet"]),
+      "sandbox:gateway:restart",
+      ["alpha", "--quiet"],
+    );
+    expectNative(
       translatePublicSandboxArgv("alpha", "skill", ["remove", "my-skill"]),
       "sandbox:skill:remove",
       ["alpha", "my-skill"],

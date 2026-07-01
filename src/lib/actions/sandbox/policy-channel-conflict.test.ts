@@ -1065,7 +1065,11 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
       "alpha",
       expect.any(Object),
@@ -1078,6 +1082,55 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
+  });
+
+  it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+
+    await startSandboxChannel("alpha", { channel: "teams" });
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Change queued");
+  });
+
+  it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
+    const current = makeTeamsEntry("alpha", { disabled: true });
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockImplementation(
+      () => current.messaging?.plan.disabledChannels ?? [],
+    );
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
+    applyPresetMock.mockReturnValue(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(registry.getDisabledChannels("alpha")).toContain("teams");
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("channels start teams");
+  });
+
+  it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    applyPresetMock.mockReturnValue(false);
+    updateSandboxMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Could not restore 'teams' to disabled state");
+    expect(loggedText()).toContain("nemoclaw alpha channels stop teams");
   });
 });
 

@@ -3,74 +3,42 @@
 
 # NemoClaw E2E CI
 
-## Interactive Host Tool Prerequisites
+Direct E2E coverage runs through Vitest.
 
-Interactive E2E coverage that drives terminal prompts requires `expect`.
-GitHub Actions installs it before the affected tests begin through the shared `install-apt-packages` action.
-Local developer images and runners must install `expect` before starting `test/e2e/test-network-policy.sh` or `test/e2e/test-gpu-e2e.sh`; missing `expect` is a test failure so interactive coverage cannot silently skip.
-The fail-closed guards in `test-network-policy.sh` and `test-gpu-e2e.sh` name their source boundaries and regression tests:
+Interactive TUI targets require `expect`. The unified workflow installs it
+before those targets run; local runners must provide it themselves.
 
-- `test-network-policy.sh`: trusted CI workflow setup installs `expect` before the script; local developer base images must provide it themselves. Remove the guard only when interactive policy-add no longer depends on `expect`, or when a repo-owned local development image is added with CI coverage that runs `command -v expect` against that image.
-- `test-gpu-e2e.sh`: trusted CI workflow setup installs `expect` before the script; the GPU runner image and local GPU images must provide it themselves. Remove the guard only when the OpenClaw TUI harness no longer depends on `expect`, or when the `linux-amd64-gpu-rtxpro6000-latest-1` runner image has CI coverage that runs `command -v expect` on that image.
+- `.github/workflows/e2e.yaml` is the scheduled and manually
+  dispatchable live target workflow.
+- `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and
+  runs focused E2E targets from source on a clean machine.
+- Platform workflows such as macOS, WSL, Ollama proxy, sandbox image, and
+  regression E2E call their target E2E tests directly.
 
-## Hermetic Compatible Inference for Direct Bash Jobs
+The former top-level `test/e2e/test-*.sh` suite has been removed. Keep real
+shell, installer, process, Docker, OpenShell, `/proc`, and sandbox boundaries in
+E2E tests when those boundaries are the behavior under test.
 
-Direct bash E2E jobs that need onboarding inference, but do not need the live NVIDIA hosted service, should use `test/e2e/lib/hermetic-compatible-inference.sh` instead of `test/e2e/lib/ci-compatible-inference.sh` or workflow-injected hosted inference secrets.
+## Scheduled operations
 
-This pattern supports issue #5747 conversions:
+The consolidated workflow keeps its operational reporting in the same job
+graph as the live targets:
 
-1. Source `lib/hermetic-compatible-inference.sh` from the test script.
-2. Call `nemoclaw_e2e_start_hermetic_compatible_inference` during prerequisites.
-3. Run the onboarding behavior under test normally; the helper exports a fake `custom` OpenAI-compatible endpoint and fake `COMPATIBLE_API_KEY`.
-4. Assert the endpoint was actually used with `nemoclaw_e2e_assert_hermetic_compatible_inference_used`.
-5. Stop it from the test cleanup trap with `nemoclaw_e2e_stop_hermetic_compatible_inference`.
-6. In `.github/workflows/nightly-e2e.yaml`, install/build only the CLI and OpenShell needed by the script; do not inject `NVIDIA_INFERENCE_API_KEY`, `COMPATIBLE_API_KEY`, `NEMOCLAW_E2E_USE_HOSTED_INFERENCE`, or hosted model/env knobs into the converted job.
-7. Add/update workflow contract coverage in `test/e2e-script-workflow.test.ts` so the job cannot regress back to hosted inference secrets.
+- GitHub Actions run history is the authoritative record for scheduled and
+  manual E2E results.
+- Automated issue routing and the workflow's `issues: write` capability are
+  retired. Any future issue escalation should use a separately reviewed
+  exceptional threshold, such as the same lane failing twice consecutively or
+  remaining broken for 24 hours, rather than posting on every failed schedule.
+- `scorecard` writes the scheduled/manual result summary, compares the trusted
+  cloud-onboard timing summary with the latest prior-release `e2e.yaml` run,
+  and posts to the daily or full-run Slack route.
+- Selective dispatches remain silent unless they run on `main` with
+  `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
+  runs never receive Slack webhook secrets.
 
-Use the lower-level `openai-compatible-api-proof.sh` directly only when a test needs raw fake-server lifecycle control without NemoClaw onboarding environment exports.
-
-## Nightly Onboard Trace Timing
-
-The GitHub Actions workflow `.github/workflows/nightly-e2e.yaml` enables NemoClaw tracing for the `cloud-onboard-e2e` lane.
-That lane is the current GitHub E2E trace-timing scope; other E2E lanes keep their existing failure-log artifacts until they opt into a trusted timing-summary artifact.
-That job sets:
-
-```bash
-NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces
-```
-
-The reusable E2E runner does not upload `/tmp/nemoclaw-traces/` directly.
-After the target-ref script finishes, trusted workflow code reads candidate trace JSON files from that target-controlled directory and writes a timing-only summary under `/tmp/nemoclaw-trace-summary/`.
-Only that summary directory is uploaded after every run as the `cloud-onboard-traces` artifact.
-Failure-only logs continue to use each job's normal `artifact_name` and `artifact_path`.
-The uploaded timing summary keeps only the trace schema version, trace id, total duration, known `nemoclaw.onboard.phase.*` durations, and a bounded slowest-span timing list.
-It omits raw attributes, events, prompts, environment values, file names, arbitrary files, and unrecognized trace fields.
-NemoClaw also sanitizes trace files as they are written, but that in-process redaction is defense in depth rather than the artifact upload trust boundary.
-
-The nightly `scorecard` job reads the `cloud-onboard-traces` artifact, selects the trusted `nemoclaw.trace_timing.v1` summary JSON, and reports:
-
-- total onboard trace duration from `summary.total_duration_ms`
-- top matching `nemoclaw.onboard.phase.*` duration changes in Slack
-- a full phase timing table in the GitHub job summary
-- deltas against the latest completed `nightly-e2e` run for the prior semver release tag's commit
-
-Phase deltas and the full summary table are reported only when the same trace span names exist in both runs.
-If phase names change between runs, the scorecard reports only the total onboard duration change.
-If the artifact, prior release tag, prior run, or matching trace data is unavailable, the scorecard keeps the nightly result best-effort and reports the missing comparison in the Slack summary instead of failing CI.
-
-## Slack Scorecard Configuration
-
-`nightly-e2e.yaml` posts the scorecard through repository Actions secrets:
-
-- `SLACK_WEBHOOK_URL_DAILY` for scheduled full nightly runs
-- `SLACK_WEBHOOK_URL_FULLRUN` for manual full runs
-- `SLACK_WEBHOOK_URL_PREVIEW` for selective dispatches when `post_to_slack=true`
-
-Scheduled nightly runs and manual full runs post the scorecard automatically.
-Selective dispatches are silent by default and post only when `post_to_slack=true`, so developers can run targeted checks without notifying Slack.
-The trace timing section is part of the same Slack scorecard message, but it stays compact: total duration, the three largest matching phase changes, and a pointer to the GitHub run summary for the full table.
-The scorecard counts passed, failed, cancelled, and skipped jobs separately.
-Runs with cancellations but no failures stay in the warning state instead of being reported as all passed, including mixed pass and cancelled selective dispatches.
-Slack no longer includes the legacy `Trend` context; trace timing is the only duration comparison in the scorecard.
-Slack does not post raw trace JSON, prompts, credentials, or environment values.
-The uploaded artifact is the trusted timing-only summary, not the raw target-ref trace directory.
+Raw cloud-onboard traces stay under the runner temporary directory. Before
+artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
+allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
+the raw directory. Aggregation ratchets require `report-to-pr` and `scorecard`
+to wait for the same execution-job set.

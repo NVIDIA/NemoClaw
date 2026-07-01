@@ -22,6 +22,8 @@ type GlobalCliActionRuntimeHooks = {
   recoverNamedGatewayRuntime?: () => Promise<GatewayRecovery>;
   runOpenshell?: typeof runOpenshell;
   upgradeSandboxes?: (options?: string[] | UpgradeSandboxesOptions) => Promise<void>;
+  recordExtraProvider?: (name: string) => boolean;
+  forgetExtraProvider?: (name: string) => boolean;
 };
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
@@ -89,4 +91,24 @@ export function runOpenshellProviderCommand(
     return runtimeHooks.runOpenshell(args, opts);
   }
   return runOpenshell(args, opts);
+}
+
+export function recordExtraProvider(name: string): boolean {
+  if (typeof runtimeHooks.recordExtraProvider === "function") {
+    return runtimeHooks.recordExtraProvider(name);
+  }
+  const { addExtraProvider } = require("../state/registry") as {
+    addExtraProvider: (name: string) => boolean;
+  };
+  return addExtraProvider(name);
+}
+
+export function forgetExtraProvider(name: string): boolean {
+  if (typeof runtimeHooks.forgetExtraProvider === "function") {
+    return runtimeHooks.forgetExtraProvider(name);
+  }
+  const { removeExtraProvider } = require("../state/registry") as {
+    removeExtraProvider: (name: string) => boolean;
+  };
+  return removeExtraProvider(name);
 }

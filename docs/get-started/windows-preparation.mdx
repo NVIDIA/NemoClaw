@@ -56,6 +56,8 @@ When Ubuntu needs first-run account setup, the script opens a handoff window and
 It enables Docker Desktop WSL integration for the target distro, restarts Docker Desktop only when Docker was already running, and leaves your global default WSL distro unchanged.
 If the target Ubuntu distro is already registered, the script confirms it uses WSL 2, converts it from WSL 1 when needed, and verifies Docker is reachable from WSL.
 If Windows requires a reboot after enabling WSL features, the script prompts for the reboot and registers a one-time continuation for the next sign-in.
+When the Ubuntu install command completes but the distro is not registered yet, the script requests a reboot only when WSL output says a reboot is required.
+Any WSL install transcript printed for troubleshooting removes PowerShell transcript metadata and temporary local paths before display.
 If Docker Desktop shows first-run prompts, complete them and return to the PowerShell window.
 
 For advanced options, download the script first and run `Get-Help "$env:TEMP\bootstrap-windows.ps1" -Detailed`.

@@ -126,9 +126,25 @@ export function resolveOnboardOptions(
   };
 }
 
+// A prompt closed before the user answered (stdin EOF, e.g.
+// `nemoclaw onboard ... < /dev/null`). `prompt()` rejects these with code
+// "EOF" so callers can treat them as a deliberate cancellation rather than a
+// crash. See src/lib/credentials/store.ts.
+function isPromptCancellation(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === "EOF";
+}
+
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest);
-  await deps.runOnboard(options);
+  try {
+    await deps.runOnboard(options);
+  } catch (error) {
+    // Stdin EOF at any onboarding prompt is a cancellation, not a failure:
+    // print a clear message and exit non-zero instead of either crashing with
+    // a stack trace or — as in the original bug — exiting 0 silently (#5976).
+    if (!isPromptCancellation(error)) throw error;
+    fail(deps, "  Installation cancelled");
+  }
 }
