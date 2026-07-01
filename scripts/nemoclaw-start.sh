@@ -525,18 +525,6 @@ lock_openclaw_config_baseline_if_present() {
 # normalization without requiring a restart.
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
-  local config_file="$config_dir/openclaw.json"
-  local hash_file="$config_dir/.config-hash"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-
-  # An explicit one-shot command may replace these paths before root cleanup.
-  # Fail closed before descriptor-safe repair so it never follows an
-  # attacker-selected symlink target.
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ] || [ -L "$baseline_file" ]; then
-    printf '[SECURITY] Refusing mutable config permission normalization — config directory or file path is a symlink\n' >&2
-    return 1
-  fi
-  [ -d "$config_dir" ] || return 0
 
   local config_dir_uid
   if ! config_dir_uid="$(
@@ -545,7 +533,11 @@ import os
 import stat
 import sys
 
-metadata = os.lstat(sys.argv[1])
+try:
+    metadata = os.lstat(sys.argv[1])
+except FileNotFoundError:
+    print("missing")
+    raise SystemExit(0)
 if not stat.S_ISDIR(metadata.st_mode):
     raise SystemExit(1)
 print(metadata.st_uid)
@@ -554,6 +546,7 @@ PY_CLASSIFY_MUTABLE_CONFIG
     printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
     return 1
   fi
+  [ "$config_dir_uid" = "missing" ] && return 0
   # Shields up: the root-owned config tree is intentionally locked.
   [ "$config_dir_uid" = "0" ] && return 0
 
@@ -671,8 +664,8 @@ def normalize_dir(directory_fd, top_level=False):
 try:
     root_fd = os.open(config_dir, directory_flags)
     root_metadata = os.fstat(root_fd)
-    if root_metadata.st_uid == 0:
-        raise SystemExit(0)
+    if root_metadata.st_uid != os.geteuid():
+        raise UnsafeTree()
     normalize_dir(root_fd, top_level=True)
     set_mode(root_fd, 0o2770, required=True)
     current_root = os.stat(config_dir, follow_symlinks=False)
@@ -708,7 +701,11 @@ file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
 sandbox_gid = grp.getgrnam("sandbox").gr_gid
 groups = os.getgroups()
 if sandbox_gid not in groups:
-    os.setgroups([*groups, sandbox_gid])
+    try:
+        os.setgroups([*groups, sandbox_gid])
+    except PermissionError:
+        print("[SECURITY] Root baseline lock requires retained CAP_SETGID", file=sys.stderr)
+        raise
 
 
 def inode_key(metadata):
@@ -721,6 +718,7 @@ try:
     try:
         before = os.stat(baseline_name, dir_fd=root_fd, follow_symlinks=False)
     except FileNotFoundError:
+        # Optional until the first successful startup captures a baseline.
         before = None
 
     if before is not None:
@@ -761,6 +759,7 @@ PY_LOCK_CONFIG_BASELINE
 # shields-config documented-exec phase. Remove this wrapper only when the
 # pinned OpenClaw preserves 2770/660 after every command outcome; do not replace
 # that upstream source fix with a NemoClaw timeout or permission escape flag.
+# Tracking issue: NVIDIA/NemoClaw#6047.
 run_oneshot_command() {
   local _nemoclaw_oneshot_child_pid=""
   local _nemoclaw_oneshot_signal=""

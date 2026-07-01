@@ -161,7 +161,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("rc=1");
       expect(result.stderr).toContain(
-        "Refusing mutable config permission normalization — config directory or file path is a symlink",
+        "Refusing mutable config permission normalization — descriptor-safe repair detected a symlink, race, or metadata failure",
       );
       expect(result.stderr).toContain(
         "[one-shot] command status=42; permission cleanup status=1; returning cleanup failure",

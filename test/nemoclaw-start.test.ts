@@ -4313,7 +4313,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
       symlinkBaseline: true,
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("config directory or file path is a symlink");
+    expect(result.stderr).toContain("descriptor-safe repair detected a symlink");
     expect(protectedMode).toBe(0o640);
   });
 

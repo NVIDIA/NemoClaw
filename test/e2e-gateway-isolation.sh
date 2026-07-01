@@ -618,6 +618,7 @@ OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
   test -s /tmp/normalize.sh
   source /tmp/normalize.sh
   STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)
+  capsh --has-p=cap_setgid
   gosu sandbox sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
   gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
   gosu sandbox chmod 700 /sandbox/.openclaw
