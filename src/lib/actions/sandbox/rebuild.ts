@@ -22,9 +22,6 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { providerExistsInGateway } = require("../../onboard/providers") as {
-  providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
-};
 
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -47,6 +44,7 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
   isMessagingSupportedAgent,
+  listSupportedMessagingChannelIdsForAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
@@ -54,7 +52,7 @@ import {
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -80,6 +78,10 @@ import {
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import {
+  checkRebuildGatewayProviderOrBail,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import {
   getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
@@ -220,23 +222,26 @@ export async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const agentId = tryGetMessagingAgentId(agent);
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifests = manifestRegistry.list();
+  const agentId = tryGetMessagingAgentId(agent, manifests);
   if (agentId === null) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not supported by any channel manifest`,
     );
     return null;
   }
-  if (!isMessagingSupportedAgent(agent)) {
+  if (!isMessagingSupportedAgent(agent, manifests)) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' has no supported messaging channels`,
     );
     return null;
   }
+  const supportedChannelIds = listSupportedMessagingChannelIdsForAgent(manifests, agentId);
   const planner = new MessagingWorkflowPlanner(
-    createBuiltInChannelManifestRegistry(),
+    manifestRegistry,
     undefined,
     createBuiltInRenderTemplateResolver(),
   );
@@ -244,7 +249,7 @@ export async function stageMessagingManifestPlanForRebuild(
     sandboxName,
     agent: agentId,
     sandboxEntry,
-    supportedChannelIds: agent.messagingPlatforms,
+    supportedChannelIds,
   });
   if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
@@ -392,10 +397,10 @@ async function stageRebuildMessagingPlanOrBail(
   try {
     return await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
   } catch (err) {
-    // Source boundary: registry messaging plans and agent manifests are durable
-    // host-side inputs from prior onboarding. If they drift or become invalid,
-    // rebuild must fail here before backup/delete; remove this boundary only if
-    // manifest staging becomes total over all persisted registry states.
+    // Source boundary: persisted registry messaging plans and current channel
+    // manifests are host-side inputs. If they drift or become invalid, rebuild
+    // must fail here before backup/delete; remove this boundary only if manifest
+    // staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(
@@ -420,9 +425,11 @@ function preflightRebuildCredentials(
   // The target registry entry is authoritative when a matching legacy session
   // omitted credentialEnv; rebuild rewrites provider/model from this entry later,
   // so remote registry providers must still fail closed before backup/delete.
-  let rebuildCredentialEnv = sessionMatchesTarget
-    ? session?.credentialEnv || getRebuildCredentialEnvFromRegistry(sb.provider)
-    : getRebuildCredentialEnvFromRegistry(sb.provider);
+  const registryCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
+  let rebuildCredentialEnv = registryCredentialEnv;
+  if (sessionMatchesTarget && registryCredentialEnv === null) {
+    rebuildCredentialEnv = session?.credentialEnv || null;
+  }
   if (!sessionMatchesTarget && session?.sandboxName) {
     log(
       `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
@@ -434,6 +441,7 @@ function preflightRebuildCredentials(
   }
 
   const rebuildProvider = sb.provider;
+
   // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
   // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
   // write paths persist null. Only a session for this sandbox plus a local
@@ -469,6 +477,9 @@ function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
+    if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+      return false;
+    }
     log(
       "Preflight credential check: no credentialEnv in session (local inference or missing session)",
     );
@@ -479,13 +490,16 @@ function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (credentialValue) return true;
-  if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+  if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+    return false;
+  }
+  if (!credentialValue && shouldVerifyRebuildGatewayProvider(rebuildProvider)) {
     log(
       `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
     );
     return true;
   }
+  if (credentialValue) return true;
 
   console.error("");
   console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
@@ -758,20 +772,25 @@ export async function rebuildSandbox(
       // null fallback) so a missing registry value doesn't silently leave a
       // stale session entry from an earlier sandbox in place.
       // #5735: apply the recreate config resolved + validated BEFORE delete by
-      // prepareRebuildResumeConfig (provider/model/credential/endpoint derived
-      // from the about-to-be-removed registry entry, never from ambient env), so
-      // onboard --resume recreates the recorded sandbox in non-interactive mode.
-      // Assign explicitly so a missing value doesn't leave a stale entry from an
-      // earlier sandbox in place. `pinEndpoint` is false for a matching session
-      // (keep its own custom endpoint) and true for a non-matching session with a
-      // canonical/registry-derivable endpoint.
+      // prepareRebuildResumeConfig, so onboard --resume recreates the recorded
+      // sandbox in non-interactive mode. Provider/model/credential/endpoint come
+      // from the about-to-be-removed registry entry or a validated matching
+      // custom-endpoint session, never ambient env. Assign explicitly so missing
+      // values cannot leave stale entries from an earlier sandbox in place.
       s.provider = resumeConfig.provider;
       s.model = resumeConfig.model;
       s.nimContainer = resumeConfig.nimContainer;
       s.credentialEnv = resumeConfig.credentialEnv;
-      if (resumeConfig.pinEndpoint) {
-        s.endpointUrl = resumeConfig.endpointUrl;
-      }
+      s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
+      // `onboard --resume` uses the session as the recreate contract. Always
+      // overwrite the endpoint from the preflighted registry-derived config,
+      // even when the pre-existing session currently matches this sandbox name:
+      // stale recovery can be retrying after an earlier failed recreate left a
+      // partial session behind. Leaving the old endpoint in that case can silently
+      // steer the recreate to the wrong provider URL. `prepareRebuildResumeConfig`
+      // already validates whether this endpoint is recoverable before any
+      // destructive work, so this is the safest source boundary (#4497/#5869).
+      s.endpointUrl = resumeConfig.endpointUrl;
       return s;
     });
     process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
@@ -992,16 +1011,21 @@ export async function rebuildSandbox(
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
-    const savedPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest?.policyPresets ?? registryPolicyPresets,
+    const rebuildEnabledChannelIds = (rebuildMessagingPlan?.channels ?? [])
+      .filter((ch) => !ch.disabled)
+      .map((ch) => ch.channelId);
+    const savedPresets = mergeRebuildMessagingPolicyPresets(
+      backupManifest?.policyPresets,
+      registryPolicyPresets,
+      rebuildEnabledChannelIds,
       rebuildDisabledChannels,
     );
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
     if (savedPresets.length > 0) {
       console.log("");
       console.log("  Restoring policy presets...");
       log(`Policy presets to restore: [${savedPresets.join(",")}]`);
-      const restoredPresets: string[] = [];
-      const failedPresets: string[] = [];
       for (const presetName of savedPresets) {
         try {
           log(`Applying preset: ${presetName}`);
@@ -1036,6 +1060,7 @@ export async function rebuildSandbox(
     let mutablePermsRepairUnverified = false;
     let mutableConfigHashRefreshUnverified = false;
     let messagingHostForwardUnverified = false;
+    const policyPresetRestoreIncomplete = failedPresets.length > 0;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1122,10 +1147,34 @@ export async function rebuildSandbox(
     // on_session_start. Gateway startup is non-fatal if state.db migration fails.
 
     // Step 7: Update registry with new version
+    //
+    // Source-of-truth reconciliation for `policies`:
+    //
+    // - Invalid state: `registry.policies` retained a preset name after the
+    //   reapply loop pruned it (disabled messaging channel) or skipped it
+    //   (failed `applyPreset`), so `policy-list` showed a ● marker for a
+    //   preset whose rules were absent from the gateway.
+    // - Source boundary: `policies.applyPreset` only appends to
+    //   `registry.policies`; nothing else writes the canonical post-rebuild
+    //   set. The reapply loop above is the only place that knows which
+    //   presets were actually reapplied.
+    // - Source-fix constraint: must run after the reapply loop and use the
+    //   successfully restored subset, not `savedPresets` (which still
+    //   includes failures).
+    // - Regression test:
+    //   `src/lib/actions/sandbox/rebuild-flow.test.ts` asserts
+    //   `registry.updateSandbox` receives `policies: restoredPresets` for
+    //   both the successful-rebuild and partial-restore harnesses.
+    // - Removal condition: drop this once `applyPreset` writes the
+    //   canonical post-apply set itself (replacing its append-only
+    //   contract), making the rebuild flow's reconciliation redundant.
     registry.updateSandbox(sandboxName, {
       agentVersion: agentDef.expectedVersion || null,
+      policies: restoredPresets,
     });
-    log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
+    log(
+      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}]`,
+    );
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
     if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
@@ -1137,7 +1186,8 @@ export async function rebuildSandbox(
       restoreSucceeded &&
       !mutablePermsRepairUnverified &&
       !mutableConfigHashRefreshUnverified &&
-      !messagingHostForwardUnverified
+      !messagingHostForwardUnverified &&
+      !policyPresetRestoreIncomplete
     ) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
       if (staleRecovery) {
@@ -1174,6 +1224,11 @@ export async function rebuildSandbox(
       if (messagingHostForwardUnverified) {
         console.log(
           `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
+        );
+      }
+      if (policyPresetRestoreIncomplete) {
+        console.log(
+          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
         );
       }
     }

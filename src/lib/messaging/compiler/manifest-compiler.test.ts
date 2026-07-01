@@ -307,6 +307,18 @@ describe("ManifestCompiler", () => {
         }),
       ]),
     );
+    expect(plan.runtimeSetup?.nodePreloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "teams",
+          module: "msteams-message-hints",
+          source: "/usr/local/lib/nemoclaw/preloads/msteams-message-hints.js",
+          target: "/tmp/nemoclaw-msteams-message-hints.js",
+          injectInto: ["boot", "connect"],
+          optional: false,
+        }),
+      ]),
+    );
     expect(plan.buildSteps.every((step) => step.value !== undefined)).toBe(true);
     expect(plan.stateUpdates).toContainEqual({
       channelId: "wechat",
@@ -411,6 +423,24 @@ describe("ManifestCompiler", () => {
     expect(JSON.stringify(plan.agentRender)).toContain(
       "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     );
+    expect(plan.runtimeSetup?.envAliases).toEqual([
+      {
+        channelId: "slack",
+        envKey: "SLACK_BOT_TOKEN",
+        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+        value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        message:
+          "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+      },
+      {
+        channelId: "slack",
+        envKey: "SLACK_APP_TOKEN",
+        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+        value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        message:
+          "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+      },
+    ]);
     expect(plan.buildSteps).toEqual([
       {
         channelId: "teams",
@@ -546,6 +576,7 @@ describe("ManifestCompiler", () => {
       }),
     );
     expect(JSON.stringify(plan.agentRender)).toContain('"port":3978');
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("groupAllowFrom");
     expect(JSON.stringify(plan.agentRender)).toContain('"requireMention":true');
@@ -577,6 +608,7 @@ describe("ManifestCompiler", () => {
       disabled: false,
     });
     expect(JSON.stringify(plan.agentRender)).toContain("channels.msteams");
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("dmPolicy");
     expect(JSON.stringify(plan.agentRender)).not.toContain("allowFrom");
@@ -991,7 +1023,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1060,7 +1091,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-config-prompt",
@@ -1144,7 +1174,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1289,7 +1318,6 @@ describe("ManifestCompiler", () => {
       ],
       policyPresets: ["matrix"],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-enroll",

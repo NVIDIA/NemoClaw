@@ -10,6 +10,13 @@ import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-met
 
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  "agents:list": [
+    {
+      group: "Getting Started",
+      order: 1.5,
+      description: "List available agent runtimes for onboard --agent",
+    },
+  ],
   ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
@@ -17,10 +24,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
-  "credentials:list": [
+  "credentials:add": [
     {
       group: "Credentials",
       order: 38,
+      description: "Register a provider credential with the OpenShell gateway",
+      flags: "<PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+    },
+  ],
+  "credentials:list": [
+    {
+      group: "Credentials",
+      order: 38.5,
       description: "List stored credential keys",
     },
   ],
@@ -80,6 +95,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Getting Started",
       order: 0,
+      description: "Configure inference endpoint and credentials (--agent to choose runtime)",
     },
     {
       group: "Getting Started",
@@ -269,6 +285,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 14,
+      flags: "[--quiet|-q]",
+    },
+  ],
+  "sandbox:gateway:restart": [
+    {
+      group: "Sandbox Management",
+      order: 14.1,
       flags: "[--quiet|-q]",
     },
   ],
@@ -488,6 +511,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Cleanup",
       order: 43,
       description: "Run uninstall.sh (local only; no remote fallback)",
+    },
+  ],
+  use: [
+    {
+      group: "Sandbox Management",
+      order: 2.5,
+      usage: "nemoclaw use <name>",
+      flags: "[--json]",
     },
   ],
   update: [

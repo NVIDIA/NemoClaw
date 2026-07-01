@@ -11,7 +11,8 @@ import {
   getAgentChoices,
   loadAgent,
   resolveAgentName,
-} from "../../../dist/lib/agent/defs";
+  resolveAgentNameAlias,
+} from "./defs";
 
 const tempAgentDirs: string[] = [];
 
@@ -48,14 +49,6 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
     // OpenClaw uses device_pairing web auth — no fetchable bearer token.
     expect(openclaw.webAuth).toEqual({ method: "none", env: null });
@@ -93,15 +86,15 @@ describe("agent definitions", () => {
     expect(hermes.dashboardUi).toBeNull();
     // Hermes' OpenAI-compatible API uses a bearer token read from API_SERVER_KEY.
     expect(hermes.webAuth).toEqual({ method: "bearer_token", env: "API_SERVER_KEY" });
-    expect(hermes.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
     expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
+  });
+
+  it("declares the Hermes expected version in the runtime semver scheme", () => {
+    const hermes = loadAgent("hermes");
+
+    expect(hermes.expectedVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    const major = Number.parseInt(String(hermes.expectedVersion).split(".")[0] ?? "", 10);
+    expect(major).toBeLessThan(1000);
   });
 
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
@@ -160,6 +153,27 @@ describe("agent definitions", () => {
     expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
   });
 
+  it("resolves common user-facing agent aliases to canonical manifest names", () => {
+    const available = ["openclaw", "hermes", "langchain-deepagents-code"];
+
+    expect(resolveAgentNameAlias("nemohermes", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("NEMO_HERMES", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("dcode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagent", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagents", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deep agents code", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagentscode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("langchain", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("nemoclaw", available)).toBe("openclaw");
+  });
+
+  it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {
+    expect(resolveAgentName({ agentFlag: "dcode" })).toBe("langchain-deepagents-code");
+
+    vi.stubEnv("NEMOCLAW_AGENT", "nemohermes");
+    expect(resolveAgentName()).toBe("hermes");
+  });
+
   it("rejects non-object manifest payloads", () => {
     const agentName = `invalid-top-level-manifest-${String(Date.now())}`;
     writeTempAgentManifest(agentName, ["- not", "- an", "- object"].join("\n"));
@@ -168,15 +182,17 @@ describe("agent definitions", () => {
   });
 
   it("rejects invalid forward_ports values in manifests", () => {
-    const agentName = `invalid-forward-port-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", "  - 70000"].join(
-        "\n",
-      ),
-    );
+    for (const port of [1023, 70000]) {
+      const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
+      writeTempAgentManifest(
+        agentName,
+        [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
+          "\n",
+        ),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
+      expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
+    }
   });
 
   it("rejects invalid health_probe.port values in manifests", () => {

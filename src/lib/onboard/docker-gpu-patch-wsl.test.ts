@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  buildDockerGpuModeCandidates,
-  shouldApplyDockerGpuPatch,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
+import { buildDockerGpuModeCandidates, shouldApplyDockerGpuPatch } from "./docker-gpu-patch";
 
 describe("shouldApplyDockerGpuPatch on Docker Desktop WSL", () => {
   it("ignores NEMOCLAW_DOCKER_GPU_PATCH=0 on Docker Desktop WSL where the patch is required", () => {

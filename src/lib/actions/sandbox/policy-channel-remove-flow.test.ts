@@ -6,9 +6,9 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const policyChannelModulePath = "../../../../dist/lib/actions/sandbox/policy-channel.js";
+const policyChannelModulePath = "./policy-channel.js";
 
-type PolicyChannelModule = typeof import("../../../../dist/lib/actions/sandbox/policy-channel");
+type PolicyChannelModule = typeof import("./policy-channel");
 
 describe("policy channel remove/enable flows", () => {
   let exitSpy: MockInstance;
@@ -52,7 +52,7 @@ describe("policy channel remove/enable flows", () => {
   });
 
   it("supports stop dry runs for configured channels", async () => {
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
+    const registry = requireDist("../../state/registry.js");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
@@ -65,6 +65,31 @@ describe("policy channel remove/enable flows", () => {
     expect(logSpy.mock.calls.flat().join("\n")).toContain(
       "--dry-run: would stop channel 'telegram' for 'alpha'.",
     );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("supports start dry runs without applying a preset or persisting the enabled plan", async () => {
+    const registry = requireDist("../../state/registry.js");
+    const policies = requireDist("../../policy/index.js");
+    const rebuild = requireDist("./rebuild.js");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
+    const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
+    const applyPresetSpy = vi.spyOn(policies, "applyPreset");
+    const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox");
+    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
+
+    await expect(
+      policyChannel.startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+    ).resolves.toBeUndefined();
+
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "--dry-run: would start channel 'telegram' for 'alpha'.",
+    );
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });

@@ -100,6 +100,7 @@ export interface Session {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   routerPid: number | null;
   routerCredentialHash: string | null;
@@ -169,6 +170,7 @@ export interface SessionUpdates {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
@@ -198,6 +200,7 @@ export interface DebugSessionSummary {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
@@ -447,6 +450,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
+    compatibleEndpointReasoning: overrides.compatibleEndpointReasoning ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
@@ -489,6 +493,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
+    compatibleEndpointReasoning: readString(data.compatibleEndpointReasoning),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
@@ -969,6 +974,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.hermesAuthMethod = null;
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
+  assignNullableString(safe, "compatibleEndpointReasoning", updates.compatibleEndpointReasoning);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (
     typeof updates.routerPid === "number" &&
@@ -1276,6 +1282,7 @@ export function summarizeForDebug(
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
+    compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,

@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import through the compiled dist/ output so coverage is attributed to the
-// CLI build output that the ratchet measures.
-import {
-  assessHost,
-  planHostRemediation,
-  shouldEnforceCdiNvidiaGpuSpec,
-} from "../../../dist/lib/onboard/preflight";
+// Import source directly so tests cannot pass against a stale build.
+import { assessHost, planHostRemediation, shouldEnforceCdiNvidiaGpuSpec } from "./preflight";
 
 type HostAssessment = Parameters<typeof planHostRemediation>[0];
 
@@ -434,7 +429,7 @@ describe("planHostRemediation — CDI", () => {
   });
 });
 
-describe("shouldEnforceCdiNvidiaGpuSpec (#5489 enforcement gate)", () => {
+describe("shouldEnforceCdiNvidiaGpuSpec enforcement gate (#5489)", () => {
   it("enforces when the spec is missing and the operator did not explicitly opt out", () => {
     // The #5489 scenario: GPU hardware present (so cdiNvidiaGpuSpecMissing is
     // true) with sandbox GPU AUTO-disabled (nvidia-smi unavailable). Auto-disable

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
+import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../src/lib/onboard/vm-driver-process.js";
 
 const {
   areRequiredDockerDriverBinariesPresent,
@@ -19,7 +19,7 @@ const {
   parseDockerCdiSpecDirs,
   shouldAllowOpenshellAboveBlueprintMax,
   shouldRequireDockerDriverEnv,
-} = require("../dist/lib/onboard") as {
+} = require("../src/lib/onboard") as {
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -77,7 +77,10 @@ describe("onboard gateway runtime helpers", () => {
     const linuxEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "linux");
     expect(linuxEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(linuxEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
-    expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_GRPC_ENDPOINT).toBe("https://127.0.0.1:8080");
+    expect(linuxEnv.OPENSHELL_LOCAL_TLS_DIR).toContain(
+      path.join("nemoclaw", "openshell-docker-gateway", "tls"),
+    );
     expect(linuxEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(linuxEnv.OPENSHELL_CLUSTER_IMAGE).toBeUndefined();
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
@@ -85,7 +88,10 @@ describe("onboard gateway runtime helpers", () => {
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
     expect(darwinEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
+    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("https://127.0.0.1:8080");
+    expect(darwinEnv.OPENSHELL_LOCAL_TLS_DIR).toContain(
+      path.join("nemoclaw", "openshell-docker-gateway", "tls"),
+    );
     expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
     expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();

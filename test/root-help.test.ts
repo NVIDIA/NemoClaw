@@ -23,6 +23,20 @@ describe("root help", () => {
     expect(output).not.toContain("Landlock enforced");
   });
 
+  it("describes onboard agent selection and the global agent runtime list", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toContain("nemoclaw onboard");
+    expect(output).toContain(
+      "Configure inference endpoint and credentials (--agent to choose runtime)",
+    );
+    expect(output).toContain("nemoclaw agents list");
+    expect(output).toContain("List available agent runtimes for onboard --agent");
+  });
+
   it("shows channel as a required positional argument in channel command signatures", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -35,5 +49,16 @@ describe("root help", () => {
         new RegExp(`nemoclaw <name> channels ${action}\\\\s{2,}[^\\n]*<channel>`),
       );
     }
+  });
+
+  it("lists --destroy-user-data under uninstall flags without unsupported --keep flags", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toMatch(/Uninstall flags:[\s\S]*--destroy-user-data/);
+    expect(output).not.toMatch(/--keep-user-data/);
+    expect(output).not.toMatch(/--keep-backups/);
   });
 });

@@ -22,7 +22,6 @@ function makeManifest(
     credentials: [],
     policyPresets: [id],
     render: [],
-    state: {},
     hooks: [],
   };
 }
@@ -47,7 +46,7 @@ describe("ChannelManifestRegistry", () => {
     );
   });
 
-  it("filters available manifests by agent and explicit platform support lists", () => {
+  it("filters available manifests by agent and explicit channel support lists", () => {
     const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
 
     expect(registry.listAvailable().map((manifest) => manifest.id)).toEqual(["telegram", "wechat"]);

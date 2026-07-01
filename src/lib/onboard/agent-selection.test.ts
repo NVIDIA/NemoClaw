@@ -3,10 +3,10 @@
 
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
-import { getAgentChoices, loadAgent } from "../../../dist/lib/agent/defs";
-import { resolveAgent } from "../../../dist/lib/agent/onboard";
-import { createSelectOnboardAgent } from "../../../dist/lib/onboard/agent-selection";
-import { selectFromNumberedMenuOrExit } from "../../../dist/lib/onboard/prompt-helpers";
+import { getAgentChoices, loadAgent } from "../agent/defs";
+import { resolveAgent } from "../agent/onboard";
+import { createSelectOnboardAgent } from "./agent-selection";
+import { selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
 // Exercises the real agent registry (agents/openclaw + agents/hermes) so the
 // red->green transition reflects genuine wizard behavior rather than a mock.

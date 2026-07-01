@@ -19,7 +19,7 @@ install_method: pip
 binary_path: /usr/local/bin/dcode
 version_command: "dcode --version"
 expected_version: "0.1.12"
-
+version_scheme: semver
 runtime:
   kind: terminal
   interactive_command: "dcode"
@@ -57,12 +57,6 @@ user_managed_files:
   - .mcp.json
 
 device_pairing: false
-
-# Artifact-only messaging render exists for build validation, but DeepAgents
-# does not run a channel bridge today. Keep public channel support disabled
-# until inbound Telegram/Discord/Slack messages can reach dcode.
-messaging_platforms:
-  supported: []
 
 # ── Inference ───────────────────────────────────────────────────
 # V1 routes NVIDIA/OpenAI-compatible selections through OpenShell's managed

@@ -13,6 +13,7 @@ export interface OnboardSessionUpdateInput {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | string | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   webSearchConfig?: WebSearchConfig | null;
   policyPresets?: string[] | null;
@@ -46,6 +47,9 @@ export function toSessionUpdates(updates: OnboardSessionUpdateInput = {}): Sessi
     normalized.hermesAuthMethod = normalizeHermesAuthMethod(updates.hermesAuthMethod);
   if (updates.preferredInferenceApi !== undefined) {
     normalized.preferredInferenceApi = toNullableString(updates.preferredInferenceApi);
+  }
+  if (updates.compatibleEndpointReasoning !== undefined) {
+    normalized.compatibleEndpointReasoning = toNullableString(updates.compatibleEndpointReasoning);
   }
   if (updates.nimContainer !== undefined)
     normalized.nimContainer = toNullableString(updates.nimContainer);

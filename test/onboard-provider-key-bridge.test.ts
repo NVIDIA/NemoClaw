@@ -31,7 +31,7 @@ function runSetupNimBridgeScenario(env: Record<string, string>) {
   const fakeBin = path.join(tmpDir, "bin");
   const home = path.join(tmpDir, "home");
   const scriptPath = path.join(tmpDir, "bridge-check.cjs");
-  const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
 
   fs.mkdirSync(fakeBin, { recursive: true });
   fs.mkdirSync(home, { recursive: true });

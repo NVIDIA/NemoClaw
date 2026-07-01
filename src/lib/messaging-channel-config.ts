@@ -49,9 +49,6 @@ export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
         channel.requireMentionEnvKey,
       ]),
       ...manifestConfigInputs.map((input) => input.envKey),
-      ...BUILT_IN_CHANNEL_MANIFESTS.flatMap(
-        (manifest) => manifest.state.rebuildHydration?.map((hydration) => hydration.env) ?? [],
-      ),
     ].filter((key): key is string => typeof key === "string" && key.length > 0),
   ),
 ];
@@ -81,6 +78,30 @@ export function getMessagingChannelConfigEnvKeys(key: string): readonly string[]
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return [];
   return [canonical, ...(configKeyAliases[canonical] ?? [])];
+}
+
+export type InvalidMessagingChannelConfigEnvEntry = {
+  key: string;
+  rawValue: string;
+  validValues: readonly string[];
+};
+
+/**
+ * Returns entries for env vars that are explicitly set to a non-blank value
+ * that is not in the manifest's validValues list. Callers (e.g. setupMessagingChannels)
+ * should fail fast on any returned entries rather than silently coercing to a default.
+ */
+export function detectInvalidMessagingChannelConfigEnvValues(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): InvalidMessagingChannelConfigEnvEntry[] {
+  const violations: InvalidMessagingChannelConfigEnvEntry[] = [];
+  for (const [key, validVals] of validValuesByKey) {
+    const rawValue = (env[key] ?? "").trim();
+    if (rawValue && !validVals.has(rawValue)) {
+      violations.push({ key, rawValue, validValues: [...validVals] });
+    }
+  }
+  return violations;
 }
 
 export function normalizeMessagingChannelConfigValue(key: string, value: unknown): string | null {

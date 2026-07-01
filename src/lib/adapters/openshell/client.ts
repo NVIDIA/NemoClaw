@@ -36,6 +36,7 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   includeStderr?: boolean;
   includeStreams?: boolean;
+  maxBuffer?: number;
 }
 
 export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
@@ -92,6 +93,11 @@ function handleSpawnError(
 
 function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+}
+
+function isIgnoredCaptureError(error: Error, opts: CaptureOpenshellOptions): boolean {
+  if (isIgnoredTimeout(error, opts)) return true;
+  return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ENOBUFS";
 }
 
 function shouldIncludeStderr(opts: CaptureOpenshellOptions): boolean {
@@ -174,9 +180,10 @@ export function captureOpenshellCommand(
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
   });
   if (result.error) {
-    if (isIgnoredTimeout(result.error, opts)) {
+    if (isIgnoredCaptureError(result.error, opts)) {
       return {
         status: result.status,
         output: captureOutput(result, opts),

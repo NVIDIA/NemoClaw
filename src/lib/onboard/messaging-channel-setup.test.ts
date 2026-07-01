@@ -8,7 +8,11 @@ import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
-import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
+import {
+  detectMessagingChannelsFromEnv,
+  setupMessagingChannels,
+  setupSelectedMessagingChannels,
+} from "./messaging-channel-setup";
 
 vi.mock("../credentials/store", () => ({
   getCredential: vi.fn(() => null),
@@ -71,7 +75,7 @@ describe("setupSelectedMessagingChannels", () => {
     vi.restoreAllMocks();
   });
 
-  it("#4068 prints Telegram group privacy-mode setup guidance during onboarding", async () => {
+  it("prints Telegram group privacy-mode setup guidance during onboarding (#4068)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
     process.env.TELEGRAM_REQUIRE_MENTION = "1";
     process.env.TELEGRAM_ALLOWED_IDS = "123456789";
@@ -567,5 +571,74 @@ describe("setupMessagingChannels", () => {
     const output = logs.join("\n");
     expect(output).toContain("token_revoked");
     expect(output).toContain("slack — already configured");
+  });
+
+  it("exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value (#5696)", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+    process.env.TELEGRAM_GROUP_POLICY = "lockdown";
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((message = "") => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(
+      setupMessagingChannels(null, null, { isNonInteractive: () => true }),
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errors.join("\n")).toContain("TELEGRAM_GROUP_POLICY");
+    expect(errors.join("\n")).toContain("lockdown");
+    expect(errors.join("\n")).toContain("open");
+    expect(errors.join("\n")).toContain("allowlist");
+    expect(errors.join("\n")).toContain("disabled");
+  });
+});
+
+describe("detectMessagingChannelsFromEnv", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+    delete process.env.NEMOCLAW_POLICY_PRESETS;
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("returns no telegram channel when no messaging env inputs are present", () => {
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+
+  it("detects telegram when TELEGRAM_BOT_TOKEN is supplied", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv(null)).toContain("telegram");
+  });
+
+  it("does not detect channels for unsupported named agents even when env inputs are complete", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv({ name: "custom-agent" } as never)).toEqual([]);
+  });
+
+  it("does not select telegram from NEMOCLAW_POLICY_PRESETS alone", () => {
+    process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
+
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
   });
 });

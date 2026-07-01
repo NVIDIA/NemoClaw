@@ -32,7 +32,6 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     expectedVersion: null,
     hasDevicePairing: false,
     phoneHomeHosts: [],
-    messagingPlatforms: [],
     dockerfileBasePath: null,
     dockerfilePath: null,
     startScriptPath: null,

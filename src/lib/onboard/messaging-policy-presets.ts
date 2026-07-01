@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { listRequiredCreateTimeMessagingPolicyPresetsByChannel } from "../messaging/channels";
+import {
+  listMessagingPolicyPresetsByChannel,
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel,
+} from "../messaging/channels";
 
 const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
   listRequiredCreateTimeMessagingPolicyPresetsByChannel();
+
+const ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL = listMessagingPolicyPresetsByChannel();
 
 function normalizedNames(values: string[] | null | undefined): string[] {
   if (!Array.isArray(values)) return [];
@@ -66,15 +71,55 @@ export function mergeRequiredMessagingChannelPolicyPresets(
   return merged;
 }
 
+export function allMessagingChannelPolicyPresets(channels: string[] | null | undefined): string[] {
+  const all: string[] = [];
+  for (const channel of normalizedNames(channels)) {
+    for (const preset of ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL[channel] || []) {
+      if (!all.includes(preset)) all.push(preset);
+    }
+  }
+  return all;
+}
+
 export function pruneDisabledMessagingPolicyPresets(
   selectedPresets: string[],
   disabledChannels: string[] | null | undefined,
 ): string[] {
-  const disabledRequiredPresets = new Set(requiredMessagingChannelPolicyPresets(disabledChannels));
-  if (disabledRequiredPresets.size === 0) return selectedPresets;
+  const disabledChannelPresets = new Set(allMessagingChannelPolicyPresets(disabledChannels));
+  if (disabledChannelPresets.size === 0) return selectedPresets;
   return selectedPresets.filter(
-    (preset) => !disabledRequiredPresets.has(preset.trim().toLowerCase()),
+    (preset) => !disabledChannelPresets.has(preset.trim().toLowerCase()),
   );
+}
+
+/**
+ * Recover the desired preset set after stop+rebuild pruned disabled-channel
+ * egress from persisted policies and a later start+rebuild re-enabled those
+ * channels. The backup manifest is authoritative when present, with the
+ * registry as the stale-sandbox fallback; the current messaging plan owns
+ * enabled/disabled state, and channel manifests own channel-to-preset mapping.
+ * The helper and caller boundaries are covered in messaging-policy-presets.test.ts
+ * and rebuild-flow.test.ts, respectively.
+ *
+ * Remove this recovery merge when the registry or planner durably persists one
+ * canonical desired preset set across stop/start rebuilds.
+ */
+export function mergeRebuildMessagingPolicyPresets(
+  backupPresets: string[] | null | undefined,
+  registryPresets: string[],
+  enabledChannels: string[] | null | undefined,
+  disabledChannels: string[] | null | undefined,
+): string[] {
+  const persistedPresets = backupPresets ?? registryPresets;
+  return [
+    ...new Set([
+      ...pruneDisabledMessagingPolicyPresets(persistedPresets, disabledChannels),
+      ...pruneDisabledMessagingPolicyPresets(
+        allMessagingChannelPolicyPresets(enabledChannels),
+        disabledChannels,
+      ),
+    ]),
+  ];
 }
 
 export function hasDisabledMessagingPolicyPreset(

@@ -88,6 +88,19 @@ describe("repo skill markdown files", () => {
     });
   }
 
+  it("keeps messaging channel support guidance manifest-owned", () => {
+    const skillFile = path.join(
+      skillsRoot,
+      "nemoclaw-contributor-onboard-messaging-channel",
+      "SKILL.md",
+    );
+    const raw = fs.readFileSync(skillFile, "utf8");
+
+    expect(raw).toContain("through `supportedAgents`");
+    expect(raw).toContain("Do not edit agent manifests for channel availability");
+    expect(raw).not.toContain("so supported platforms match the manifest `supportedAgents`");
+  });
+
   it("keeps contributor PR creation anchored to the trusted base template", () => {
     const skillPath = path.join(skillsRoot, "nemoclaw-contributor-create-pr", "SKILL.md");
     const skill = fs.readFileSync(skillPath, "utf8");

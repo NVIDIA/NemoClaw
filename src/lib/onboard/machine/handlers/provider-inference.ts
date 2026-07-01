@@ -16,6 +16,7 @@ export interface ProviderSelectionResult {
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -37,6 +38,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesAuthMethod: string | null;
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
+    compatibleEndpointReasoning: string | null;
     nimContainer: string | null;
     webSearchConfig: WebSearchConfig | null;
   };
@@ -88,7 +90,9 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
         metadata?: Record<string, unknown> | null;
       },
     ): Promise<Session>;
-    hydrateCredentialEnv(credentialEnv: string | null): void;
+    hydrateCredentialEnv(credentialEnv: string | null): string | null | undefined;
+    configureCompatibleEndpointReasoning(storedValue?: string | null): Promise<"true" | "false">;
+    clearCompatibleEndpointReasoning(): null;
     repairLocalInferenceSystemdOverrideOrExit(
       provider: string | null,
       isNonInteractive: () => boolean,
@@ -141,6 +145,7 @@ export interface ProviderInferenceStateResult {
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
@@ -171,6 +176,36 @@ function clearStagedCredentialEnv(
   if (credentialEnv) deps.deleteEnv(credentialEnv);
 }
 
+function agentName(agent: unknown): string {
+  const name = (agent as { name?: string | null } | null)?.name;
+  return typeof name === "string" && name.length > 0 ? name : "openclaw";
+}
+
+function hasActiveMessagingChannels(
+  selectedMessagingChannels: string[],
+  session: Session | null,
+): boolean {
+  if (selectedMessagingChannels.length > 0) return true;
+  const channels = session?.messagingPlan?.channels;
+  return Boolean(
+    Array.isArray(channels) &&
+      channels.some((channel) => channel.active === true && channel.disabled !== true),
+  );
+}
+
+function shouldRefreshCompatibleEndpointRouteForMessaging(
+  provider: string | null,
+  selectedMessagingChannels: string[],
+  session: Session | null,
+  agent: unknown,
+): boolean {
+  return (
+    provider === "compatible-endpoint" &&
+    agentName(agent) === "openclaw" &&
+    hasActiveMessagingChannels(selectedMessagingChannels, session)
+  );
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   resume,
   fresh,
@@ -197,6 +232,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
   let preferredInferenceApi = initial.preferredInferenceApi;
+  let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
@@ -225,7 +261,37 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
       });
-      deps.hydrateCredentialEnv(credentialEnv);
+      const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
+      // A rebuild recreate may leave `openshell inference get` reporting the
+      // same provider/model while the newly created messaging sandbox's
+      // `inference.local` route is not actually wired to the compatible
+      // endpoint. For the OpenClaw+messaging path that later performs a
+      // sandbox-side compatible-endpoint smoke, refresh the gateway route in
+      // the inference phase instead of trusting the provider/model-only resume
+      // shortcut. If the local key is absent but the gateway provider exists,
+      // setupInference can still re-apply the route with the stored gateway
+      // credential; skip only the host direct smoke that would otherwise probe
+      // unauthenticated.
+      if (
+        shouldRefreshCompatibleEndpointRouteForMessaging(
+          provider,
+          selectedMessagingChannels,
+          session,
+          agent,
+        )
+      ) {
+        forceInferenceSetup = true;
+        skipHostInferenceSmoke = !hydratedCredential;
+        deps.log(
+          skipHostInferenceSmoke
+            ? "  [resume] Refreshing compatible-endpoint inference route with the stored gateway credential."
+            : "  [resume] Refreshing compatible-endpoint inference route for messaging.",
+        );
+      }
+      compatibleEndpointReasoning =
+        provider === "compatible-endpoint"
+          ? await deps.configureCompatibleEndpointReasoning(compatibleEndpointReasoning)
+          : deps.clearCompatibleEndpointReasoning();
       if (provider === "ollama-local") {
         const repairMetadata = { repair: "ollama-systemd-loopback" };
         await deps.recordRepairEvent("state.repair.started", {
@@ -263,6 +329,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesAuthMethod = selection.hermesAuthMethod;
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
+      compatibleEndpointReasoning = selection.compatibleEndpointReasoning;
       nimContainer = selection.nimContainer;
       allowToolsIncompatible = selection.allowToolsIncompatible === true;
       skipHostInferenceSmoke = selection.skipHostInferenceSmoke === true;
@@ -285,6 +352,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
+          compatibleEndpointReasoning,
           nimContainer,
         }),
       );
@@ -347,6 +415,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             provider,
             model,
             hermesAuthMethod,
+            compatibleEndpointReasoning,
             nimContainer,
             hermesToolGateways,
           }),
@@ -387,6 +456,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           provider,
           model,
           hermesAuthMethod,
+          compatibleEndpointReasoning,
           nimContainer,
           hermesToolGateways,
         }),
@@ -465,6 +535,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
         hermesAuthMethod,
+        compatibleEndpointReasoning,
         nimContainer,
         hermesToolGateways,
       }),
@@ -486,6 +557,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     hermesAuthMethod,
     hermesToolGateways,
     preferredInferenceApi,
+    compatibleEndpointReasoning,
     nimContainer,
     webSearchConfig,
     session,

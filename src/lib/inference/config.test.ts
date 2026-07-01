@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
+// Import source directly so tests cannot pass against a stale build.
 import {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -21,7 +21,7 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
-} from "../../../dist/lib/inference/config";
+} from "./config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
@@ -29,7 +29,6 @@ describe("inference selection config", () => {
       "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
       "moonshotai/kimi-k2.6",
       "openai/gpt-oss-120b",
@@ -52,6 +51,11 @@ describe("inference selection config", () => {
       "openai/gpt-5.5",
     ]);
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
+  });
+
+  it("retires GLM 5.1 only from the NVIDIA Endpoints picker", () => {
+    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain("z-ai/glm-5.1");
+    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain("z-ai/glm-5.1");
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
@@ -399,7 +403,7 @@ describe("planInferenceRouteReconcile", () => {
     expect(planInferenceRouteReconcile(null, recorded)).toEqual({ kind: "repair" });
   });
 
-  it("flags divergence when the gateway model differs (the #3726 case)", () => {
+  it("flags divergence when the gateway model differs (#3726)", () => {
     const live = {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",

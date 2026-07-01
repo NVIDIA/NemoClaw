@@ -14,11 +14,11 @@ process.env.HOME = TMP_HOME;
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const BACKUPS_ROOT = path.join(TMP_HOME, ".nemoclaw", "rebuild-backups");
 
-type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
+type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
 type CurrentOpenClawReadMode = "file" | "missing" | "invalid-json";
 
 const sandboxState = (await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
+  pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
 )) as SandboxStateModule;
 
 beforeEach(() => {

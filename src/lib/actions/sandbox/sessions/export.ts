@@ -46,6 +46,8 @@ import { CLI_NAME } from "../../../cli/branding";
 import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
+import { isWarmupSessionId } from "../warmup-session";
+import { type SessionIndexEntry, parseSessionIndex } from "./session-index";
 import {
   DEFAULT_AGENT_ID,
   parseAgentIdFromSessionKey,
@@ -85,11 +87,6 @@ export interface SessionsExportResult {
   // Tarball size in `tar` format; null in `dir` format.
   bundleBytes: number | null;
   sessions: SessionExportEntry[];
-}
-
-interface SessionIndexEntry {
-  key: string;
-  sessionId: string;
 }
 
 // Session ids must start with an alphanumeric character so they can never be
@@ -509,7 +506,11 @@ function resolveSelectedFiles(
 
   const entries: { key: string; sessionId: string }[] = [];
   if (keys.length === 0) {
-    for (const entry of index) entries.push(entry);
+    // Export-all hides internal warm-up sessions; explicit keys are honored below.
+    for (const entry of index) {
+      if (isWarmupSessionId(entry.sessionId)) continue;
+      entries.push(entry);
+    }
   } else {
     const missing: string[] = [];
     for (const key of keys) {
@@ -581,94 +582,6 @@ function readSessionIndex(sandboxName: string, agent: string): SessionIndexEntry
     );
   }
   return parsed;
-}
-
-// Tolerant parsing of `openclaw sessions list --json`.
-//
-//   - Invalid state addressed: the upstream OpenClaw CLI has historically
-//     emitted the session index either as a plain JSON array, wrapped in
-//     `{sessions:[...]}` / `{entries:[...]}` / `{items:[...]}`, with
-//     `sessionId` or `id` as the file-name field, and prefixed with Node
-//     experimental-feature warnings. Each shape variant is enough to break a
-//     strict parser and abort the export.
-//   - Source boundary: NemoClaw must accept the upstream-of-the-day shape
-//     read-only. The upstream-pinned contract is captured in
-//     `agents/openclaw/manifest.yaml -> expected_version`; this code does not
-//     hard-code the literal so the manifest stays the single source of
-//     truth.
-//   - Source-fix constraint: tightening the parser to one shape would
-//     regress against any in-the-wild OpenClaw build that still emits a
-//     legacy shape, and NemoClaw cannot rev the upstream CLI from this side.
-//   - Regression-test coverage: `export.test.ts > parseSessionIndex` covers
-//     each accepted shape plus the log-noise prefix; CLI-level coverage in
-//     `test/sandbox-sessions-export-cli.test.ts` exercises the array and
-//     wrapped-object forms via the stub openshell.
-//   - Removal condition: once OpenClaw documents a single stable JSON
-//     contract for `sessions list --json` in its release notes, this
-//     parser can collapse to the strict shape and the alias map can drop.
-export function parseSessionIndex(output: string): SessionIndexEntry[] | null {
-  const trimmed = output.trim();
-  if (!trimmed) return [];
-  const lines = trimmed.split(/\r?\n/);
-  const candidates: string[] = [];
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const candidate = lines[index]?.trim();
-    if (candidate && (candidate.startsWith("[") || candidate.startsWith("{"))) {
-      candidates.push(candidate);
-    }
-  }
-  candidates.push(trimmed);
-  for (const candidate of candidates) {
-    const entries = tryExtractIndex(candidate);
-    if (entries) return entries;
-  }
-  // Non-empty output, but no JSON-shaped candidate parsed into a recognised
-  // session index. Distinguish this from the empty-string case so callers
-  // can surface a parse error instead of silently treating it as "no
-  // sessions" — the latter would mask an upstream contract drift.
-  return null;
-}
-
-function tryExtractIndex(text: string): SessionIndexEntry[] | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const array = pickIndexArray(parsed);
-  if (!array) return null;
-  // Legitimate empty index — upstream said no sessions.
-  if (array.length === 0) return [];
-  const entries: SessionIndexEntry[] = [];
-  for (const entry of array) {
-    if (!entry || typeof entry !== "object") continue;
-    const obj = entry as Record<string, unknown>;
-    const key = typeof obj.key === "string" ? obj.key : null;
-    const sessionId =
-      typeof obj.sessionId === "string"
-        ? obj.sessionId
-        : typeof obj.id === "string"
-          ? obj.id
-          : null;
-    if (key && sessionId) entries.push({ key, sessionId });
-  }
-  // Non-empty upstream array yielded zero recognised entries — schema drift.
-  // Return null so the caller surfaces a parse error instead of silently
-  // treating it as "no sessions".
-  if (entries.length === 0) return null;
-  return entries;
-}
-
-function pickIndexArray(parsed: unknown): unknown[] | null {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed && typeof parsed === "object") {
-    const obj = parsed as Record<string, unknown>;
-    if (Array.isArray(obj.sessions)) return obj.sessions;
-    if (Array.isArray(obj.entries)) return obj.entries;
-    if (Array.isArray(obj.items)) return obj.items;
-  }
-  return null;
 }
 
 function stagingTarballPath(agent: string): string {

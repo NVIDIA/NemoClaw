@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyVllmRuntimeContextWindow } from "../../../dist/lib/inference/vllm-runtime-context";
+import { applyVllmRuntimeContextWindow } from "./vllm-runtime-context";
 
 function applyContextWindow(
   modelsResponse: unknown,

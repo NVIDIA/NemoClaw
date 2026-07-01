@@ -197,7 +197,9 @@ describe("callOpenclawGateway", () => {
         { encoding: "utf8" },
       );
 
-      expect(result.status).toBe(126);
+      // Login-shell teardown hooks may replace the explicit 126 status, but
+      // the security rejection must remain non-zero and happen before Node.
+      expect(result.status).not.toBe(0);
       expect(result.stderr).toContain("[SECURITY]");
       expect(result.stderr).toContain("expected regular root-owned mode 444 file");
       expect(result.stderr).not.toContain("node should not run");

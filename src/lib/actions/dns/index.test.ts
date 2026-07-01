@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import { runFixCoreDns, runSetupDnsProxy } from "../../../../dist/lib/actions/dns/index.js";
 import type { CommandResult } from "./index";
+import { runFixCoreDns, runSetupDnsProxy } from "./index.js";
 
 function ok(stdout = ""): CommandResult {
   return { status: 0, stdout, stderr: "" };

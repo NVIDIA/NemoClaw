@@ -83,6 +83,10 @@ function suggestGlobalCommand(token: string): string | null {
   return suggestCommand(token, GLOBAL_COMMANDS);
 }
 
+function suggestSandboxName(token: string, registeredNames: readonly string[]): string | null {
+  return suggestCommand(token, registeredNames);
+}
+
 function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
@@ -135,7 +139,7 @@ function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint 
   if (cmd === "policy" && subcommand === "set") {
     return {
       entered: argv.join(" "),
-      command: "openshell policy set --policy <policy-file> <sandbox-name>",
+      command: "openshell policy set --policy <policy-file> --wait <sandbox-name>",
       note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
     };
   }
@@ -224,6 +228,10 @@ async function recoverRequestedSandboxIfNeeded(
     .listSandboxes()
     .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
+    const nameSuggestion = suggestSandboxName(sandboxName, allNames);
+    if (nameSuggestion) {
+      console.error(`  Did you mean: ${CLI_NAME} ${nameSuggestion} ${action}?`);
+    }
     console.error("");
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
@@ -379,6 +387,11 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     .listSandboxes()
     .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
+    const nameSuggestion = suggestSandboxName(cmd, allNames);
+    if (nameSuggestion) {
+      console.error(`  Did you mean: ${CLI_NAME} ${nameSuggestion} connect?`);
+      console.error("");
+    }
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Try: ${CLI_NAME} <sandbox-name> connect`);
     console.error("");
