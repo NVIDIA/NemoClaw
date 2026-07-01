@@ -1,7 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/** Prevent provider-composed OpenShell policy entries from entering mutation paths. */
+/**
+ * Prevent provider-composed OpenShell policy entries from entering mutation
+ * paths.
+ *
+ * invalidState: a refactor introduces an unclassified policy read or changes a
+ * mutation to consume provider-composed `--full` output.
+ * sourceBoundary: typed command builders own argv construction; this audit owns
+ * exhaustive discovery and classification of their production call sites.
+ * whyNotSourceFix: TypeScript cannot distinguish a command array after it
+ * crosses the process runner, so this defense-in-depth check intentionally uses
+ * deterministic source patterns plus repository-wide read-site discovery.
+ * regressionTest: test/policy-mutation-read-discovery.test.ts injects
+ * unaccounted reads and requires this audit to fail.
+ * removalCondition: replace the source-pattern table when mutation and
+ * diagnostic commands carry enforced tagged types through the runner boundary.
+ */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";

@@ -36,9 +36,46 @@ describe("canonical OpenShell policy boundary", () => {
     }
     expect(() => parseOpenShellPolicy("version: [unterminated")).toThrow(/not valid YAML/);
     expect(() => parseOpenShellPolicy("---\nscalar")).toThrow(/must be a YAML mapping/);
+    for (const raw of [
+      "version: 1\nnetwork_policies: invalid",
+      "version: 1\nnetwork_policies: []",
+      "version: 1\nnetwork_policies: null",
+    ]) {
+      expect(() => parseOpenShellPolicy(raw)).toThrow(/network_policies must be a YAML mapping/);
+    }
+    for (const raw of [
+      'version: "1"\nnetwork_policies: {}',
+      "version: 1.5\nnetwork_policies: {}",
+    ]) {
+      expect(() => parseOpenShellPolicy(raw)).toThrow(/version must be a positive integer/);
+    }
     expect(() =>
       parseOpenShellPolicy("FutureKey: value", { allowUnmarkedPolicyBody: true }),
     ).toThrow(/does not contain a policy/);
+  });
+
+  it("keeps strict and legacy modes aligned outside the versionless exception", () => {
+    const marked = "Version: 1\n---\nversion: 1\nnetwork_policies:\n  safe: {}";
+    expect(parseOpenShellPolicy(marked, { allowUnmarkedPolicyBody: true })).toEqual(
+      parseOpenShellPolicy(marked),
+    );
+
+    for (const raw of [
+      "",
+      "---\nscalar",
+      "version: [unterminated",
+      "version: 1\nnetwork_policies: []",
+      'version: "1"\nnetwork_policies: {}',
+    ]) {
+      expect(() => parseOpenShellPolicy(raw)).toThrow();
+      expect(() => parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true })).toThrow();
+    }
+
+    const versionless = "future_policy:\n  keep: true";
+    expect(() => parseOpenShellPolicy(versionless)).toThrow(/does not contain a policy/);
+    expect(parseOpenShellPolicy(versionless, { allowUnmarkedPolicyBody: true }).yamlBody).toBe(
+      versionless,
+    );
   });
 
   it("removes provider-composed policies without mutating other policy fields", () => {

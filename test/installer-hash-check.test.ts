@@ -51,6 +51,7 @@ type FixtureMode =
   | "failure"
   | "missing-brev-pin"
   | "partial"
+  | "partial-manifest-missing"
   | "pr-checker-bypass"
   | "pr-parser-bypass";
 type PinFormatting =
@@ -225,7 +226,13 @@ case "$url" in
         esac
         ;;
       openshell-gateway-checksums-sha256.txt)
-        printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output"
+        case "\${NEMOCLAW_TEST_CURL_MODE}" in
+          partial-manifest-missing)
+            printf '%s\n' 'curl: (22) The requested URL returned error: 404' >&2
+            exit 22
+            ;;
+          *) printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-gateway-checksums-sha256.txt")}' >"$output" ;;
+        esac
         ;;
       openshell-sandbox-checksums-sha256.txt)
         printf '%s' '${CHECKSUM_MANIFESTS.get("openshell-sandbox-checksums-sha256.txt")}' >"$output"
@@ -382,6 +389,19 @@ describe("installer hash verification", () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
     expect(result.stdout).toContain("expected all 10 pinned asset references");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when one OpenShell checksum manifest returns HTTP 404", () => {
+    const result = runFixture("partial-manifest-missing");
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("OK: openshell-checksums-sha256.txt");
+    expect(result.stdout).toContain(
+      "STALE: unable to download openshell-gateway-checksums-sha256.txt",
+    );
+    expect(result.stdout).toContain("OK: openshell-sandbox-checksums-sha256.txt");
+    expect(result.stderr).toContain("requested URL returned error: 404");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
