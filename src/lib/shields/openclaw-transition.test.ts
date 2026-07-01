@@ -138,7 +138,7 @@ describe("OpenClaw shields top-config transaction", () => {
       switch (argv[0]) {
         case "/usr/bin/id":
           return "1000\n";
-        case "/usr/bin/python3":
+        case "/usr/bin/timeout":
           return "";
         default:
           throw new Error(`unexpected privileged command: ${argv.join(" ")}`);
@@ -156,6 +156,10 @@ describe("OpenClaw shields top-config transaction", () => {
       ["/usr/bin/id", "-u", "sandbox"],
       ["/usr/bin/id", "-g", "sandbox"],
       [
+        "/usr/bin/timeout",
+        "--signal=TERM",
+        "--kill-after=5s",
+        "15s",
         "/usr/bin/python3",
         "-I",
         "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
