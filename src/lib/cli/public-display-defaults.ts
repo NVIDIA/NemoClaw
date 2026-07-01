@@ -193,7 +193,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Messaging Channels",
       order: 25,
       usage: "nemoclaw <name> channels status",
-      description: "Channel-specific runtime diagnostics",
+      description: "Messaging channel status",
       flags: "[--channel <channel>] [--json]",
     },
   ],

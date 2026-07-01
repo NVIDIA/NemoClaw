@@ -231,6 +231,11 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Force this
+# after self-wrapper normalization so injected or inherited values cannot make
+# OpenClaw processes probe an impossible credential source.
+export AWS_EC2_METADATA_DISABLED=true
+
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
 # gateway liveness check is meaningful. Its presence means this container has
 # entered the OpenClaw gateway launch path (standalone deployments and the #3975
@@ -2895,6 +2900,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value

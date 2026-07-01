@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CurlProbeResult } from "../adapters/http/probe";
+import {
+  type CurlAuthConfig,
+  createBearerAuthConfig,
+  createOpenAiLikeAuthConfig,
+  createXApiKeyAuthConfig,
+  type OpenAiLikeAuthMode,
+} from "../adapters/http/auth-config";
+import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { getCurlTimingArgs, runCurlProbe } from "../adapters/http/probe";
 import type { ModelCatalogFetchResult, ModelValidationResult } from "../onboard/types";
 
@@ -11,12 +18,26 @@ const { normalizeCredentialValue } = require("../credentials/store");
 export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 
 export interface ProviderModelOptions {
-  runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   buildEndpointUrl?: string;
   /** When "query-param", send the API key as a ?key= URL parameter instead of
    *  an Authorization: Bearer header. Required for Google Gemini which rejects
    *  requests carrying both auth methods. See issue #1960. */
-  authMode?: "bearer" | "query-param";
+  authMode?: OpenAiLikeAuthMode;
+}
+
+function buildOpenAiLikeAuthConfig(apiKey: string, options: ProviderModelOptions): CurlAuthConfig {
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode);
+}
+
+function fetchResultFromError(error: unknown): ModelCatalogFetchResult {
+  return {
+    ok: false,
+    httpStatus: 0,
+    curlStatus: 0,
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 type ModelCatalogItem = {
@@ -94,24 +115,25 @@ export function fetchNvidiaEndpointModels(
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
   const buildEndpointUrl = options.buildEndpointUrl ?? BUILD_ENDPOINT_URL;
+  let authConfig: CurlAuthConfig | undefined;
   try {
-    const result = runCurlProbeImpl([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      "Content-Type: application/json",
-      "-H",
-      `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`,
-      `${buildEndpointUrl}/models`,
-    ]);
+    authConfig = createBearerAuthConfig(normalizeCredentialValue(apiKey));
+    const result = runCurlProbeImpl(
+      [
+        "-sS",
+        ...getCurlTimingArgs(),
+        "-H",
+        "Content-Type: application/json",
+        ...authConfig.args,
+        `${buildEndpointUrl}/models`,
+      ],
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
     return toModelCatalogFetchResult(result);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
+  } finally {
+    authConfig?.cleanup();
   }
 }
 
@@ -153,28 +175,18 @@ export function fetchOpenAiLikeModels(
   options: ProviderModelOptions = {},
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
-  const useQueryParam = options.authMode === "query-param";
-  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = `${String(endpointUrl).replace(/\/+$/, "")}/models`;
-  const url =
-    useQueryParam && normalizedKey
-      ? `${baseUrl}?key=${encodeURIComponent(normalizedKey)}`
-      : baseUrl;
+  let authConfig: CurlAuthConfig | undefined;
   try {
-    const result = runCurlProbeImpl([
-      "-sS",
-      ...getCurlTimingArgs(),
-      ...(!useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : []),
-      url,
-    ]);
+    authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+    const result = runCurlProbeImpl(["-sS", ...getCurlTimingArgs(), ...authConfig.args, baseUrl], {
+      trustedConfigFiles: authConfig.trustedConfigFiles,
+    });
     return toModelCatalogFetchResult(result);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
+  } finally {
+    authConfig?.cleanup();
   }
 }
 
@@ -187,24 +199,25 @@ export function fetchAnthropicModels(
   options: ProviderModelOptions = {},
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  let authConfig: CurlAuthConfig | undefined;
   try {
-    const result = runCurlProbeImpl([
-      "-sS",
-      ...getCurlTimingArgs(),
-      "-H",
-      `x-api-key: ${normalizeCredentialValue(apiKey)}`,
-      "-H",
-      "anthropic-version: 2023-06-01",
-      `${String(endpointUrl).replace(/\/+$/, "")}/v1/models`,
-    ]);
+    authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
+    const result = runCurlProbeImpl(
+      [
+        "-sS",
+        ...getCurlTimingArgs(),
+        ...authConfig.args,
+        "-H",
+        "anthropic-version: 2023-06-01",
+        `${String(endpointUrl).replace(/\/+$/, "")}/v1/models`,
+      ],
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
     return toModelCatalogFetchResult(result, ["id", "name"]);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
+  } finally {
+    authConfig?.cleanup();
   }
 }
 
