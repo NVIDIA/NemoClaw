@@ -3837,6 +3837,8 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
   requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
 
+  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3877,18 +3879,23 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
   const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
   const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
+  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
   if (
     configureTraceIndex === -1 ||
+    prepareWorkspaceIndex === -1 ||
     runVitestIndex === -1 ||
     sanitizeTraceIndex === -1 ||
     deleteTraceIndex === -1 ||
     !(
-      configureTraceIndex < runVitestIndex &&
+      configureTraceIndex < prepareWorkspaceIndex &&
+      prepareWorkspaceIndex < runVitestIndex &&
       runVitestIndex < sanitizeTraceIndex &&
       sanitizeTraceIndex < deleteTraceIndex
     )
   ) {
-    errors.push("live trace setup, Vitest run, sanitizer, and cleanup steps must stay in order");
+    errors.push(
+      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
   }
 
   const summary = requireStep(errors, steps, "Summarize artifacts");

@@ -306,9 +306,6 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare E2E workspace
-        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
-
       - name: Configure live E2E trace directory
         env:
           TARGET_ID: ${{ matrix.id }}
@@ -316,6 +313,9 @@ jobs:
         run: |
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
       - name: Run live E2E tests
         env:

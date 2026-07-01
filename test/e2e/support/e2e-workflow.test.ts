@@ -988,7 +988,7 @@ jobs:
           "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "run-target job missing step: Build trusted live E2E timing summary",
           "run-target job missing step: Delete raw live E2E traces",
-          "live trace setup, Vitest run, sanitizer, and cleanup steps must stay in order",
+          "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
           "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
@@ -1031,6 +1031,33 @@ jobs:
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
         "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild must match the workflow job selector",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects live trace setup after workspace preparation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const steps = workflow.jobs.live?.steps;
+    expect(steps).toEqual(expect.any(Array));
+    const configureIndex = steps.findIndex(
+      (step) => step.name === "Configure live E2E trace directory",
+    );
+    expect(configureIndex).toBeGreaterThanOrEqual(0);
+    const [configureStep] = steps.splice(configureIndex, 1);
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThanOrEqual(0);
+    steps.splice(prepareIndex + 1, 0, configureStep);
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
+        "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

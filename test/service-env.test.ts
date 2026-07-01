@@ -7,12 +7,10 @@ import {
   execSync,
 } from "node:child_process";
 import {
-  chmodSync,
   existsSync,
   lstatSync,
   mkdtempSync,
   readFileSync,
-  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -907,17 +905,7 @@ describe("service environment", () => {
       const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
       const rcPath = join(fakeHome, ".bashrc");
       const tmpFile = join(tmpdir(), `nemoclaw-rc-skip-composed-${process.pid}.sh`);
-      const gatewayLogPath = "/tmp/gateway.log";
-      const gatewayLogBackup = join(tmpdir(), `nemoclaw-gateway-log-backup-${process.pid}`);
-      let gatewayLogBackedUp = false;
       try {
-        if (existsSync(gatewayLogPath)) {
-          renameSync(gatewayLogPath, gatewayLogBackup);
-          gatewayLogBackedUp = true;
-        }
-        writeFileSync(gatewayLogPath, "test gateway log\n", { mode: 0o644 });
-        chmodSync(gatewayLogPath, 0o644);
-
         const shimLine = `[ -f ${proxyEnvPath} ] && . ${proxyEnvPath}`;
         const originalBashrc = [
           "# user-managed bashrc owned by a foreign uid (e.g. root)",
@@ -969,18 +957,6 @@ describe("service environment", () => {
         const rcAfter = readFileSync(rcPath, "utf-8");
         expect(rcAfter).toBe(originalBashrc);
       } finally {
-        try {
-          unlinkSync(gatewayLogPath);
-        } catch {
-          /* ignore */
-        }
-        if (gatewayLogBackedUp) {
-          try {
-            renameSync(gatewayLogBackup, gatewayLogPath);
-          } catch {
-            /* ignore */
-          }
-        }
         try {
           unlinkSync(tmpFile);
         } catch {
