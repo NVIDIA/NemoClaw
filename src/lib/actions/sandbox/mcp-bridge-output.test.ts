@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { McpBridgeEntry } from "../../state/registry";
-import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 
 const baseEntry: McpBridgeEntry = {
   server: "github",
@@ -116,5 +116,21 @@ describe("MCP adapter output redaction", () => {
 
     expect(redacted).toBe("Authorization: Bearer ***REDACTED***\nnext line kept");
     expect(redacted).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
+  });
+
+  it("strips ANSI before redacting split credential values from command output", () => {
+    const secret = "ansi-split-secret";
+    const redacted = commandOutput(
+      {
+        status: 0,
+        stdout: `\u001b[2mId:\u001b[0m provider-id\nraw ${secret.slice(0, 5)}\u001b[31m${secret.slice(5)}\u001b[0m`,
+        stderr: "",
+      },
+      { MCP_TOKEN: secret },
+    );
+
+    expect(redacted).toBe("Id: provider-id\nraw ***REDACTED***");
+    expect(redacted).not.toContain(secret);
+    expect(redacted).not.toContain("\u001b");
   });
 });

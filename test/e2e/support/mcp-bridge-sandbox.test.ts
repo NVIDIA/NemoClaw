@@ -19,6 +19,7 @@ import {
 import {
   buildRawOpenShellAllowedIpsRebindingPolicy,
   buildRawOpenShellAllowedIpsRebindingProbeScript,
+  parseRawOpenShellAllowedIpsRebindingEndpoint,
   RAW_OPENSHELL_REBIND_HOSTNAME,
   RAW_OPENSHELL_REBIND_HTTP_CODE_MARKER,
   RAW_OPENSHELL_REBIND_PINNED_IP,
@@ -208,6 +209,28 @@ network_policies:
         rules: [{ allow: { method: "tools/list" } }],
       }),
     ]);
+  });
+
+  it("reads the effective raw policy semantically when OpenShell quotes allowed IPs", () => {
+    const endpoint = parseRawOpenShellAllowedIpsRebindingEndpoint(`Version: 1
+---
+version: 1
+network_policies:
+  ${RAW_OPENSHELL_REBIND_POLICY_KEY}:
+    endpoints:
+      - host: ${RAW_OPENSHELL_REBIND_HOSTNAME}
+        port: 31337
+        protocol: mcp
+        allowed_ips:
+          - '${RAW_OPENSHELL_REBIND_PINNED_IP}'
+`);
+
+    expect(endpoint).toMatchObject({
+      allowed_ips: [RAW_OPENSHELL_REBIND_PINNED_IP],
+      host: RAW_OPENSHELL_REBIND_HOSTNAME,
+      port: 31337,
+      protocol: "mcp",
+    });
   });
 
   it("passes only an exact HTTP 403 and rejects an allowed response", () => {

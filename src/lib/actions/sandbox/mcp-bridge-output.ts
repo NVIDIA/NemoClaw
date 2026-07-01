@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { stripAnsi } from "../../adapters/openshell/client";
 import { redactStandaloneSecretsFull } from "../../security/redact";
 import type { McpBridgeEntry } from "../../state/registry";
 
@@ -151,7 +152,10 @@ function redactMcpOutput(
   entry: Pick<McpBridgeEntry, "env"> | undefined,
   envValues: Record<string, string>,
 ): string {
-  let output = text || "";
+  // Preserve the semantic text before removing standalone control bytes.
+  // Otherwise an SGR label such as `\x1b[2mId:\x1b[0m` becomes
+  // `[2mId:[0m`, which is safe to display but no longer parseable.
+  let output = stripAnsi(text || "");
   for (const value of explicitCredentialValues(entry, envValues)) {
     output = output.replaceAll(value, MCP_REDACTION_MARKER);
   }

@@ -13,6 +13,7 @@ import {
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge";
+import { commandOutput } from "./mcp-bridge-output";
 import {
   snapshotMcpCredentialRevision,
   waitForAttachedMcpCredential,
@@ -55,6 +56,29 @@ Provider:
       type: "generic",
       credentialKeys: [],
     });
+  });
+
+  it("parses ANSI-decorated OpenShell provider metadata after redaction", () => {
+    const output = commandOutput({
+      status: 0,
+      stdout: [
+        "\u001b[2mProvider:\u001b[0m",
+        "\u001b[2m  Id:\u001b[0m 11111111-2222-4333-8444-555555555555",
+        "\u001b[2m  Type:\u001b[0m generic",
+        "\u001b[2m  Resource version:\u001b[0m 7",
+        "\u001b[2m  Credential keys:\u001b[0m GITHUB_TOKEN",
+      ].join("\n"),
+      stderr: "",
+    });
+
+    expect(parseMcpProviderMetadata(output)).toEqual({
+      id: "11111111-2222-4333-8444-555555555555",
+      resourceVersion: 7,
+      type: "generic",
+      credentialKeys: ["GITHUB_TOKEN"],
+    });
+    expect(output).not.toContain("\u001b");
+    expect(output).not.toMatch(/\[[0-9;]*m/);
   });
 
   it("distinguishes a real detach from OpenShell's idempotent success", () => {

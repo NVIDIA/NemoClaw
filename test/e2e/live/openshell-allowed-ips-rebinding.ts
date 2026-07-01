@@ -32,6 +32,17 @@ type RawOpenShellPolicy = Record<string, unknown> & {
   network_policies?: Record<string, unknown>;
 };
 
+type RawOpenShellEndpoint = Record<string, unknown> & {
+  allowed_ips?: unknown;
+  host?: unknown;
+  port?: unknown;
+  protocol?: unknown;
+};
+
+function isMapping(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function resultText(result: Pick<ShellProbeResult, "stderr" | "stdout">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -42,6 +53,34 @@ function parseRawPolicy(yaml: string): RawOpenShellPolicy {
     throw new Error("OpenShell base policy must be a YAML mapping");
   }
   return parsed as RawOpenShellPolicy;
+}
+
+export function parseRawOpenShellAllowedIpsRebindingEndpoint(
+  effectivePolicyOutput: string,
+): RawOpenShellEndpoint {
+  const policy = parseOpenShellPolicy(effectivePolicyOutput, {
+    allowUnmarkedPolicyBody: true,
+  }).policy;
+  const networkPolicies = policy.network_policies;
+  if (!isMapping(networkPolicies)) {
+    throw new Error("effective OpenShell policy must contain network_policies");
+  }
+  const rawPolicy = networkPolicies[RAW_OPENSHELL_REBIND_POLICY_KEY];
+  if (!isMapping(rawPolicy) || !Array.isArray(rawPolicy.endpoints)) {
+    throw new Error(
+      `effective OpenShell policy must contain ${RAW_OPENSHELL_REBIND_POLICY_KEY} endpoints`,
+    );
+  }
+  const endpoint = rawPolicy.endpoints.find(
+    (candidate): candidate is RawOpenShellEndpoint =>
+      isMapping(candidate) && candidate.host === RAW_OPENSHELL_REBIND_HOSTNAME,
+  );
+  if (!endpoint) {
+    throw new Error(
+      `effective OpenShell policy must contain the ${RAW_OPENSHELL_REBIND_HOSTNAME} endpoint`,
+    );
+  }
+  return endpoint;
 }
 
 export function buildRawOpenShellAllowedIpsRebindingPolicy(
@@ -247,9 +286,13 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
       },
     );
     expect(effectivePolicy.exitCode, resultText(effectivePolicy)).toBe(0);
-    expect(effectivePolicy.stdout).toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
-    expect(effectivePolicy.stdout).toContain(`- ${RAW_OPENSHELL_REBIND_PINNED_IP}`);
-    expect(effectivePolicy.stdout).toContain("protocol: mcp");
+    const effectiveEndpoint = parseRawOpenShellAllowedIpsRebindingEndpoint(effectivePolicy.stdout);
+    expect(effectiveEndpoint).toMatchObject({
+      allowed_ips: [RAW_OPENSHELL_REBIND_PINNED_IP],
+      host: RAW_OPENSHELL_REBIND_HOSTNAME,
+      port: server.port,
+      protocol: "mcp",
+    });
 
     await remapDnsRebindingHostname(
       options.host,

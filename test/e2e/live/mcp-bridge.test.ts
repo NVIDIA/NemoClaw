@@ -1246,7 +1246,7 @@ liveAgentMatrixTest(
       artifactName: "onboard-hermes-mcp-bridge",
     });
     await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes", {
-      recoverAgentRuntime: true,
+      verifyManagedAgentRuntime: true,
     });
     cleanup.add("remove Hermes MCP bridge", () =>
       bestEffortRemoveBridge(host, HERMES_SANDBOX_NAME),
@@ -1318,7 +1318,7 @@ liveAgentMatrixTest(
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     const rebuildDiscoveryOffset = fakeMcp.requests.length;
     await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes-rebuild", {
-      recoverAgentRuntime: true,
+      verifyManagedAgentRuntime: true,
     });
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
       requestOffset: rebuildDiscoveryOffset,

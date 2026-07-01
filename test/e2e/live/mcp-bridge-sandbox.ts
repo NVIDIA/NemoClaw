@@ -8,6 +8,9 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
+const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
+const HERMES_API_HEALTH_URL = "http://127.0.0.1:8642/health";
+const HERMES_MANAGED_RUNTIME_WAIT_MS = 90_000;
 
 export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
 
@@ -161,6 +164,50 @@ async function waitForSandboxAfterRestart(
   throw new Error(`OpenShell sandbox '${sandboxName}' did not recover after installing test CA`);
 }
 
+/**
+ * Prove that the same-UID Hermes supervisor has recovered after the container
+ * restart. OpenShell can accept sandbox execs before the image entrypoint has
+ * finished starting Hermes, so sandbox readiness alone is not enough.
+ *
+ * The packaged transaction helper owns the root-lifecycle-marker validation:
+ * a sandbox-identity process cannot use this path in the legacy root-separated
+ * topology. The API health check then closes the smaller race between trusted
+ * process identity and the public Hermes relay becoming ready.
+ */
+export function buildHermesManagedRuntimeReadinessScript(): string {
+  return [
+    "set -eu",
+    `${shellQuote(HERMES_MCP_TRANSACTION_HELPER)} probe >/dev/null`,
+    `http_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(HERMES_API_HEALTH_URL)} 2>/dev/null || true)"`,
+    'case "$http_code" in 200|401) exit 0 ;; *) exit 1 ;; esac',
+  ].join("\n");
+}
+
+async function waitForHermesManagedRuntimeAfterRestart(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactPrefix: string,
+): Promise<void> {
+  const readinessScript = trustedSandboxShellScript(buildHermesManagedRuntimeReadinessScript());
+  const deadline = Date.now() + HERMES_MANAGED_RUNTIME_WAIT_MS;
+  let lastResult: ShellProbeResult | null = null;
+  let attempt = 0;
+  do {
+    attempt += 1;
+    lastResult = await sandbox.execShell(sandboxName, readinessScript, {
+      artifactName: `${artifactPrefix}-wait-for-managed-runtime-after-mcp-ca-restart-${attempt}`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 10_000,
+    });
+    if (lastResult.exitCode === 0) return;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  } while (Date.now() < deadline);
+  throw new Error(
+    `${artifactPrefix} managed Hermes runtime did not recover after installing MCP test CA\nstdout:\n${lastResult?.stdout ?? ""}\nstderr:\n${lastResult?.stderr ?? ""}`,
+  );
+}
+
 async function collectHermesRecoveryDiagnostics(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -195,7 +242,7 @@ export async function installMcpTestCaInSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
-  options: { recoverAgentRuntime?: boolean } = {},
+  options: { verifyManagedAgentRuntime?: boolean } = {},
 ): Promise<void> {
   const caPath = requireMcpTestCaPath();
   const install = await host.command(
@@ -226,28 +273,20 @@ export async function installMcpTestCaInSandbox(
   }
   await waitForSandboxAfterRestart(sandbox, sandboxName, artifactPrefix);
 
-  if (options.recoverAgentRuntime) {
-    const recover = await host.nemoclaw([sandboxName, "recover"], {
-      artifactName: `${artifactPrefix}-recover-after-mcp-ca-restart`,
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "90",
-      },
-      timeoutMs: 3 * 60_000,
-    });
-    if (recover.exitCode !== 0) {
+  if (options.verifyManagedAgentRuntime) {
+    try {
+      await waitForHermesManagedRuntimeAfterRestart(sandbox, sandboxName, artifactPrefix);
+    } catch (error) {
       const diagnostics = await collectHermesRecoveryDiagnostics(
         sandbox,
         sandboxName,
         artifactPrefix,
       );
-      throw new Error(
-        `${artifactPrefix} recover agent runtime after installing MCP test CA\nstdout:\n${recover.stdout}\nstderr:\n${recover.stderr}\n${diagnostics}`,
-      );
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${diagnostics}`);
     }
     const managedLifecycle = await sandbox.exec(
       sandboxName,
-      ["/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", "probe"],
+      [HERMES_MCP_TRANSACTION_HELPER, "probe"],
       {
         artifactName: `${artifactPrefix}-assert-managed-lifecycle-after-mcp-ca-restart`,
         env: buildAvailabilityProbeEnv(),
