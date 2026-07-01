@@ -49,8 +49,8 @@ export function parseOpenShellPolicy(
   raw: string,
   options: ParseOpenShellPolicyOptions = {},
 ): ParsedOpenShellPolicy {
-  const separatorIndex = raw.indexOf("---");
-  const yamlBody = (separatorIndex >= 0 ? raw.slice(separatorIndex + 3) : raw).trim();
+  const separator = /(?:^|\r?\n)---[ \t]*(?:\r?\n|$)/.exec(raw);
+  const yamlBody = (separator ? raw.slice(separator.index + separator[0].length) : raw).trim();
   if (!yamlBody || /^(error|failed|invalid|warning|status)\b/i.test(yamlBody)) {
     throw new Error(MISSING_POLICY_DOCUMENT);
   }
@@ -68,7 +68,7 @@ export function parseOpenShellPolicy(
       throw new Error(MISSING_POLICY_DOCUMENT);
     }
   } else if (
-    separatorIndex < 0 &&
+    !separator &&
     !("version" in parsed) &&
     !("network_policies" in parsed)
   ) {
