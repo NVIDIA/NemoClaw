@@ -1643,6 +1643,85 @@ function readManifest(backupPath: string): RebuildManifest | null {
 
 // ── Listing ────────────────────────────────────────────────────────
 
+export type RebuildRecoveryManifestValidation =
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
+
+/**
+ * Re-read and validate a prepared rebuild backup before a destructive recovery.
+ *
+ * `getLatestBackup()` validates the manifest schema. Recovery additionally pins
+ * the backup to the target sandbox's own timestamped directory and requires the
+ * persisted sandbox/agent identity to match the registry entry. This keeps an
+ * installer recovery from deleting a sandbox based on a renamed, copied, or
+ * otherwise mismatched manifest.
+ */
+export function validateRebuildRecoveryManifest(
+  sandboxName: string,
+  agentName: string | null | undefined,
+  candidate: RebuildManifest,
+): RebuildRecoveryManifestValidation {
+  const expectedAgent = String(agentName || "openclaw").trim() || "openclaw";
+  const sandboxBackupRoot = path.resolve(REBUILD_BACKUPS_DIR, sandboxName);
+  const expectedBackupPath = path.resolve(sandboxBackupRoot, candidate.timestamp);
+  const candidateBackupPath = path.resolve(candidate.backupPath);
+
+  if (
+    candidateBackupPath !== expectedBackupPath ||
+    path.dirname(candidateBackupPath) !== sandboxBackupRoot ||
+    path.basename(candidateBackupPath) !== candidate.timestamp
+  ) {
+    return {
+      ok: false,
+      reason: `backup path does not match '${sandboxName}' and timestamp '${candidate.timestamp}'`,
+    };
+  }
+
+  const persisted = readManifest(candidateBackupPath);
+  if (!persisted || persisted.version !== MANIFEST_VERSION) {
+    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+  }
+  if (persisted.sandboxName !== sandboxName) {
+    return {
+      ok: false,
+      reason: `manifest sandbox '${persisted.sandboxName}' does not match '${sandboxName}'`,
+    };
+  }
+  if (persisted.agentType !== expectedAgent) {
+    return {
+      ok: false,
+      reason: `manifest agent '${persisted.agentType}' does not match registry agent '${expectedAgent}'`,
+    };
+  }
+  if (
+    persisted.timestamp !== candidate.timestamp ||
+    path.resolve(persisted.backupPath) !== candidateBackupPath
+  ) {
+    return { ok: false, reason: "persisted backup identity changed during validation" };
+  }
+
+  return { ok: true, manifest: persisted };
+}
+
+/**
+ * Confirm that a backup came from a NemoClaw-managed image. Current registry
+ * entries carry a build fingerprint; v0.0.55 managed images predate that field
+ * but carry the same non-empty agent version in the registry and backup. Legacy
+ * custom images intentionally carry neither signal.
+ */
+export function hasPositiveManagedImageEvidence(
+  sandbox: Pick<registry.SandboxEntry, "agentVersion" | "nemoclawVersion">,
+  manifest: Pick<RebuildManifest, "agentVersion">,
+): boolean {
+  const fingerprint = String(sandbox.nemoclawVersion || "").trim();
+  if (fingerprint) return true;
+  const registryAgentVersion = String(sandbox.agentVersion || "").trim();
+  const manifestAgentVersion = String(manifest.agentVersion || "").trim();
+  return Boolean(
+    registryAgentVersion && manifestAgentVersion && registryAgentVersion === manifestAgentVersion,
+  );
+}
+
 /**
  * List available backups for a sandbox, newest first, each enriched with a
  * virtual `snapshotVersion` number.

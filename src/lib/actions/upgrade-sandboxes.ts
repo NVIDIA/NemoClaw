@@ -27,6 +27,7 @@ import {
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
+import * as sandboxState from "../state/sandbox";
 import { rebuildSandbox } from "./sandbox/rebuild";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
@@ -78,6 +79,48 @@ function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
   return parts.join("; ");
 }
 
+type PreparedBackupRecovery = {
+  sandbox: registry.SandboxEntry;
+  manifest: sandboxState.RebuildManifest;
+};
+
+type RejectedBackupRecovery = {
+  sandbox: registry.SandboxEntry;
+  reason: string;
+};
+
+function prepareBackupRecovery(
+  sandbox: registry.SandboxEntry,
+): PreparedBackupRecovery | RejectedBackupRecovery {
+  const latest = sandboxState.getLatestBackup(sandbox.name);
+  if (!latest) {
+    return { sandbox, reason: "no validated pre-upgrade backup was found" };
+  }
+
+  const validation = sandboxState.validateRebuildRecoveryManifest(
+    sandbox.name,
+    sandbox.agent,
+    latest,
+  );
+  if (!validation.ok) {
+    return { sandbox, reason: validation.reason };
+  }
+  if (!sandboxState.hasPositiveManagedImageEvidence(sandbox, validation.manifest)) {
+    return {
+      sandbox,
+      reason:
+        "backup has no positive NemoClaw-managed image evidence (legacy custom images are not auto-recreated)",
+    };
+  }
+  return { sandbox, manifest: validation.manifest };
+}
+
+function isPreparedBackupRecovery(
+  candidate: PreparedBackupRecovery | RejectedBackupRecovery,
+): candidate is PreparedBackupRecovery {
+  return "manifest" in candidate;
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -127,7 +170,24 @@ export async function upgradeSandboxes(
     { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
   );
 
-  if (stale.length === 0 && unknown.length === 0) {
+  const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+  const backupRecoveryAssessments = recoverPreparedBackups
+    ? sandboxes.filter((sandbox) => !liveNames.has(sandbox.name)).map(prepareBackupRecovery)
+    : [];
+  const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
+  const rejectedRecoveries = backupRecoveryAssessments.filter(
+    (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),
+  );
+  const preparedRecoveryNames = new Set(
+    preparedRecoveries.map((candidate) => candidate.sandbox.name),
+  );
+
+  if (
+    stale.length === 0 &&
+    unknown.length === 0 &&
+    preparedRecoveries.length === 0 &&
+    rejectedRecoveries.length === 0
+  ) {
     console.log("  All sandboxes are up to date.");
     return;
   }
@@ -146,6 +206,20 @@ export async function upgradeSandboxes(
       console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
     }
   }
+  if (preparedRecoveries.length > 0) {
+    console.log(`\n  ${B}Prepared backup recovery:${R}`);
+    for (const recovery of preparedRecoveries) {
+      console.log(
+        `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (non-Ready)`,
+      );
+    }
+  }
+  if (rejectedRecoveries.length > 0) {
+    console.log(`\n  ${YW}Backup recovery blocked:${R}`);
+    for (const recovery of rejectedRecoveries) {
+      console.error(`    ${recovery.sandbox.name}  ${recovery.reason}`);
+    }
+  }
   console.log("");
 
   if (checkOnly) {
@@ -155,35 +229,66 @@ export async function upgradeSandboxes(
         `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
       );
     }
+    if (preparedRecoveries.length > 0) {
+      console.log(
+        `  ${preparedRecoveries.length} non-Ready sandbox(es) have a validated pre-upgrade backup.`,
+      );
+    }
+    if (rejectedRecoveries.length > 0) {
+      console.log(
+        `  ${rejectedRecoveries.length} non-Ready sandbox(es) cannot be recovered automatically.`,
+      );
+    }
     console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
     return;
   }
 
   const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
-  if (stopped.length > 0) {
-    console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
+  const stoppedWithoutPreparedBackup = stopped.filter(
+    (sandbox) => !preparedRecoveryNames.has(sandbox.name),
+  );
+  if (stoppedWithoutPreparedBackup.length > 0 && !recoverPreparedBackups) {
+    console.log(
+      `  ${D}Skipping ${stoppedWithoutPreparedBackup.length} stopped sandbox(es) — start them first.${R}`,
+    );
   }
-  if (rebuildable.length === 0) {
+  if (
+    rebuildable.length === 0 &&
+    preparedRecoveries.length === 0 &&
+    rejectedRecoveries.length === 0
+  ) {
     console.log("  No running stale sandboxes to rebuild.");
     return;
   }
 
   let rebuilt = 0;
-  let failed = 0;
-  for (const s of rebuildable) {
+  let failed = rejectedRecoveries.length;
+  const work = [
+    ...rebuildable.map((sandbox) => ({ sandbox, manifest: null })),
+    ...preparedRecoveries.map((recovery) => ({
+      sandbox: { name: recovery.sandbox.name },
+      manifest: recovery.manifest,
+    })),
+  ];
+  for (const item of work) {
+    const { sandbox, manifest } = item;
     if (!skipConfirm) {
-      const answer = await askPrompt(`  Rebuild '${s.name}'? [y/N]: `);
+      const verb = manifest ? "Recover" : "Rebuild";
+      const answer = await askPrompt(`  ${verb} '${sandbox.name}'? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-        console.log(`  Skipped '${s.name}'.`);
+        console.log(`  Skipped '${sandbox.name}'.`);
         continue;
       }
     }
     try {
-      await rebuildSandbox(s.name, ["--yes"], { throwOnError: true });
+      await rebuildSandbox(sandbox.name, ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest ?? undefined,
+      });
       rebuilt++;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`  ${YW}⚠${R} Failed to rebuild '${s.name}': ${errorMessage}`);
+      console.error(`  ${YW}⚠${R} Failed to rebuild '${sandbox.name}': ${errorMessage}`);
       failed++;
     }
   }
