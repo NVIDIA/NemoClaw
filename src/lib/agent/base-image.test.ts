@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 
@@ -11,14 +8,6 @@ type AgentOnboardModule = typeof import("./onboard");
 type DockerImageModule = typeof import("../adapters/docker/image");
 type DockerInspectModule = typeof import("../adapters/docker/inspect");
 type SandboxBaseImageModule = typeof import("../sandbox-base-image");
-
-function removeEmptyDir(dir: string): void {
-  try {
-    fs.rmdirSync(dir);
-  } catch {
-    // Keep pre-existing user directories intact.
-  }
-}
 
 /**
  * Build a minimal Hermes agent manifest for base-image provisioning tests.
@@ -70,7 +59,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
 function withMockedDocker<T>(
   run: (deps: {
     ensureAgentBaseImage: AgentOnboardModule["ensureAgentBaseImage"];
-    createAgentSandbox: AgentOnboardModule["createAgentSandbox"];
     dockerBuildMock: ReturnType<typeof vi.fn>;
     dockerImageInspectMock: ReturnType<typeof vi.fn>;
     resolveSandboxBaseImageMock: ReturnType<typeof vi.fn>;
@@ -110,7 +98,6 @@ function withMockedDocker<T>(
     const agentOnboardModule = require("./onboard") as AgentOnboardModule;
     return run({
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
-      createAgentSandbox: agentOnboardModule.createAgentSandbox,
       dockerBuildMock,
       dockerImageInspectMock,
       resolveSandboxBaseImageMock,
@@ -197,56 +184,6 @@ describe("agent base image provisioning", () => {
         "Failed to build Hermes Agent base image (exit 23)",
       );
       expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
-    });
-  });
-
-  it("excludes live E2E workspace artifacts from staged agent build contexts", () => {
-    withMockedDocker(({ createAgentSandbox, root }) => {
-      const generatedFiles = [
-        ".tmp/nemoclaw-agent-build-context-test/provider.sock",
-        ".e2e/nemoclaw-agent-build-context-test/state.json",
-        "e2e-artifacts/nemoclaw-agent-build-context-test/result.json",
-        "worktrees/nemoclaw-agent-build-context-test/file.txt",
-      ];
-      const cleanupDirs = [
-        ".tmp/nemoclaw-agent-build-context-test",
-        ".e2e/nemoclaw-agent-build-context-test",
-        "e2e-artifacts/nemoclaw-agent-build-context-test",
-        "worktrees/nemoclaw-agent-build-context-test",
-      ];
-      let buildCtx: string | null = null;
-
-      try {
-        for (const relativeFile of generatedFiles) {
-          const artifactPath = path.join(root, relativeFile);
-          fs.mkdirSync(path.dirname(artifactPath), { recursive: true });
-          fs.writeFileSync(artifactPath, "generated artifact");
-        }
-
-        const staged = createAgentSandbox(
-          makeAgent({
-            dockerfileBasePath: null,
-            dockerfilePath: path.join(root, "agents/hermes/Dockerfile"),
-          }),
-        );
-        buildCtx = staged.buildCtx;
-
-        expect(fs.existsSync(staged.stagedDockerfile)).toBe(true);
-        expect(fs.existsSync(path.join(buildCtx, ".tmp"))).toBe(false);
-        expect(fs.existsSync(path.join(buildCtx, ".e2e"))).toBe(false);
-        expect(fs.existsSync(path.join(buildCtx, "e2e-artifacts"))).toBe(false);
-        expect(fs.existsSync(path.join(buildCtx, "worktrees"))).toBe(false);
-      } finally {
-        if (buildCtx) {
-          fs.rmSync(buildCtx, { recursive: true, force: true });
-        }
-        for (const relativeDir of cleanupDirs) {
-          fs.rmSync(path.join(root, relativeDir), { recursive: true, force: true });
-        }
-        for (const relativeDir of [".tmp", ".e2e", "e2e-artifacts", "worktrees"]) {
-          removeEmptyDir(path.join(root, relativeDir));
-        }
-      }
     });
   });
 

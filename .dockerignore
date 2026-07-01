@@ -9,13 +9,6 @@ __pycache__
 .mypy_cache
 *.egg-info
 coverage/
-docs/_build/
-
-# Live E2E and local workspace artifacts
-.e2e/
-.tmp/
-e2e-artifacts/
-worktrees/
 
 # VCS and CI metadata
 .git

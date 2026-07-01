@@ -30,38 +30,6 @@ import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
-const AGENT_BUILD_CONTEXT_EXCLUDED_BASENAMES = new Set([
-  ".claude",
-  ".e2e",
-  ".git",
-  ".idea",
-  ".mypy_cache",
-  ".nemoclaw-maintainer",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".tmp",
-  ".venv",
-  ".vscode",
-  "__pycache__",
-  "coverage",
-  "dist",
-  "e2e-artifacts",
-  "node_modules",
-  "worktrees",
-]);
-
-function shouldCopyAgentBuildContextPath(src: string): boolean {
-  const relativePath = path.relative(ROOT, src);
-  if (relativePath === "") return true;
-  if (
-    relativePath === "docs/_build" ||
-    relativePath.startsWith(`docs${path.sep}_build${path.sep}`)
-  ) {
-    return false;
-  }
-  return !AGENT_BUILD_CONTEXT_EXCLUDED_BASENAMES.has(path.basename(src));
-}
-
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
@@ -189,7 +157,10 @@ export function createAgentSandbox(
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.cpSync(ROOT, buildCtx, {
     recursive: true,
-    filter: shouldCopyAgentBuildContextPath,
+    filter: (src) => {
+      const base = path.basename(src);
+      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
+    },
   });
   const stagedDockerfile = path.join(buildCtx, "Dockerfile");
   fs.copyFileSync(agentDockerfile, stagedDockerfile);
