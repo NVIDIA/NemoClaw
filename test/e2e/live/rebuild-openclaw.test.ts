@@ -241,6 +241,10 @@ function seedRegistryAndSession(): void {
     policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
+    // This test creates an old NemoClaw-managed runtime directly through
+    // OpenShell. Record the managed-image provenance explicitly so rebuild
+    // does not have to guess whether an omitted legacy value meant `--from`.
+    fromDockerfile: null,
   };
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);

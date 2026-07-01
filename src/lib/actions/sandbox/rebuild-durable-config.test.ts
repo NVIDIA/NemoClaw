@@ -54,6 +54,21 @@ describe("resolveRebuildDurableConfig", () => {
     expect(config.fromDockerfileError).toContain("cannot distinguish");
   });
 
+  it("accepts explicit managed-image provenance for an old agent runtime", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agentVersion: "2026.3.11",
+        nemoclawVersion: null,
+        fromDockerfile: null,
+      },
+      createSession({ sandboxName: "other" }),
+    );
+    expect(config.fromDockerfile).toBeNull();
+    expect(config.fromDockerfileError).toBeNull();
+  });
+
   it("does not treat a same-name null image session as proof of a legacy managed image", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",

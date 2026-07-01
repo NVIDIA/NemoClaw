@@ -1603,7 +1603,7 @@ processRecovery.executeSandboxExecCommand = (name, command) => {
 };
 processRecovery.executeSandboxCommand = () => null;
 
-const rebuild = require(${j("actions/sandbox/rebuild.js")});
+const rebuild = require(${j("actions/sandbox/rebuild-pipeline.js")});
 let rebuildCount = 0;
 rebuild.rebuildSandbox = async () => { rebuildCount += 1; };
 

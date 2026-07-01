@@ -306,6 +306,10 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     policyTier: null,
     agent: "hermes",
     agentVersion: OLD_HERMES_REGISTRY_VERSION,
+    // This curated old-version fixture is still a NemoClaw-managed image.
+    // Preserve that provenance explicitly; an absent value must remain
+    // fail-closed because it could represent a custom `--from` image.
+    fromDockerfile: null,
     messaging: { schemaVersion: 1, plan: messagingPlan },
   };
   expect(
