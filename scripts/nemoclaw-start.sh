@@ -3095,22 +3095,43 @@ def is_same_identity_scope_replacement(original, replacement, paired_device, req
     paired_key = norm(paired_device.get("publicKey"))
     original_mode = norm(original.get("clientMode")).lower()
     client_id = norm(original.get("clientId"))
+    replacement_mode = norm(replacement.get("clientMode")).lower()
+    replacement_client_id = norm(replacement.get("clientId"))
     replacement_scopes = requested_scope_view(replacement)
+    allowed_replacement_scopes = {"operator.pairing", "operator.read", "operator.write", "operator.admin"}
+    scope_target_matches = bool(
+        replacement_scopes is not None
+        and (
+            (replacement_scopes.issubset({"operator.pairing", "operator.read", "operator.write"})
+             and canonical_operator_scopes(replacement_scopes) == canonical_operator_scopes(requested))
+            or (replacement.get("isRepair") is True and "operator.admin" in replacement_scopes
+                and replacement_scopes.issubset(allowed_replacement_scopes))
+        )
+    )
     return (
         bool(original_key)
         and original_key == replacement_key == paired_key
         and original_mode == "cli"
-        and norm(replacement.get("clientMode")).lower() == original_mode
+        and (not replacement_mode or replacement_mode == original_mode)
         and norm(paired_device.get("clientMode")).lower() == original_mode
         and bool(client_id)
-        and norm(replacement.get("clientId")) == client_id
+        and (not replacement_client_id or replacement_client_id == client_id)
         and norm(paired_device.get("clientId")) == client_id
+        and norm(replacement.get("deviceId")) == norm(original.get("deviceId"))
         and norm(paired_device.get("deviceId")) == norm(original.get("deviceId"))
         and roles(original) == roles(replacement) == roles(paired_device) == {"operator"}
-        and replacement_scopes is not None
-        and replacement_scopes.issubset({"operator.pairing", "operator.read", "operator.write"})
-        and canonical_operator_scopes(replacement_scopes)
-        == canonical_operator_scopes(requested)
+        and scope_target_matches
+    )
+
+def is_exact_non_admin_scope_request(original, current, paired_device, requested):
+    current_scopes = requested_scope_view(current)
+    return bool(
+        is_same_identity_scope_replacement(original, current, paired_device, requested)
+        and norm(current.get("clientId")) == norm(original.get("clientId"))
+        and norm(current.get("clientMode")).lower() == norm(original.get("clientMode")).lower()
+        and current_scopes is not None
+        and current_scopes.issubset({"operator.pairing", "operator.read", "operator.write"})
+        and canonical_operator_scopes(current_scopes) == canonical_operator_scopes(requested)
     )
 
 def output_mentions_request_id(value):
@@ -3123,15 +3144,22 @@ def is_scope_upgrade_approval_compat_failure(output):
         "gatewayclientrequesterror" in text or "gateway" in text
     )
 
+def is_opaque_gateway_approval_failure(output):
+    text = norm(output).lower()
+    return (("gateway connect failed" in text or "gatewayclientrequesterror" in text)
+            and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", output, re.IGNORECASE))
+
 requested = requested_scope_view(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
-original_pending_key = None
-for key, item in pending.items():
-    if isinstance(item, dict) and item.get("requestId") == request_id:
-        original_pending_key = key
-        break
+original_pending = [
+    (key, item) for key, item in pending.items()
+    if isinstance(item, dict) and norm(item.get("requestId")) == request_id
+]
+if len(original_pending) > 1:
+    raise SystemExit(1)
+original_pending_key, current_original = original_pending[0] if original_pending else (None, None)
 still_pending = original_pending_key is not None
 paired_entry = paired.get(device_id) if device_id else None
 paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
@@ -3140,6 +3168,9 @@ if (not request_id or norm(before.get("requestId")) != request_id or not device_
         or requested is None or not requested.issubset(allowed)
         or "operator.pairing" not in paired_scopes or not isinstance(paired_entry, dict)
         or norm(paired_entry.get("deviceId")) != device_id):
+    raise SystemExit(1)
+if (still_pending
+        and not is_exact_non_admin_scope_request(before, current_original, paired_entry, requested)):
     raise SystemExit(1)
 same_device_pending = [
     (key, item) for key, item in pending.items()
@@ -3157,7 +3188,7 @@ if (request_id and requested and not still_pending and not same_device_pending
 
 # Compatibility boundary: repair only the local OpenClaw device state after a
 # failed approve leaves behind one exact same-identity non-admin replacement, or
-# the older reviewed admin-shaped replacement. The non-admin form must be the
+# the older reviewed OpenClaw-marked admin repair. The non-admin form must be the
 # only canonical-scope match and its request ID must appear in the known gateway
 # failure. Some older failures only surface opaque text, so the state files remain
 # the source of truth for the separately bounded admin-shaped case. Remove this
@@ -3174,26 +3205,29 @@ for key, item in pending.items():
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
             and norm(item.get("deviceId")) == device_id and same_scope_view is not None
             and same_scope_view.issubset(allowed)
-            and is_same_identity_scope_replacement(before, item, paired_entry, requested)):
+            and is_exact_non_admin_scope_request(before, item, paired_entry, requested)):
         same_scope_candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             same_scope_mentioned.append((key, item))
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
-            "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
+            "operator.admin" in item_scopes and item_scopes.issubset(replacement_allowed)
+            and is_same_identity_scope_replacement(before, item, paired_entry, requested)):
         candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             mentioned.append((key, item))
 compatibility = "openclaw-approve-recovered-replacement"
 if (is_scope_upgrade_approval_compat_failure(approve_output)
-        and not still_pending and len(same_device_pending) == 1
+        and len(same_device_pending) == 1
         and len(same_scope_candidates) == 1
         and len(same_scope_mentioned) == 1):
     replacement_key, replacement = same_scope_mentioned[0]
-    compatibility = "openclaw-approve-recovered-same-scope-replacement"
-elif not still_pending and len(same_device_pending) == 1 and len(mentioned) == 1:
+    compatibility = ("openclaw-approve-recovered-coexisting-same-scope-replacement"
+                     if still_pending else "openclaw-approve-recovered-same-scope-replacement")
+elif (is_scope_upgrade_approval_compat_failure(approve_output)
+        and not still_pending and len(same_device_pending) == 1 and len(mentioned) == 1):
     replacement_key, replacement = mentioned[0]
 elif (not still_pending and len(same_device_pending) == 1 and len(candidates) == 1
-        and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE)):
+        and is_opaque_gateway_approval_failure(approve_output)):
     replacement_key, replacement = candidates[0]
 elif (still_pending and not candidates and not same_device_pending
         and is_scope_upgrade_approval_compat_failure(approve_output)):
@@ -3214,7 +3248,8 @@ paired_entry["approvedScopes"] = approved_list
 token = paired_entry.get("tokens", {}).get("operator")
 if isinstance(token, dict):
     token["scopes"] = approved_list
-pending.pop(request_id, None)
+if original_pending_key is not None:
+    pending.pop(original_pending_key, None)
 pending.pop(replacement_key, None)
 paired[device_id] = paired_entry
 save("pending.json", pending)

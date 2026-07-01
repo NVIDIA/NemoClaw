@@ -243,6 +243,12 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("machine.state='openclaw'");
     expect(review).toContain("scripts/check-production-build-args.sh");
     expect(review).toContain("Recovered Gateway Credential Boundary");
+    expect(review).toContain("OpenClaw Device Approval Convergence Boundary");
+    expect(review).toContain("retry through an `isRepair: true` admin-shaped request");
+    expect(review).toContain("never copies or grants `operator.admin`");
+    expect(review).toContain(
+      "delete this compatibility repair when a reviewed OpenClaw release returns success",
+    );
     expect(review).toContain("src/lib/onboard/recovered-provider-reuse.ts");
     expect(review).toContain("passes that route only in memory to the same sandbox's recreate");
     expect(review).toContain("test/onboard-remote-recreate-credential-reuse.test.ts");

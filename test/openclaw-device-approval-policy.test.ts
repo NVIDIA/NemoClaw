@@ -102,6 +102,18 @@ function sameScopeReplacement(requestId = "request-2"): Record<string, unknown> 
   };
 }
 
+function adminRepairReplacement(requestId = "request-2"): Record<string, unknown> {
+  return {
+    requestId,
+    deviceId: "device-1",
+    publicKey: "public-key-1",
+    role: "operator",
+    roles: ["operator"],
+    scopes: ["operator.admin"],
+    isRepair: true,
+  };
+}
+
 function persistApprovedScopes(stateDir: string): void {
   const pairedFile = path.join(stateDir, "devices", "paired.json");
   const paired = JSON.parse(fs.readFileSync(pairedFile, "utf8"));
@@ -164,6 +176,30 @@ describe("openclaw device approval policy (#4462)", () => {
     }
   });
 
+  it.each([
+    ["missing client identity", { ...originalRequest(), clientId: undefined }],
+    ["admin repair scopes", { ...originalRequest(), scopes: ["operator.admin"], isRepair: true }],
+  ])("rejects a still-pending original with %s", (_case, currentOriginal) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, { original: currentOriginal });
+      const pendingFile = path.join(stateDir, "devices", "pending.json");
+      const pairedFile = path.join(stateDir, "devices", "paired.json");
+      const pendingBefore = fs.readFileSync(pendingFile, "utf8");
+      const pairedBefore = fs.readFileSync(pairedFile, "utf8");
+
+      const result = runRecovery(stateDir, "request-1", COMPAT_APPROVE_OUTPUT, originalRequest());
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(fs.readFileSync(pendingFile, "utf8")).toBe(pendingBefore);
+      expect(fs.readFileSync(pairedFile, "utf8")).toBe(pairedBefore);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("recovers the exact output-mentioned same-identity scope replacement", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
     try {
@@ -193,6 +229,118 @@ describe("openclaw device approval policy (#4462)", () => {
         "operator.write",
       ]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers one exact mentioned replacement while the original is still pending", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, {
+        original: originalRequest(),
+        replacement: sameScopeReplacement(),
+      });
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-2)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-coexisting-same-scope-replacement",
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8")),
+      ).toEqual({});
+      expect(fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8")).not.toContain(
+        "operator.admin",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers the sole output-mentioned OpenClaw admin repair without granting admin", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, { replacement: adminRepairReplacement() });
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-2)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-replacement",
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8")),
+      ).toEqual({});
+      const paired = JSON.parse(
+        fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8"),
+      );
+      expect(paired["device-1"].approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
+      expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a marked admin repair after unrelated opaque output", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, { replacement: adminRepairReplacement() });
+      const pendingFile = path.join(stateDir, "devices", "pending.json");
+      const pairedFile = path.join(stateDir, "devices", "paired.json");
+      const pendingBefore = fs.readFileSync(pendingFile, "utf8");
+      const pairedBefore = fs.readFileSync(pairedFile, "utf8");
+
+      const result = runRecovery(stateDir, "request-1", "authorization denied", originalRequest());
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(fs.readFileSync(pendingFile, "utf8")).toBe(pendingBefore);
+      expect(fs.readFileSync(pairedFile, "utf8")).toBe(pairedBefore);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an unrelated entry whose map key equals the original request ID", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      const unrelated = { requestId: "other-request", deviceId: "other-device" };
+      writeReplacementState(stateDir, {
+        replacement: sameScopeReplacement(),
+        "request-1": unrelated,
+      });
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-2)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8")),
+      ).toEqual({ "request-1": unrelated });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -332,6 +480,18 @@ describe("openclaw device approval policy (#4462)", () => {
       originalRequest(),
     ],
     [
+      "missing client identity",
+      { replacement: { ...sameScopeReplacement(), clientId: undefined } },
+      "request-2",
+      originalRequest(),
+    ],
+    [
+      "missing client mode",
+      { replacement: { ...sameScopeReplacement(), clientMode: undefined } },
+      "request-2",
+      originalRequest(),
+    ],
+    [
       "different operator role",
       {
         replacement: {
@@ -367,8 +527,18 @@ describe("openclaw device approval policy (#4462)", () => {
       originalRequest(),
     ],
     [
-      "coexisting original and replacement requests",
-      { original: originalRequest(), replacement: sameScopeReplacement() },
+      "duplicate original requests beside a replacement",
+      {
+        original: originalRequest(),
+        duplicate: originalRequest(),
+        replacement: sameScopeReplacement(),
+      },
+      "request-2",
+      originalRequest(),
+    ],
+    [
+      "admin fallback without the OpenClaw repair marker",
+      { replacement: { ...adminRepairReplacement(), isRepair: false } },
       "request-2",
       originalRequest(),
     ],

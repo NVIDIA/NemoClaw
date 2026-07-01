@@ -47,6 +47,7 @@ function runReplacementCase(
   options: {
     additionalPending?: Record<string, Record<string, unknown>>;
     coexistOriginal?: boolean;
+    opaqueOutput?: string;
     persistedApprovedScopes?: boolean;
   } = {},
 ) {
@@ -76,14 +77,19 @@ function runReplacementCase(
     replacement,
     ...options.additionalPending,
   };
+  const approvalFailureOutput =
+    options.opaqueOutput ??
+    `gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: ${mentionedId})`;
+  const requestIdErrorLine =
+    options.opaqueOutput === undefined ? 'echo "unknown requestId" >&2' : ":";
   fs.writeFileSync(
     path.join(fakeBin, "openclaw"),
     `#!/usr/bin/env bash
 cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
 ${JSON.stringify(replacementState)}
 JSON
-echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: ${mentionedId})" >&2
-echo "unknown requestId" >&2
+printf '%s\n' ${JSON.stringify(approvalFailureOutput)} >&2
+${requestIdErrorLine}
 exit 1
 `,
     { mode: 0o755 },
@@ -161,6 +167,131 @@ describe("nemoclaw-start scope replacement recovery (#4462)", () => {
         "operator.write",
       ]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["client identity", { clientId: undefined }],
+    ["client mode", { clientMode: undefined }],
+  ])("rejects a non-admin replacement missing %s", (_case, missingField) => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+      ...missingField,
+    };
+    const run = runReplacementCase(replacement);
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({ replacement });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers the sole OpenClaw admin repair without granting admin", () => {
+    const replacement = {
+      requestId: "request-2",
+      deviceId: "device-1",
+      publicKey: "public-key-1",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.admin"],
+      isRepair: true,
+    };
+    const run = runReplacementCase(replacement);
+    try {
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(JSON.parse(run.result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-replacement",
+      );
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({});
+      const paired = JSON.parse(fs.readFileSync(run.pairedFile, "utf8"));
+      expect(paired["device-1"].approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
+      expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an admin fallback without the OpenClaw repair marker", () => {
+    const replacement = {
+      requestId: "request-2",
+      deviceId: "device-1",
+      publicKey: "public-key-1",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.admin"],
+      isRepair: false,
+    };
+    const run = runReplacementCase(replacement);
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({ replacement });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a marked admin repair after unrelated opaque output", () => {
+    const replacement = {
+      requestId: "request-2",
+      deviceId: "device-1",
+      publicKey: "public-key-1",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.admin"],
+      isRepair: true,
+    };
+    const run = runReplacementCase(replacement, "", { opaqueOutput: "authorization denied" });
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({ replacement });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves an unrelated entry whose map key equals the original request ID", () => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+    };
+    const unrelated = { requestId: "other-request", deviceId: "other-device" };
+    const run = runReplacementCase(replacement, "request-2", {
+      additionalPending: { "request-1": unrelated },
+    });
+    try {
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({
+        "request-1": unrelated,
+      });
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ["missing client identity", { ...ORIGINAL_REQUEST, clientId: undefined }],
+    ["admin repair scopes", { ...ORIGINAL_REQUEST, scopes: ["operator.admin"], isRepair: true }],
+  ])("rejects a still-pending original with %s", (_case, currentOriginal) => {
+    const run = runReplacementCase(currentOriginal, "request-2");
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({
+        replacement: currentOriginal,
+      });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
     } finally {
       fs.rmSync(run.tmpDir, { recursive: true, force: true });
     }
@@ -269,7 +400,7 @@ describe("nemoclaw-start scope replacement recovery (#4462)", () => {
     }
   });
 
-  it("rejects a replacement while the original request remains pending", () => {
+  it("recovers one exact replacement while the original request remains pending", () => {
     const replacement = {
       ...ORIGINAL_REQUEST,
       requestId: "request-2",
@@ -277,12 +408,12 @@ describe("nemoclaw-start scope replacement recovery (#4462)", () => {
     };
     const run = runReplacementCase(replacement, "request-2", { coexistOriginal: true });
     try {
-      expect(run.result.status).toBe(1);
-      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({
-        original: ORIGINAL_REQUEST,
-        replacement,
-      });
-      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(JSON.parse(run.result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-coexisting-same-scope-replacement",
+      );
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({});
+      expect(fs.readFileSync(run.pairedFile, "utf8")).not.toContain("operator.admin");
     } finally {
       fs.rmSync(run.tmpDir, { recursive: true, force: true });
     }
