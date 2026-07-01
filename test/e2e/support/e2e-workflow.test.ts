@@ -627,19 +627,17 @@ describe("e2e workflow boundary", () => {
         { env?: Record<string, unknown>; steps?: Array<Record<string, unknown>> }
       >;
     };
-    const missing: string[] = [];
-    for (const [jobName, job] of Object.entries(workflow.jobs)) {
-      if (job.env?.E2E_JOB !== "1") continue;
-      for (const step of job.steps ?? []) {
-        const run = typeof step.run === "string" ? step.run : "";
-        for (const match of run.matchAll(/test\/e2e\/live\/[A-Za-z0-9_.\/-]+\.test\.ts/g)) {
-          const testPath = match[0];
-          if (!fs.existsSync(path.join(process.cwd(), testPath))) {
-            missing.push(`${jobName} -> ${testPath}`);
-          }
-        }
-      }
-    }
+
+    const missing = Object.entries(workflow.jobs)
+      .filter(([, job]) => job.env?.E2E_JOB === "1")
+      .flatMap(([jobName, job]) =>
+        (job.steps ?? []).flatMap((step) =>
+          [...String(step.run ?? "").matchAll(/test\/e2e\/live\/[A-Za-z0-9_.\/-]+\.test\.ts/g)]
+            .map((match) => match[0])
+            .filter((testPath) => !fs.existsSync(path.join(process.cwd(), testPath)))
+            .map((testPath) => `${jobName} -> ${testPath}`),
+        ),
+      );
 
     expect(missing).toEqual([]);
   });
