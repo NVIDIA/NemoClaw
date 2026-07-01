@@ -43,12 +43,11 @@ function extractOpenClawBootstrapEnvSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
   const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
   const end = src.indexOf("# Marker file the Docker HEALTHCHECK reads", start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(
-      "Failed to extract OpenClaw bootstrap environment normalization from " +
-        "scripts/nemoclaw-start.sh",
-    );
-  }
+  const extractionFailure =
+    "Failed to extract OpenClaw bootstrap environment normalization from " +
+    "scripts/nemoclaw-start.sh";
+  expect(start, extractionFailure).not.toBe(-1);
+  expect(end, extractionFailure).toBeGreaterThan(start);
   return src.slice(start, end).trimEnd();
 }
 
