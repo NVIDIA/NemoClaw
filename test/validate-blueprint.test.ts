@@ -33,6 +33,10 @@ const TAVILY_POLICY_PRESET_PATH = new URL(
   "../nemoclaw-blueprint/policies/presets/tavily.yaml",
   import.meta.url,
 );
+const DEEPAGENTS_POLICY_PATH = new URL(
+  "../agents/langchain-deepagents-code/policy-additions.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
@@ -91,6 +95,7 @@ type PolicyEntry = {
 
 type SandboxPolicy = {
   version?: number;
+  filesystem_policy?: { read_only?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -484,6 +489,7 @@ describe("Brave Search provider profile", () => {
 describe("Tavily Search provider profile", () => {
   const profile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_PATH);
   const preset = loadYaml<PolicyPreset>(TAVILY_POLICY_PRESET_PATH);
+  const deepAgentsPolicy = loadYaml<SandboxPolicy>(DEEPAGENTS_POLICY_PATH);
 
   it("routes TAVILY_API_KEY through a bearer authorization header", () => {
     expect(profile.id).toBe("tavily");
@@ -521,6 +527,15 @@ describe("Tavily Search provider profile", () => {
   it("keeps its binary allowlist aligned with the Tavily policy preset", () => {
     const presetBinaries = preset.network_policies?.tavily?.binaries?.map(({ path }) => path);
     expect(profile.binaries).toEqual(presetBinaries);
+  });
+
+  it("anchors managed Python access to Deep Agents Code's read-only venv", () => {
+    const managedPython = "/opt/venv/bin/python3*";
+    const managedInferenceBinaries = deepAgentsPolicy.network_policies?.managed_inference?.binaries;
+
+    expect(deepAgentsPolicy.filesystem_policy?.read_only).toContain("/opt/venv");
+    expect(managedInferenceBinaries).toContainEqual({ path: managedPython });
+    expect(profile.binaries).toContain(managedPython);
   });
 });
 
