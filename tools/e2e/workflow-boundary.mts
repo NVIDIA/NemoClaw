@@ -9,6 +9,7 @@ import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workfl
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
+import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
 
@@ -712,18 +713,6 @@ function validateOpenShellVersionPinJob(errors: string[], jobs: WorkflowRecord):
     errors.push("openshell-version-pin checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openshell-version-pin job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openshell-version-pin setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run OpenShell version-pin live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openshell-version-pin.test.ts");
@@ -791,21 +780,6 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("skill-agent checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("skill-agent job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "skill-agent setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -951,21 +925,6 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
     ["expect"],
   );
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("network-policy job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "network-policy setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1102,21 +1061,6 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("common-egress-agent checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("common-egress-agent job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "common-egress-agent setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1227,18 +1171,6 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("shields-config checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("shields-config job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "shields-config setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run shields-config live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -1315,21 +1247,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("rebuild-openclaw checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("rebuild-openclaw job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "rebuild-openclaw setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireEnvDoesNotExposeSecret(
@@ -1463,18 +1380,6 @@ function validateRebuildHermesJob(
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
-  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -1583,21 +1488,6 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("sandbox-rebuild checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("sandbox-rebuild job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "sandbox-rebuild setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -1709,21 +1599,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
     errors.push("state-backup-restore checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("state-backup-restore job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "state-backup-restore setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1828,21 +1703,6 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
     errors.push("upgrade-stale-sandbox checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("upgrade-stale-sandbox job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "upgrade-stale-sandbox setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -1930,21 +1790,6 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("token-rotation checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("token-rotation job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "token-rotation setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run token rotation live test");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -2093,21 +1938,6 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
     errors.push("messaging-compatible-endpoint checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("messaging-compatible-endpoint job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "messaging-compatible-endpoint setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -2214,21 +2044,6 @@ function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord)
     errors.push("onboard-negative-paths checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("onboard-negative-paths job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "onboard-negative-paths setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run onboard negative-paths live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/onboard-negative-paths.test.ts");
@@ -2307,21 +2122,6 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("cloud-inference checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("cloud-inference job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "cloud-inference setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run cloud inference live test");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -2667,21 +2467,6 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
     errors.push("double-onboard checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("double-onboard job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "double-onboard setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installTools = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installTools, "bash scripts/install-openshell.sh");
 
@@ -2758,18 +2543,6 @@ function validateRuntimeOverridesJob(errors: string[], jobs: WorkflowRecord): vo
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("runtime-overrides checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("runtime-overrides job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "runtime-overrides setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
@@ -2855,21 +2628,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-e2e checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-e2e job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-e2e setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run Hermes live Vitest test");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -2994,18 +2752,6 @@ function validateHermesRootEntrypointSmokeJob(errors: string[], jobs: WorkflowRe
     errors.push("hermes-root-entrypoint-smoke checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-root-entrypoint-smoke job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-root-entrypoint-smoke setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -3098,18 +2844,6 @@ function validateHermesSandboxSecretBoundaryJob(errors: string[], jobs: Workflow
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("hermes-sandbox-secret-boundary checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("hermes-sandbox-secret-boundary job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "hermes-sandbox-secret-boundary setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(
     errors,
@@ -3227,21 +2961,6 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
     errors.push("diagnostics checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("diagnostics job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "diagnostics setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(errors, jobName, steps, "Run diagnostics live test");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
@@ -3342,20 +3061,6 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("spark-install checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("spark-install job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "spark-install setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run Spark install live test");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -3459,20 +3164,6 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("snapshot-commands checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("snapshot-commands job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "snapshot-commands setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run snapshot commands live test");
   const runVitestEnv = asRecord(runVitest?.env);
@@ -3587,23 +3278,6 @@ function validateModelRouterProviderRoutedInferenceJob(
       "model-router-provider-routed-inference checkout step must set persist-credentials=false",
     );
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("model-router-provider-routed-inference job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "model-router-provider-routed-inference setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireJobStep(
     errors,
@@ -3743,23 +3417,6 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("tunnel-lifecycle checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("tunnel-lifecycle job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "tunnel-lifecycle setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const cloudflaredPrereq = requireJobStep(
     errors,
@@ -3904,23 +3561,6 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("issue-2478-crash-loop-recovery checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("issue-2478-crash-loop-recovery job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "issue-2478-crash-loop-recovery setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -4067,21 +3707,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
     errors.push("channels-add-remove checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-add-remove job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-add-remove setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4180,21 +3805,6 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
     errors.push("openclaw-discord-pairing checkout step must set persist-credentials=false");
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-discord-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-discord-pairing setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4287,21 +3897,6 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("openclaw-slack-pairing checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-slack-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-slack-pairing setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -4434,21 +4029,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("channels-stop-start checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-stop-start job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-stop-start setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -4692,23 +4272,6 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     );
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) {
-    errors.push("bedrock-runtime-compatible-anthropic job missing step: Set up Node");
-  }
-  requireFullShaAction(errors, setupNode, "bedrock-runtime-compatible-anthropic setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
   const runVitest = requireJobStep(
     errors,
     jobName,
@@ -4760,6 +4323,7 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
+  errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
@@ -4823,9 +4387,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (asRecord(generateCheckout?.with)["persist-credentials"] !== false) {
     errors.push("generate-matrix checkout step must set persist-credentials=false");
   }
-  const generateSetupNode = namedStep(generateSteps, "Set up Node");
-  if (!generateSetupNode) errors.push("generate-matrix job missing step: Set up Node");
-  requireFullShaAction(errors, generateSetupNode, "generate-matrix setup-node");
   const generate = requireStep(errors, generateSteps, "Generate E2E target matrix");
   const generateEnv = asRecord(generate?.env);
   if (generateEnv.JOBS !== "${{ inputs.jobs }}") {
@@ -4927,13 +4488,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push("checkout step must set persist-credentials=false");
   }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("live job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "setup-node");
-
-  const buildCli = requireStep(errors, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
 
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);

@@ -72,7 +72,7 @@ describe("inference switch workflow boundary", () => {
     );
     [steps[cleanupIndex], steps[uploadIndex]] = [steps[uploadIndex], steps[cleanupIndex]];
     expect(validateInferenceSwitchWorkflow(lingeringCredentials)).toContain(
-      "openclaw-inference-switch must authenticate, build, test, upload artifacts, then clean credentials",
+      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
     );
   });
 

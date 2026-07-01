@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 // Current-state security boundary for the default sandbox-operations job.
 // The shared workflow boundary owns the guarded Docker login and cleanup
@@ -140,8 +141,8 @@ export function validateSandboxOperationsWorkflow(workflow: {
     }
   }
 
-  requireStepOrder(errors, steps, authenticate.name ?? "", "Build CLI");
-  requireStepOrder(errors, steps, "Build CLI", verifyLauncher.name ?? "");
+  requireStepOrder(errors, steps, authenticate.name ?? "", PREPARE_E2E_STEP);
+  requireStepOrder(errors, steps, PREPARE_E2E_STEP, verifyLauncher.name ?? "");
   requireStepOrder(errors, steps, verifyLauncher.name ?? "", "Install OpenShell CLI");
   requireStepOrder(errors, steps, "Install OpenShell CLI", "Run sandbox operations live test");
 
