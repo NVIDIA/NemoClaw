@@ -36,6 +36,11 @@ function allEndpoints(policy: Record<string, any>): Endpoint[] {
   ).flatMap((entry) => entry.endpoints ?? []);
 }
 
+function requireNonEmpty<T>(items: T[], label: string): T[] {
+  expect(items[0], label).toBeDefined();
+  return items;
+}
+
 function expectInspectedWebSocket(endpoint: Endpoint | undefined): void {
   expect(endpoint).toBeTruthy();
   expect(endpoint).toMatchObject({
@@ -69,10 +74,12 @@ describe("channel-owned messaging policy YAML", () => {
       ),
     ];
     const slackRestHosts = new Set(["slack.com", "api.slack.com", "hooks.slack.com"]);
+    const slackRestEndpoints = requireNonEmpty(
+      sources.flatMap(allEndpoints).filter((entry) => slackRestHosts.has(entry.host ?? "")),
+      "expected Slack REST endpoints in channel and permissive policies",
+    );
 
-    for (const endpoint of sources
-      .flatMap(allEndpoints)
-      .filter((entry) => slackRestHosts.has(entry.host ?? ""))) {
+    for (const endpoint of slackRestEndpoints) {
       expect(endpoint).toMatchObject({
         protocol: "rest",
         request_body_credential_rewrite: true,
@@ -113,10 +120,19 @@ describe("channel-owned messaging policy YAML", () => {
     const sortRules = (rules: Array<{ method: string; path: string }>) =>
       [...rules].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
 
-    const nousRules = rulesFor("nous_research", "nousresearch.com");
-    expect(nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method))).toEqual(
-      [],
+    const discordEndpoints = requireNonEmpty(
+      networkPolicies.discord?.endpoints ?? [],
+      "expected Hermes Discord endpoints",
     );
+    const nonDiscordMutationRules = discordEndpoints
+      .filter((endpoint) => endpoint.host !== "discord.com")
+      .flatMap((endpoint) => endpoint.rules ?? [])
+      .map((rule) => rule.allow)
+      .filter((rule): rule is { method: string; path: string } =>
+        Boolean(rule?.method && rule?.path),
+      )
+      .filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method));
+    expect(nonDiscordMutationRules).toEqual([]);
 
     const discordMutationRules = sortRules(
       rulesFor("discord", "discord.com").filter((rule) =>

@@ -45,6 +45,21 @@ describe("messaging channel policy presets", () => {
     );
   });
 
+  it("does not fall back to OpenClaw policies for unsupported agents", () => {
+    expect(
+      loadMessagingChannelPolicyPreset("telegram", { agent: "langchain-deepagents-code" }),
+    ).toBeNull();
+    expect(
+      resolveMessagingChannelPolicyPresetPath("telegram", "langchain-deepagents-code"),
+    ).toBeNull();
+    expect(listMessagingChannelPolicyPresets({ agent: "langchain-deepagents-code" })).toEqual([]);
+  });
+
+  it("returns null for unknown channel policy presets", () => {
+    expect(loadMessagingChannelPolicyPreset("nonexistent", { agent: "hermes" })).toBeNull();
+    expect(resolveMessagingChannelPolicyPresetPath("nonexistent", "hermes")).toBeNull();
+  });
+
   it("ships a policy file for every manifest-supported agent and preset", () => {
     const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>
       manifest.supportedAgents.flatMap((agent) =>

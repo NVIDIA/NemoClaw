@@ -23,8 +23,12 @@ export interface MessagingChannelPolicyPresetInfo {
   readonly agent: MessagingAgentId;
 }
 
-function normalizeAgent(agent: MessagingAgentId | string | null | undefined): MessagingAgentId {
-  return agent === "hermes" ? "hermes" : "openclaw";
+function normalizeAgent(
+  agent: MessagingAgentId | string | null | undefined,
+): MessagingAgentId | null {
+  if (agent == null) return "openclaw";
+  if (agent === "openclaw" || agent === "hermes") return agent;
+  return null;
 }
 
 function isSafeId(value: string): boolean {
@@ -70,7 +74,8 @@ export function resolveMessagingChannelPolicyPresetPath(
   agent: MessagingAgentId | string | null | undefined = "openclaw",
 ): string | null {
   const normalizedAgent = normalizeAgent(agent);
-  for (const preset of listMessagingPolicyPresetMetadata()) {
+  if (!normalizedAgent) return null;
+  for (const preset of listMessagingPolicyPresetMetadata({ agent: normalizedAgent })) {
     if (preset.presetName !== presetName) continue;
     const file = channelPolicyPath(preset.channelId, normalizedAgent);
     if (file && fs.existsSync(file)) return file;
@@ -93,6 +98,7 @@ export function listMessagingChannelPolicyPresets(
   options: { readonly agent?: MessagingAgentId | string | null } = {},
 ): MessagingChannelPolicyPresetInfo[] {
   const agent = normalizeAgent(options.agent);
+  if (!agent) return [];
   const result: MessagingChannelPolicyPresetInfo[] = [];
   const seen = new Set<string>();
   for (const preset of listMessagingPolicyPresetMetadata({ agent })) {
