@@ -12,6 +12,7 @@ type ReusableCallerJob = {
 };
 
 type Workflow = {
+  permissions?: Record<string, string>;
   on?: {
     workflow_call?: {
       inputs?: Record<string, unknown>;
@@ -45,6 +46,15 @@ describe("Brev nightly workflow contract", () => {
       expect(unknownInputs, `${jobName} passes unsupported reusable workflow inputs`).toEqual([]);
       expect(unknownSecrets, `${jobName} passes unsupported reusable workflow secrets`).toEqual([]);
     }
+  });
+
+  it("grants the reusable workflow permission ceiling so GitHub can start the run", () => {
+    expect(nightly.permissions).toEqual(branchValidation.permissions);
+    expect(nightly.permissions).toEqual({
+      contents: "read",
+      checks: "write",
+      "pull-requests": "write",
+    });
   });
 
   it("does not expose stale published-launchable controls", () => {

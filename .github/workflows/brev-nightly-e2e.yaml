@@ -28,6 +28,12 @@ on:
 
 permissions:
   contents: read
+  # The reusable branch-validation workflow creates check runs and PR comments
+  # when pr_number is supplied. GitHub validates the called workflow's complete
+  # permission set at startup even though nightly leaves pr_number empty, so the
+  # caller must grant the same ceiling or the run terminates with zero jobs.
+  checks: write
+  pull-requests: write
 
 concurrency:
   group: brev-nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
