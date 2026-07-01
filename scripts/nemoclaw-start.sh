@@ -1065,6 +1065,10 @@ PYOVERRIDE
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/3175
 
 reconcile_agent_model_with_provider() {
+  # apply_model_override already won; reconciling against the gateway would
+  # overwrite the user's explicit choice with an inference/-prefixed variant.
+  [ -z "${NEMOCLAW_MODEL_OVERRIDE:-}" ] || return 0
+
   if [ "$(id -u)" -ne 0 ]; then
     return 0
   fi
@@ -4464,7 +4468,9 @@ openclaw_runtime_guard_chain_complete() {
 
 restore_openclaw_runtime_guard_chain() {
   if ! openclaw_runtime_guard_chain_complete; then
-    echo "[gateway-recovery] WARNING: /tmp guard chain missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)" >&2
+    local _guard_warn="[gateway-recovery] WARNING: /tmp guard chain missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)"
+    echo "$_guard_warn" >&2
+    echo "$_guard_warn" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
   fi
 
   # Preserve startup ordering: immutable core preloads first, then the

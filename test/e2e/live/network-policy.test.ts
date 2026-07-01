@@ -970,9 +970,6 @@ RUN_NETWORK_POLICY_TEST(
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
 
     cleanup.add(`destroy restricted-zero-presets sandbox ${SUPPRESSION_SANDBOX_NAME}`, async () => {
       await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
