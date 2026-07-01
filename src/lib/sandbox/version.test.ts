@@ -39,6 +39,7 @@ const { EXPECTED_VERSION_BY_AGENT } = vi.hoisted(() => ({
   EXPECTED_VERSION_BY_AGENT: {
     openclaw: "2026.5.27",
     "hermes-calendar-pin": "2026.6.19",
+    "high-major-semver": "999.9.9",
   } as Record<string, string>,
 }));
 
@@ -269,6 +270,53 @@ describe("checkAgentVersion", () => {
     const result = checkAgentVersion("hermes-sb");
     expect(result.sandboxVersion).toBe("0.17.0");
     expect(result.isStale).toBe(false);
+  });
+
+  it("treats a semver with a four-digit major that does not start with 20 as semver, not calendar (#6049)", () => {
+    registry.registerSandbox({
+      name: "high-major-sb",
+      agent: "high-major-semver",
+      agentVersion: "1000.0.0",
+    });
+
+    const result = checkAgentVersion("high-major-sb");
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("1000.0.0");
+    expect(result.schemeMismatch).toBe(false);
+    expect(result.isStale).toBe(false);
+  });
+
+  it("flags a same-scheme semver when the sandbox trails a four-digit-major expected pin (#6049)", () => {
+    registry.registerSandbox({
+      name: "high-major-sb",
+      agent: "high-major-semver",
+      agentVersion: "999.9.8",
+    });
+
+    const result = checkAgentVersion("high-major-sb");
+    expect(result.schemeMismatch).toBe(false);
+    expect(result.isStale).toBe(true);
+  });
+
+  it("marks a scheme mismatch on the returned result so callers can render a distinct state", () => {
+    registry.registerSandbox({
+      name: "hermes-sb",
+      agent: "hermes-calendar-pin",
+      agentVersion: "0.17.0",
+    });
+
+    const result = checkAgentVersion("hermes-sb");
+    expect(result.schemeMismatch).toBe(true);
+    expect(result.isStale).toBe(false);
+  });
+
+  it("surfaces the reason when checkAgentVersion cannot inspect the sandbox", () => {
+    registry.registerSandbox({ name: "test-sb", agent: null });
+
+    const result = checkAgentVersion("test-sb", { skipProbe: true });
+
+    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.unavailableReason).toBe("skip-probe");
   });
 
   it("probes a hermes runtime over ssh and does not flag a matching semver", () => {

@@ -26,6 +26,15 @@ export interface VersionCheckResult {
   expectedVersion: string | null;
   isStale: boolean;
   detectionMethod: "registry" | "ssh-exec" | "unavailable";
+  /** True only when the check ran and the sandbox is definitively current. */
+  schemeMismatch?: boolean;
+  /** Categorises why the result could not be computed, so callers can surface a distinct state. */
+  unavailableReason?:
+    | "no-expected-version"
+    | "skip-probe"
+    | "openshell-missing"
+    | "ssh-config-failure"
+    | "ssh-exec-failure";
 }
 
 /**
@@ -46,6 +55,27 @@ function resolveAgentForSandbox(sandboxName: string): ReturnType<typeof loadAgen
   return loadAgent(agentName);
 }
 
+const warnedProbeKeys = new Set<string>();
+
+function warnProbeFailure(
+  sandboxName: string,
+  reason: string,
+  detail: Record<string, unknown> = {},
+): void {
+  const key = `${sandboxName}|${reason}`;
+  if (warnedProbeKeys.has(key)) return;
+  warnedProbeKeys.add(key);
+  const payload = JSON.stringify({
+    event: "sandbox_version_probe_failed",
+    sandbox: sandboxName,
+    reason,
+    ...detail,
+  });
+  process.stderr.write(
+    `warning: sandbox '${sandboxName}' version probe unavailable (${reason}). ${payload}\n`,
+  );
+}
+
 /**
  * Probe the live agent version inside a sandbox via SSH.
  * Returns the parsed version string or null on failure.
@@ -54,14 +84,23 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const agent = resolveAgentForSandbox(sandboxName);
 
   const openshellBinary = resolveOpenshell();
-  if (!openshellBinary) return null;
+  if (!openshellBinary) {
+    warnProbeFailure(sandboxName, "openshell-missing");
+    return null;
+  }
 
   const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  if (sshConfigResult.status !== 0) return null;
-  if (!sshConfigResult.output.trim()) return null;
+  if (sshConfigResult.status !== 0) {
+    warnProbeFailure(sandboxName, "ssh-config-status", { status: sshConfigResult.status });
+    return null;
+  }
+  if (!sshConfigResult.output.trim()) {
+    warnProbeFailure(sandboxName, "ssh-config-empty");
+    return null;
+  }
 
   const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ver-");
   try {
@@ -83,9 +122,25 @@ export function probeAgentVersion(sandboxName: string): string | null {
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
     );
-    if (result.status !== 0) return null;
-    return parseVersionFromText(result.stdout);
-  } catch {
+    if (result.status !== 0) {
+      warnProbeFailure(sandboxName, "ssh-exec-status", {
+        status: result.status,
+        signal: result.signal,
+        stderr: (result.stderr ?? "").trim().slice(0, 200),
+      });
+      return null;
+    }
+    const parsed = parseVersionFromText(result.stdout);
+    if (parsed === null) {
+      warnProbeFailure(sandboxName, "version-parse-failure", {
+        stdout: (result.stdout ?? "").trim().slice(0, 200),
+      });
+    }
+    return parsed;
+  } catch (error) {
+    warnProbeFailure(sandboxName, "ssh-exec-exception", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   } finally {
     tmpSshConfig.cleanup();
@@ -139,16 +194,21 @@ function warnSchemeMismatch(
 // structured JSON payload surfaces the mismatch so operators and log
 // pipelines can detect when a check has been skipped rather than silently
 // trusting a cached calendar version.
-function isAgentStale(
+interface StalenessVerdict {
+  isStale: boolean;
+  schemeMismatch: boolean;
+}
+
+function evaluateStaleness(
   sandboxName: string,
   sandboxVersion: string,
   expectedVersion: string,
-): boolean {
+): StalenessVerdict {
   if (!versionsComparable(sandboxVersion, expectedVersion)) {
     warnSchemeMismatch(sandboxName, sandboxVersion, expectedVersion);
-    return false;
+    return { isStale: false, schemeMismatch: true };
   }
-  return !versionGte(sandboxVersion, expectedVersion);
+  return { isStale: !versionGte(sandboxVersion, expectedVersion), schemeMismatch: false };
 }
 
 /**
@@ -170,6 +230,7 @@ export function checkAgentVersion(
       expectedVersion: null,
       isStale: false,
       detectionMethod: "unavailable",
+      unavailableReason: "no-expected-version",
     };
   }
 
@@ -177,12 +238,13 @@ export function checkAgentVersion(
 
   // Fast path: version already cached in registry
   if (sb?.agentVersion && !opts?.forceProbe) {
-    const isStale = isAgentStale(sandboxName, sb.agentVersion, expectedVersion);
+    const verdict = evaluateStaleness(sandboxName, sb.agentVersion, expectedVersion);
     return {
       sandboxVersion: sb.agentVersion,
       expectedVersion,
-      isStale,
+      isStale: verdict.isStale,
       detectionMethod: "registry",
+      schemeMismatch: verdict.schemeMismatch,
     };
   }
 
@@ -192,6 +254,7 @@ export function checkAgentVersion(
       expectedVersion,
       isStale: false,
       detectionMethod: "unavailable",
+      unavailableReason: "skip-probe",
     };
   }
 
@@ -208,15 +271,17 @@ export function checkAgentVersion(
       expectedVersion,
       isStale: false,
       detectionMethod: "unavailable",
+      unavailableReason: "ssh-exec-failure",
     };
   }
 
-  const isStale = isAgentStale(sandboxName, probed, expectedVersion);
+  const verdict = evaluateStaleness(sandboxName, probed, expectedVersion);
   return {
     sandboxVersion: probed,
     expectedVersion,
-    isStale,
+    isStale: verdict.isStale,
     detectionMethod: "ssh-exec",
+    schemeMismatch: verdict.schemeMismatch,
   };
 }
 
