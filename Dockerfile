@@ -22,8 +22,13 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 WORKDIR /opt/nemoclaw
-RUN npm ci && npm run build
+RUN npm ci \
+    && npm run build \
+    && node --experimental-strip-types \
+        /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
+        /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder

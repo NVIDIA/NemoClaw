@@ -9,6 +9,8 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { auditOpenShellPolicyBoundaryDependencies } from "../../scripts/checks/verify-openshell-policy-boundary-dependencies.mts";
+
 const repoRoot = path.join(import.meta.dirname, "..", "..");
 const require = createRequire(import.meta.url);
 
@@ -139,5 +141,29 @@ describe("OpenShell policy boundary package contract", () => {
         path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.js"),
       ),
     ).toBe(false);
+  });
+
+  it("locks the generated sandbox boundary to its reviewed direct dependency", () => {
+    const boundaryPath = path.join(
+      repoRoot,
+      "nemoclaw",
+      "dist",
+      "shared",
+      "openshell-policy-boundary.cjs",
+    );
+    expect(auditOpenShellPolicyBoundaryDependencies(fs.readFileSync(boundaryPath, "utf8"))).toEqual(
+      ["yaml"],
+    );
+
+    expect(() =>
+      auditOpenShellPolicyBoundaryDependencies('require("unexpected-package");'),
+    ).toThrow(/non-whitelisted modules: unexpected-package/);
+    expect(() =>
+      auditOpenShellPolicyBoundaryDependencies('const dependency = "yaml"; require(dependency);'),
+    ).toThrow(/non-literal module load/);
+
+    const dockerfile = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("verify-openshell-policy-boundary-dependencies.mts");
+    expect(dockerfile).toContain("dist/shared/openshell-policy-boundary.cjs");
   });
 });
