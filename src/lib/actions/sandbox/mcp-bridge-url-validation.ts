@@ -29,6 +29,13 @@ function hasSecretShapedMcpPathSegment(pathname: string): boolean {
 
 function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   if (!isOpenShellMcpHostAlias(hostname)) return;
+  // invalidState: a host alias is accepted without an attested gateway address,
+  // forcing broad private-range policy instead of an exact destination pin.
+  // sourceBoundary: the pinned OpenShell release owns gateway-address discovery.
+  // whyNotSourceFix: v0.0.72 exposes no attested driver gateway address.
+  // regressionTest: URL validation and all three live adapters reject aliases.
+  // removalCondition: remove only after a reviewed OpenShell capability exposes
+  // an attested address; a future version number alone is not that capability.
   throw new McpBridgeError(
     `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.72 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
     2,
@@ -73,6 +80,13 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
     );
   }
   if (parsed.hostname.startsWith("[") && parsed.hostname.endsWith("]")) {
+    // invalidState: an IPv6 literal reaches an OpenShell parser that cannot
+    // represent and enforce its exact proxy target safely.
+    // sourceBoundary: the pinned OpenShell proxy parser owns literal support.
+    // whyNotSourceFix: v0.0.72 does not support this target form.
+    // regressionTest: host/Hermes parity rejects private and public IPv6 literals.
+    // removalCondition: remove only with reviewed parser support and parity proof;
+    // never infer the capability from semver alone.
     throw new McpBridgeError(
       "IPv6-literal MCP server URLs are not supported by the current OpenShell proxy target parser. Use a DNS hostname with public A/AAAA records.",
       2,

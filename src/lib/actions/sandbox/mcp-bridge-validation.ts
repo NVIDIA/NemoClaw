@@ -11,6 +11,10 @@ import {
   type ParsedMcpAddArgs,
 } from "./mcp-bridge-contracts";
 import { normalizeMcpServerUrl } from "./mcp-bridge-url-validation";
+// This static import is intentionally fail-closed: TypeScript/build packaging
+// must reject a missing or malformed security manifest instead of letting the
+// CLI start with a weakened credential-name denylist. Input, package, image,
+// and workflow contracts pin its structure, installed path, and version.
 import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
 
 export {

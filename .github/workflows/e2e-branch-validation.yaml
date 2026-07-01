@@ -183,6 +183,18 @@ jobs:
     outputs:
       tested_sha: ${{ steps.tested-ref.outputs.sha }}
     steps:
+      - name: Validate test suite
+        env:
+          TEST_SUITE: ${{ inputs.test_suite }}
+        run: |
+          case "$TEST_SUITE" in
+            full|credential-sanitization|telegram-injection|messaging-providers|messaging-compatible-endpoint|dashboard-remote-bind|gpu|all) ;;
+            *)
+              echo "::error::test_suite is not one of the supported Brev E2E suites"
+              exit 1
+              ;;
+          esac
+
       - name: Resolve branch from PR number
         if: inputs.pr_number != ''
         env:

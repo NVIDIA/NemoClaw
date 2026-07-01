@@ -2,6 +2,16 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# invalidState: the three reviewed E2E consumers drift to different cloudflared
+# versions/digests, or their shared pin no longer matches the upstream asset.
+# sourceBoundary: Cloudflare owns the release asset; NemoClaw owns all three
+# workflow pins and independently verifies the downloaded bytes.
+# whyNotSourceFix: upstream cannot enforce which release NemoClaw workflows use.
+# regressionTest: cloudflared-update-check-workflow.test.ts covers three-pin
+# parity, asset URL identity, digest mismatch, and update instructions.
+# removalCondition: remove this checker when the three consumers share one
+# machine-readable dependency manifest with equivalent live asset verification.
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

@@ -107,6 +107,15 @@ TRUSTED_HERMES_GATEWAY_LAUNCHERS = {
 
 
 def _load_credential_boundary_manifest() -> dict[str, object]:
+    # invalidState: the transaction accepts a credential name against a missing,
+    # corrupt, or wrong-version OpenShell boundary manifest.
+    # sourceBoundary: NemoClaw owns one reviewed manifest installed beside this
+    # helper in images; the second path is the deterministic source-checkout layout.
+    # whyNotSourceFix: OpenShell v0.0.72 has no machine-readable child-env contract.
+    # regressionTest: hermes-mcp-config-transaction and image packaging tests cover
+    # both layouts, strict parsing, version alignment, and reserved-name parity.
+    # removalCondition: use an upstream capability manifest once the minimum
+    # supported OpenShell release provides one.
     candidates = (
         Path(__file__).with_name(BOUNDARY_MANIFEST_NAME),
         Path(__file__).resolve().parents[2]
@@ -270,6 +279,10 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("MCP mutation payload URL contains forbidden components")
     hostname = parsed.hostname.lower().rstrip(".")
+    # Fail closed on every IPv6 literal, including globally routable addresses,
+    # before the IPv4-only classification below. DNS names are resolved and
+    # validated by the host boundary, then pinned into OpenShell allowed_ips;
+    # this in-sandbox transaction never establishes the network connection.
     if ":" in hostname:
         raise ValueError("IPv6-literal MCP URLs are not supported")
     if not hostname.isascii() or any(char in hostname for char in "*?[]{};"):

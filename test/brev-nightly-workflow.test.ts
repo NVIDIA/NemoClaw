@@ -122,6 +122,21 @@ describe("Brev nightly workflow contract", () => {
     expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
   });
 
+  it("fails closed on unsupported reusable test-suite values before checkout", () => {
+    const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
+    const validation = steps.find((step) => step.name === "Validate test suite");
+    const checkout = steps.find((step) => step.name === "Checkout target branch");
+
+    expect(validation?.env?.TEST_SUITE).toBe("${{ inputs.test_suite }}");
+    expect(validation?.run).toContain(
+      "full|credential-sanitization|telegram-injection|messaging-providers|messaging-compatible-endpoint|dashboard-remote-bind|gpu|all",
+    );
+    expect(validation?.run).toContain("exit 1");
+    expect(steps.indexOf(validation as NonNullable<typeof validation>)).toBeLessThan(
+      steps.indexOf(checkout as NonNullable<typeof checkout>),
+    );
+  });
+
   it("runs stateful messaging targets on separate fresh instances", () => {
     expect(nightly.jobs?.["brev-nightly-e2e"]?.strategy?.matrix?.test_suite).toEqual([
       "all",
