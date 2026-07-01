@@ -103,4 +103,50 @@ describe("evaluateStaleness", () => {
       schemeMismatch: true,
     });
   });
+
+  it("flags a calendar-scheme agent (OpenClaw) running a semver runtime as scheme-mismatched", () => {
+    expect(evaluateStaleness("openclaw-sb", "calendar", "1.2.3", "2026.5.27")).toEqual({
+      isStale: true,
+      schemeMismatch: true,
+    });
+  });
+
+  it("falls back to shape classification when no manifest scheme is declared", () => {
+    expect(evaluateStaleness("sb", null, "0.17.0", "0.17.0")).toEqual({
+      isStale: false,
+      schemeMismatch: false,
+    });
+    expect(evaluateStaleness("sb", null, "2026.5.27", "2026.5.27")).toEqual({
+      isStale: false,
+      schemeMismatch: false,
+    });
+    expect(evaluateStaleness("sb", null, "0.17.0", "2026.5.27")).toEqual({
+      isStale: true,
+      schemeMismatch: true,
+    });
+  });
+
+  it("emits a structured JSON payload to stderr on scheme mismatch", () => {
+    const stderr: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderr.push(chunk.toString());
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      evaluateStaleness("hermes-warn-sb", "semver", "2026.7.4", "0.18.0");
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    const line = stderr.join("");
+    const jsonStart = line.indexOf("{");
+    const payload = JSON.parse(line.slice(jsonStart).trim());
+    expect(payload).toEqual({
+      event: "sandbox_version_scheme_mismatch",
+      sandbox: "hermes-warn-sb",
+      sandboxVersion: "2026.7.4",
+      expectedVersion: "0.18.0",
+      action: "flagged_as_stale",
+    });
+  });
 });
