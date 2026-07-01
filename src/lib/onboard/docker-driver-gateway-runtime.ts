@@ -170,13 +170,17 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
-    return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+    const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });
+    if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
+    return gatewayEnv;
   }
 
   function isPidAlive(pid: number): boolean {

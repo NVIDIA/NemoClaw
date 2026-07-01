@@ -12,13 +12,33 @@
  * shields are up (root-owned), startup must not weaken the lock.
  */
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const MUTABLE_CONFIG_NORMALIZER = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "normalize_mutable_config_perms.py",
+);
+const OPENCLAW_CONFIG_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
+const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
+const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
+const HERMES_LOCK_TOKEN = "a".repeat(64);
+const HERMES_SEALED_GUARD_HELP = [
+  "begin-shields-transition",
+  "run-state-dir-transition",
+  "apply-shields-transition",
+  "finish-shields-transition",
+  "prepare-shields-abort",
+  "abort-shields-transition",
+  "--rollback-shields-mode",
+].join(" ");
 
 function extractShellFunctionFromSource(src: string, name: string): string {
   const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -30,17 +50,54 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  return [
-    extractShellFunctionFromSource(startScript, "lock_openclaw_config_baseline_if_present"),
-    extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
-      'local config_dir="/sandbox/.openclaw"',
-      `local config_dir=${JSON.stringify(configDir)}`,
-    ),
-  ].join("\n");
+  return extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
+    'local config_dir="/sandbox/.openclaw"',
+    `local config_dir=${JSON.stringify(configDir)}`,
+  );
 }
 
 function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode;
+}
+
+function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
+  const testRoot = path.dirname(configDir);
+  const normalizerPath = path.join(testRoot, "normalize_mutable_config_perms.py");
+  fs.copyFileSync(MUTABLE_CONFIG_NORMALIZER, normalizerPath);
+  fs.chmodSync(normalizerPath, 0o755);
+  const spawnOptions: SpawnSyncOptionsWithStringEncoding = {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      BASH_ENV: "",
+      HOME: testRoot,
+      NEMOCLAW_MUTABLE_CONFIG_NORMALIZER: normalizerPath,
+    },
+    timeout: 5000,
+  };
+  switch (process.getuid?.()) {
+    case 0: {
+      const unprivilegedId = 65534;
+      for (const ownedPath of [...ownedPaths, normalizerPath]) {
+        fs.chownSync(ownedPath, unprivilegedId, unprivilegedId);
+      }
+      spawnOptions.uid = unprivilegedId;
+      spawnOptions.gid = unprivilegedId;
+      break;
+    }
+  }
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        normalizeMutableConfigPermsFor(configDir),
+        "normalize_mutable_config_perms",
+      ].join("\n"),
+    ],
+    spawnOptions,
+  );
 }
 
 function withMockedDockerExecFileSync<T>(
@@ -51,8 +108,10 @@ function withMockedDockerExecFileSync<T>(
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dockerExecModule = require("../src/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
+    dockerSpawnSync: (args: readonly string[]) => unknown;
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
+  const originalDockerSpawnSync = dockerExecModule.dockerSpawnSync;
   const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
   const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
   const priorPrivilegedExec = require.cache[privilegedExecPath];
@@ -70,8 +129,24 @@ function withMockedDockerExecFileSync<T>(
     const separator = args.indexOf("--");
     const command = separator >= 0 ? args.slice(separator + 1) : [...args];
     calls.push(command);
-    if (command[0] === "python3" && command[1] === "-c") {
-      for (const target of command.slice(6)) {
+    const hermesGuardIndex = command.indexOf(HERMES_RUNTIME_CONFIG_GUARD);
+    const hermesAction = command[hermesGuardIndex + 1] ?? "";
+    const hermesResponse =
+      hermesGuardIndex < 0
+        ? undefined
+        : (new Map<string, string>([
+            ["--help", HERMES_SEALED_GUARD_HELP],
+            ["begin-shields-transition", `lock_token=${HERMES_LOCK_TOKEN} original_locked=0`],
+            ["apply-shields-transition", "shields_mode=mutable chattr_applied=0"],
+          ]).get(hermesAction) ?? "");
+    switch (hermesResponse) {
+      case undefined:
+        break;
+      default:
+        return hermesResponse;
+    }
+    if (command[0] === "python3" && command[1] === "-I" && command[2] === "-c") {
+      for (const target of command.slice(7)) {
         if (options.symlinkedPaths?.has(target)) {
           throw new Error(`refusing symlink path: ${target}`);
         }
@@ -80,8 +155,14 @@ function withMockedDockerExecFileSync<T>(
     }
     if (command[0] === "stat" && command[1] === "-c") {
       const target = command.at(-1);
-      if (target === "/sandbox/.openclaw") return "2770 sandbox:sandbox\n";
-      if (target === "/sandbox/.hermes") return "3770 sandbox:sandbox\n";
+      switch (target) {
+        case "/sandbox":
+          return "755 sandbox:sandbox\n";
+        case "/sandbox/.openclaw":
+          return "2770 sandbox:sandbox\n";
+        case "/sandbox/.hermes":
+          return "3770 sandbox:sandbox\n";
+      }
       if (typeof target === "string" && target.startsWith("/sandbox/.hermes/")) {
         return "640 sandbox:sandbox\n";
       }
@@ -93,10 +174,93 @@ function withMockedDockerExecFileSync<T>(
     return "";
   });
 
+  dockerExecModule.dockerSpawnSync = vi.fn((args: readonly string[]) => {
+    const separator = args.indexOf("--");
+    const command = separator >= 0 ? args.slice(separator + 1) : [...args];
+    calls.push(command);
+
+    const openClawGuardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
+    const stateDirGuardIndex = command.indexOf(STATE_DIR_GUARD);
+    switch (true) {
+      case command[0] === "test" &&
+        command[1] === "-r" &&
+        (command[2] === OPENCLAW_CONFIG_GUARD || command[2] === STATE_DIR_GUARD):
+        return {
+          status: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      case openClawGuardIndex >= 0: {
+        const action = command[openClawGuardIndex + 1];
+        const symlinkedTarget = [...(options.symlinkedPaths ?? [])].find((target) =>
+          target.startsWith("/sandbox/.openclaw/"),
+        );
+        const refused = action === "preflight" && symlinkedTarget !== undefined;
+        const records = refused
+          ? [
+              {
+                type: "issue",
+                code: "unsafe-path",
+                path: symlinkedTarget,
+                detail: `refusing symlink path: ${symlinkedTarget}`,
+              },
+              { type: "result", action, status: "failed" },
+            ]
+          : [
+              {
+                type: "result",
+                action,
+                status: "ok",
+                configDir: "/sandbox/.openclaw",
+                files: ["openclaw.json", ".config-hash"],
+                chattrApplied: action === "lock",
+              },
+            ];
+        return {
+          status: refused ? 1 : 0,
+          signal: null,
+          stdout: `${records.map((record) => JSON.stringify(record)).join("\n")}\n`,
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      case stateDirGuardIndex >= 0: {
+        const action = command[stateDirGuardIndex + 1];
+        return {
+          status: 0,
+          signal: null,
+          stdout: `${JSON.stringify({
+            type: "result",
+            action,
+            status: "ok",
+            issueCount: 0,
+          })}\n`,
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+      }
+      default:
+        return {
+          status: 0,
+          signal: null,
+          stdout: "",
+          stderr: "",
+          pid: 0,
+          output: [],
+        } as never;
+    }
+  });
+
   try {
     return run();
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
+    dockerExecModule.dockerSpawnSync = originalDockerSpawnSync;
     delete require.cache[shieldsModulePath];
     if (priorPrivilegedExec) require.cache[privilegedExecPath] = priorPrivilegedExec;
     else delete require.cache[privilegedExecPath];
@@ -130,22 +294,15 @@ describe("mutable agent config permissions", () => {
       fs.chmodSync(nestedDir, 0o700);
       fs.chmodSync(configFile, 0o600);
 
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          [
-            "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
-            normalizeMutableConfigPermsFor(configDir),
-            "normalize_mutable_config_perms",
-          ].join("\n"),
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
+      const result = runMutableConfigNormalizer(configDir, [
+        tmpDir,
+        configDir,
+        path.join(configDir, "agents"),
+        nestedDir,
+        configFile,
+      ]);
 
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(modeBits(configDir) & 0o7777).toBe(0o2770);
       expect(modeBits(configFile) & 0o7777).toBe(0o660);
       expect(modeBits(configDir) & 0o070).toBe(0o070);
@@ -185,22 +342,16 @@ describe("mutable agent config permissions", () => {
       expect(modeBits(configDir) & 0o7777).toBe(0o700);
       expect(modeBits(configFile) & 0o7777).toBe(0o600);
 
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          [
-            "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
-            normalizeMutableConfigPermsFor(configDir),
-            "normalize_mutable_config_perms",
-          ].join("\n"),
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
+      const result = runMutableConfigNormalizer(configDir, [
+        tmpDir,
+        configDir,
+        path.join(configDir, "agents"),
+        nestedDir,
+        configFile,
+        hashFile,
+      ]);
 
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       // Mutable contract restored: setgid + group rwx dir, group rw files.
       expect(modeBits(configDir) & 0o7777).toBe(0o2770);
       expect(modeBits(configFile) & 0o7777).toBe(0o660);
@@ -208,6 +359,33 @@ describe("mutable agent config permissions", () => {
       expect(modeBits(configDir) & 0o2000).toBe(0o2000);
       expect(modeBits(nestedDir) & 0o2000).toBe(0o2000);
       expect(modeBits(nestedDir) & 0o070).toBe(0o070);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a hardlinked fixed config before changing either alias mode", () => {
+    const tmpDir = mkdtempOnPosixFs("nemoclaw-6047-hardlink-");
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configFile = path.join(configDir, "openclaw.json");
+    const earlierTreeAlias = path.join(configDir, ".a");
+    const externalAlias = path.join(tmpDir, "external-config");
+
+    try {
+      fs.mkdirSync(configDir, { mode: 0o700 });
+      fs.writeFileSync(externalAlias, "{}\n", { mode: 0o600 });
+      fs.chmodSync(externalAlias, 0o600);
+      fs.linkSync(externalAlias, earlierTreeAlias);
+      fs.linkSync(externalAlias, configFile);
+
+      const result = runMutableConfigNormalizer(configDir, [tmpDir, configDir, externalAlias]);
+
+      expect(result.status).not.toBe(0);
+      expect(fs.statSync(configFile).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(fs.statSync(earlierTreeAlias).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(modeBits(configFile) & 0o7777).toBe(0o600);
+      expect(modeBits(earlierTreeAlias) & 0o7777).toBe(0o600);
+      expect(modeBits(externalAlias) & 0o7777).toBe(0o600);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -237,41 +415,29 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    const configUnlock = commands.find(
-      (command) => command[0] === "python3" && command[1] === "-c",
-    );
-    expect(configUnlock).toEqual(
-      expect.arrayContaining([
-        "660",
-        "2770",
-        "sandbox:sandbox",
-        "/sandbox/.openclaw",
-        "/sandbox/.openclaw/openclaw.json",
-        "/sandbox/.openclaw/.config-hash",
-      ]),
-    );
-    // The consolidated state-dir unlock script restores ownership and mode on
-    // every high-risk state dir (including `workspace`) inside a single
-    // `sh -c` invocation; the workspace-* glob is handled by a second
-    // `sh -c`. Both are asserted via the `arrayContaining` check below.
-    const shellInvocations = commands.filter(
-      (command) => command[0] === "sh" && command[1] === "-c",
-    );
+    const openClawActions = commands
+      .filter((command) => command.includes(OPENCLAW_CONFIG_GUARD))
+      .map((command) => command[command.indexOf(OPENCLAW_CONFIG_GUARD) + 1])
+      .filter((action): action is string => typeof action === "string");
+    const stateDirActions = commands
+      .filter((command) => command.includes(STATE_DIR_GUARD))
+      .map((command) => command[command.indexOf(STATE_DIR_GUARD) + 1])
+      .filter((action): action is string => typeof action === "string");
+    expect(openClawActions).toEqual(["preflight", "unlock"]);
+    expect(stateDirActions).toEqual(["unlock"]);
+    expect(commands).toContainEqual(["test", "-r", OPENCLAW_CONFIG_GUARD]);
+    expect(commands).toContainEqual(["test", "-r", STATE_DIR_GUARD]);
+    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.openclaw/openclaw.json"]);
+    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.openclaw/.config-hash"]);
     expect(
-      shellInvocations.some(
+      commands.some(
         (command) =>
-          command.includes("/sandbox/.openclaw") &&
-          command.includes("sandbox:sandbox") &&
-          command.includes("g+rwX,o-rwx") &&
-          command.includes("2770") &&
-          command.includes("workspace"),
+          command[0] === "sh" &&
+          command[1] === "-c" &&
+          typeof command[2] === "string" &&
+          command[2].includes("chown -R"),
       ),
-    ).toBe(true);
-    expect(
-      shellInvocations.some(
-        (command) => typeof command[2] === "string" && command[2].includes("workspace-*"),
-      ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("refuses to unlock OpenClaw config when a config path is a symlink", () => {
@@ -306,22 +472,22 @@ describe("mutable agent config permissions", () => {
       ),
     ).toThrow("refusing symlink path");
 
-    const configUnlock = commands.find(
-      (command) => command[0] === "python3" && command[1] === "-c",
-    );
-    expect(configUnlock).toEqual(
+    const openClawPreflight = commands.find((command) => {
+      const guardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
+      return guardIndex >= 0 && command[guardIndex + 1] === "preflight";
+    });
+    expect(openClawPreflight).toEqual(
       expect.arrayContaining([
+        "python3",
+        "-I",
+        OPENCLAW_CONFIG_GUARD,
+        "preflight",
+        "--config-dir",
         "/sandbox/.openclaw",
-        "/sandbox/.openclaw/openclaw.json",
-        "/sandbox/.openclaw/.config-hash",
       ]),
     );
-    const script = configUnlock?.[2] ?? "";
-    expect(script).toContain("unlock_ok = False");
-    expect(script).toContain('flags |= getattr(os, "O_NONBLOCK", 0)');
-    expect(script).toContain("if unlock_ok:");
-    expect(script).toContain("elif dir_stat is not None:");
-    expect(script).toContain("os.fchmod(dir_fd, stat.S_IMODE(dir_stat.st_mode))");
+    expect(commands).toContainEqual(["test", "-r", OPENCLAW_CONFIG_GUARD]);
+    expect(commands.some((command) => command.includes(STATE_DIR_GUARD))).toBe(false);
     expect(
       commands.some(
         (command) =>
@@ -357,19 +523,30 @@ describe("mutable agent config permissions", () => {
       });
     });
 
-    const configUnlock = commands.find(
-      (command) => command[0] === "python3" && command[1] === "-c",
+    const hermesActions = commands
+      .filter((command) => command.includes(HERMES_RUNTIME_CONFIG_GUARD))
+      .map((command) => command[command.indexOf(HERMES_RUNTIME_CONFIG_GUARD) + 1]);
+    expect(hermesActions).toEqual([
+      "--help",
+      "begin-shields-transition",
+      "run-state-dir-transition",
+      "apply-shields-transition",
+      "finish-shields-transition",
+    ]);
+    const begin = commands.find((command) => command.includes("begin-shields-transition"));
+    expect(begin).toEqual(
+      expect.arrayContaining(["--shields-mode", "mutable", "--rollback-shields-mode", "mutable"]),
     );
-    expect(configUnlock).toEqual(
-      expect.arrayContaining([
-        "640",
-        "3770",
-        "sandbox:sandbox",
-        "/sandbox/.hermes",
-        "/sandbox/.hermes/config.yaml",
-        "/sandbox/.hermes/.env",
-      ]),
-    );
+    for (const action of [
+      "run-state-dir-transition",
+      "apply-shields-transition",
+      "finish-shields-transition",
+    ]) {
+      const command = commands.find((candidate) => candidate.includes(action));
+      expect(command).toEqual(expect.arrayContaining(["--lock-token", HERMES_LOCK_TOKEN]));
+    }
+    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/config.yaml"]);
+    expect(commands).toContainEqual(["stat", "-c", "%a %U:%G", "/sandbox/.hermes/.env"]);
   });
 
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {
@@ -381,6 +558,8 @@ describe("mutable agent config permissions", () => {
 const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
+const OPENCLAW_CONFIG_GUARD = ${JSON.stringify(OPENCLAW_CONFIG_GUARD)};
+const STATE_DIR_GUARD = ${JSON.stringify(STATE_DIR_GUARD)};
 Module._load = function patchedLoad(request, parent, isMain) {
   if (request === "../adapters/docker/exec") {
     return {
@@ -389,9 +568,9 @@ Module._load = function patchedLoad(request, parent, isMain) {
         const command = separator >= 0 ? args.slice(separator + 1) : args;
         calls.push(command);
         if (command[0] === "stat" && command[1] === "-c") {
-          return command.at(-1) === "/sandbox/.openclaw"
-            ? "755 root:root\n"
-            : "444 root:root\n";
+          const target = command.at(-1);
+          if (target === "/sandbox") return "1775 root:sandbox\n";
+          return target === "/sandbox/.openclaw" ? "755 root:root\n" : "444 root:root\n";
         }
         if (command[0] === "lsattr") {
           return "----i----------------- " + command.at(-1) + "\n";
@@ -404,6 +583,55 @@ Module._load = function patchedLoad(request, parent, isMain) {
           );
         }
         return "";
+      },
+      dockerSpawnSync(args) {
+        const separator = args.indexOf("--");
+        const command = separator >= 0 ? args.slice(separator + 1) : args;
+        calls.push(command);
+        if (
+          command[0] === "test" &&
+          command[1] === "-r" &&
+          (command[2] === OPENCLAW_CONFIG_GUARD || command[2] === STATE_DIR_GUARD)
+        ) {
+          return { status: 0, signal: null, stdout: "", stderr: "", pid: 0, output: [] };
+        }
+        const openClawGuardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
+        if (openClawGuardIndex >= 0) {
+          const action = command[openClawGuardIndex + 1];
+          return {
+            status: 0,
+            signal: null,
+            stdout: JSON.stringify({
+              type: "result",
+              action,
+              status: "ok",
+              configDir: "/sandbox/.openclaw",
+              files: ["openclaw.json", ".config-hash"],
+              chattrApplied: action === "lock",
+            }) + "\n",
+            stderr: "",
+            pid: 0,
+            output: [],
+          };
+        }
+        const stateDirGuardIndex = command.indexOf(STATE_DIR_GUARD);
+        if (stateDirGuardIndex >= 0) {
+          const action = command[stateDirGuardIndex + 1];
+          return {
+            status: 0,
+            signal: null,
+            stdout: JSON.stringify({
+              type: "result",
+              action,
+              status: "ok",
+              issueCount: 0,
+            }) + "\n",
+            stderr: "",
+            pid: 0,
+            output: [],
+          };
+        }
+        return { status: 0, signal: null, stdout: "", stderr: "", pid: 0, output: [] };
       },
     };
   }
@@ -429,23 +657,37 @@ process.stdout.write(JSON.stringify(calls));
       { encoding: "utf-8", timeout: 5000 },
     );
 
-    expect(probe.status).toBe(0);
+    expect(probe.status, probe.stderr).toBe(0);
     const commands = JSON.parse(probe.stdout) as string[][];
-    const stateDirLockIndex = commands.findIndex(
-      (command) =>
-        command[0] === "sh" &&
+    const openClawCapabilityIndex = commands.findIndex(
+      (command) => command.join("\0") === ["test", "-r", OPENCLAW_CONFIG_GUARD].join("\0"),
+    );
+    const openClawLockIndex = commands.findIndex((command) => {
+      const guardIndex = command.indexOf(OPENCLAW_CONFIG_GUARD);
+      return guardIndex >= 0 && command[guardIndex + 1] === "lock";
+    });
+    const stateDirCapabilityIndex = commands.findIndex(
+      (command) => command.join("\0") === ["test", "-r", STATE_DIR_GUARD].join("\0"),
+    );
+    const stateDirLockIndex = commands.findIndex((command) => {
+      const guardIndex = command.indexOf(STATE_DIR_GUARD);
+      return guardIndex >= 0 && command[guardIndex + 1] === "lock";
+    });
+    const verificationIndex = commands.findIndex(
+      (command, index) =>
+        index > stateDirLockIndex &&
+        command[0] === "stat" &&
         command[1] === "-c" &&
-        command.includes("/sandbox/.openclaw") &&
-        command.includes("root:sandbox") &&
-        command.includes("go-w") &&
-        command.includes("755"),
+        command.at(-1) === "/sandbox/.openclaw",
     );
-    const stripSetgidIndex = commands.findIndex(
-      (command) => command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
-    );
+    expect(openClawCapabilityIndex).toBeGreaterThan(-1);
+    expect(openClawLockIndex).toBeGreaterThan(openClawCapabilityIndex);
+    expect(stateDirCapabilityIndex).toBeGreaterThan(openClawLockIndex);
     expect(stateDirLockIndex).toBeGreaterThan(-1);
-    expect(stripSetgidIndex).toBeGreaterThan(stateDirLockIndex);
-    expect(commands).toContainEqual(["chmod", "755", "/sandbox/.openclaw"]);
+    expect(stateDirLockIndex).toBeGreaterThan(stateDirCapabilityIndex);
+    expect(verificationIndex).toBeGreaterThan(stateDirLockIndex);
+    expect(commands).not.toContainEqual(["chmod", "g-s", "/sandbox/.openclaw"]);
+    expect(commands).not.toContainEqual(["chmod", "755", "/sandbox/.openclaw"]);
   });
 
   it("does not relax a root-owned config tree while shields are up", () => {
@@ -461,8 +703,9 @@ process.stdout.write(JSON.stringify(calls));
           "-c",
           [
             "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "root\\n"; else command stat "$@"; fi; }',
+            // Model the descriptor observing root ownership without requiring
+            // the test runner itself to own this fixture as root.
+            'python3() { if [ "${2:-}" != "-" ]; then printf "unexpected helper invocation\\n" >&2; return 68; fi; cat >/dev/null; printf "0\\n"; }',
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),

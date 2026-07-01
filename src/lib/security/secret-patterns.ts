@@ -41,6 +41,8 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   /\b\d{8,10}:[A-Za-z0-9_-]{35}\b/g,
   // Discord bot tokens (base64 user ID . timestamp . HMAC)
   /\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b/g,
+  // Tavily
+  /tvly-[A-Za-z0-9_-]{10,}/g,
 ];
 
 /** Context-anchored patterns (require a prefix like KEY=, Bearer, etc.). */
@@ -49,12 +51,21 @@ export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
+/** Multi-line or JSON-escaped secret blocks that do not have a token prefix. */
+export const SECRET_BLOCK_PATTERNS: RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g,
+];
+
 /** All secret patterns combined. */
-export const SECRET_PATTERNS: RegExp[] = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_PATTERNS];
+export const SECRET_PATTERNS: RegExp[] = [
+  ...TOKEN_PREFIX_PATTERNS,
+  ...CONTEXT_PATTERNS,
+  ...SECRET_BLOCK_PATTERNS,
+];
 
 /**
  * Token prefixes covered by the debug.sh sed fallback.
  * The primary path delegates to node; this fallback only runs when
  * node or dist/ is unavailable. Consistency test verifies these appear.
  */
-export const EXPECTED_SHELL_PREFIXES = ["nvapi-", "nvcf-", "ghp_", "sk-"];
+export const EXPECTED_SHELL_PREFIXES = ["nvapi-", "nvcf-", "ghp_", "sk-", "tvly-"];

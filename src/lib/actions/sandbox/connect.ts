@@ -54,7 +54,12 @@ import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-f
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
-import { checkAndRecoverSandboxProcesses, executeSandboxExecCommand } from "./process-recovery";
+import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
+import {
+  checkAndRecoverSandboxProcesses,
+  executeSandboxExecCommand,
+  resolveSandboxDashboardPort,
+} from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
@@ -193,7 +198,7 @@ function exitOnSecretBoundaryRefusal(
   console.error("");
   const reason =
     "secretBoundaryReason" in processCheck
-      ? (processCheck.secretBoundaryReason as "raw-secret" | "inconclusive" | undefined)
+      ? (processCheck.secretBoundaryReason as SecretBoundaryRefusalReason | undefined)
       : undefined;
   if (reason === "raw-secret") {
     console.error(
@@ -202,12 +207,45 @@ function exitOnSecretBoundaryRefusal(
     console.error(
       "  Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
     );
+  } else if (reason === "exec-failed") {
+    console.error(
+      `  ${contextLabel} failed: could not execute the secret-boundary check for ${agentName} gateway in '${sandboxName}'.`,
+    );
+    console.error(
+      "  Check sandbox connectivity, then re-run `nemoclaw <sandbox> recover` before connecting.",
+    );
+  } else if (reason === "validator-missing") {
+    console.error(
+      `  ${contextLabel} failed: the secret-boundary validator is missing from Hermes gateway in '${sandboxName}'.`,
+    );
+    console.error("  Re-image the sandbox with a current Hermes build before connecting.");
+  } else if (reason === "agent-missing") {
+    console.error(
+      `  ${contextLabel} failed: the Hermes agent definition is unavailable for sandbox '${sandboxName}'.`,
+    );
+    console.error("  Repair the NemoClaw installation, then re-run recovery before connecting.");
   } else {
     console.error(
       `  ${contextLabel} failed: secret-boundary check did not complete for ${agentName} gateway in '${sandboxName}'.`,
     );
     console.error("  Inspect the validator output above and re-run `nemoclaw <sandbox> recover`.");
   }
+  process.exit(1);
+}
+
+function exitOnForwardRecoveryFailure(
+  sandboxName: string,
+  agentName: string,
+  port: number,
+  detail?: string,
+): never {
+  console.error("");
+  console.error(
+    `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
+  );
+  console.error(
+    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+  );
   process.exit(1);
 }
 
@@ -234,6 +272,18 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
+  }
+  if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
+    const detail =
+      "forwardRecoveryFailureDetail" in processCheck
+        ? String(processCheck.forwardRecoveryFailureDetail)
+        : undefined;
+    exitOnForwardRecoveryFailure(
+      sandboxName,
+      agentName,
+      resolveSandboxDashboardPort(sandboxName),
+      detail,
+    );
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });
