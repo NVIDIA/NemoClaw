@@ -10,6 +10,10 @@ export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
+export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
+export LANGSMITH_TRACING=false
+export DEEPAGENTS_CODE_OFFLINE=1
+export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
@@ -123,6 +127,10 @@ prepare_runtime_env() {
     printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
+    printf '%s\n' 'export DEEPAGENTS_CODE_LANGSMITH_TRACING=false'
+    printf '%s\n' 'export LANGSMITH_TRACING=false'
+    printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
+    printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     # shellcheck disable=SC2016
@@ -137,9 +145,6 @@ prepare_runtime_env() {
     write_export_if_set SSL_CERT_FILE
     write_export_if_set REQUESTS_CA_BUNDLE
     write_export_if_set NODE_EXTRA_CA_CERTS
-    write_export_if_set LANGSMITH_TRACING
-    write_export_if_set LANGSMITH_PROJECT
-    write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
     write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"
   # Dcode intentionally runs as the non-root sandbox user, unlike the

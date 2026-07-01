@@ -63,7 +63,7 @@ For a single headless task, run:
 dcode -n "Summarize this repository"
 ```
 
-The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
+The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, manual update/install commands blocked, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, shell allow-list overrides blocked, and LangSmith tracing disabled.
 
 To confirm which sandbox a session is in, run the identity command:
 
@@ -89,14 +89,16 @@ Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, generated config, and hooks config when those files exist.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
-NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime.
+NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime. If upstream Deep Agents Code credentials are stored in `.deepagents/.state/auth.json`, the managed wrapper refuses to launch until they are removed so they cannot bypass NemoClaw credential handling.
 
 ## Optional Web Search
 
 Deep Agents Code can reach Tavily web search once you register a Tavily credential with the OpenShell gateway on the host.
 NemoClaw never accepts the raw key inside the sandbox, in `.env`, or in Deep Agents config files; the gateway injects it at egress instead.
+The managed wrapper also refuses direct runtime, `.env`, or upstream `/auth` credential storage for this harness; use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state.
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+The managed wrapper also refuses direct runtime, `.env`, or upstream `/auth` credential storage for this harness; use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state.
 
 To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
 
@@ -115,6 +117,7 @@ nemo-deepagents <sandbox-name> rebuild
 
 The `tavily` preset only opens egress to `api.tavily.com:443`.
 Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
+NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
 Remove the access again when it is no longer needed.
@@ -126,9 +129,8 @@ nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ### Optional Tracing (LangSmith)
 
 NemoClaw does not support LangSmith tracing for this managed harness yet.
-`start.sh` forwards the non-secret `LANGSMITH_TRACING`/`LANGSMITH_PROJECT` toggles if set, but no policy preset opens `api.smith.langchain.com` and no supported mechanism injects `LANGSMITH_API_KEY`.
-If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy).
-Treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
+The managed wrapper forces `LANGSMITH_TRACING=false` and `DEEPAGENTS_CODE_LANGSMITH_TRACING=false`, and no policy preset opens `api.smith.langchain.com`.
+Treat tracing as unsupported until NemoClaw ships a maintained `langsmith` preset and credential flow.
 
 ## Troubleshooting
 

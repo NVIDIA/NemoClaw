@@ -8,8 +8,19 @@ import importlib.util
 from pathlib import Path
 
 PATCH = '''    # NemoClaw-managed sandbox image hardening.
-    if getattr(args, "command", None) == "mcp":
+    os.environ["DEEPAGENTS_CODE_AUTO_UPDATE"] = "0"
+    os.environ["DEEPAGENTS_CODE_NO_UPDATE_CHECK"] = "1"
+    os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING"] = "false"
+    os.environ["LANGSMITH_TRACING"] = "false"
+    os.environ["DEEPAGENTS_CODE_OFFLINE"] = "1"
+    os.environ["DEEPAGENTS_CODE_RIPGREP_INSTALLER"] = "system"
+    blocked_command = getattr(args, "command", None)
+    if blocked_command == "mcp":
         parser.error("MCP commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if blocked_command in {"auth", "install", "update"}:
+        parser.error(f"{blocked_command} commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if blocked_command == "tools" and getattr(args, "tools_command", None) == "install":
+        parser.error("tools install is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if hasattr(args, "sandbox"):
         args.sandbox = "none"
     if hasattr(args, "sandbox_id"):

@@ -10,12 +10,17 @@ export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
+export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
+export LANGSMITH_TRACING=false
+export DEEPAGENTS_CODE_OFFLINE=1
+export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
+readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
 
 run_dcode() {
   exec python3 -m deepagents_code "$@"
@@ -238,7 +243,8 @@ is_secret_shaped_value() {
 }
 
 has_credential_name_context() {
-  local upper="${1^^}"
+  local upper
+  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
     KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
       return 0
@@ -286,6 +292,13 @@ refuse_dynamic_env() {
   exit 2
 }
 
+refuse_auth_store_credentials() {
+  local source="$1"
+  printf 'dcode: refusing to start — %s contains stored Deep Agents Code credentials.\n' "$source" >&2
+  printf "  Remove them and use 'nemoclaw credentials' plus NemoClaw policy/configuration instead.\n" >&2
+  exit 2
+}
+
 assert_no_secret_runtime_env() {
   local pair name value
   while IFS= read -r -d '' pair; do
@@ -318,6 +331,7 @@ assert_no_secret_env_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     lines+=("$line")
   done <"$env_file"
+  [ "${#lines[@]}" -gt 0 ] || return 0
   for line in "${lines[@]}"; do
     line="${line%$'\r'}"
     line="$(trim_whitespace "$line")"
@@ -360,8 +374,33 @@ assert_no_secret_env_file() {
   done
 }
 
+assert_no_auth_store_credentials() {
+  local auth_file="$DEEPAGENTS_AUTH_FILE"
+  [ -r "$auth_file" ] || return 0
+  set +e
+  python3 - "$auth_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(0)
+credentials = data.get("credentials") if isinstance(data, dict) else None
+sys.exit(1 if credentials else 0)
+PY
+  local status=$?
+  set -e
+  if [ "$status" -eq 1 ]; then
+    refuse_auth_store_credentials "$auth_file"
+  fi
+}
+
 assert_no_secret_runtime_env
 assert_no_secret_env_file
+assert_no_auth_store_credentials
 
 # SECURITY: managed identity/status display boundary.
 # - Invalid state: config.toml and runtime environment values are mutable inside
@@ -561,9 +600,22 @@ reject_managed_override() {
   exit 2
 }
 
-if [ "${1:-}" = "mcp" ]; then
-  reject_managed_override "MCP posture" "mcp"
-fi
+case "${1:-}" in
+  mcp)
+    reject_managed_override "MCP posture" "mcp"
+    ;;
+  update | install)
+    reject_managed_override "dependency update posture" "${1:-}"
+    ;;
+  auth)
+    reject_managed_override "credential posture" "auth"
+    ;;
+  tools)
+    if [ "${2:-}" = "install" ]; then
+      reject_managed_override "managed tool installation posture" "tools install"
+    fi
+    ;;
+esac
 
 for arg in "$@"; do
   case "$arg" in

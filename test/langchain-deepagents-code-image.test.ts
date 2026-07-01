@@ -63,14 +63,19 @@ function readAgentFile(name: string): string {
 function makeWrapperFixture(
   tempDir: string,
   envFileOverride?: string,
-): { wrapperPath: string; ranMarker: string; envFile: string } {
+): { wrapperPath: string; ranMarker: string; envFile: string; authFile: string } {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
+  const authFile = path.join(tempDir, "auth.json");
   const fixture = readAgentFile("dcode-wrapper.sh")
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
+    )
+    .replace(
+      'readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"',
+      `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
     )
     .replace(
       "exec python3 -m deepagents_code",
@@ -79,7 +84,7 @@ function makeWrapperFixture(
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, fixture, "utf8");
   fs.chmodSync(wrapperPath, 0o755);
-  return { wrapperPath, ranMarker, envFile };
+  return { wrapperPath, ranMarker, envFile, authFile };
 }
 
 function makeNetworkSimulatingFixture(tempDir: string): {
@@ -224,10 +229,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).toContain('chmod 444 "$tmp"');
     expect(startScript).toContain("write_export_if_set HTTPS_PROXY");
     expect(startScript).not.toContain("write_proxy_export_pair");
+    expect(startScript).toContain("export DEEPAGENTS_CODE_LANGSMITH_TRACING=false");
+    expect(startScript).toContain("export LANGSMITH_TRACING=false");
+    expect(startScript).toContain("export DEEPAGENTS_CODE_OFFLINE=1");
+    expect(startScript).toContain("export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
     expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toMatch(
-      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY)\b/,
+      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY|LANGSMITH_TRACING)\b/,
     );
   });
 
@@ -327,6 +336,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("patch-managed-deepagents-code.py");
     expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
+    expect(wrapper).toContain("export DEEPAGENTS_CODE_LANGSMITH_TRACING=false");
+    expect(wrapper).toContain("export LANGSMITH_TRACING=false");
+    expect(wrapper).toContain("export DEEPAGENTS_CODE_OFFLINE=1");
+    expect(wrapper).toContain("export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
+    expect(wrapper).toContain('reject_managed_override "dependency update posture"');
+    expect(wrapper).toContain('reject_managed_override "credential posture"');
+    expect(wrapper).toContain('reject_managed_override "managed tool installation posture"');
+    expect(wrapper).toContain("assert_no_auth_store_credentials");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).toContain(
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
@@ -1038,20 +1055,63 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("passes through when no secret-shaped value is present in env or file", () => {
+  it("passes through when no secret-shaped value is present in env, env file, or auth store", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const { wrapperPath, ranMarker, envFile, authFile } = makeWrapperFixture(tempDir);
     fs.writeFileSync(
       envFile,
       ["# comment", "DISCORD_ALLOWED_USERS=alice,bob", "MODEL_NAME=gpt-4"].join("\n"),
       "utf8",
     );
+    fs.writeFileSync(authFile, JSON.stringify({ version: 1, credentials: {} }), "utf8");
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {});
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("rejects stored Deep Agents Code credentials before dcode runs", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-store-"));
+    const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    fs.writeFileSync(
+      authFile,
+      JSON.stringify({
+        version: 1,
+        credentials: {
+          langsmith: { type: "api_key", key: fakeSecret, added_at: "2026-06-30T00:00:00Z" },
+        },
+      }),
+      "utf8",
+    );
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("auth.json");
+    expect(result.stderr).toContain("stored Deep Agents Code credentials");
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it.each([
+    { args: ["update"], posture: "dependency update posture" },
+    { args: ["install", "anthropic"], posture: "dependency update posture" },
+    { args: ["auth", "set", "langsmith"], posture: "credential posture" },
+    { args: ["tools", "install"], posture: "managed tool installation posture" },
+  ])("rejects upstream managed-mutation command $args", ({ args, posture }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-command-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+
+    const result = runWrapper(wrapperPath, args, {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(posture);
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
   it("rejects non-messaging secret shapes carried by managed runtime env names", () => {
@@ -1426,6 +1486,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         "    def __init__(self):",
         "        self.args = SimpleNamespace(",
         "            command=None,",
+        "            tools_command=None,",
         "            sandbox='docker',",
         "            sandbox_id='sandbox-id',",
         "            sandbox_snapshot_name='snapshot',",
@@ -1461,9 +1522,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(patched).toContain("args.no_mcp = True");
     expect(patched).toContain("args.mcp_config = None");
     expect(patched).toContain("args.shell_allow_list = None");
+    expect(patched).toContain('os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING"] = "false"');
+    expect(patched).toContain('os.environ["LANGSMITH_TRACING"] = "false"');
+    expect(patched).toContain('os.environ["DEEPAGENTS_CODE_OFFLINE"] = "1"');
+    expect(patched).toContain('os.environ["DEEPAGENTS_CODE_RIPGREP_INSTALLER"] = "system"');
     expect(patched).toContain('os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)');
     expect(patched).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-    expect(patched).toContain('getattr(args, "command", None) == "mcp"');
+    expect(patched).toContain('blocked_command = getattr(args, "command", None)');
+    expect(patched).toContain('blocked_command in {"auth", "install", "update"}');
 
     const output = execFileSync(
       "python3",
@@ -1483,6 +1549,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
           "assert args.trust_project_mcp is False, args.trust_project_mcp",
           "assert args.shell_allow_list is None, args.shell_allow_list",
           "assert 'DEEPAGENTS_CODE_SHELL_ALLOW_LIST' not in os.environ",
+          "assert os.environ['DEEPAGENTS_CODE_AUTO_UPDATE'] == '0'",
+          "assert os.environ['DEEPAGENTS_CODE_NO_UPDATE_CHECK'] == '1'",
+          "assert os.environ['DEEPAGENTS_CODE_LANGSMITH_TRACING'] == 'false'",
+          "assert os.environ['LANGSMITH_TRACING'] == 'false'",
+          "assert os.environ['DEEPAGENTS_CODE_OFFLINE'] == '1'",
+          "assert os.environ['DEEPAGENTS_CODE_RIPGREP_INSTALLER'] == 'system'",
           "main.parser.args.command = 'mcp'",
           "try:",
           "    main.parse_args()",
@@ -1490,6 +1562,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
           "    assert 'MCP commands are disabled' in str(exc), exc",
           "else:",
           "    raise AssertionError('mcp command did not fail')",
+          "main.parser.args.command = 'update'",
+          "try:",
+          "    main.parse_args()",
+          "except RuntimeError as exc:",
+          "    assert 'update commands are disabled' in str(exc), exc",
+          "else:",
+          "    raise AssertionError('update command did not fail')",
+          "main.parser.args.command = 'tools'",
+          "main.parser.args.tools_command = 'install'",
+          "try:",
+          "    main.parse_args()",
+          "except RuntimeError as exc:",
+          "    assert 'tools install is disabled' in str(exc), exc",
+          "else:",
+          "    raise AssertionError('tools install command did not fail')",
           "print('managed-posture-ok')",
         ].join("\n"),
       ],
