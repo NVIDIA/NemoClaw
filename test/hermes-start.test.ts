@@ -192,7 +192,11 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "_HERMES_BOUNDARY_TIMEOUT=()",
+      // A harmless no-op prefix (not an empty array): macOS bash 3.2 treats
+      // "${empty[@]}" as an unbound variable under `set -u`, which would abort
+      // the harness before the validator ever runs. `env --` just execs the
+      // validator unchanged.
+      "_HERMES_BOUNDARY_TIMEOUT=(env --)",
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -221,7 +225,11 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "_HERMES_BOUNDARY_TIMEOUT=()",
+      // A harmless no-op prefix (not an empty array): macOS bash 3.2 treats
+      // "${empty[@]}" as an unbound variable under `set -u`, which would abort
+      // the harness before the validator ever runs. `env --` just execs the
+      // validator unchanged.
+      "_HERMES_BOUNDARY_TIMEOUT=(env --)",
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",

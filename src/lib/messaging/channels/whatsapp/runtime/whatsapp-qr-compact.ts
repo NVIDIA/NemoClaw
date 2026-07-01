@@ -45,9 +45,101 @@
 //
 // Ref: https://github.com/NVIDIA/NemoClaw/issues/4522
 
-(function () {
-  "use strict";
+function markPatched(mod) {
+  try {
+    Object.defineProperty(mod, "__nemoclawCompactPatched", { value: true });
+  } catch (_e) {
+    mod.__nemoclawCompactPatched = true;
+  }
+}
 
+function hasOwn(mod, name) {
+  return mod && Object.prototype.hasOwnProperty.call(mod, name);
+}
+
+// `qrcode` package main: renderQrTerminal() calls qrcode.toString(text, opts).
+// Require an OWN toString (every object inherits Object.prototype.toString, so
+// a plain `typeof mod.toString` check would also match qrcode's internal
+// submodules — e.g. lib/core/qrcode.js, which exposes create() but only the
+// inherited toString — and needlessly mutate them). The package main exposes
+// its own toString + create; the submodules do not have an own toString.
+function isQrcodePackage(mod) {
+  return (
+    hasOwn(mod, "toString") &&
+    typeof mod.toString === "function" &&
+    typeof mod.create === "function"
+  );
+}
+
+// `qrcode-terminal` package: exposes its own generate(text, opts, cb) and,
+// unlike `qrcode`, has no create().
+function isQrcodeTerminalPackage(mod) {
+  return (
+    hasOwn(mod, "generate") &&
+    typeof mod.generate === "function" &&
+    typeof mod.create !== "function"
+  );
+}
+
+function patchQrcode(mod) {
+  if (mod.__nemoclawCompactPatched) return mod;
+  var origToString = mod.toString;
+  mod.toString = function (text, opts, cb) {
+    // Support toString(text, cb) and toString(text, opts, cb) / (text, opts).
+    if (typeof opts === "function") {
+      cb = opts;
+      opts = undefined;
+    }
+    var merged = {};
+    if (opts && typeof opts === "object") {
+      for (var key in opts) {
+        if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
+      }
+    }
+    // Only the terminal renderer has the oversize problem. `type` defaults
+    // to "utf8" in the qrcode package, but the WhatsApp path always passes
+    // "terminal" explicitly; force small there and leave every other type
+    // (svg/png/utf8 data URIs used elsewhere) exactly as the caller asked.
+    if (merged.type === "terminal") {
+      merged.small = true;
+    }
+    return origToString.call(this, text, merged, cb);
+  };
+  markPatched(mod);
+  return mod;
+}
+
+function patchQrcodeTerminal(mod) {
+  if (mod.__nemoclawCompactPatched) return mod;
+  var origGenerate = mod.generate;
+  mod.generate = function (text, opts, cb) {
+    if (typeof opts === "function") {
+      cb = opts;
+      opts = undefined;
+    }
+    var merged = {};
+    if (opts && typeof opts === "object") {
+      for (var key in opts) {
+        if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
+      }
+    }
+    merged.small = true;
+    return origGenerate.call(this, text, merged, cb);
+  };
+  markPatched(mod);
+  return mod;
+}
+
+// Named exports so the pure shape-detect + patch helpers can be unit-tested
+// (NemoClaw#4522 regression class) without pulling in a real qrcode dependency.
+// The auto-install below still uses the exact same functions, so the runtime
+// hook behaves identically.
+export { hasOwn, isQrcodePackage, isQrcodeTerminalPackage, patchQrcode, patchQrcodeTerminal };
+
+// Install the Module._load hook that patches qrcode / qrcode-terminal on load.
+// Guarded so double-require is a no-op. Runs on import (the file is loaded via
+// `--require`/preload), preserving the previous self-installing IIFE behavior.
+function installWhatsappQrCompactHook() {
   if (process.__nemoclawWhatsappQrCompactInstalled) return;
   try {
     Object.defineProperty(process, "__nemoclawWhatsappQrCompactInstalled", { value: true });
@@ -57,91 +149,6 @@
 
   var Module = require("module");
   var origLoad = Module._load;
-
-  function markPatched(mod) {
-    try {
-      Object.defineProperty(mod, "__nemoclawCompactPatched", { value: true });
-    } catch (_e) {
-      mod.__nemoclawCompactPatched = true;
-    }
-  }
-
-  function hasOwn(mod, name) {
-    return mod && Object.prototype.hasOwnProperty.call(mod, name);
-  }
-
-  // `qrcode` package main: renderQrTerminal() calls qrcode.toString(text, opts).
-  // Require an OWN toString (every object inherits Object.prototype.toString, so
-  // a plain `typeof mod.toString` check would also match qrcode's internal
-  // submodules — e.g. lib/core/qrcode.js, which exposes create() but only the
-  // inherited toString — and needlessly mutate them). The package main exposes
-  // its own toString + create; the submodules do not have an own toString.
-  function isQrcodePackage(mod) {
-    return (
-      hasOwn(mod, "toString") &&
-      typeof mod.toString === "function" &&
-      typeof mod.create === "function"
-    );
-  }
-
-  // `qrcode-terminal` package: exposes its own generate(text, opts, cb) and,
-  // unlike `qrcode`, has no create().
-  function isQrcodeTerminalPackage(mod) {
-    return (
-      hasOwn(mod, "generate") &&
-      typeof mod.generate === "function" &&
-      typeof mod.create !== "function"
-    );
-  }
-
-  function patchQrcode(mod) {
-    if (mod.__nemoclawCompactPatched) return mod;
-    var origToString = mod.toString;
-    mod.toString = function (text, opts, cb) {
-      // Support toString(text, cb) and toString(text, opts, cb) / (text, opts).
-      if (typeof opts === "function") {
-        cb = opts;
-        opts = undefined;
-      }
-      var merged = {};
-      if (opts && typeof opts === "object") {
-        for (var key in opts) {
-          if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
-        }
-      }
-      // Only the terminal renderer has the oversize problem. `type` defaults
-      // to "utf8" in the qrcode package, but the WhatsApp path always passes
-      // "terminal" explicitly; force small there and leave every other type
-      // (svg/png/utf8 data URIs used elsewhere) exactly as the caller asked.
-      if (merged.type === "terminal") {
-        merged.small = true;
-      }
-      return origToString.call(this, text, merged, cb);
-    };
-    markPatched(mod);
-    return mod;
-  }
-
-  function patchQrcodeTerminal(mod) {
-    if (mod.__nemoclawCompactPatched) return mod;
-    var origGenerate = mod.generate;
-    mod.generate = function (text, opts, cb) {
-      if (typeof opts === "function") {
-        cb = opts;
-        opts = undefined;
-      }
-      var merged = {};
-      if (opts && typeof opts === "object") {
-        for (var key in opts) {
-          if (Object.prototype.hasOwnProperty.call(opts, key)) merged[key] = opts[key];
-        }
-      }
-      merged.small = true;
-      return origGenerate.call(this, text, merged, cb);
-    };
-    markPatched(mod);
-    return mod;
-  }
 
   Module._load = function (request, _parent, _isMain) {
     var loaded = origLoad.apply(this, arguments);
@@ -159,4 +166,6 @@
     }
     return loaded;
   };
-})();
+}
+
+installWhatsappQrCompactHook();
