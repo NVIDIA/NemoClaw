@@ -5,6 +5,7 @@ import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
 import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_MCP_DISPLAY_LAYOUT } from "./public-display-mcp";
 import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
@@ -197,43 +198,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--channel <channel>] [--json]",
     },
   ],
-  "sandbox:mcp": [
-    {
-      group: "MCP Servers",
-      order: 25.1,
-      usage: "nemoclaw <name> mcp list",
-      description: "List configured MCP servers",
-      flags: "[--json]",
-    },
-    {
-      group: "MCP Servers",
-      order: 25.2,
-      usage: "nemoclaw <name> mcp add",
-      description: "Add an OpenShell-enforced MCP HTTP server",
-      flags: "<server> --url <url> --env KEY",
-    },
-    {
-      group: "MCP Servers",
-      order: 25.3,
-      usage: "nemoclaw <name> mcp status",
-      description: "Inspect MCP server health",
-      flags: "[server] [--json]",
-    },
-    {
-      group: "MCP Servers",
-      order: 25.4,
-      usage: "nemoclaw <name> mcp restart",
-      description: "Refresh one or all MCP server registrations",
-      flags: "[server]",
-    },
-    {
-      group: "MCP Servers",
-      order: 25.5,
-      usage: "nemoclaw <name> mcp remove",
-      description: "Remove an MCP server, provider, and generated policy",
-      flags: "<server> [--force]",
-    },
-  ],
+  ...SANDBOX_MCP_DISPLAY_LAYOUT,
   "sandbox:config:get": [
     {
       group: "Sandbox Management",
