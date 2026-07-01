@@ -13,146 +13,18 @@
 // in-process stub HTTP backend, and drive real requests through it. No network
 // beyond loopback; both servers and the child are torn down in afterEach.
 
-import { type ChildProcess, spawn } from "node:child_process";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
-import path from "node:path";
+import type { ChildProcess } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-const PROXY_SCRIPT = path.resolve(import.meta.dirname, "..", "scripts", "ollama-auth-proxy.js");
+import {
+  freePort,
+  request,
+  startBackend,
+  startProxy,
+  terminate,
+} from "./ollama-auth-proxy-handler-helpers.ts";
+
 const TOKEN = "unit-test-secret-token";
-
-interface BackendCapture {
-  method: string;
-  url: string;
-  headers: http.IncomingHttpHeaders;
-}
-
-/** Start a loopback stub backend that records the request it received. */
-function startBackend(): Promise<{
-  server: http.Server;
-  port: number;
-  captured: BackendCapture[];
-}> {
-  const captured: BackendCapture[] = [];
-  const server = http.createServer((req, res) => {
-    captured.push({
-      method: req.method ?? "",
-      url: req.url ?? "",
-      headers: { ...req.headers },
-    });
-    // Drain the body so piped client requests complete cleanly.
-    req.resume();
-    req.on("end", () => {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, models: [] }));
-    });
-  });
-  return new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => {
-      resolve({ server, port: (server.address() as AddressInfo).port, captured });
-    });
-  });
-}
-
-/** Grab an ephemeral free TCP port, then release it for the proxy to bind. */
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = http.createServer();
-    probe.once("error", reject);
-    probe.listen(0, "127.0.0.1", () => {
-      const port = (probe.address() as AddressInfo).port;
-      probe.close(() => resolve(port));
-    });
-  });
-}
-
-/** Spawn the real proxy script and wait until its listener accepts a connection. */
-async function startProxy(
-  proxyPort: number,
-  backendPort: number,
-  token: string,
-): Promise<ChildProcess> {
-  const child = spawn(process.execPath, [PROXY_SCRIPT], {
-    env: {
-      ...process.env,
-      OLLAMA_PROXY_TOKEN: token,
-      OLLAMA_PROXY_PORT: String(proxyPort),
-      OLLAMA_BACKEND_PORT: String(backendPort),
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("proxy did not start in time")), 5_000);
-    const tryConnect = (): void => {
-      const req = http.request(
-        { host: "127.0.0.1", port: proxyPort, path: "/", method: "GET" },
-        (res) => {
-          res.resume();
-          clearTimeout(timer);
-          resolve();
-        },
-      );
-      req.on("error", () => setTimeout(tryConnect, 100));
-      req.end();
-    };
-    child.once("exit", (code) => reject(new Error(`proxy exited early with code ${code}`)));
-    tryConnect();
-  });
-  return child;
-}
-
-async function terminate(child: ChildProcess | undefined): Promise<void> {
-  if (!child || child.killed || child.exitCode !== null) return;
-  child.kill("SIGTERM");
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      if (!child.killed && child.exitCode === null) child.kill("SIGKILL");
-      resolve();
-    }, 2_000);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
-
-interface ProxyResponse {
-  status: number;
-  body: string;
-}
-
-/** Issue a real request through the proxy on loopback. */
-function request(
-  proxyPort: number,
-  options: { method?: string; path?: string; auth?: string; body?: string },
-): Promise<ProxyResponse> {
-  return new Promise((resolve, reject) => {
-    const headers: Record<string, string> = { host: "example.invalid" };
-    if (options.auth !== undefined) headers.authorization = options.auth;
-    if (options.body !== undefined) headers["content-type"] = "application/json";
-    const req = http.request(
-      {
-        host: "127.0.0.1",
-        port: proxyPort,
-        path: options.path ?? "/api/tags",
-        method: options.method ?? "GET",
-        headers,
-      },
-      (res) => {
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          body += chunk;
-        });
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
-      },
-    );
-    req.on("error", reject);
-    if (options.body !== undefined) req.write(options.body);
-    req.end();
-  });
-}
 
 describe("ollama-auth-proxy request handler", () => {
   let backend: Awaited<ReturnType<typeof startBackend>> | undefined;

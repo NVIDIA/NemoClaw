@@ -89,12 +89,13 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   const LOOPBACK_URL = "http://127.0.0.1:18789";
   const savedEnv = process.env.NEMOCLAW_DASHBOARD_BIND;
 
+  const restoreEnv = (value: string | undefined) => {
+    delete process.env.NEMOCLAW_DASHBOARD_BIND;
+    Object.assign(process.env, value === undefined ? {} : { NEMOCLAW_DASHBOARD_BIND: value });
+  };
+
   afterEach(() => {
-    if (savedEnv === undefined) {
-      delete process.env.NEMOCLAW_DASHBOARD_BIND;
-    } else {
-      process.env.NEMOCLAW_DASHBOARD_BIND = savedEnv;
-    }
+    restoreEnv(savedEnv);
   });
 
   it("opens the remote bind when env NEMOCLAW_DASHBOARD_BIND=0.0.0.0", () => {

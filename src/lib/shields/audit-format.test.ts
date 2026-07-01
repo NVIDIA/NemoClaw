@@ -137,8 +137,8 @@ describe("shields-audit production redaction", () => {
   });
 
   afterEach(() => {
-    if (savedHome === undefined) delete process.env.HOME;
-    else process.env.HOME = savedHome;
+    delete process.env.HOME;
+    Object.assign(process.env, savedHome === undefined ? {} : { HOME: savedHome });
     vi.resetModules();
     fs.rmSync(homeDir, { recursive: true, force: true });
   });

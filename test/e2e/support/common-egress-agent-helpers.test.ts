@@ -59,6 +59,13 @@ describe("common-egress agent parsing and classification helpers", () => {
     });
 
     const originalGithubActions = process.env.GITHUB_ACTIONS;
+    const restoreGithubActions = () => {
+      delete process.env.GITHUB_ACTIONS;
+      Object.assign(
+        process.env,
+        originalGithubActions === undefined ? {} : { GITHUB_ACTIONS: originalGithubActions },
+      );
+    };
     try {
       process.env.GITHUB_ACTIONS = "true";
       expect(
@@ -72,11 +79,7 @@ describe("common-egress agent parsing and classification helpers", () => {
         sanitizedEndpointValidationFailure: true,
       });
     } finally {
-      if (originalGithubActions === undefined) {
-        delete process.env.GITHUB_ACTIONS;
-      } else {
-        process.env.GITHUB_ACTIONS = originalGithubActions;
-      }
+      restoreGithubActions();
     }
 
     expect(

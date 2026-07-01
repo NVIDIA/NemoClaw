@@ -15,6 +15,7 @@ import {
   patchQrcode,
   patchQrcodeTerminal,
 } from "./whatsapp-qr-compact";
+import { makeQrcodeLoadHook } from "./whatsapp-qr-compact-test-helpers";
 
 // A fake of the `qrcode` package main: has its OWN toString + create().
 function makeQrcodeFake() {
@@ -149,14 +150,7 @@ describe("Module._load hook path-segment matching (#4522)", () => {
     const qrcodeFake = makeQrcodeFake();
     const absolutePath = "/tmp/app/node_modules/qrcode/lib/index.js";
     const origLoad = Module._load;
-    Module._load = function (request: unknown, ..._rest: unknown[]) {
-      const loaded = request === absolutePath ? qrcodeFake : {};
-      if (typeof request === "string" && request.indexOf("qrcode") !== -1) {
-        if (isQrcodePackage(loaded)) return patchQrcode(loaded);
-        if (isQrcodeTerminalPackage(loaded)) return patchQrcodeTerminal(loaded);
-      }
-      return loaded;
-    };
+    Module._load = makeQrcodeLoadHook(absolutePath, qrcodeFake);
     try {
       const loaded = Module._load(absolutePath) as ReturnType<typeof makeQrcodeFake>;
       expect(loaded).toBe(qrcodeFake);
