@@ -525,6 +525,16 @@ lock_openclaw_config_baseline_if_present() {
 # normalization without requiring a restart.
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
+  local config_file="$config_dir/openclaw.json"
+  local hash_file="$config_dir/.config-hash"
+
+  # An explicit one-shot command may replace these paths before root cleanup.
+  # Fail closed, and use find -P below, so permission repair never follows an
+  # attacker-selected symlink target.
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
   [ -d "$config_dir" ] || return 0
 
   # Detect shields-up. Config dir owned by root means shields are
@@ -535,10 +545,14 @@ normalize_mutable_config_perms() {
     return 0
   fi
 
-  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-  chmod 2770 "$config_dir" 2>/dev/null || true
-  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
+  find -P "$config_dir" -type d -exec chmod g+rwx,o-rwx,g+s {} + 2>/dev/null || true
+  find -P "$config_dir" -type f -exec chmod g+rw,o-rwx {} + 2>/dev/null || true
+  find -P "$config_dir" -maxdepth 0 -type d -exec chmod 2770 {} + 2>/dev/null || true
+  find -P "$config_dir" -maxdepth 1 -type f \( -name openclaw.json -o -name .config-hash \) -exec chmod 660 {} + 2>/dev/null || true
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — config directory or file path became a symlink\n' >&2
+    return 1
+  fi
   lock_openclaw_config_baseline_if_present "$config_dir" || return 1
 }
 

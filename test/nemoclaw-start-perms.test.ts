@@ -132,4 +132,44 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       "[one-shot] command status=42; permission cleanup status=17; returning cleanup failure",
     );
   });
+
+  it("refuses a child-planted config symlink without chmodding its target (#6047)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-symlink-"));
+    const configDir = path.join(root, ".openclaw");
+    const protectedTarget = path.join(root, "protected-target");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+    fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
+
+    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    );
+    const script = [
+      "set -euo pipefail",
+      "lock_openclaw_config_baseline_if_present() { return 0; }",
+      normalizeFunction,
+      oneShotFunction,
+      "rc=0",
+      `run_oneshot_command bash -c 'rm "$1/openclaw.json"; ln -s "$2" "$1/openclaw.json"; exit 42' bash ${JSON.stringify(configDir)} ${JSON.stringify(protectedTarget)} || rc=$?`,
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("rc=1");
+      expect(result.stderr).toContain(
+        "Refusing mutable config permission normalization — config directory or file path is a symlink",
+      );
+      expect(result.stderr).toContain(
+        "[one-shot] command status=42; permission cleanup status=1; returning cleanup failure",
+      );
+      expect(mode(protectedTarget)).toBe(0o640);
+      expect(fs.lstatSync(path.join(configDir, "openclaw.json")).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
