@@ -3,11 +3,19 @@
 
 import path from "node:path";
 
+import { isCredentialShapedName } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 
 export interface CurlProbeArgOptions {
   cwd?: string;
   trustedConfigFiles?: readonly string[];
+  /**
+   * Permit redirect-following flags (`-L`, `-sfL`, `--location`) for this probe.
+   * Opt-in per call site because following redirects on a user-supplied URL
+   * widens the SSRF surface; only enable for probes against a fixed,
+   * hardcoded host.
+   */
+  allowRedirects?: boolean;
 }
 
 const CURL_CONFIG_OPTIONS = new Set(["--config", "-K"]);
@@ -41,18 +49,29 @@ const CURL_SAFE_FLAG_OPTIONS = new Set([
   "-sS",
   "-sf",
   "-f",
-  "-L",
-  "-sfL",
   "--fail",
   "--silent",
   "--show-error",
-  "--location",
   "--compressed",
   "--get",
 ]);
+// Redirect-following flags are NOT globally safe — they widen the SSRF
+// surface whenever a user-controlled URL is involved. Call sites that
+// genuinely need to follow redirects from a fixed, hardcoded host (e.g. the
+// Ollama manifest probe) must opt in via CurlProbeArgOptions.allowRedirects.
+const CURL_REDIRECT_FLAG_OPTIONS = new Set(["-L", "-sfL", "--location"]);
 const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
+
+// Defence-in-depth: primary protection is routing all secrets through trusted
+// --config tmpfiles. This denylist refuses URLs whose query-parameter names
+// look credential-shaped, so a regression at the caller can never quietly
+// leak a secret into the curl argv element. The credential-shaped test is
+// shared with the curl probe environment scrubber (security/credential-env).
+function isCredentialShapedQueryParam(name: string): boolean {
+  return isCredentialShapedName(name);
+}
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -65,7 +84,32 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (url.username || url.password) {
     throw new Error("curl probe URL must not embed credentials");
   }
+  for (const param of url.searchParams.keys()) {
+    if (isCredentialShapedQueryParam(param)) {
+      throw new Error(
+        `curl probe URL must not embed credentials in the ${param} query parameter; route via --config`,
+      );
+    }
+  }
   return url.toString();
+}
+
+const CURL_FORBIDDEN_AUTH_HEADER_PREFIXES = [
+  "authorization:",
+  "proxy-authorization:",
+  "x-api-key:",
+  "x-goog-api-key:",
+];
+
+function assertHeaderCarriesNoSecret(option: string, value: string): void {
+  const lower = value.toLowerCase().trimStart();
+  for (const prefix of CURL_FORBIDDEN_AUTH_HEADER_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      throw new Error(
+        `curl probe ${option} must not carry credentials inline; route the header via --config`,
+      );
+    }
+  }
 }
 
 function splitCurlOptionArg(arg: string): { option: string; inlineValue?: string } {
@@ -153,6 +197,7 @@ export function validateCurlProbeArgs(
       if (curlHeaderValueReadsFromFile(value)) {
         throw new Error(`curl probe option must not read headers from a file: ${option}`);
       }
+      assertHeaderCarriesNoSecret(option, value);
       if (inlineValue === undefined) index += 1;
       continue;
     }
@@ -173,6 +218,14 @@ export function validateCurlProbeArgs(
       continue;
     }
     if (CURL_SAFE_FLAG_OPTIONS.has(option)) {
+      continue;
+    }
+    if (CURL_REDIRECT_FLAG_OPTIONS.has(option)) {
+      if (!opts.allowRedirects) {
+        throw new Error(
+          `curl probe option is not allowed without explicit allowRedirects opt-in: ${option}`,
+        );
+      }
       continue;
     }
     if (!arg.startsWith("-")) {

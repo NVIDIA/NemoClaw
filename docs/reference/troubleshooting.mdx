@@ -815,6 +815,37 @@ If they are missing on an older sandbox, upgrade NemoClaw and run:
 $$nemoclaw <name> rebuild
 ```
 
+### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
+
+Sandbox outbound network access is denied by default and enforced by the OpenShell proxy.
+When a request targets a host that no applied policy preset allows, the proxy refuses the tunnel and tools surface only the protocol-level error:
+
+```text
+fatal: unable to access 'https://example.com/foo/bar/': CONNECT tunnel failed, response 403
+curl: (56) CONNECT tunnel failed, response 403
+```
+
+This is a network-policy denial, not a tool or certificate problem.
+
+The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this denial signature and the `logs` command below.
+The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
+Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.
+If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 63 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
+The reminder is intentionally proactive: the denial itself is surfaced by the OpenShell proxy, so the `curl`/`git` error text is left unchanged and the reminder points you to the logs instead.
+
+To see which rule denied the request, read the merged logs from the host:
+
+```bash
+$$nemoclaw <name> logs --tail 50
+```
+
+If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
+
+```bash
+$$nemoclaw <name> policy-add <preset>
+```
+
 ### Sandbox creation reports a TLS certificate mismatch
 
 If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.
@@ -836,6 +867,41 @@ Instead:
 1. Upgrade to a NemoClaw release that includes the newer `openclaw` version.
 2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
 3. Run `$$nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
+
+<AgentOnly variant="openclaw">
+
+### AWS EC2 Instance-Role Credential Discovery Is Unavailable
+
+This is expected in an OpenClaw sandbox.
+NemoClaw forces `AWS_EC2_METADATA_DISABLED=true` because OpenShell blocks the link-local EC2 Instance Metadata Service endpoint.
+Existing sandboxes must use a current NemoClaw image before they receive this environment invariant.
+
+Upgrade NemoClaw and rebuild the sandbox:
+
+```bash
+$$nemoclaw update --yes
+$$nemoclaw <name> rebuild --yes
+```
+
+Reconnect and verify the value:
+
+```bash
+$$nemoclaw <name> connect
+printenv AWS_EC2_METADATA_DISABLED
+```
+
+Expected output:
+
+```text
+true
+```
+
+Only EC2 instance-role discovery is disabled.
+Static access keys, bearer tokens, shared profiles, SSO and process credentials, web identity, and ECS container credentials remain eligible.
+NemoClaw's host-local Amazon Bedrock adapter is outside the sandbox credential-discovery boundary and remains available.
+Do not add `169.254.169.254` to a network policy or override the variable.
+
+</AgentOnly>
 
 ### Inference requests time out
 

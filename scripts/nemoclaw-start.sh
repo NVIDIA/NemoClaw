@@ -231,6 +231,11 @@ case "${1:-}" in
 esac
 NEMOCLAW_CMD=("$@")
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Force this
+# after self-wrapper normalization so injected or inherited values cannot make
+# OpenClaw processes probe an impossible credential source.
+export AWS_EC2_METADATA_DISABLED=true
+
 # Marker file the Docker HEALTHCHECK reads to decide whether an in-container
 # gateway liveness check is meaningful. Its presence means this container has
 # entered the OpenClaw gateway launch path (standalone deployments and the #3975
@@ -254,6 +259,7 @@ NEMOCLAW_CMD=("$@")
 # Internal test seam shared by the PID writer and watchdog. This is deliberately
 # not documented as a public env API; production always keeps the default path.
 GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
+GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemoclaw-gateway-watchdog-kill}"
 
 # A numeric PID is not a process identity: Linux may reuse it immediately
 # after the child is reaped.  Capture `/proc/<pid>/stat` field 22 (starttime)
@@ -358,6 +364,19 @@ record_gateway_pid() {
 
 clear_gateway_pid_record() {
   printf '' | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+record_gateway_watchdog_kill() {
+  printf '%s\n' "${1:-}" \
+    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_WATCHDOG_KILL_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+consume_gateway_watchdog_kill() {
+  local expected="$1" marked=""
+  [ -f "$GATEWAY_WATCHDOG_KILL_FILE" ] || return 1
+  IFS= read -r marked <"$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  rm -f "$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  [ -n "$marked" ] && [ "$marked" = "$expected" ]
 }
 
 _chat_ui_url_port() {
@@ -2881,6 +2900,7 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export AWS_EC2_METADATA_DISABLED="true"
 export JITI_FS_CACHE="false"
 PROXYEOF
     local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
@@ -3312,6 +3332,99 @@ PYAPPROVEAFTER
   return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
+# nemoclaw-policy-denial-hint begin
+# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
+# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
+# a policy denial only as the opaque protocol error
+# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
+# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
+# breadcrumb when a human first lands in an interactive connect shell so a later
+# 403 is recognisable and actionable.
+#
+# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
+# stderr turns their stderr into a pipe, which makes the tools treat it as a
+# non-TTY and silently drop progress meters and colour — a worse regression than
+# the missing breadcrumb. The hint is therefore tool-agnostic informational
+# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
+# byte-for-byte unchanged, and covers every connect path that sources this file.
+# Shown once per top-level interactive TTY session; suppress with
+# NEMOCLAW_NO_POLICY_HINT=1.
+#
+# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
+# which lives in a separate codebase/release cycle, so the denial response
+# cannot be made self-describing from this repo. This proactive breadcrumb is
+# the NemoClaw-owned surface that points at the denial reason in the logs.
+# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# condition: drop this stanza once the OpenShell proxy returns a structured,
+# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
+# site, at which point the breadcrumb is redundant.
+#
+# Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
+# behavior is this proactive connect-shell reminder. It does NOT make the
+# denial-time curl/git/wget error itself denial-adjacent — that is intentional,
+# given the source boundary above — so the tool error stays unchanged.
+_nemoclaw_policy_denial_hint_label() {
+  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
+  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
+  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
+  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
+  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
+  # (digit-leading labels, control characters, ANSI escapes, shell
+  # metacharacters, whitespace) falls back to a placeholder the user resolves
+  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
+  # characters, so an embedded newline is rejected by the metacharacter class.
+  #
+  # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
+  # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
+  # additional code points into [a-z]). Safe to set unconditionally: this helper
+  # is only ever called inside $(…) command substitution (a subshell), so the
+  # assignment cannot leak into the interactive shell.
+  LC_ALL=C
+  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
+  case "${OPENSHELL_SANDBOX:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+    *)
+      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
+        printf '%s' "$OPENSHELL_SANDBOX"
+      else
+        printf '<name>'
+      fi
+      ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_text() {
+  {
+    printf '  Note: this sandbox restricts outbound network access by policy.\n'
+    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
+      "$(_nemoclaw_policy_denial_hint_label)"
+  } >&2
+}
+_nemoclaw_maybe_policy_denial_hint() {
+  # Once per shell process: a login shell can source this file through more than
+  # one system-wide hook (the login-profile hook and the interactive-bash hook;
+  # #2704), so guard against printing twice. Not exported, so it neither leaks
+  # into child processes nor suppresses sibling connect sessions.
+  [ -n "${_NEMOCLAW_POLICY_HINT_SHOWN:-}" ] && return 0
+  # Suppressed by the user.
+  case "${NEMOCLAW_NO_POLICY_HINT:-}" in 1 | true | TRUE | yes | YES) return 0 ;; esac
+  # Interactive human shells only — never automation (`bash -c`, scripts).
+  case $- in *i*) ;; *) return 0 ;; esac
+  # Real terminal on stderr (where the hint is written).
+  [ -t 2 ] || return 0
+  # Top-level connect shell only — don't repeat in every subshell/pane.
+  [ "${SHLVL:-1}" -le 1 ] || return 0
+  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
+  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  _NEMOCLAW_POLICY_HINT_SHOWN=1
+  _nemoclaw_policy_denial_hint_text
+}
+_nemoclaw_maybe_policy_denial_hint
+# nemoclaw-policy-denial-hint end
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""
@@ -4117,6 +4230,7 @@ start_gateway_serving_watchdog() {
       # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
       # /tmp/gateway.log alongside the gateway's own output.
       echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      record_gateway_watchdog_kill "$tracked_identity"
       kill -TERM "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         openclaw_supervised_pid_is_live "$pid" "$start_identity" || break
@@ -4794,9 +4908,11 @@ if [ "$(id -u)" -ne 0 ]; then
     # non-zero, defeating the respawn loop entirely.
     RC=0
     EXITED_GATEWAY_PID="$GATEWAY_PID"
+    EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
-    if [ "$RC" -eq 0 ]; then
+    if [ "$RC" -eq 0 ] \
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -5067,6 +5183,7 @@ while :; do
   fi
 
   EXITED_GATEWAY_PID="$GATEWAY_PID"
+  EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
   REAP_STATUS=0
   openclaw_reap_exited_gateway || REAP_STATUS=$?
   if [ "$REAP_STATUS" -eq 3 ]; then
@@ -5081,7 +5198,8 @@ while :; do
     handle_openclaw_gateway_control_request || true
     continue
   fi
-  if [ "$RC" -eq 0 ]; then
+  if [ "$RC" -eq 0 ] \
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
     exit 0
   fi
   NOW=$(date +%s)

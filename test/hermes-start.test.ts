@@ -192,7 +192,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "_HERMES_BOUNDARY_TIMEOUT=()",
+      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -221,7 +221,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "_HERMES_BOUNDARY_TIMEOUT=()",
+      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
@@ -760,7 +760,7 @@ function runRuntimeShellEnvBootstrap() {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
     });
     const envFileContent = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
     const envFileMode = fs.existsSync(envFile)
@@ -805,6 +805,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
@@ -1016,6 +1017,8 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
+
+  // PATH-shadow regression lives in test/hermes-start-path-shadow.test.ts.
 
   it("rejects raw secret-shaped values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
