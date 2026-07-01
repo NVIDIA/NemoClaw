@@ -19,7 +19,11 @@ import {
 } from "./manifest";
 import type { RenderTemplateReferenceResolver } from "./compiler/engines/template";
 import { MessagingWorkflowPlanner } from "./compiler";
-import { type MessagingChannelModule, type MessagingPolicyContribution } from "./channels/module";
+import {
+  type MessagingChannelModule,
+  type MessagingPolicyContribution,
+  validateMessagingChannelModule,
+} from "./channels/module";
 
 export interface MessagingWorkflowPlannerOptions {
   readonly hooks?: "built-in" | "none";
@@ -227,15 +231,15 @@ function validateChannelModules(
 ): readonly MessagingChannelModule[] {
   const seen = new Set<string>();
   for (const module of modules) {
-    if (module.kind !== "nemoclaw.messaging.channel") {
-      throw new Error(`Invalid messaging channel module kind for '${module.id}'.`);
-    }
-    if (module.apiVersion !== 1) {
-      throw new Error(`Unsupported messaging channel module API version for '${module.id}'.`);
-    }
-    if (module.id !== module.manifest().id) {
+    const errors = validateMessagingChannelModule(module).filter(
+      (issue) => issue.severity === "error",
+    );
+    if (errors.length > 0) {
       throw new Error(
-        `Messaging channel module id '${module.id}' must match manifest id '${module.manifest().id}'.`,
+        [
+          `Invalid messaging channel module '${module.id}'.`,
+          ...errors.map((issue) => `  - ${issue.message}`),
+        ].join("\n"),
       );
     }
     if (seen.has(module.id)) {
