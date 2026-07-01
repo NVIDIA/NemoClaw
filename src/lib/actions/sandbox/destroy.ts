@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
@@ -14,44 +13,27 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
-  getSandboxDeleteOutcome,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import {
-  type DetachSandboxProvidersResult,
   emitProviderDetachResidualHint,
-  runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { redact } from "../../security/redact";
-import { withTimerBoundShieldsMutationLockAsync } from "../../shields/timer-bound-lock";
-import { killTimer as defaultKillShieldsTimer, readTimerMarker } from "../../shields/timer-control";
+import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
-import {
-  createSystemDeps as createSessionDeps,
-  getActiveSandboxSessions,
-} from "../../state/sandbox-session";
-import {
-  cleanupGatewayAfterLastSandbox,
-  type DestroyRunOpenshell,
-  selectGatewayForSandboxDestroy,
-} from "./destroy-gateway";
-import { getSandboxTargetGatewayName } from "./gateway-target";
-import {
-  finalizeMcpBridgesAfterSandboxDelete,
-  type McpDestroyPreparation,
-  prepareMcpBridgesForAbsentSandboxDestroy,
-  prepareMcpBridgesForDestroy,
-  restoreMcpBridgesAfterDestroyAbort,
-} from "./mcp-bridge";
-import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
+import { confirmSandboxDestroy } from "./destroy-confirmation";
+import { executeSandboxDestroy } from "./destroy-execution";
+import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
+
+export { classifyDestroySandboxPresence } from "./destroy-presence";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -142,50 +124,6 @@ function hasNoLiveSandboxes(): boolean {
     return false;
   }
   return parseLiveSandboxNames(liveList.output).size === 0;
-}
-
-type DestroySandboxPresence = "present" | "absent" | "unknown";
-
-function isStrictSandboxListJsonRow(value: unknown): value is { name: string } {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const row = value as Record<string, unknown>;
-  const labels = row.labels;
-  return (
-    typeof row.id === "string" &&
-    typeof row.name === "string" &&
-    row.name.length > 0 &&
-    row.name.trim() === row.name &&
-    !!labels &&
-    typeof labels === "object" &&
-    !Array.isArray(labels) &&
-    Object.values(labels as Record<string, unknown>).every((label) => typeof label === "string") &&
-    typeof row.resource_version === "number" &&
-    Number.isFinite(row.resource_version) &&
-    typeof row.created_at === "string" &&
-    typeof row.phase === "string" &&
-    row.phase.length > 0 &&
-    typeof row.current_policy_version === "number" &&
-    Number.isFinite(row.current_policy_version)
-  );
-}
-
-export function classifyDestroySandboxPresence(
-  sandboxName: string,
-  result: { status: number | null; stdout?: string; stderr?: string },
-): DestroySandboxPresence {
-  if (result.status !== 0) return "unknown";
-  const stderr = result.stderr?.trim() ?? "";
-  if (stderr) return "unknown";
-  let rows: unknown;
-  try {
-    rows = JSON.parse(result.stdout ?? "");
-  } catch {
-    return "unknown";
-  }
-  if (!Array.isArray(rows) || !rows.every(isStrictSandboxListJsonRow)) {
-    return "unknown";
-  }
-  return rows.some((row) => row.name === sandboxName) ? "present" : "absent";
 }
 
 export function cleanupSandboxServices(
@@ -364,246 +302,18 @@ async function destroySandboxUnlocked(
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
-  const skipConfirm = normalized.yes === true || normalized.force === true;
+  if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
 
-  // Active session detection — enrich the confirmation prompt if sessions are active
-  let activeSessionCount = 0;
-  const opsBin = resolveOpenshell();
-  if (opsBin) {
-    try {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
-      if (sessionResult.detected) {
-        activeSessionCount = sessionResult.sessions.length;
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
-
-  if (!skipConfirm) {
-    console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
-    if (activeSessionCount > 0) {
-      const plural = activeSessionCount > 1 ? "sessions" : "session";
-      console.log(
-        `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
-      );
-      console.log(
-        `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-      );
-    }
-    console.log("  This will permanently delete the sandbox and all workspace files inside it.");
-    console.log("  This cannot be undone.");
-    const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-  }
-
-  const sb = registry.getSandbox(sandboxName);
-  console.log(`  Deleting sandbox '${sandboxName}'...`);
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: DestroyRunOpenshell;
-  };
-  // Capture and select the sandbox's gateway before any destructive OpenShell
-  // operation. Provider cleanup and sandbox delete must address the gateway
-  // recorded for this sandbox, not whichever gateway happens to be active.
-  const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
-  // `gateway select` mutates shared CLI state and can be raced by another
-  // NemoClaw process. Pin every subsequent list/provider/delete/finalize
-  // subprocess in this destroy operation to the registry-captured gateway.
-  process.env.OPENSHELL_GATEWAY = cleanupGatewayName;
-
-  const sandboxPresence = classifyDestroySandboxPresence(
+  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
+    prepareSandboxDestroy(sandboxName);
+  const destructiveResult = await executeSandboxDestroy({
+    cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+    force: normalized.force === true,
+    runOpenshell,
+    sandbox,
+    sandboxConfirmedAbsent,
     sandboxName,
-    runOpenshell(["sandbox", "list", "-o", "json"], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-    }),
-  );
-  const sandboxConfirmedAbsent = sandboxPresence === "absent";
-  const mcpEntriesRequiringConfigMutation = Object.values(sb?.mcp?.bridges ?? {}).filter(
-    (entry) => entry.addState !== "prepared",
-  );
-  if (
-    !sandboxConfirmedAbsent &&
-    sb &&
-    !sb.mcp?.destroyPreparedAt &&
-    !sb.mcp?.destroyPendingAt &&
-    mcpEntriesRequiringConfigMutation.length > 0
-  ) {
-    // Gateway selection/listing above is required to distinguish a live
-    // sandbox from absent-sandbox cleanup. Once live presence is known,
-    // refuse locked Hermes config before stopping local agent services or
-    // mutating MCP adapter/provider/policy state.
-    assertMcpAdapterConfigMutationsAllowed(sandboxName, sb, mcpEntriesRequiringConfigMutation);
-  }
-
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
-  if (sb && sb.nimContainer) {
-    console.log(`  Stopping NIM for '${sandboxName}'...`);
-    nim.stopNimContainerByName(sb.nimContainer);
-  } else {
-    // Best-effort cleanup of convention-named NIM containers that may not be
-    // recorded in the registry (e.g. older sandboxes). Suppress output so the
-    // user does not see "No such container" noise when no NIM exists.
-    nim.stopNimContainer(sandboxName, { silent: true });
-  }
-
-  // The Ollama auth proxy is per-sandbox and only spawned when the provider
-  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
-  // handled separately by `cleanupSandboxServices` below.
-  if (sb?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy");
-    killStaleProxy();
-  }
-
-  const emptyMcpPreparation: McpDestroyPreparation = {
-    entries: [],
-    detachedProviderEntries: [],
-    scrubbedAdapterEntries: [],
-    destroyAlreadyPrepared: false,
-    destroyAlreadyPending: false,
-  };
-  const destructiveResult = await withTimerBoundShieldsMutationLockAsync(
-    sandboxName,
-    "destroy sandbox",
-    async () => {
-      const mcpPreparation =
-        Object.keys(sb?.mcp?.bridges ?? {}).length > 0
-          ? sandboxConfirmedAbsent
-            ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, {
-                force: normalized.force === true,
-              })
-            : await prepareMcpBridgesForDestroy(sandboxName)
-          : emptyMcpPreparation;
-
-      if (sandboxConfirmedAbsent && mcpPreparation.entries.length > 0) {
-        console.warn(
-          `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
-        );
-      }
-
-      // Wipe persistent state AFTER the gateway is selected so the exec targets
-      // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
-      // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
-      // Keep the same timer-bound lock across MCP detachment, wipe, provider
-      // cleanup, delete, and final MCP cleanup so an auto-restore timer cannot
-      // mutate this sandbox or a same-name replacement between phases.
-      let hardenedForDelete = false;
-      let destroyTimerMarker: ReturnType<typeof readTimerMarker> = null;
-      let destroyTimerProcessToken: string | undefined;
-      if (!sandboxConfirmedAbsent) {
-        wipeSandboxState(sandboxName);
-
-        // The wipe needs the timed mutable posture so the sandbox user can
-        // remove manifest state. Convert it back to a verified locked posture
-        // immediately afterward and before delete.
-        destroyTimerMarker = readTimerMarker(sandboxName);
-        if (destroyTimerMarker) {
-          if (/^[0-9a-f]{32}$/.test(destroyTimerMarker.processToken ?? "")) {
-            destroyTimerProcessToken = destroyTimerMarker.processToken;
-          }
-          const { shieldsUp: hardenShields } =
-            require("../../shields") as typeof import("../../shields");
-          hardenShields(sandboxName, {
-            throwOnError: true,
-            allowLegacyHermesProtocol: true,
-          });
-          hardenedForDelete = true;
-        }
-      }
-
-      const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
-        ? { detached: [], failures: [] }
-        : runSandboxProviderPreDeleteCleanup(sandboxName, {
-            runOpenshell,
-            redact,
-          });
-      const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-
-      if (deleteResult.status !== 0 && !alreadyGone) {
-        let mcpRecoveryFailure: string | undefined;
-        if (!sandboxConfirmedAbsent) {
-          let openedMcpRollbackWindow = false;
-          try {
-            if (hardenedForDelete && mcpPreparation.entries.length > 0) {
-              if (!destroyTimerProcessToken) {
-                throw new Error(
-                  "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",
-                );
-              }
-              const { shieldsDown: openRollbackWindow } =
-                require("../../shields") as typeof import("../../shields");
-              openRollbackWindow(sandboxName, {
-                reason: "restore MCP after refused sandbox delete",
-                timeout: "15m",
-                throwOnError: true,
-                allowLegacyHermesProtocol: true,
-                deferAutoRestoreWhileOwnerAlive: true,
-                processToken: destroyTimerProcessToken,
-              });
-              openedMcpRollbackWindow = true;
-            }
-            await restoreMcpBridgesAfterDestroyAbort(sandboxName, mcpPreparation);
-          } catch (error) {
-            mcpRecoveryFailure = error instanceof Error ? error.message : String(error);
-          } finally {
-            if (openedMcpRollbackWindow) {
-              try {
-                const { shieldsUp: closeRollbackWindow } =
-                  require("../../shields") as typeof import("../../shields");
-                closeRollbackWindow(sandboxName, {
-                  throwOnError: true,
-                  allowLegacyHermesProtocol: true,
-                });
-              } catch (error) {
-                const detail = error instanceof Error ? error.message : String(error);
-                mcpRecoveryFailure = mcpRecoveryFailure
-                  ? `${mcpRecoveryFailure}; shields re-lock failed: ${detail}`
-                  : `shields re-lock failed: ${detail}`;
-              }
-            }
-          }
-        }
-        return {
-          ok: false as const,
-          deleteOutput,
-          exitCode: deleteResult.status || 1,
-          mcpRecoveryFailure,
-        };
-      }
-
-      // The live sandbox is now gone while this name remains serialized.
-      // Revoke the timer and local shields state before releasing the lock so
-      // neither can target a subsequently created sandbox with the same name.
-      cleanupShieldsDestroyArtifacts(sandboxName);
-      try {
-        await finalizeMcpBridgesAfterSandboxDelete(sandboxName, mcpPreparation, {
-          force: normalized.force === true,
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error(
-          `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
-        );
-        console.error(
-          `  MCP cleanup state was preserved. Re-run destroy to finish without requiring the host MCP secret environment variable.`,
-        );
-        throw error;
-      }
-      return { ok: true as const, detachOutcome, deleteResult, alreadyGone };
-    },
-  );
+  });
   if (!destructiveResult.ok) {
     if (destructiveResult.deleteOutput) {
       console.error(`  ${destructiveResult.deleteOutput}`);

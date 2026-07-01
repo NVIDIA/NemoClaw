@@ -7,14 +7,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { isDeepStrictEqual } from "node:util";
-
 import YAML from "yaml";
 
 // Namespace access keeps resolveOpenshell spyable in focused policy tests.
 import * as openshellResolveModule from "../adapters/openshell/resolve";
 import { loadAgent } from "../agent/defs";
-import type { JsonObject, JsonValue } from "../core/json-types";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
@@ -33,6 +30,17 @@ import {
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
+import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
+import { findUnownedExistingPolicyKey } from "./preset-ownership";
+import {
+  isPolicyDocument,
+  isPolicyObject,
+  isPresetPolicyMap,
+  parseNetworkPolicies,
+  type PolicyDocument,
+  type PolicyObject,
+  type PolicyValue,
+} from "./preset-parsing";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
@@ -44,15 +52,6 @@ type PresetInfo = {
   description: string;
 };
 
-// Re-use shared JSON types under policy-domain names.
-type PolicyValue = JsonValue;
-type PolicyObject = JsonObject;
-
-type PolicyDocument = PolicyObject & {
-  version?: number;
-  network_policies?: PolicyObject;
-};
-
 type SelectionOptions = {
   applied?: string[];
 };
@@ -60,10 +59,6 @@ type SelectionOptions = {
 type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
 };
-
-function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 /**
  * Enumerate every preset YAML under `nemoclaw-blueprint/policies/presets/`
@@ -102,29 +97,6 @@ function loadPreset(name: string): string | null {
     return null;
   }
   return fs.readFileSync(file, "utf-8");
-}
-
-function isPolicyObject(value: PolicyValue): value is PolicyObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPresetPolicyMap(value: PolicyValue): value is PolicyObject {
-  return (
-    isPolicyObject(value) &&
-    Object.keys(value).length > 0 &&
-    Object.values(value).every(isPolicyObject)
-  );
-}
-
-function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
-  if (!content) return null;
-  try {
-    const parsed = YAML.parse(content);
-    const networkPolicies = isPolicyDocument(parsed) ? parsed.network_policies : null;
-    return isPolicyObject(networkPolicies) ? networkPolicies : null;
-  } catch {
-    return null;
-  }
 }
 
 function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
@@ -811,36 +783,19 @@ function applyPresetContent(
     return false;
   }
   if (options.allowedExistingNetworkPolicyKeys) {
-    let currentNetworkPolicies: Record<string, unknown> = {};
-    let incomingNetworkPolicies: Record<string, unknown> = {};
+    let collision: string | null = null;
     try {
-      const currentParsed = currentPolicy ? YAML.parse(currentPolicy) : {};
-      const incomingParsed = YAML.parse(`network_policies:\n${presetEntries}`);
-      if (
-        currentParsed?.network_policies &&
-        typeof currentParsed.network_policies === "object" &&
-        !Array.isArray(currentParsed.network_policies)
-      ) {
-        currentNetworkPolicies = currentParsed.network_policies;
-      }
-      if (
-        incomingParsed?.network_policies &&
-        typeof incomingParsed.network_policies === "object" &&
-        !Array.isArray(incomingParsed.network_policies)
-      ) {
-        incomingNetworkPolicies = incomingParsed.network_policies;
-      }
+      collision = findUnownedExistingPolicyKey(
+        currentPolicy,
+        presetEntries,
+        options.allowedExistingNetworkPolicyKeys,
+      );
     } catch {
       console.error(
         `  Could not validate network policy key ownership for '${presetName}'; refusing to apply it.`,
       );
       return false;
     }
-    const allowed = new Set(options.allowedExistingNetworkPolicyKeys);
-    const collision = Object.keys(incomingNetworkPolicies).find(
-      (key) =>
-        Object.prototype.hasOwnProperty.call(currentNetworkPolicies, key) && !allowed.has(key),
-    );
     if (collision) {
       console.error(
         `  Network policy key '${collision}' already exists and is not owned by '${presetName}'; refusing to replace it.`,
@@ -1184,34 +1139,6 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 }
 
 /**
- * True when every `network_policies` key declared in `content` is present in
- * `gatewayPolicyNames`. Works for both built-in preset YAML and the custom
- * preset YAML stored under a sandbox's registry entry — keeping a single
- * matching rule means `policy-list` and `status` stay consistent for either
- * preset source. (#3590)
- */
-function presetMatchesGateway(
-  content: string | null,
-  gatewayPolicyNames: ReadonlySet<string>,
-): boolean {
-  const entries = extractPresetEntries(content);
-  if (!entries) return false;
-
-  let presetPolicies;
-  try {
-    const presetParsed = YAML.parse("network_policies:\n" + entries);
-    presetPolicies = presetParsed?.network_policies;
-  } catch {
-    return false;
-  }
-
-  if (!presetPolicies || typeof presetPolicies !== "object") return false;
-
-  const presetKeys = Object.keys(presetPolicies);
-  return presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k));
-}
-
-/**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
  * against known preset definitions. Considers both built-in presets and
@@ -1224,48 +1151,21 @@ function presetMatchesGateway(
  * matching presets" (`[]`).
  */
 function getGatewayPresets(sandboxName: string): string[] | null {
-  let rawPolicy = "";
-  try {
-    rawPolicy = runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true });
-  } catch {
-    return null;
-  }
-
-  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
-  if (!currentPolicy) return null;
-
-  let parsed;
-  try {
-    parsed = YAML.parse(currentPolicy);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object") return null;
-
-  // Gateway returned valid YAML but has no network_policies section —
-  // this is a reachable gateway with an empty/default policy.
-  const gatewayPolicies = parsed.network_policies;
-  if (!gatewayPolicies || typeof gatewayPolicies !== "object" || Array.isArray(gatewayPolicies)) {
-    return [];
-  }
-
-  const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched: string[] = [];
-
-  for (const preset of listPresets()) {
-    if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
-      matched.push(preset.name);
-    }
-  }
-
-  for (const entry of registry.getCustomPolicies(sandboxName)) {
-    if (presetMatchesGateway(entry.content, gatewayPolicyNames)) {
-      matched.push(entry.name);
-    }
-  }
-
-  return matched;
+  return inspectGatewayPresetNames({
+    readPolicy: () => runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true }),
+    parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+    extractPresetEntries,
+    sources: () => [
+      ...listPresets().map((preset) => ({
+        name: preset.name,
+        content: loadPresetForSandbox(sandboxName, preset.name),
+      })),
+      ...registry.getCustomPolicies(sandboxName).map((entry) => ({
+        name: entry.name,
+        content: entry.content,
+      })),
+    ],
+  });
 }
 
 /**
@@ -1276,43 +1176,12 @@ function getPresetContentGatewayState(
   sandboxName: string,
   presetContent: string,
 ): "match" | "absent" | "drift" | null {
-  let rawPolicy = "";
-  try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
-  } catch {
-    return null;
-  }
-  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
-  if (!currentPolicy) return null;
-
-  const presetEntries = extractPresetEntries(presetContent);
-  if (!presetEntries) return "drift";
-  try {
-    const current = YAML.parse(currentPolicy)?.network_policies;
-    const expected = YAML.parse(`network_policies:\n${presetEntries}`)?.network_policies;
-    if (
-      !current ||
-      typeof current !== "object" ||
-      Array.isArray(current) ||
-      !expected ||
-      typeof expected !== "object" ||
-      Array.isArray(expected)
-    ) {
-      return "drift";
-    }
-    const expectedKeys = Object.keys(expected);
-    if (expectedKeys.length === 0) return "drift";
-    const presentKeys = expectedKeys.filter((key) =>
-      Object.prototype.hasOwnProperty.call(current, key),
-    );
-    if (presentKeys.length === 0) return "absent";
-    if (presentKeys.length !== expectedKeys.length) return "drift";
-    return expectedKeys.every((key) => isDeepStrictEqual(current[key], expected[key]))
-      ? "match"
-      : "drift";
-  } catch {
-    return "drift";
-  }
+  return inspectPresetContentGatewayState({
+    readPolicy: () => runCapture(buildPolicyGetCommand(sandboxName)),
+    parseCurrentPolicy: parseCurrentPolicyOrEmpty,
+    extractPresetEntries,
+    presetContent,
+  });
 }
 
 function presetContentMatchesGateway(sandboxName: string, presetContent: string): boolean | null {
