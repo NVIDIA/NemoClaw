@@ -12,6 +12,7 @@ type ReusableCallerJob = {
 };
 
 type Workflow = {
+  concurrency?: { group?: string };
   permissions?: Record<string, string>;
   on?: {
     workflow_call?: {
@@ -55,6 +56,10 @@ describe("Brev nightly workflow contract", () => {
       checks: "write",
       "pull-requests": "write",
     });
+  });
+
+  it("keeps every suite in the nightly matrix in a distinct concurrency group", () => {
+    expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
   });
 
   it("does not expose stale published-launchable controls", () => {

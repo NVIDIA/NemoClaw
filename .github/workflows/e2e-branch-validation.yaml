@@ -166,7 +166,10 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: e2e-branch-validation-${{ inputs.pr_number || github.run_id }}
+  # A caller may fan this reusable workflow out as a suite matrix. Include the
+  # suite so sibling jobs do not cancel each other while repeat runs of the
+  # same PR/suite still replace stale work.
+  group: e2e-branch-validation-${{ inputs.pr_number || github.run_id }}-${{ inputs.test_suite }}
   cancel-in-progress: true
 
 jobs:
