@@ -131,16 +131,28 @@ export function probeAgentVersion(sandboxName: string): string | null {
 // major (e.g. `1000.0.0`) from being misclassified as calendar; the upper
 // bound is only limited by the regex character class, giving future or
 // intentionally-future test fixtures (`9999.12.31`) the same calendar shape.
-// If an agent ever needs a third scheme, add an explicit `version_scheme`
-// field to the manifest rather than teaching this regex a new shape.
+// Agents that expose ambiguous versions (e.g. a real semver whose major
+// falls inside the year range) should set `version_scheme` explicitly in
+// their manifest to override this heuristic.
 const CALENDAR_VERSION_PATTERN = /^[2-9]\d{3}\.\d+\.\d+/;
 
-function isCalendarVersion(value: string): boolean {
-  return CALENDAR_VERSION_PATTERN.test(String(value));
+function classifyVersionShape(value: string): "calendar" | "semver" {
+  return CALENDAR_VERSION_PATTERN.test(String(value)) ? "calendar" : "semver";
 }
 
-function versionsComparable(left: string, right: string): boolean {
-  return isCalendarVersion(left) === isCalendarVersion(right);
+function resolveVersionScheme(
+  agentScheme: "semver" | "calendar" | null,
+  value: string,
+): "semver" | "calendar" {
+  return agentScheme ?? classifyVersionShape(value);
+}
+
+function versionsComparable(
+  agentScheme: "semver" | "calendar" | null,
+  left: string,
+  right: string,
+): boolean {
+  return resolveVersionScheme(agentScheme, left) === resolveVersionScheme(agentScheme, right);
 }
 
 const warnedSchemeMismatchKeys = new Set<string>();
@@ -181,10 +193,11 @@ interface StalenessVerdict {
 
 function evaluateStaleness(
   sandboxName: string,
+  agentScheme: "semver" | "calendar" | null,
   sandboxVersion: string,
   expectedVersion: string,
 ): StalenessVerdict {
-  if (!versionsComparable(sandboxVersion, expectedVersion)) {
+  if (!versionsComparable(agentScheme, sandboxVersion, expectedVersion)) {
     warnSchemeMismatch(sandboxName, sandboxVersion, expectedVersion);
     return { isStale: false, schemeMismatch: true };
   }
@@ -227,7 +240,12 @@ export function checkAgentVersion(
   // cross-scheme cache would otherwise remain forever without triggering a
   // rebuild.
   if (sb?.agentVersion && !opts?.forceProbe) {
-    const verdict = evaluateStaleness(sandboxName, sb.agentVersion, expectedVersion);
+    const verdict = evaluateStaleness(
+      sandboxName,
+      agent.versionScheme ?? null,
+      sb.agentVersion,
+      expectedVersion,
+    );
     if (!verdict.schemeMismatch) {
       return {
         sandboxVersion: sb.agentVersion,
@@ -270,7 +288,12 @@ export function checkAgentVersion(
     };
   }
 
-  const verdict = evaluateStaleness(sandboxName, probed, expectedVersion);
+  const verdict = evaluateStaleness(
+    sandboxName,
+    agent.versionScheme ?? null,
+    probed,
+    expectedVersion,
+  );
   return {
     sandboxVersion: probed,
     expectedVersion,
