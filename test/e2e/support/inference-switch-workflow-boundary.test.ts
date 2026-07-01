@@ -79,10 +79,9 @@ describe("inference switch workflow boundary", () => {
   it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
     const workflow = readInferenceSwitchWorkflow();
     const steps = workflow.jobs["openclaw-inference-switch"].steps!;
-    const configureIndex = steps.findIndex(
-      (step) => step.name === "Configure isolated Docker auth directory",
+    expect(steps.some((step) => step.name === "Configure isolated Docker auth directory")).toBe(
+      false,
     );
-    if (configureIndex >= 0) steps.splice(configureIndex, 1);
 
     const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
     const authIndex = steps.indexOf(authenticate);

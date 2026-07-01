@@ -415,11 +415,11 @@ fi
         PATH: `${fakeBin}:${process.env.PATH}`,
         RUNNER_TEMP: options.runnerTemp ?? runnerTemp,
       };
-      if (options.dockerConfig === undefined) {
-        delete env.DOCKER_CONFIG;
-      } else {
-        env.DOCKER_CONFIG = options.dockerConfig;
-      }
+      delete env.DOCKER_CONFIG;
+      Object.assign(
+        env,
+        options.dockerConfig === undefined ? {} : { DOCKER_CONFIG: options.dockerConfig },
+      );
       return spawnSync(CLEANUP_HELPER_PATH, [], {
         encoding: "utf8",
         env,
