@@ -113,6 +113,12 @@ beforeEach(() => {
     const presetName = String(name);
     return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
   });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    (_sandboxName: unknown, name: unknown) => {
+      const presetName = String(name);
+      return `network_policies:\n  ${presetName}:\n    host: ${presetName}.example.com\n`;
+    },
+  );
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
 });

@@ -167,7 +167,7 @@ export async function addSandboxPolicy(
   }
   if (!answer) return;
 
-  const presetContent = policies.loadPreset(answer);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) return;
 
   const endpoints = policies.getPresetEndpoints(presetContent);
@@ -945,7 +945,7 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
-  const presetContent = policies.loadPreset(canonical);
+  const presetContent = policies.loadPresetForSandbox(sandboxName, canonical);
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
   if (presetContent === null || presetPolicyKeys.length === 0) {
@@ -1509,7 +1509,7 @@ export async function removeSandboxPolicy(
   // Resolve preset content: built-in first, then custom (persisted in
   // registry). Needed only for the endpoint preview below — removePreset()
   // itself re-resolves on the library side.
-  let presetContent: string | null = policies.loadPreset(answer);
+  let presetContent: string | null = policies.loadPresetForSandbox(sandboxName, answer);
   if (!presetContent) {
     const entry = customPresets.find((p: { name: string }) => p.name === answer);
     if (entry) {

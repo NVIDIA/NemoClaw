@@ -79,6 +79,7 @@
     ".version",
     "bin/",
     "dist/",
+    "src/lib/messaging/channels/**/policy/*.yaml",
     "nemoclaw/dist/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",

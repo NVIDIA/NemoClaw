@@ -44,6 +44,7 @@ policies.listCustomPresets = () => [
 ];
 policies.getAppliedPresets = () => ["my-api"];
 policies.loadPreset = () => null; // built-in lookup misses
+policies.loadPresetForSandbox = () => null; // built-in lookup misses
 policies.getPresetEndpoints = () => ["api.example.internal"];
 policies.removePreset = (sandboxName, presetName) => {
   calls.push({ type: "remove", sandboxName, presetName });

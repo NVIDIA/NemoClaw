@@ -181,7 +181,7 @@ policies.loadPreset = (name) => {
   if (${JSON.stringify(presetMissingNetworkPolicies)}) return "name: " + name + "\ndescription: \"stub preset without network_policies\"\n";
   if (${JSON.stringify(presetMalformedYaml)}) return "network_policies:\n  - [unclosed\n";
   return "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
-};
+}; policies.loadPresetForSandbox = (_sandboxName, name) => policies.loadPreset(name);
 policies.applyPreset = (sandboxName, presetName) => {
   appliedCalls.push({ sandboxName, presetName });
   callOrder.push("applyPreset:" + presetName);
