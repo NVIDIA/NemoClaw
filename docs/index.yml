@@ -63,6 +63,9 @@ navigation:
               - page: "Tool-Calling Reliability"
                 path: inference/tool-calling-reliability.mdx
                 slug: tool-calling-reliability
+              - page: "Model Capability Audit"
+                path: _build/agent-variants/inference/model-capability-audit.openclaw.generated.mdx
+                slug: model-capability-audit
               - page: "Switch Inference Providers"
                 path: _build/agent-variants/inference/switch-inference-providers.openclaw.generated.mdx
                 slug: switch-inference-providers
@@ -234,6 +237,9 @@ navigation:
               - page: "Use Local Inference"
                 path: _build/agent-variants/inference/use-local-inference.hermes.generated.mdx
                 slug: use-local-inference
+              - page: "Model Capability Audit"
+                path: _build/agent-variants/inference/model-capability-audit.hermes.generated.mdx
+                slug: model-capability-audit
               - page: "Switch Inference Providers"
                 path: _build/agent-variants/inference/switch-inference-providers.hermes.generated.mdx
                 slug: switch-inference-providers

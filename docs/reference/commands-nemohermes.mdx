@@ -1058,6 +1058,8 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 ### `nemohermes <name> channels start <channel>`
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
+Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
+If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
 
 ```bash
 nemohermes my-assistant channels start telegram
