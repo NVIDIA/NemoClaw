@@ -119,36 +119,36 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     const args = Array.isArray(argv) ? argv.map(String) : [];
     const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
     const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
-    if (
+    const shouldFailOpenClawGuard = Boolean(
       openClawGuard &&
-      (action === "lock" || action === "unlock") &&
-      options.failOpenClawGuardActions?.includes(action)
-    ) {
-      const failures = options.openClawGuardFailures ?? [
-        options.openClawGuardFailure ?? {
-          code: "startup-not-ready",
-          path: "/run/nemoclaw/openclaw-config-ready.json",
-          detail: "OpenClaw startup is not ready for host config mutations",
-        },
-      ];
-      return {
-        status: 1,
-        signal: null,
-        stdout: `${failures
-          .map((failure) => JSON.stringify({ type: "issue", ...failure }))
-          .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
-        stderr: "",
-        pid: 0,
-        output: [],
-      } as never;
-    }
-    openClawPosture =
-      openClawGuard && action === "lock"
+        (action === "lock" || action === "unlock") &&
+        options.failOpenClawGuardActions?.includes(action),
+    );
+    const failures = options.openClawGuardFailures ?? [
+      options.openClawGuardFailure ?? {
+        code: "startup-not-ready",
+        path: "/run/nemoclaw/openclaw-config-ready.json",
+        detail: "OpenClaw startup is not ready for host config mutations",
+      },
+    ];
+    const failureResult = {
+      status: 1,
+      signal: null,
+      stdout: `${failures
+        .map((failure) => JSON.stringify({ type: "issue", ...failure }))
+        .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
+      stderr: "",
+      pid: 0,
+      output: [],
+    };
+    openClawPosture = shouldFailOpenClawGuard
+      ? openClawPosture
+      : openClawGuard && action === "lock"
         ? "locked"
         : openClawGuard && action === "unlock"
           ? "mutable"
           : openClawPosture;
-    return {
+    const successResult = {
       status: 0,
       signal: null,
       stdout: action
@@ -168,7 +168,8 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
       stderr: "",
       pid: 0,
       output: [],
-    } as never;
+    };
+    return (shouldFailOpenClawGuard ? failureResult : successResult) as never;
   });
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
