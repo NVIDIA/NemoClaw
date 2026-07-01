@@ -24,10 +24,11 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 
 function extractShellFunctionFromSource(source: string, name: string): string {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = source.match(new RegExp(`${escaped}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in agents/hermes/start.sh`);
-  }
+  const match =
+    source.match(new RegExp(`${escaped}\\(\\) \\{([\\s\\S]*?)^\\}`, "m")) ??
+    (() => {
+      throw new Error(`Expected ${name} in agents/hermes/start.sh`);
+    })();
   return `${name}() {${match[1]}\n}`;
 }
 
