@@ -39,6 +39,7 @@ export default defineConfig({
           name: "cli",
           testTimeout: testTimeout(20_000),
           hookTimeout: testTimeout(20_000),
+          poolOptions: { forks: { execArgv: ["--max-old-space-size=8192"] } },
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
@@ -50,6 +51,7 @@ export default defineConfig({
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
+          poolOptions: { forks: { execArgv: ["--max-old-space-size=8192"] } },
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
