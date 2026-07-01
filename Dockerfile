@@ -55,6 +55,10 @@ ARG OPENCLAW_2026_4_24_INTEGRITY=sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL
 ARG OPENCLAW_2026_4_24_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.4.24.tgz
 ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==
 
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
+
 # OpenClaw 2026.6.9 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
 # names do not persist under /tmp/jiti inside the sandbox.

@@ -75,6 +75,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       openshellVersion: "0.1.2",
     });
     expect(entry.agent).toBeNull();
+    expect(entry.agentVersion).toBeTruthy();
+    expect(entry.nemoclawVersion).toBeTruthy();
     expect(entry.messaging).toBe(plannedMessagingState);
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
@@ -115,6 +117,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.credentialEnv).toBeNull();
     expect(entry.preferredInferenceApi).toBeNull();
     expect(entry.nimContainer).toBeNull();
+    expect(entry.agentVersion).toBeNull();
+    expect(entry.nemoclawVersion).toBeNull();
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
     expect(rawEntry.messagingChannelConfig).toBeUndefined();

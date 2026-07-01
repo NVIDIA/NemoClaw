@@ -256,6 +256,38 @@ network_policies:
   return target;
 }
 
+// A user-supplied preset that pins allowed_ips on a NON-bridge host. The guard
+// must reject this on a real sandbox even though the host.openshell.internal
+// exemption exists — the exemption must not become a blanket allowed_ips bypass
+// (#6073). Mirrors the writeHostGatewayPolicy shape but targets an arbitrary
+// private host.
+function writeEvilAllowedIpsPolicy(artifacts: ArtifactSink): string {
+  const target = artifacts.pathFor("policies/evil-allowed-ips.yaml");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(
+    target,
+    `preset:
+  name: e2e-evil-allowed-ips
+  description: "Network-policy E2E allowed_ips SSRF-bypass rejection probe"
+
+network_policies:
+  e2e_evil_allowed_ips:
+    name: e2e_evil_allowed_ips
+    endpoints:
+      - host: 10.200.0.2
+        port: 18789
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+        rules:
+          - allow: { method: GET, path: "/**" }
+`,
+    "utf8",
+  );
+  return target;
+}
+
 function buildWebFetchProbeScript(): string {
   return String.raw`
 import fs from "node:fs";
@@ -835,6 +867,22 @@ printf '\n'
         { artifactName: "tc-net-10-host-gateway-policy-add", timeoutMs: SANDBOX_EXEC_TIMEOUT_MS },
       );
       expect(hostGatewayApply.exitCode, text(hostGatewayApply)).toBe(0);
+
+      // #6073: the same policy-add --from-file path must still reject
+      // allowed_ips on a non-bridge host on this real sandbox, proving the
+      // host.openshell.internal exemption is not a blanket allowed_ips bypass.
+      const evilPolicyFile = writeEvilAllowedIpsPolicy(artifacts);
+      const evilApply = await runNemoclaw(
+        host,
+        [SANDBOX_NAME, "policy-add", "--from-file", evilPolicyFile, "--yes"],
+        {
+          artifactName: "tc-net-10-evil-allowed-ips-rejection",
+          timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+        },
+      );
+      expect(evilApply.exitCode, text(evilApply)).not.toBe(0);
+      expect(text(evilApply)).toMatch(/allowed_ips|not permitted/i);
+
       await sleep(POLICY_SETTLE_MS);
 
       const approvedDirect = await fetchStatus(
