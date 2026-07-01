@@ -38,7 +38,6 @@ export async function runRebuildDestroyPhase(
 ): Promise<McpRebuildPreparation | null> {
   const {
     sandboxName,
-    sandboxEntry: sb,
     staleRecovery,
     backupManifest,
     log,
