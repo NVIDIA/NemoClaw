@@ -23,6 +23,11 @@ describe("canonical OpenShell policy boundary", () => {
     expect(parseOpenShellPolicy(versionless, { allowUnmarkedPolicyBody: true }).yamlBody).toBe(
       versionless,
     );
+
+    const inlineSeparator = 'version: 1\nmetadata:\n  marker: "a---b"\nnetwork_policies: {}';
+    expect(parseOpenShellPolicy(inlineSeparator, { allowUnmarkedPolicyBody: true }).yamlBody).toBe(
+      inlineSeparator,
+    );
   });
 
   it("rejects missing, diagnostic, malformed, scalar, and unmarked policy output", () => {
