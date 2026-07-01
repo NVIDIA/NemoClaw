@@ -2936,7 +2936,6 @@ async function createSandbox(
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
   process.on("exit", cleanupBuildCtx);
-
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -2961,6 +2960,7 @@ async function createSandbox(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
+    extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
@@ -4571,8 +4571,8 @@ async function setupPoliciesWithSelection(
       waitForSandboxReady,
       syncPresetSelection,
       selectPolicyTier,
-      setPolicyTier: (sandbox, tierName) =>
-        registry.updateSandbox(sandbox, { policyTier: tierName }),
+      setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
+      getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
       selectTierPresetsAndAccess,
       parsePolicyPresetEnv,
       env: process.env,

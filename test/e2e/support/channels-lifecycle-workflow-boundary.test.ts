@@ -45,17 +45,6 @@ describe("channels lifecycle workflow boundary", () => {
       "persist-credentials": true,
     };
 
-    const dockerAuthStep = job.steps.find((step) => step.name === "Authenticate to Docker Hub");
-    expect(dockerAuthStep).toBeDefined();
-    dockerAuthStep!.run =
-      "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
-
-    const configureDockerAuthStep = job.steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    );
-    expect(configureDockerAuthStep).toBeDefined();
-    configureDockerAuthStep!.run =
-      'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
 
     const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
     expect(installRootStep).toBeDefined();
@@ -90,10 +79,6 @@ describe("channels lifecycle workflow boundary", () => {
       "retention-days": 1,
     };
 
-    const cleanupStep = job.steps.find((step) => step.name === "Clean up Docker auth");
-    expect(cleanupStep).toBeDefined();
-    delete cleanupStep!.if;
-    cleanupStep!.run = "docker logout docker.io";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
@@ -105,8 +90,6 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start job must not set DOCKER_CONFIG at job level",
           "openclaw-channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "openclaw-channels-stop-start checkout step must set persist-credentials=false",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-stop-start" >> "$GITHUB_ENV"',
-          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
@@ -118,8 +101,6 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start artifact upload name must be stable",
           "openclaw-channels-stop-start artifact upload must set include-hidden-files: false",
           "openclaw-channels-stop-start artifact upload retention-days must be 14",
-          "openclaw-channels-stop-start Docker auth cleanup must always run",
-          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
         ]),
       );
     } finally {

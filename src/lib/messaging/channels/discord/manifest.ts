@@ -28,7 +28,6 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_SERVER_ID",
-      envAliases: ["DISCORD_SERVER_IDS"],
       statePath: "discordGuilds.serverId",
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
@@ -55,7 +54,6 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_USER_ID",
-      envAliases: ["DISCORD_ALLOWED_IDS"],
       statePath: "discordGuilds.userIds",
       promptWhenInput: "serverId",
       prompt: {
@@ -199,25 +197,6 @@ export const discordManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      discordGuilds: ["serverId", "requireMention", "userId"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "discordGuilds.serverId",
-        env: "DISCORD_SERVER_ID",
-      },
-      {
-        statePath: "discordGuilds.requireMention",
-        env: "DISCORD_REQUIRE_MENTION",
-      },
-      {
-        statePath: "discordGuilds.userIds",
-        env: "DISCORD_USER_ID",
-      },
-    ],
-  },
   hooks: [
     {
       id: "discord-openclaw-bridge-health",

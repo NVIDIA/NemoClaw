@@ -113,16 +113,5 @@ export const whatsappManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.whatsapp",
-        env: "WHATSAPP_ALLOWED_IDS",
-      },
-    ],
-  },
   hooks: [],
 } as const satisfies ChannelManifest;

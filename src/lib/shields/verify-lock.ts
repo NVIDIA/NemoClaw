@@ -19,6 +19,7 @@
 import { parseSha256Output } from "./seal";
 
 export type LockTarget = {
+  agentName?: string;
   configPath: string;
   configDir: string;
   sensitiveFiles?: string[];
@@ -29,6 +30,7 @@ export type VerifyShieldsLockOptions = {
   exec: (cmd: string[]) => string;
   assertLegacyLayout?: (sandboxName: string, configDir: string) => void;
   expectedHashes?: { [path: string]: string };
+  verifyParentProtection?: boolean;
 };
 
 export type VerifyShieldsLockResult = {
@@ -81,6 +83,27 @@ export function verifyShieldsLockState(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     issues.push(`dir stat failed: ${msg}`);
+  }
+
+  if (
+    options.verifyParentProtection &&
+    (target.agentName === "hermes" || target.agentName === "openclaw")
+  ) {
+    const separator = target.configDir.lastIndexOf("/");
+    const parentDir = separator > 0 ? target.configDir.slice(0, separator) : "/";
+    try {
+      const parentPerms = exec(["stat", "-c", "%a %U:%G", parentDir]);
+      const [parentMode, parentOwner] = parentPerms.split(" ");
+      if (parentMode !== "1775") {
+        issues.push(`parent dir mode=${parentMode} (expected 1775)`);
+      }
+      if (parentOwner !== "root:sandbox") {
+        issues.push(`parent dir owner=${parentOwner} (expected root:sandbox)`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      issues.push(`parent dir stat failed: ${msg}`);
+    }
   }
 
   if (options.verifyChattr) {

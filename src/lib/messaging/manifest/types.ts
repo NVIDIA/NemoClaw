@@ -45,7 +45,6 @@ export interface ChannelManifest {
   readonly hostForward?: ChannelHostForwardSpec;
   readonly runtime?: ChannelRuntimeByAgentSpec;
   readonly agentPackages?: readonly ChannelAgentPackageSpec[];
-  readonly state: ChannelStateSpec;
   readonly hooks: readonly ChannelHookSpec[];
 }
 
@@ -85,7 +84,6 @@ interface ChannelInputBaseSpec {
   readonly validValues?: readonly string[];
   readonly formatPattern?: string;
   readonly formatHint?: string;
-  readonly envAliases?: readonly string[];
 }
 
 /** Secret input metadata; values must be referenced, not stored in manifests or plans. */
@@ -213,18 +211,6 @@ export interface ChannelAgentPackageSpec {
   readonly spec: MessagingTemplateString;
   readonly pin?: boolean;
   readonly required?: boolean;
-}
-
-/** State persistence and rebuild-hydration rules owned by the channel. */
-export interface ChannelStateSpec {
-  readonly persist?: Readonly<Record<string, readonly string[]>>;
-  readonly rebuildHydration?: readonly ChannelRebuildHydrationSpec[];
-}
-
-/** Mapping from persisted state back to an env var during rebuild planning. */
-export interface ChannelRebuildHydrationSpec {
-  readonly statePath: MessagingStatePath;
-  readonly env: string;
 }
 
 /** Lifecycle phase where a referenced hook may run. */

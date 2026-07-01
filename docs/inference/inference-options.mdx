@@ -74,6 +74,36 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
+## Model Task-Fit Guide
+
+Use this table as starter guidance when selecting a curated cloud model during onboarding.
+The provider catalog remains authoritative for exact context-window limits, availability, and current pricing.
+The relative labels below are qualitative and compare models within the curated onboarding choices, not across every model a provider offers.
+
+| Model | Best-for task type | Relative latency | Tool-use quality | Context-window fit | Relative cost |
+|---|---|---|---|---|---|
+| `nvidia/nemotron-3-super-120b-a12b` | Default hosted agent work, multi-step planning, and tool-heavy shell workflows | Medium | Strong default for OpenClaw tool loops | Large agent context | Medium |
+| `nvidia/nemotron-3-ultra-550b-a55b` | Quality-sensitive reasoning, careful synthesis, and complex reviews | Higher | Strong for complex tool plans | Large agent context | Higher |
+| `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | Reasoning-first and multimodal experiments where a compact hosted model is enough | Medium | Good after the smoke probe confirms final-answer content | Large agent context | Medium |
+| `z-ai/glm-5.1` | General chat, multilingual text work, and fast iteration | Low-to-medium | Good for straightforward tool loops | Large agent context | Low-to-medium |
+| `minimaxai/minimax-m2.7` | Long-form writing, multi-turn assistant work, and broad instruction following | Medium | Good for structured assistant turns | Large agent context | Medium |
+| `moonshotai/kimi-k2.6` | Coding tasks and shell-heavy agent trajectories | Medium | Strong with NemoClaw's Kimi tool-call compatibility path | Large-context friendly | Medium |
+| `openai/gpt-oss-120b` | Hosted open-weight style experimentation and cost-aware general agents | Medium | Good when provider-side tool calling is enabled | Large agent context | Medium |
+| `deepseek-ai/deepseek-v4-pro` | Code, math, and reasoning-heavy problem solving | Medium-to-high | Strong when the endpoint supports tool calls | Large agent context | Medium-to-high |
+| `gpt-5.4` | Default OpenAI-backed agent work and general high-quality reasoning | Medium | Strong | Large agent context | Medium-to-high |
+| `gpt-5.4-mini` | Latency-sensitive routine automation and repeated helper calls | Low | Good | Medium-to-large context | Low |
+| `gpt-5.4-nano` | Very low-latency classification, routing, extraction, and small helper tasks | Very low | Basic to good for simple tool loops | Medium context | Very low |
+| `gpt-5.4-pro-2026-03-05` | Quality-first complex reasoning where latency and cost are secondary | Highest | Validate Responses API support before relying on long tool loops | Large agent context | Highest |
+| `claude-sonnet-4-6` | Balanced coding, writing, analysis, and multi-step tool work | Medium | Strong | Large agent context | Medium-to-high |
+| `claude-haiku-4-5` | Fast summarization, routing, extraction, and lightweight assistant turns | Low | Good for simple tool loops | Medium-to-large context | Low |
+| `claude-opus-4-6` | Deep analysis, careful writing, and quality-first planning | Higher | Strong | Large agent context | Higher |
+| `gemini-3.1-pro-preview` | Large-context analysis, synthesis, and preview-feature evaluation | Medium-to-high | Good; validate tool continuation for the selected provider path | Extensive context | Medium-to-high |
+| `gemini-3.1-flash-lite-preview` | Low-cost extraction, classification, and simple helper calls | Low | Basic to good for simple tool loops | Medium-to-large context | Low |
+| `gemini-3-flash-preview` | Fast general assistant tasks and preview-feature evaluation | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-pro` | Large-context analysis, long-document synthesis, and complex reasoning | Medium-to-high | Good | Extensive context | Medium-to-high |
+| `gemini-2.5-flash` | Latency-sensitive general assistant and multimodal tasks | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-flash-lite` | Lowest-cost helper calls, extraction, and classification | Very low | Basic to good for simple tool loops | Medium-to-large context | Very low |
+
 ## Choosing the Right Option for Nemotron
 
 NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported deployment surface, so two onboarding options can route to Nemotron.
@@ -211,6 +241,7 @@ To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` befo
 
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
+Install vLLM first if it is not already on the host (for example, `pip install vllm`), then start it:
 
 ```bash
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
@@ -223,7 +254,11 @@ $$nemoclaw onboard
 ```
 
 When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
-Enter the base URL of your local server, for example `http://localhost:8000/v1`.
+Enter the base URL of your local server, for example `http://localhost:8000/v1` on the default Docker-driver topology.
+If you are on the legacy containerized OpenShell gateway path and the gateway cannot reach host `localhost`, use the host-gateway URL for your setup, commonly `http://host.openshell.internal:8000/v1`.
+
+For GGUF models, start a compatible server such as `llama-server` yourself and enter the model id that server reports from `/v1/models`.
+The Ollama local path selects Ollama model tags; it does not accept a raw `.gguf` file path directly.
 
 The wizard prompts for an API key.
 If your server does not require authentication, enter any non-empty string (for example, `dummy`).
@@ -236,7 +271,8 @@ Route, configuration, and authentication failures still fail immediately.
 
 ### Non-Interactive Setup
 
-Set the following environment variables for scripted or CI/CD deployments.
+Start your OpenAI-compatible server first; the endpoint in `NEMOCLAW_ENDPOINT_URL` must already be serving, or onboarding fails its validation probe.
+Then set the following environment variables for scripted or CI/CD deployments.
 Set `NEMOCLAW_REASONING=true` when the compatible endpoint serves a reasoning-only model.
 
 <Warning>

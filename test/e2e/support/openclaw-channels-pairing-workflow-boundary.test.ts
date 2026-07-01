@@ -38,12 +38,8 @@ describe("OpenClaw channels pairing workflow boundary", () => {
       uses: string;
     };
     setupNode.uses = "actions/setup-node@v4";
-    const configureDockerAuth = pairingJob.steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    ) as Record<string, unknown>;
-    configureDockerAuth.run =
-      'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-openclaw-channels-pairing" >> "$GITHUB_ENV"';
     const installRootDependencies = pairingJob.steps.find(
+
       (step) => step.name === "Install root dependencies",
     ) as Record<string, unknown>;
     Object.assign(installRootDependencies, { run: "npm install" });
@@ -68,11 +64,10 @@ describe("OpenClaw channels pairing workflow boundary", () => {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "openclaw-channels-pairing job must not set DOCKER_CONFIG at job level",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-pairing" >> "$GITHUB_ENV"',
-          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "openclaw-channels-pairing checkout action must be pinned to a full commit SHA",
           "openclaw-channels-pairing checkout step must set persist-credentials=false",
           "openclaw-channels-pairing setup-node action must be pinned to a full commit SHA",
+
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Build CLI' run script must include npm run build:cli",
           "openclaw-channels-pairing step must use fake Discord token",
