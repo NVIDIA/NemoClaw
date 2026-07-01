@@ -17,6 +17,8 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
+      # OpenShell attributes Deep Agents Code Tavily requests to its managed Python venv.
+      - { path: /opt/venv/bin/python3* }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
       - { path: /usr/local/bin/curl }
