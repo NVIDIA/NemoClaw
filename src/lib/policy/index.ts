@@ -25,21 +25,21 @@ import {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
+import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
-import { inspectGatewayPresetNames, inspectPresetContentGatewayState } from "./gateway-state";
 import { findUnownedExistingPolicyKey } from "./preset-ownership";
 import {
   isPolicyDocument,
   isPolicyObject,
   isPresetPolicyMap,
-  parseNetworkPolicies,
   type PolicyDocument,
   type PolicyObject,
   type PolicyValue,
+  parseNetworkPolicies,
 } from "./preset-parsing";
 
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
