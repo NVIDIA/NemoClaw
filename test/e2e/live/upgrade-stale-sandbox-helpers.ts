@@ -152,6 +152,7 @@ export function writeStaleRegistryEntry(): void {
     gpuEnabled: false,
     policies: [],
     policyTier: null,
+    fromDockerfile: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
   };
