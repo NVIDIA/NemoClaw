@@ -12,6 +12,7 @@ import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-bou
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
+import { validateUploadE2eArtifactsWorkflowBoundary } from "./upload-e2e-artifacts-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_E2E_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -413,22 +414,6 @@ function validateInlineHostDependencyInstall(
   }
 }
 
-function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
-  if (!uploadPath.includes(expected)) {
-    errors.push(`artifact upload path must include ${expected}`);
-  }
-}
-
-function requireUploadPathDoesNotContain(
-  errors: string[],
-  uploadPath: string,
-  forbidden: string,
-): void {
-  if (uploadPath.includes(forbidden)) {
-    errors.push(`artifact upload path must not include ${forbidden}`);
-  }
-}
-
 function requireEnvDoesNotExposeSecret(
   errors: string[],
   owner: string,
@@ -618,9 +603,6 @@ function validateFreeStandingInventoryBoundary(
     for (const step of steps) {
       if (step.uses) {
         requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
-        if (stringValue(step.uses).startsWith("actions/upload-artifact@")) {
-          requireUploadPathDoesNotContain(errors, stringValue(asRecord(step.with).path), "/tmp/");
-        }
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
         errors.push(
@@ -716,24 +698,6 @@ function validateOpenShellVersionPinJob(errors: string[], jobs: WorkflowRecord):
   const runVitest = requireJobStep(errors, jobName, steps, "Run OpenShell version-pin live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openshell-version-pin.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenShell version-pin artifacts");
-  requireFullShaAction(errors, upload, "openshell-version-pin upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-openshell-version-pin") {
-    errors.push("openshell-version-pin artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openshell-version-pin/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openshell-version-pin artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openshell-version-pin artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openshell-version-pin artifact upload retention-days must be 14");
-  }
 }
 
 function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
@@ -798,42 +762,6 @@ function validateSkillAgentJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "export OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/skill-agent.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload skill-agent artifacts");
-  requireFullShaAction(errors, upload, "skill-agent upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-skill-agent") {
-    errors.push("skill-agent artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  for (const expected of [
-    "e2e-artifacts/live/skill-agent/*/artifact-summary.json",
-    "e2e-artifacts/live/skill-agent/*/cleanup.json",
-    "e2e-artifacts/live/skill-agent/*/cleanup-skill-agent-summary.json",
-    "e2e-artifacts/live/skill-agent/*/target.json",
-    "e2e-artifacts/live/skill-agent/*/target-result.json",
-    "e2e-artifacts/live/skill-agent/*/shell/*.result.json",
-    "e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt",
-    "e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt",
-  ]) {
-    requireUploadPathContains(errors, uploadPath, expected);
-  }
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === "e2e-artifacts/live/skill-agent/") {
-      errors.push(
-        "skill-agent artifact upload path must not list the whole skill-agent artifact directory",
-      );
-    }
-  }
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("skill-agent artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("skill-agent artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("skill-agent artifact upload retention-days must be 14");
-  }
 }
 
 function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void {
@@ -940,24 +868,6 @@ function validateNetworkPolicyJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/network-policy.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload network-policy artifacts");
-  requireFullShaAction(errors, upload, "network-policy upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-network-policy") {
-    errors.push("network-policy artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/network-policy/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("network-policy artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("network-policy artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("network-policy artifact upload retention-days must be 14");
-  }
 }
 
 function validateIssue4434HostDependencies(errors: string[], jobs: WorkflowRecord): void {
@@ -1077,24 +987,6 @@ function validateCommonEgressAgentJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/common-egress-agent.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload common-egress agent artifacts");
-  requireFullShaAction(errors, upload, "common-egress-agent upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-common-egress-agent") {
-    errors.push("common-egress-agent artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/common-egress-agent/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("common-egress-agent artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("common-egress-agent artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("common-egress-agent artifact upload retention-days must be 14");
-  }
 }
 
 function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1178,25 +1070,6 @@ function validateShieldsConfigJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/shields-config.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload shields-config artifacts");
-  requireFullShaAction(errors, upload, "shields-config upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-shields-config") {
-    errors.push("shields-config artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/shields-config/");
-  requireUploadPathDoesNotContain(errors, uploadPath, "/tmp/nemoclaw-e2e-shields-install.log");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("shields-config artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("shields-config artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("shields-config artifact upload retention-days must be 14");
-  }
 }
 
 function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1270,24 +1143,6 @@ function validateRebuildOpenClawJob(errors: string[], jobs: WorkflowRecord): voi
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-openclaw.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw rebuild artifacts");
-  requireFullShaAction(errors, upload, "rebuild-openclaw upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-rebuild-openclaw") {
-    errors.push("rebuild-openclaw artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/rebuild-openclaw/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("rebuild-openclaw artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("rebuild-openclaw artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("rebuild-openclaw artifact upload retention-days must be 14");
-  }
 }
 
 function validateRebuildHermesJob(
@@ -1392,38 +1247,6 @@ function validateRebuildHermesJob(
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/rebuild-hermes.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    options.staleBase
-      ? "Upload Hermes stale-base rebuild artifacts"
-      : "Upload Hermes rebuild artifacts",
-  );
-  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
-  const uploadWith = asRecord(upload?.with);
-  const artifactName = options.staleBase ? "e2e-rebuild-hermes-stale-base" : "e2e-rebuild-hermes";
-  if (uploadWith.name !== artifactName) {
-    errors.push(`${jobName} artifact upload name must be stable`);
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    options.staleBase
-      ? "e2e-artifacts/live/rebuild-hermes-stale-base/"
-      : "e2e-artifacts/live/rebuild-hermes/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push(`${jobName} artifact upload retention-days must be 14`);
-  }
 }
 
 function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1505,24 +1328,6 @@ function validateSandboxRebuildJob(errors: string[], jobs: WorkflowRecord): void
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/sandbox-rebuild.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload sandbox rebuild artifacts");
-  requireFullShaAction(errors, upload, "sandbox-rebuild upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-sandbox-rebuild") {
-    errors.push("sandbox-rebuild artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/sandbox-rebuild/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("sandbox-rebuild artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("sandbox-rebuild artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("sandbox-rebuild artifact upload retention-days must be 14");
-  }
 }
 
 function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1615,24 +1420,6 @@ function validateStateBackupRestoreJob(errors: string[], jobs: WorkflowRecord): 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/state-backup-restore.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload state backup restore artifacts");
-  requireFullShaAction(errors, upload, "state-backup-restore upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-state-backup-restore") {
-    errors.push("state-backup-restore artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/state-backup-restore/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("state-backup-restore artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("state-backup-restore artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("state-backup-restore artifact upload retention-days must be 14");
-  }
 }
 
 function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1724,24 +1511,6 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/upgrade-stale-sandbox.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload upgrade stale sandbox artifacts");
-  requireFullShaAction(errors, upload, "upgrade-stale-sandbox upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-upgrade-stale-sandbox") {
-    errors.push("upgrade-stale-sandbox artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/upgrade-stale-sandbox/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("upgrade-stale-sandbox artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("upgrade-stale-sandbox artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("upgrade-stale-sandbox artifact upload retention-days must be 14");
-  }
 }
 
 function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1823,24 +1592,6 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload token rotation artifacts");
-  requireFullShaAction(errors, upload, "token-rotation upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-token-rotation") {
-    errors.push("token-rotation artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/token-rotation/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("token-rotation artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("token-rotation artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("token-rotation artifact upload retention-days must be 14");
-  }
 }
 
 function validateMessagingCompatibleEndpointJob(errors: string[], jobs: WorkflowRecord): void {
@@ -1962,37 +1713,6 @@ function validateMessagingCompatibleEndpointJob(errors: string[], jobs: Workflow
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/messaging-compatible-endpoint.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload messaging compatible endpoint artifacts",
-  );
-  requireFullShaAction(errors, upload, "messaging-compatible-endpoint upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-messaging-compatible-endpoint") {
-    errors.push("messaging-compatible-endpoint artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/messaging-compatible-endpoint/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "messaging-compatible-endpoint artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "messaging-compatible-endpoint artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("messaging-compatible-endpoint artifact upload retention-days must be 14");
-  }
 }
 
 function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2047,24 +1767,6 @@ function validateOnboardNegativePathsJob(errors: string[], jobs: WorkflowRecord)
   const runVitest = requireJobStep(errors, jobName, steps, "Run onboard negative-paths live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/onboard-negative-paths.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload onboard negative-paths artifacts");
-  requireFullShaAction(errors, upload, "onboard-negative-paths upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-onboard-negative-paths") {
-    errors.push("onboard-negative-paths artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/onboard-negative-paths/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("onboard-negative-paths artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("onboard-negative-paths artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("onboard-negative-paths artifact upload retention-days must be 14");
-  }
 }
 
 function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2130,24 +1832,6 @@ function validateCloudInferenceJob(errors: string[], jobs: WorkflowRecord): void
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/cloud-inference.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload cloud inference artifacts");
-  requireFullShaAction(errors, upload, "cloud-inference upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-cloud-inference") {
-    errors.push("cloud-inference artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/cloud-inference/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("cloud-inference artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("cloud-inference artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("cloud-inference artifact upload retention-days must be 14");
-  }
 }
 
 function requireNoDockerHubAuthInRun(errors: string[], owner: string, runScript: string): void {
@@ -2474,24 +2158,6 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload double-onboard Vitest artifacts");
-  requireFullShaAction(errors, upload, "double-onboard upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-double-onboard") {
-    errors.push("double-onboard artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/double-onboard/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("double-onboard artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("double-onboard artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("double-onboard artifact upload retention-days must be 14");
-  }
 }
 function validateRuntimeOverridesJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "runtime-overrides";
@@ -2547,24 +2213,6 @@ function validateRuntimeOverridesJob(errors: string[], jobs: WorkflowRecord): vo
   const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/runtime-overrides.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload runtime overrides artifacts");
-  requireFullShaAction(errors, upload, "runtime-overrides upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-runtime-overrides") {
-    errors.push("runtime-overrides artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/runtime-overrides/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("runtime-overrides artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("runtime-overrides artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("runtime-overrides artifact upload retention-days must be 14");
-  }
 }
 
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2637,24 +2285,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Hermes live Vitest artifacts");
-  requireFullShaAction(errors, upload, "hermes-e2e upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-e2e") {
-    errors.push("hermes-e2e artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/hermes-e2e/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("hermes-e2e artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("hermes-e2e artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-e2e artifact upload retention-days must be 14");
-  }
 }
 
 function validateHermesRootEntrypointSmokeJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2761,33 +2391,6 @@ function validateHermesRootEntrypointSmokeJob(errors: string[], jobs: WorkflowRe
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Hermes root entrypoint smoke artifacts",
-  );
-  requireFullShaAction(errors, upload, "hermes-root-entrypoint-smoke upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-root-entrypoint-smoke") {
-    errors.push("hermes-root-entrypoint-smoke artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/hermes-root-entrypoint-smoke/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "hermes-root-entrypoint-smoke artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "hermes-root-entrypoint-smoke artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-root-entrypoint-smoke artifact upload retention-days must be 14");
-  }
 }
 
 function validateHermesSandboxSecretBoundaryJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2854,37 +2457,6 @@ function validateHermesSandboxSecretBoundaryJob(errors: string[], jobs: Workflow
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-sandbox-secret-boundary.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Hermes sandbox secret-boundary artifacts",
-  );
-  requireFullShaAction(errors, upload, "hermes-sandbox-secret-boundary upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-hermes-sandbox-secret-boundary") {
-    errors.push("hermes-sandbox-secret-boundary artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/hermes-sandbox-secret-boundary/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "hermes-sandbox-secret-boundary artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "hermes-sandbox-secret-boundary artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("hermes-sandbox-secret-boundary artifact upload retention-days must be 14");
-  }
 }
 
 function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -2969,24 +2541,6 @@ function validateDiagnosticsJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/diagnostics.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload diagnostics artifacts");
-  requireFullShaAction(errors, upload, "diagnostics upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-diagnostics") {
-    errors.push("diagnostics artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/diagnostics/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("diagnostics artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("diagnostics artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("diagnostics artifact upload retention-days must be 14");
-  }
 }
 
 function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3070,24 +2624,6 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   requireRunContains(errors, runVitest, "set -euo pipefail");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/spark-install.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Spark install artifacts");
-  requireFullShaAction(errors, upload, "spark-install upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-spark-install") {
-    errors.push("spark-install artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/spark-install/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("spark-install artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("spark-install artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("spark-install artifact upload retention-days must be 14");
-  }
 }
 
 function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3174,24 +2710,6 @@ function validateSnapshotCommandsJob(errors: string[], jobs: WorkflowRecord): vo
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/snapshot-commands.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload snapshot commands artifacts");
-  requireFullShaAction(errors, upload, "snapshot-commands upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-snapshot-commands") {
-    errors.push("snapshot-commands artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/snapshot-commands/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("snapshot-commands artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("snapshot-commands artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("snapshot-commands artifact upload retention-days must be 14");
-  }
 }
 
 function validateModelRouterProviderRoutedInferenceJob(
@@ -3297,37 +2815,6 @@ function validateModelRouterProviderRoutedInferenceJob(
     runVitest,
     "test/e2e/live/model-router-provider-routed-inference.test.ts",
   );
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Model Router provider-routed inference artifacts",
-  );
-  requireFullShaAction(errors, upload, "model-router-provider-routed-inference upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-model-router-provider-routed-inference") {
-    errors.push("model-router-provider-routed-inference artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/model-router-provider-routed-inference/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "model-router-provider-routed-inference artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "model-router-provider-routed-inference artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("model-router-provider-routed-inference artifact upload retention-days must be 14");
-  }
 }
 
 function validateGatewayDriftPreflightJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3477,24 +2964,6 @@ function validateTunnelLifecycleJob(errors: string[], jobs: WorkflowRecord): voi
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/tunnel-lifecycle.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload tunnel lifecycle artifacts");
-  requireFullShaAction(errors, upload, "tunnel-lifecycle upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-tunnel-lifecycle") {
-    errors.push("tunnel-lifecycle artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/tunnel-lifecycle/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("tunnel-lifecycle artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("tunnel-lifecycle artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("tunnel-lifecycle artifact upload retention-days must be 14");
-  }
 }
 
 function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3580,37 +3049,6 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
   );
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/issue-2478-crash-loop-recovery.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload issue #2478 crash-loop recovery artifacts",
-  );
-  requireFullShaAction(errors, upload, "issue-2478-crash-loop-recovery upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-issue-2478-crash-loop-recovery") {
-    errors.push("issue-2478-crash-loop-recovery artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/issue-2478-crash-loop-recovery/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "issue-2478-crash-loop-recovery artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "issue-2478-crash-loop-recovery artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("issue-2478-crash-loop-recovery artifact upload retention-days must be 14");
-  }
 }
 
 function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3737,24 +3175,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-add-remove.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels add/remove artifacts");
-  requireFullShaAction(errors, upload, "channels-add-remove upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove artifact upload name must be stable");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/channels-add-remove/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-add-remove artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-add-remove artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-add-remove artifact upload retention-days must be 14");
-  }
 }
 
 function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3828,26 +3248,6 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-discord-pairing.test.ts");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload OpenClaw Discord pairing artifacts",
-  );
-  requireFullShaAction(errors, upload, "openclaw-discord-pairing upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-discord-pairing/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-discord-pairing artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-discord-pairing artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-discord-pairing artifact upload retention-days must be 14");
-  }
 }
 
 function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord): void {
@@ -3919,21 +3319,6 @@ function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord)
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/openclaw-slack-pairing.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw Slack pairing artifacts");
-  requireFullShaAction(errors, upload, "openclaw-slack-pairing upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-slack-pairing/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-slack-pairing artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-slack-pairing artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-slack-pairing artifact upload retention-days must be 14");
-  }
 }
 
 function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4063,28 +3448,6 @@ function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/channels-stop-start.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels stop/start artifacts");
-  requireFullShaAction(errors, upload, "channels-stop-start upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start artifact upload name must include matrix.agent");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-stop-start artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-stop-start artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-stop-start artifact upload retention-days must be 14");
-  }
 }
 
 function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): void {
@@ -4144,20 +3507,6 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload Telegram injection artifacts");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/telegram-injection/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("telegram-injection artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("telegram-injection artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("telegram-injection artifact upload retention-days must be 14");
-  }
 }
 
 function validateBedrockRuntimeCompatibleAnthropicJob(
@@ -4285,45 +3634,13 @@ function validateBedrockRuntimeCompatibleAnthropicJob(
     "test/e2e/live/bedrock-runtime-compatible-anthropic.test.ts",
   );
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-
-  const upload = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Upload Bedrock Runtime compatible Anthropic artifacts",
-  );
-  requireFullShaAction(errors, upload, "bedrock-runtime-compatible-anthropic upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload name must include matrix.agent",
-    );
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload must set include-hidden-files: false",
-    );
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push(
-      "bedrock-runtime-compatible-anthropic artifact upload must ignore missing fixture artifacts",
-    );
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("bedrock-runtime-compatible-anthropic artifact upload retention-days must be 14");
-  }
 }
 
 export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_PATH): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
+  errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
@@ -4517,57 +3834,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   );
   requireRunContains(errors, summary, "| Target | Manifest | Expected state | Suites | Phases |");
   requireRunContains(errors, summary, "TARGET_ID");
-
-  const upload = requireStep(errors, steps, "Upload E2E artifacts");
-  requireFullShaAction(errors, upload, "upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-${{ matrix.id }}") {
-    errors.push("artifact upload name must include matrix.id");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/target.json");
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
-  );
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
-  );
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
-  for (const line of uploadPath.split("\n")) {
-    if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
-      errors.push("artifact upload path must not list the whole matrix artifact directory");
-    }
-  }
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("artifact upload retention-days must be 14");
-  }
 
   validateOpenShellVersionPinJob(errors, jobs);
   validateOnboardNegativePathsJob(errors, jobs);
