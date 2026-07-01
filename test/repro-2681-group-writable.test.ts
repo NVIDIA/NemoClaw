@@ -361,6 +361,29 @@ describe("mutable agent config permissions", () => {
     }
   });
 
+  it("rejects a hardlinked fixed config before changing either alias mode", () => {
+    const tmpDir = mkdtempOnPosixFs("nemoclaw-6047-hardlink-");
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configFile = path.join(configDir, "openclaw.json");
+    const externalAlias = path.join(tmpDir, "external-config");
+
+    try {
+      fs.mkdirSync(configDir, { mode: 0o700 });
+      fs.writeFileSync(externalAlias, "{}\n", { mode: 0o600 });
+      fs.chmodSync(externalAlias, 0o600);
+      fs.linkSync(externalAlias, configFile);
+
+      const result = runMutableConfigNormalizer(configDir, [tmpDir, configDir, externalAlias]);
+
+      expect(result.status).not.toBe(0);
+      expect(fs.statSync(configFile).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(modeBits(configFile) & 0o7777).toBe(0o600);
+      expect(modeBits(externalAlias) & 0o7777).toBe(0o600);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("shields-down restores OpenClaw group-writable file modes and setgid dirs", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
@@ -675,7 +698,7 @@ process.stdout.write(JSON.stringify(calls));
             "set -euo pipefail",
             // Model the descriptor observing root ownership without requiring
             // the test runner itself to own this fixture as root.
-            "python3() { cat >/dev/null; printf '0\\n'; }",
+            'python3() { if [ "${2:-}" != "-" ]; then printf "unexpected helper invocation\\n" >&2; return 68; fi; cat >/dev/null; printf "0\\n"; }',
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),

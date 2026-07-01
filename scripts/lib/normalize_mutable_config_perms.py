@@ -153,6 +153,15 @@ def normalize_dir(directory_fd: int, *, top_level: bool = False) -> None:
         try:
             current_mode = stat.S_IMODE(opened.st_mode)
             if top_level and name in FIXED_FILES:
+                root_metadata = os.fstat(directory_fd)
+                if (
+                    stable_file_key(opened) != stable_file_key(before)
+                    or opened.st_dev != root_metadata.st_dev
+                    or opened.st_uid != os.geteuid()
+                    or opened.st_gid != os.getegid()
+                    or opened.st_nlink != 1
+                ):
+                    raise UnsafeTree()
                 set_mode(child_fd, 0o660, required=True)
             elif top_level and name == BASELINE_NAME:
                 if opened.st_uid == os.geteuid():

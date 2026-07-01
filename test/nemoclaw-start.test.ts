@@ -4257,12 +4257,12 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     const script = path.join(root, "run.sh");
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
     const result = spawnSync("bash", [script], { encoding: "utf-8" });
-    const baselineMode = fs.statSync(baselinePath).mode & 0o777;
+    const baselineIsSymlink = fs.lstatSync(baselinePath).isSymbolicLink();
+    const baselineMode = baselineIsSymlink ? undefined : fs.statSync(baselinePath).mode & 0o777;
     const protectedMode = fs.statSync(protectedTarget).mode & 0o777;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, baselineMode, protectedMode };
+    return { result, baselineIsSymlink, baselineMode, protectedMode };
   }
-
   it("keeps the baseline read-only after mutable permission normalization", () => {
     const { result, baselineMode } = runNormalizeMutableConfigPermsWithBaseline();
     expect(result.status).toBe(0);
@@ -4270,14 +4270,13 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   });
 
   it("fails closed when mutable permission normalization sees a symlinked baseline", () => {
-    const { result, protectedMode } = runNormalizeMutableConfigPermsWithBaseline({
-      symlinkBaseline: true,
-    });
+    const outcome = runNormalizeMutableConfigPermsWithBaseline({ symlinkBaseline: true });
+    const { result, baselineIsSymlink, protectedMode } = outcome;
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("descriptor-safe repair detected an unsafe link");
+    expect(baselineIsSymlink).toBe(true);
     expect(protectedMode).toBe(0o640);
   });
-
   function runCaptureCandidate(
     configContent: string,
     options: { baselineContent?: string; json5Module?: string } = {},
