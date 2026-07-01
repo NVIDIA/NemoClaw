@@ -102,7 +102,7 @@ describe("e2e workflow boundary", () => {
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "artifact upload path must not include /tmp/",
+        "openclaw-inference-switch upload-e2e-artifacts must preserve its explicit name/path contract",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -985,8 +985,8 @@ jobs:
           "live job env must not include NVIDIA_INFERENCE_API_KEY",
           "step 'Run live E2E tests' run script must not interpolate dispatch inputs directly",
           "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-          "artifact upload must set include-hidden-files: false",
-          "upload-artifact action must be pinned to a full commit SHA",
+          "live must not invoke actions/upload-artifact directly",
+          "live must use upload-e2e-artifacts exactly once",
           "openshell-version-pin job must use the shared jobs selector condition",
           "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
@@ -1080,8 +1080,8 @@ jobs:
           "snapshot-commands job must not set DOCKER_CONFIG at job level",
           "snapshot-commands checkout step must set persist-credentials=false",
           "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands artifact upload must set include-hidden-files: false",
-          "artifact upload path must include e2e-artifacts/live/snapshot-commands/",
+          "snapshot-commands upload-e2e-artifacts invocation must not override its contract",
+          "snapshot-commands upload-e2e-artifacts must use the action defaults",
           "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",
         ]),
       );
@@ -1235,10 +1235,8 @@ jobs:
           "channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "channels-stop-start step must set the fake Telegram token",
           "step 'Run channels stop/start live test' run script must include test/e2e/live/channels-stop-start.test.ts",
-          "channels-stop-start upload-artifact action must be pinned to a full commit SHA",
-          "channels-stop-start artifact upload name must include matrix.agent",
-          "channels-stop-start artifact upload must set include-hidden-files: false",
-          "channels-stop-start artifact upload retention-days must be 14",
+          "channels-stop-start must not invoke actions/upload-artifact directly",
+          "channels-stop-start must use upload-e2e-artifacts exactly once",
         ]),
       );
     } finally {
@@ -1388,8 +1386,8 @@ jobs:
           "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
           "diagnostics step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
           "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
-          "diagnostics artifact upload must set include-hidden-files: false",
-          "diagnostics artifact upload retention-days must be 14",
+          "diagnostics upload-e2e-artifacts invocation must not override its contract",
+          "diagnostics upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {
