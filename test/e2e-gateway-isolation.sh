@@ -606,6 +606,35 @@ else
   fail "config changed unexpectedly without override: $OUT"
 fi
 
+# ── Test 30: One-shot cleanup repairs post-Doctor DAC modes ──────
+# PID 1 drops CAP_DAC_OVERRIDE, so root cannot traverse a sandbox-owned 0700
+# config directory. Exercise the production two-phase helper from the built
+# image: owner-UID descriptor repair first, then the root-only baseline lock.
+
+info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
+OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  test -s /tmp/normalize.sh
+  source /tmp/normalize.sh
+  STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)
+  gosu sandbox sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  gosu sandbox chmod 700 /sandbox/.openclaw
+  normalize_mutable_config_perms
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
+  gosu sandbox sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
+  gosu gateway sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
+  printf "ONESHOT_DAC_REPAIR_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "ONESHOT_DAC_REPAIR_OK"; then
+  pass "owner-UID repair restores 2770/660 and gateway-user writes"
+else
+  fail "one-shot DAC repair failed: $OUT"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────
 
 echo ""

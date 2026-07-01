@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -169,6 +169,66 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       expect(mode(protectedTarget)).toBe(0o640);
       expect(fs.lstatSync(path.join(configDir, "openclaw.json")).isSymbolicLink()).toBe(true);
     } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("never chmods a protected target during background symlink swaps (#6047)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-race-"));
+    const configDir = path.join(root, ".openclaw");
+    const racePath = path.join(configDir, "race-file");
+    const protectedTarget = path.join(root, "protected-target");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+    fs.writeFileSync(racePath, "mutable\n");
+    fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
+    for (let index = 0; index < 300; index++) {
+      fs.writeFileSync(path.join(configDir, `filler-${index}`), "x\n");
+    }
+
+    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    );
+    const script = [
+      "set -euo pipefail",
+      normalizeFunction,
+      oneShotFunction,
+      "rc=0",
+      "run_oneshot_command bash -c 'exit 42' || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+    const mutator = spawn(
+      process.execPath,
+      [
+        "-e",
+        [
+          'const fs = require("node:fs");',
+          "const [racePath, target] = process.argv.slice(1);",
+          "for (;;) {",
+          "  try { fs.unlinkSync(racePath); } catch {}",
+          '  fs.writeFileSync(racePath, "mutable\\n");',
+          "  fs.unlinkSync(racePath);",
+          "  fs.symlinkSync(target, racePath);",
+          "}",
+        ].join("\n"),
+        racePath,
+        protectedTarget,
+      ],
+      { stdio: "ignore" },
+    );
+    const stopped = new Promise<void>((resolve) => mutator.once("close", () => resolve()));
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const result = runBash(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/rc=(?:1|42)/);
+      expect(mode(protectedTarget)).toBe(0o640);
+    } finally {
+      mutator.kill("SIGKILL");
+      await stopped;
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

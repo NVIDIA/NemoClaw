@@ -4261,16 +4261,13 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   });
 
   // ── write_openclaw_config_baseline ────────────────────────────────────────
-  function runNormalizeMutableConfigPermsWithBaseline(
-    fixture: { failBaselineChown?: boolean; failBaselineChmod?: boolean } = {},
-  ) {
+  function runNormalizeMutableConfigPermsWithBaseline(fixture: { symlinkBaseline?: boolean } = {}) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-baseline-lock-"));
     const openclawDir = path.join(root, ".openclaw");
     fs.mkdirSync(openclawDir, { recursive: true });
     const configPath = path.join(openclawDir, "openclaw.json");
     const hashPath = path.join(openclawDir, ".config-hash");
     const baselinePath = path.join(openclawDir, "openclaw.json.nemoclaw-baseline");
-    const baselineName = path.basename(baselinePath);
 
     fs.writeFileSync(configPath, "{}");
     fs.writeFileSync(hashPath, "oldhash\n");
@@ -4279,19 +4276,18 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     fs.chmodSync(configPath, 0o660);
     fs.chmodSync(hashPath, 0o660);
     fs.chmodSync(baselinePath, 0o460);
+    const protectedTarget = path.join(root, "protected-target");
+    fs.writeFileSync(protectedTarget, "protected", { mode: 0o640 });
+    switch (fixture.symlinkBaseline) {
+      case true:
+        fs.rmSync(baselinePath);
+        fs.symlinkSync(protectedTarget, baselinePath);
+        break;
+    }
 
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      "id() { echo 0; }",
-      fixture.failBaselineChown
-        ? `chown() { case "$*" in *${baselineName}*) return 1 ;; esac; return 0; }`
-        : "chown() { return 0; }",
-      fixture.failBaselineChmod
-        ? `chmod() { case "$*" in *${baselineName}*) return 1 ;; esac; command chmod "$@"; }`
-        : "",
-      `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
-      extractShellFunction("lock_openclaw_config_baseline_if_present").replaceAll("/sandbox", root),
       extractShellFunction("normalize_mutable_config_perms").replaceAll("/sandbox", root),
       "normalize_mutable_config_perms",
     ]
@@ -4301,8 +4297,9 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     fs.writeFileSync(script, wrapper, { mode: 0o700 });
     const result = spawnSync("bash", [script], { encoding: "utf-8" });
     const baselineMode = fs.statSync(baselinePath).mode & 0o777;
+    const protectedMode = fs.statSync(protectedTarget).mode & 0o777;
     fs.rmSync(root, { recursive: true, force: true });
-    return { result, baselineMode };
+    return { result, baselineMode, protectedMode };
   }
 
   it("keeps the baseline read-only after mutable permission normalization", () => {
@@ -4311,12 +4308,13 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     expect(baselineMode).toBe(0o440);
   });
 
-  it("fails closed when mutable permission normalization cannot re-lock the baseline", () => {
-    const { result } = runNormalizeMutableConfigPermsWithBaseline({
-      failBaselineChmod: true,
+  it("fails closed when mutable permission normalization sees a symlinked baseline", () => {
+    const { result, protectedMode } = runNormalizeMutableConfigPermsWithBaseline({
+      symlinkBaseline: true,
     });
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("Failed to set permissions");
+    expect(result.stderr).toContain("config directory or file path is a symlink");
+    expect(protectedMode).toBe(0o640);
   });
 
   type BaselineFixture = {

@@ -527,33 +527,230 @@ normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
   local hash_file="$config_dir/.config-hash"
+  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
 
   # An explicit one-shot command may replace these paths before root cleanup.
-  # Fail closed, and use find -P below, so permission repair never follows an
+  # Fail closed before descriptor-safe repair so it never follows an
   # attacker-selected symlink target.
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ] || [ -L "$baseline_file" ]; then
     printf '[SECURITY] Refusing mutable config permission normalization — config directory or file path is a symlink\n' >&2
     return 1
   fi
   [ -d "$config_dir" ] || return 0
 
-  # Detect shields-up. Config dir owned by root means shields are
-  # currently locked; normalizing would weaken the contract.
-  local config_dir_owner
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" = "root" ]; then
-    return 0
-  fi
+  local config_dir_uid
+  if ! config_dir_uid="$(
+    python3 -I - "$config_dir" <<'PY_CLASSIFY_MUTABLE_CONFIG'
+import os
+import stat
+import sys
 
-  find -P "$config_dir" -type d -exec chmod g+rwx,o-rwx,g+s {} + 2>/dev/null || true
-  find -P "$config_dir" -type f -exec chmod g+rw,o-rwx {} + 2>/dev/null || true
-  find -P "$config_dir" -maxdepth 0 -type d -exec chmod 2770 {} + 2>/dev/null || true
-  find -P "$config_dir" -maxdepth 1 -type f \( -name openclaw.json -o -name .config-hash \) -exec chmod 660 {} + 2>/dev/null || true
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing mutable config permission normalization — config directory or file path became a symlink\n' >&2
+metadata = os.lstat(sys.argv[1])
+if not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit(1)
+print(metadata.st_uid)
+PY_CLASSIFY_MUTABLE_CONFIG
+  )"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
     return 1
   fi
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
+  # Shields up: the root-owned config tree is intentionally locked.
+  [ "$config_dir_uid" = "0" ] && return 0
+
+  # Doctor can leave a sandbox-owned 700/600 tree. PID 1 intentionally lacks
+  # CAP_DAC_OVERRIDE, so traverse it through the owner UID. Keep a harmless
+  # prefix in non-root mode so the descriptor implementation stays shared.
+  local -a permission_repair_prefix=(env)
+  if [ "$(id -u)" -eq 0 ]; then
+    permission_repair_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+
+  # The mutable tree belongs to the sandbox identity, so path-based root chmod
+  # is a confused-deputy risk even with find -P. Pin every inode with
+  # O_NOFOLLOW and mutate only the opened descriptor; swaps are detected after
+  # fchmod/fchown without ever dereferencing the replacement path.
+  if ! "${permission_repair_prefix[@]}" python3 -I - "$config_dir" <<'PY_NORMALIZE_MUTABLE_CONFIG'; then
+import os
+import stat
+import sys
+
+config_dir = sys.argv[1]
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+if not nofollow:
+    raise SystemExit(1)
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow
+file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
+top_level_fixed = {"openclaw.json", ".config-hash"}
+baseline_name = "openclaw.json.nemoclaw-baseline"
+is_root = os.geteuid() == 0
+
+
+class UnsafeTree(Exception):
+    pass
+
+
+def inode_key(metadata):
+    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
+
+
+def open_pinned(parent_fd, name, flags, expected):
+    try:
+        child_fd = os.open(name, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        raise UnsafeTree() from exc
+    opened = os.fstat(child_fd)
+    if inode_key(opened) != inode_key(expected):
+        os.close(child_fd)
+        raise UnsafeTree()
+    return child_fd, opened
+
+
+def verify_still_linked(parent_fd, name, opened):
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except OSError as exc:
+        raise UnsafeTree() from exc
+    if inode_key(current) != inode_key(opened):
+        raise UnsafeTree()
+
+
+def set_mode(child_fd, mode, required=False):
+    try:
+        os.fchmod(child_fd, mode)
+    except PermissionError:
+        if is_root or required:
+            raise
+
+
+def normalize_dir(directory_fd, top_level=False):
+    with os.scandir(directory_fd) as entries:
+        names = sorted(entry.name for entry in entries)
+    for name in names:
+        try:
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except OSError as exc:
+            raise UnsafeTree() from exc
+        if stat.S_ISLNK(before.st_mode):
+            if top_level and (name in top_level_fixed or name == baseline_name):
+                raise UnsafeTree()
+            continue
+        if stat.S_ISDIR(before.st_mode):
+            child_fd, opened = open_pinned(directory_fd, name, directory_flags, before)
+            try:
+                normalize_dir(child_fd)
+                current_mode = stat.S_IMODE(os.fstat(child_fd).st_mode)
+                set_mode(child_fd, (current_mode | 0o2070) & ~0o007)
+                verify_still_linked(directory_fd, name, opened)
+            finally:
+                os.close(child_fd)
+            continue
+        if not stat.S_ISREG(before.st_mode):
+            continue
+        if top_level and name == baseline_name and before.st_uid == 0:
+            # The sandbox phase cannot open a root-only baseline. Root pins and
+            # locks this path separately after mutable traversal completes.
+            continue
+        child_fd, opened = open_pinned(directory_fd, name, file_flags, before)
+        try:
+            current_mode = stat.S_IMODE(opened.st_mode)
+            if top_level and name in top_level_fixed:
+                set_mode(child_fd, 0o660, required=True)
+            elif top_level and name == baseline_name:
+                if opened.st_uid == os.geteuid():
+                    set_mode(child_fd, 0o440, required=True)
+                elif opened.st_uid != 0:
+                    raise UnsafeTree()
+            else:
+                set_mode(child_fd, (current_mode | 0o060) & ~0o007)
+            verify_still_linked(directory_fd, name, opened)
+        finally:
+            os.close(child_fd)
+
+
+try:
+    root_fd = os.open(config_dir, directory_flags)
+    root_metadata = os.fstat(root_fd)
+    if root_metadata.st_uid == 0:
+        raise SystemExit(0)
+    normalize_dir(root_fd, top_level=True)
+    set_mode(root_fd, 0o2770, required=True)
+    current_root = os.stat(config_dir, follow_symlinks=False)
+    if inode_key(current_root) != inode_key(root_metadata):
+        raise UnsafeTree()
+except (KeyError, OSError, UnsafeTree):
+    raise SystemExit(1)
+finally:
+    if "root_fd" in locals():
+        os.close(root_fd)
+PY_NORMALIZE_MUTABLE_CONFIG
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected a symlink, race, or metadata failure\n' >&2
+    return 1
+  fi
+
+  # The owner phase makes the directory traversable again. Root then locks the
+  # recovery baseline through pinned descriptors, after initializing the
+  # supplementary sandbox group that container runtimes may omit for uid 0.
+  if [ "$(id -u)" -eq 0 ] && ! python3 -I - "$config_dir" <<'PY_LOCK_CONFIG_BASELINE'; then
+import grp
+import os
+import stat
+import sys
+
+config_dir = sys.argv[1]
+baseline_name = "openclaw.json.nemoclaw-baseline"
+nofollow = getattr(os, "O_NOFOLLOW", 0)
+if not nofollow:
+    raise SystemExit(1)
+
+directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow
+file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NONBLOCK | nofollow
+sandbox_gid = grp.getgrnam("sandbox").gr_gid
+groups = os.getgroups()
+if sandbox_gid not in groups:
+    os.setgroups([*groups, sandbox_gid])
+
+
+def inode_key(metadata):
+    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
+
+
+try:
+    root_fd = os.open(config_dir, directory_flags)
+    root_metadata = os.fstat(root_fd)
+    try:
+        before = os.stat(baseline_name, dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        before = None
+
+    if before is not None:
+        if not stat.S_ISREG(before.st_mode):
+            raise OSError()
+        baseline_fd = os.open(baseline_name, file_flags, dir_fd=root_fd)
+        try:
+            opened = os.fstat(baseline_fd)
+            if inode_key(opened) != inode_key(before):
+                raise OSError()
+            os.fchown(baseline_fd, 0, sandbox_gid)
+            os.fchmod(baseline_fd, 0o440)
+            current = os.stat(baseline_name, dir_fd=root_fd, follow_symlinks=False)
+            if inode_key(current) != inode_key(opened):
+                raise OSError()
+        finally:
+            os.close(baseline_fd)
+
+    current_root = os.stat(config_dir, follow_symlinks=False)
+    if inode_key(current_root) != inode_key(root_metadata):
+        raise OSError()
+except (KeyError, OSError):
+    raise SystemExit(1)
+finally:
+    if "root_fd" in locals():
+        os.close(root_fd)
+PY_LOCK_CONFIG_BASELINE
+    printf '[SECURITY] Refusing mutable config permission normalization — root baseline descriptor lock failed\n' >&2
+    return 1
+  fi
 }
 
 # OpenClaw assumes a single-UID 700/600 config tree, while NemoClaw's separate

@@ -645,8 +645,9 @@ process.stdout.write(JSON.stringify(calls));
           "-c",
           [
             "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "root\\n"; else command stat "$@"; fi; }',
+            // Model the descriptor observing root ownership without requiring
+            // the test runner itself to own this fixture as root.
+            "python3() { cat >/dev/null; printf '0\\n'; }",
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),
