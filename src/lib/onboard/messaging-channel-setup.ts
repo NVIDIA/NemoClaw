@@ -4,16 +4,15 @@
 import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import {
+  type BuiltInMessagingHookOptions,
+  type ChannelManifestRegistry,
   type ChannelInputSpec,
   type ChannelManifest,
-  createBuiltInChannelManifestRegistry,
-  createBuiltInMessagingHookRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   getMessagingManifestAvailabilityContext,
   hasMessagingManifestRequiredInputs,
   MessagingHostStateApplier,
   MessagingSetupApplier,
-  MessagingWorkflowPlanner,
   resolveMessagingManifestSeed,
   type SandboxMessagingPlan,
   toMessagingAgentId,
@@ -36,6 +35,7 @@ import {
 
 export interface SetupSelectedMessagingChannelsOptions {
   readonly agent?: { readonly name?: string } | null;
+  readonly hookOptions?: BuiltInMessagingHookOptions;
   readonly sandboxName?: string | null;
   readonly interactive?: boolean;
 }
@@ -44,11 +44,14 @@ export interface SetupMessagingChannelsDeps {
   readonly step?: (current: number, total: number, label: string) => void;
   readonly note?: (message: string) => void;
   readonly isNonInteractive?: () => boolean;
+  readonly hookOptions?: BuiltInMessagingHookOptions;
   readonly sandboxName?: string | null;
 }
 
 const getMessagingToken = (envKey: string): string | null =>
   normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
+
+const builtInMessagingCatalog = createBuiltInMessagingCatalog();
 
 const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
   if (!input.envKey) return null;
@@ -68,7 +71,7 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
  * presets are not messaging channel selection.
  */
 export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = null): string[] {
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = builtInMessagingCatalog.createManifestRegistry();
   const availabilityContext = getMessagingManifestAvailabilityContext(
     agent,
     manifestRegistry.list(),
@@ -99,7 +102,7 @@ export async function setupMessagingChannels(
   const note = deps.note ?? console.log;
   const isNonInteractive =
     deps.isNonInteractive ?? (() => process.env.NEMOCLAW_NON_INTERACTIVE === "1");
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = builtInMessagingCatalog.createManifestRegistry();
   const availabilityContext = getMessagingManifestAvailabilityContext(
     agent,
     manifestRegistry.list(),
@@ -119,6 +122,7 @@ export async function setupMessagingChannels(
       note(`  [non-interactive] Messaging channel inputs detected: ${found.join(", ")}`);
       await setupSelectedMessagingChannels(found, enabled, availableChannels, {
         agent,
+        hookOptions: deps.hookOptions,
         interactive: false,
         sandboxName: deps.sandboxName,
       });
@@ -166,6 +170,7 @@ export async function setupMessagingChannels(
 
   await setupSelectedMessagingChannels(selected, enabled, availableChannels, {
     agent,
+    hookOptions: deps.hookOptions,
     sandboxName: deps.sandboxName,
   });
   console.log("");
@@ -187,7 +192,7 @@ export async function setupSelectedMessagingChannels(
   messagingChannels: readonly ChannelManifest[],
   options: SetupSelectedMessagingChannelsOptions = {},
 ): Promise<SandboxMessagingPlan | null> {
-  const registry = createBuiltInChannelManifestRegistry();
+  const registry = builtInMessagingCatalog.createManifestRegistry();
   const supportedChannelIds = messagingChannels.map((channel) => channel.id);
   const selectedChannels = uniqueSelectedChannels(selected, supportedChannelIds, registry);
   if (selectedChannels.length === 0) {
@@ -197,11 +202,9 @@ export async function setupSelectedMessagingChannels(
 
   const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
-  const planner = new MessagingWorkflowPlanner(
-    registry,
-    createBuiltInMessagingHookRegistry(),
-    createBuiltInRenderTemplateResolver(),
-  );
+  const planner = builtInMessagingCatalog.createWorkflowPlanner({
+    hookOptions: options.hookOptions,
+  });
 
   if (options.interactive === false) {
     const plan = await planner.buildPlan({
@@ -246,7 +249,7 @@ export async function setupSelectedMessagingChannels(
 function uniqueSelectedChannels(
   selected: readonly string[],
   supportedChannelIds: readonly string[],
-  registry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  registry: ChannelManifestRegistry,
 ): string[] {
   const supported = new Set(supportedChannelIds);
   const result: string[] = [];
@@ -269,7 +272,7 @@ function logEnrollmentHelp(manifest: ChannelManifest): void {
 }
 
 function buildCredentialAvailability(
-  registry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  registry: ChannelManifestRegistry,
   channelIds: readonly string[],
 ): Record<string, boolean> {
   const availability: Record<string, boolean> = {};

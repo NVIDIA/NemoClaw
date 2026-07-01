@@ -19,7 +19,7 @@ import {
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
 import {
-  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingCatalog,
   getMessagingManifestAvailabilityContext,
 } from "../../messaging";
 import * as policies from "../../policy";
@@ -98,8 +98,9 @@ export type ChannelStatusReport =
 // unresponsive when the Noise WebSocket is stuck; a fast hard cap keeps
 // channels status from inheriting that hang.
 const WHATSAPP_PROBE_TIMEOUT_MS = 8_000;
+const messagingCatalog = createBuiltInMessagingCatalog();
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
-const channelManifestRegistry = createBuiltInChannelManifestRegistry();
+const channelManifestRegistry = messagingCatalog.createManifestRegistry();
 
 const SHELL_OK = "NEMOCLAW_WA_DIAG_OK";
 const HEARTBEAT_BEGIN = "NEMOCLAW_WA_HEARTBEAT_BEGIN";

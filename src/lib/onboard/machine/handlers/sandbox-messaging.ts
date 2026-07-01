@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingCatalog,
   listSupportedMessagingChannelIdsForAgent,
   tryGetMessagingAgentId,
 } from "../../../messaging";
@@ -47,7 +47,7 @@ export interface ReconcileSandboxMessagingOptions<Agent> {
   readonly deps: SandboxMessagingDeps<Agent>;
 }
 
-const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
+const messagingManifestRegistry = createBuiltInMessagingCatalog().createManifestRegistry();
 
 function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
   plan: SandboxMessagingPlan;

@@ -4,7 +4,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
+import {
+  type BuiltInMessagingHookOptions,
+  createBuiltInChannelManifestRegistry,
+  MessagingSetupApplier,
+} from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
@@ -40,6 +44,60 @@ function manifests(...channelIds: string[]) {
     const manifest = manifestRegistry.get(channelId);
     if (!manifest) throw new Error(`missing manifest ${channelId}`);
     return manifest;
+  });
+}
+
+function testMessagingHookOptions(): BuiltInMessagingHookOptions {
+  return {
+    common: {
+      getCredential: vi.mocked(getCredential),
+      prompt: vi.mocked(prompt),
+      saveCredential: vi.mocked(saveCredential),
+    },
+    slack: {
+      validateCredentials: {
+        validateCredentials: vi.mocked(validateSlackCredentials),
+        formatValidationFailure: (result) => result.message,
+      },
+    },
+    wechat: {
+      ilinkLogin: {
+        env: process.env,
+        saveCredential: vi.mocked(saveCredential),
+        runLogin: async () => {
+          const result = await vi.mocked(runWechatHostQrLogin)();
+          if (result.kind !== "ok") return result;
+          return {
+            kind: "ok",
+            summary: `account ${result.credentials.accountId}`,
+            credentials: result.credentials,
+          };
+        },
+      },
+    },
+  };
+}
+
+function setupSelectedMessagingChannelsForTest(
+  selected: Parameters<typeof setupSelectedMessagingChannels>[0],
+  enabled: Parameters<typeof setupSelectedMessagingChannels>[1],
+  messagingChannels: Parameters<typeof setupSelectedMessagingChannels>[2],
+  options: Parameters<typeof setupSelectedMessagingChannels>[3] = {},
+) {
+  return setupSelectedMessagingChannels(selected, enabled, messagingChannels, {
+    hookOptions: testMessagingHookOptions(),
+    ...options,
+  });
+}
+
+function setupMessagingChannelsForTest(
+  agent: Parameters<typeof setupMessagingChannels>[0],
+  existingChannels: Parameters<typeof setupMessagingChannels>[1],
+  deps: Parameters<typeof setupMessagingChannels>[2] = {},
+) {
+  return setupMessagingChannels(agent, existingChannels, {
+    hookOptions: testMessagingHookOptions(),
+    ...deps,
   });
 }
 
@@ -84,7 +142,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
+    await setupSelectedMessagingChannelsForTest(
       ["telegram"],
       new Set(["telegram"]),
       manifests("telegram"),
@@ -125,7 +183,11 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["telegram"]);
 
-    const plan = await setupSelectedMessagingChannels(["telegram"], enabled, manifests("telegram"));
+    const plan = await setupSelectedMessagingChannelsForTest(
+      ["telegram"],
+      enabled,
+      manifests("telegram"),
+    );
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(enabled.has("telegram")).toBe(false);
@@ -146,7 +208,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
+    await setupSelectedMessagingChannelsForTest(
       ["telegram"],
       new Set(["telegram"]),
       manifests("telegram"),
@@ -167,7 +229,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
+    await setupSelectedMessagingChannelsForTest(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).not.toHaveBeenCalled();
@@ -191,7 +253,11 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    const plan = await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
+    const plan = await setupSelectedMessagingChannelsForTest(
+      ["slack"],
+      enabled,
+      manifests("slack"),
+    );
 
     expect(enabled.has("slack")).toBe(true);
     expect(plan?.channels[0]).toMatchObject({ channelId: "slack", active: true });
@@ -220,7 +286,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await setupSelectedMessagingChannels(
+    await setupSelectedMessagingChannelsForTest(
       ["telegram", "discord"],
       new Set(["telegram", "discord"]),
       manifests("telegram", "discord"),
@@ -250,7 +316,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     vi.spyOn(console, "log").mockImplementation(() => {});
 
-    const plan = await setupSelectedMessagingChannels(
+    const plan = await setupSelectedMessagingChannelsForTest(
       ["telegram"],
       new Set(["telegram"]),
       manifests("telegram"),
@@ -279,7 +345,11 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(["discord"], new Set(["discord"]), manifests("discord"));
+    await setupSelectedMessagingChannelsForTest(
+      ["discord"],
+      new Set(["discord"]),
+      manifests("discord"),
+    );
 
     expect(process.env.DISCORD_SERVER_ID).toBe("1491590992753590594");
     expect(process.env.DISCORD_REQUIRE_MENTION).toBe("0");
@@ -304,7 +374,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    const plan = await setupSelectedMessagingChannels(
+    const plan = await setupSelectedMessagingChannelsForTest(
       ["wechat"],
       new Set(["wechat"]),
       manifests("wechat"),
@@ -325,7 +395,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    const plan = await setupSelectedMessagingChannels(
+    const plan = await setupSelectedMessagingChannelsForTest(
       ["whatsapp"],
       new Set(["whatsapp"]),
       manifests("whatsapp"),
@@ -347,7 +417,7 @@ describe("setupSelectedMessagingChannels", () => {
   it("threads the resolved sandbox name into manifest provider bindings", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:telegram-token";
 
-    const plan = await setupSelectedMessagingChannels(
+    const plan = await setupSelectedMessagingChannelsForTest(
       ["telegram"],
       new Set(["telegram"]),
       manifests("telegram"),
@@ -388,7 +458,7 @@ describe("setupMessagingChannels", () => {
     const steps: string[] = [];
     const notes: string[] = [];
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       step: (current, total, label) => steps.push(`${current}/${total} ${label}`),
       note: (message) => notes.push(message),
       isNonInteractive: () => true,
@@ -406,7 +476,7 @@ describe("setupMessagingChannels", () => {
     process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
     const notes: string[] = [];
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       note: (message) => notes.push(message),
       isNonInteractive: () => true,
     });
@@ -421,7 +491,7 @@ describe("setupMessagingChannels", () => {
   it("clears any stale serialized messaging plan when no channels are selected", async () => {
     process.env[MESSAGING_SETUP_APPLIER_ENV_KEY] = "stale-plan";
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       isNonInteractive: () => true,
     });
 
@@ -434,7 +504,7 @@ describe("setupMessagingChannels", () => {
     process.env.WECHAT_ACCOUNT_ID = "   ";
     const notes: string[] = [];
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       note: (message) => notes.push(message),
       isNonInteractive: () => true,
     });
@@ -451,7 +521,7 @@ describe("setupMessagingChannels", () => {
     process.env.WECHAT_ACCOUNT_ID = "wechat-account";
     const notes: string[] = [];
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       note: (message) => notes.push(message),
       isNonInteractive: () => true,
     });
@@ -470,7 +540,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    const result = await setupMessagingChannels(null, null, {
+    const result = await setupMessagingChannelsForTest(null, null, {
       note: (message) => notes.push(message),
       isNonInteractive: () => true,
     });
@@ -504,7 +574,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
+    await setupSelectedMessagingChannelsForTest(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-fake-bot-token");
@@ -534,7 +604,7 @@ describe("setupMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
+    await setupSelectedMessagingChannelsForTest(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-timeout-bot-token");
@@ -562,7 +632,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
+    await setupSelectedMessagingChannelsForTest(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(prompt).toHaveBeenCalledWith("  Slack Member IDs (comma-separated allowlist): ");
@@ -585,7 +655,7 @@ describe("setupMessagingChannels", () => {
     });
 
     await expect(
-      setupMessagingChannels(null, null, { isNonInteractive: () => true }),
+      setupMessagingChannelsForTest(null, null, { isNonInteractive: () => true }),
     ).rejects.toThrow("process.exit");
 
     expect(exitSpy).toHaveBeenCalledWith(1);

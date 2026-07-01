@@ -22,6 +22,7 @@ import { MessagingWorkflowPlanner } from "./compiler";
 import { type MessagingChannelModule, type MessagingPolicyContribution } from "./channels/module";
 
 export interface MessagingWorkflowPlannerOptions {
+  readonly hooks?: "built-in" | "none";
   readonly hookOptions?: BuiltInMessagingHookOptions;
 }
 
@@ -129,7 +130,7 @@ export class StaticMessagingCatalog implements MessagingCatalog {
   createWorkflowPlanner(options: MessagingWorkflowPlannerOptions = {}): MessagingWorkflowPlanner {
     return new MessagingWorkflowPlanner(
       this.createManifestRegistry(),
-      this.createHookRegistry(options.hookOptions),
+      options.hooks === "none" ? undefined : this.createHookRegistry(options.hookOptions),
       this.createTemplateResolver(),
     );
   }

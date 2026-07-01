@@ -3,7 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import {
-  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingCatalog,
   getMessagingManifestAvailabilityContext,
 } from "../messaging";
 import { channelUsesInSandboxQrPairing, type ChannelDef } from "../sandbox/channels";
@@ -29,7 +29,7 @@ export function filterEnabledChannelsByAgent<T extends string[] | null | undefin
 ): T {
   if (!Array.isArray(enabledChannels)) return enabledChannels;
   if (!agent) return enabledChannels;
-  const registry = createBuiltInChannelManifestRegistry();
+  const registry = createBuiltInMessagingCatalog().createManifestRegistry();
   const available = registry.listAvailable(
     getMessagingManifestAvailabilityContext(agent, registry.list()),
   );

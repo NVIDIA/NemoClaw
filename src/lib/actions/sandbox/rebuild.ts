@@ -41,12 +41,10 @@ import type {
   SandboxMessagingPlan,
 } from "../../messaging";
 import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   isMessagingSupportedAgent,
   listSupportedMessagingChannelIdsForAgent,
   MessagingSetupApplier,
-  MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
@@ -108,6 +106,8 @@ export function buildRefreshMutableOpenClawConfigHashCommand(
     "chmod 660 .config-hash 2>/dev/null || true",
   ].join("; ");
 }
+
+const messagingCatalog = createBuiltInMessagingCatalog();
 
 function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
   sandboxName: string,
@@ -222,7 +222,7 @@ export async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = messagingCatalog.createManifestRegistry();
   const manifests = manifestRegistry.list();
   const agentId = tryGetMessagingAgentId(agent, manifests);
   if (agentId === null) {
@@ -240,11 +240,7 @@ export async function stageMessagingManifestPlanForRebuild(
     return null;
   }
   const supportedChannelIds = listSupportedMessagingChannelIdsForAgent(manifests, agentId);
-  const planner = new MessagingWorkflowPlanner(
-    manifestRegistry,
-    undefined,
-    createBuiltInRenderTemplateResolver(),
-  );
+  const planner = messagingCatalog.createWorkflowPlanner({ hooks: "none" });
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
     agent: agentId,

@@ -17,8 +17,8 @@ import type {
   ShowStatusCommandDeps,
 } from "./inventory";
 import { findAllOverlaps } from "./messaging/applier";
-import { createBuiltInChannelManifestRegistry } from "./messaging/channels";
-import { createBuiltInMessagingHookRegistry, runMessagingHookSync } from "./messaging/hooks";
+import { createBuiltInMessagingCatalog } from "./messaging/catalog";
+import { type MessagingHookRegistry, runMessagingHookSync } from "./messaging/hooks";
 import type {
   ChannelHookSpec,
   MessagingAgentId,
@@ -27,6 +27,8 @@ import type {
 import * as registry from "./state/registry";
 import { createSystemDeps, parseSshProcesses } from "./state/sandbox-session";
 import { getServiceStatuses, showStatus as showServiceStatus } from "./tunnel/services";
+
+const messagingCatalog = createBuiltInMessagingCatalog();
 
 function captureOpenshell(
   rootDir: string,
@@ -59,7 +61,7 @@ function checkMessagingBridgeHealth(
     channels: channelSet,
     currentSandbox: sandboxName,
     registryEntries: safeListRegistryEntries(),
-    hookRegistry: createBuiltInMessagingHookRegistry({
+    hookRegistry: messagingCatalog.createHookRegistry({
       telegram: {
         gatewayConflictStatus: {
           executeSandboxCommand: (name, command, timeoutMs) =>
@@ -102,7 +104,7 @@ interface MessagingStatusHookRunOptions {
   readonly channels?: ReadonlySet<string>;
   readonly currentSandbox?: string;
   readonly registryEntries?: readonly registry.SandboxEntry[];
-  readonly hookRegistry?: ReturnType<typeof createBuiltInMessagingHookRegistry>;
+  readonly hookRegistry?: MessagingHookRegistry;
 }
 
 type MessagingStatusHookRunResult = {
@@ -114,8 +116,8 @@ type MessagingStatusHookRunResult = {
 function runMessagingStatusHooks(
   options: MessagingStatusHookRunOptions,
 ): MessagingStatusHookRunResult[] {
-  const hookRegistry = options.hookRegistry ?? createBuiltInMessagingHookRegistry();
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const hookRegistry = options.hookRegistry ?? messagingCatalog.createHookRegistry();
+  const manifestRegistry = messagingCatalog.createManifestRegistry();
   const agents: ReadonlySet<MessagingAgentId> = options.agent
     ? new Set<MessagingAgentId>([options.agent])
     : (options.agents ?? new Set<MessagingAgentId>(["openclaw"]));

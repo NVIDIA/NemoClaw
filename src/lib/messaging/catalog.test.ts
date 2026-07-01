@@ -45,6 +45,7 @@ describe("MessagingCatalog", () => {
       }
     }
     expect(catalog.createWorkflowPlanner()).toBeTruthy();
+    expect(catalog.createWorkflowPlanner({ hooks: "none" })).toBeTruthy();
   });
 
   it("resolves built-in templates through channel modules", () => {
