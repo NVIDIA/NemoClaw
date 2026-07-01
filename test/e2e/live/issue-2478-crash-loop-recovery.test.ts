@@ -20,6 +20,7 @@ import type { HostCliClient } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { buildProxyEnvRestoreInvocation } from "./issue-2478-crash-loop-recovery-helpers.ts";
 
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-2478";
@@ -370,15 +371,11 @@ async function restoreProxyEnv(
   sandboxName: string,
   snapshot: { b64: string; size: number },
 ): Promise<void> {
-  const result = await sandbox.exec(
-    sandboxName,
-    [
-      "sh",
-      "-c",
-      `rm -f /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; (printf '%s' '${snapshot.b64}' | base64 -d > /tmp/nemoclaw-proxy-env.sh 2>/dev/null && chmod 444 /tmp/nemoclaw-proxy-env.sh) || true; wc -c < /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true`,
-    ],
-    { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
-  );
+  const result = await sandbox.exec(sandboxName, buildProxyEnvRestoreInvocation(snapshot.b64), {
+    artifactName: "restore-proxy-env",
+    env: probeEnv(),
+    timeoutMs: 30_000,
+  });
   expect(result.exitCode, result.stderr).toBe(0);
 
   const restoredSize = Number(result.stdout.trim() || 0);
