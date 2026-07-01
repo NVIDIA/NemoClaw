@@ -44,6 +44,7 @@ const ASSET_DIGESTS = new Map([
   ],
 ]);
 const ASSETS = [...ASSET_DIGESTS.keys()];
+const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
 type FixtureMode =
   | "brev-mismatch"
   | "complete"
@@ -51,6 +52,7 @@ type FixtureMode =
   | "failure"
   | "missing-brev-pin"
   | "partial"
+  | "partial-asset-missing"
   | "partial-manifest-missing"
   | "pr-checker-bypass"
   | "pr-parser-bypass";
@@ -74,6 +76,10 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
     source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
   "pr-checker-bypass": corruptFirstBrevPin,
   "pr-parser-bypass": corruptFirstBrevPin,
+};
+const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "partial-asset-missing": (source) =>
+    source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
 };
 const CHECKSUM_MANIFESTS = new Map([
   [
@@ -277,6 +283,10 @@ function runFixture(
       : fs.readFileSync(targetChecker, "utf8"),
   );
   const checker = trustedChecker ? trustedCheckerPath : targetChecker;
+  const installer = path.join(fixtureRoot, "scripts", "install-openshell.sh");
+  const installerSource = fs.readFileSync(installer, "utf8");
+  const mutateInstaller = INSTALLER_MUTATIONS[mode] ?? ((source: string) => source);
+  fs.writeFileSync(installer, mutateInstaller(installerSource));
   const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   const mutateBrev = BREV_MUTATIONS[mode] ?? ((source: string) => source);
@@ -402,6 +412,18 @@ describe("installer hash verification", () => {
     );
     expect(result.stdout).toContain("OK: openshell-sandbox-checksums-sha256.txt");
     expect(result.stderr).toContain("requested URL returned error: 404");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when a pinned installer asset is absent from every manifest", () => {
+    const result = runFixture("partial-asset-missing");
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      `STALE: installer ${UNPUBLISHED_ASSET} does not match exactly one v0.0.72 checksum entry`,
+    );
+    expect(result.stdout).toContain("upstream: missing");
+    expect(result.stdout).toContain("matches:  0");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
