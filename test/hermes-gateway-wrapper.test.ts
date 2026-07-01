@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
 import { buildOpenshellExecArgs } from "../src/lib/actions/sandbox/exec.ts";
@@ -40,13 +40,6 @@ function python3Available(): boolean {
   }
 }
 const canRun = process.platform === "linux" && python3Available();
-// Surface a hard error in CI when the prerequisites are missing instead of
-// silently skipping — a green CI run that never executed any wrapper test
-// would mask regressions in the security boundary.
-assert(
-  !process.env.CI || canRun,
-  "Hermes wrapper integration tests require Linux + python3; CI environment did not meet both prerequisites",
-);
 
 type WrapperRun = {
   status: number | null;
@@ -146,6 +139,18 @@ function runWrapper(
 }
 
 describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
+  // Surface a hard error in CI when the prerequisites are missing instead of
+  // silently skipping — a green CI run that never executed any wrapper test
+  // would mask regressions in the security boundary. Runs after
+  // `describe.skipIf` evaluates so non-Linux/python-less environments still
+  // skip cleanly without failing at module load.
+  beforeAll(() => {
+    assert(
+      !process.env.CI || canRun,
+      "Hermes wrapper integration tests require Linux + python3; CI environment did not meet both prerequisites",
+    );
+  });
+
   it("refuses `gateway` with a raw secret-shaped env var and never starts the gateway (#4975)", () => {
     const run = runWrapper(["gateway", "run"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
 
@@ -201,6 +206,19 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("--version");
+  });
+
+  it("invokes the runtime-env validator and the config-show masker under python3 -I (isolated mode)", () => {
+    // The wrapper resolves python3 from a fixed trusted absolute-path list, so
+    // an intercepting PATH-planted stub cannot capture the argv it exec's with.
+    // Assert the isolated-mode flag directly on the wrapper source so a
+    // regression that drops `-I` from either invocation fails the test.
+    // `-I` matters because it disables PYTHONPATH / PYTHONHOME / user-site
+    // startup hooks that a hostile runtime environment could otherwise use to
+    // load attacker-controlled code before the validator or the masker runs.
+    const source = fs.readFileSync(WRAPPER, "utf-8");
+    expect(source).toMatch(/\[python3,\s*"-I",\s*guard_path,\s*"runtime-env"\]/);
+    expect(source).toMatch(/\[python3,\s*"-I",\s*guard_path,\s*"mask-config-output"\]/);
   });
 
   it("masks api_key values in `config show` Python dict output", () => {
