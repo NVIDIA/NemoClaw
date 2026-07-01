@@ -492,29 +492,6 @@ export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # inherit group=sandbox regardless of which UID created them, so the
 # agent keeps read access and shields-up locking still works the same.
 #
-# Keep the recovery baseline outside the mutable group-write contract. It is
-# readable by the sandbox group for restore, but only root should rewrite it.
-lock_openclaw_config_baseline_if_present() {
-  local config_dir="${1:-/sandbox/.openclaw}"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-
-  [ -f "$baseline_file" ] || return 0
-  [ "$(id -u)" -eq 0 ] || return 0
-
-  if [ -L "$config_dir" ] || [ -L "$baseline_file" ]; then
-    return 0
-  fi
-
-  if ! chown root:sandbox "$baseline_file"; then
-    printf '[SECURITY] Failed to set ownership on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-  if ! chmod 0440 "$baseline_file"; then
-    printf '[SECURITY] Failed to set permissions on %s\n' "$baseline_file" >&2
-    return 1
-  fi
-}
-
 # Idempotent. Skips when shields are UP (config dir owned by root) so
 # the lock is not weakened.
 #
@@ -525,21 +502,160 @@ lock_openclaw_config_baseline_if_present() {
 # normalization without requiring a restart.
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
-  [ -d "$config_dir" ] || return 0
+  local operation="${1:-normalize}"
 
-  # Detect shields-up. Config dir owned by root means shields are
-  # currently locked; normalizing would weaken the contract.
-  local config_dir_owner
-  config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown)"
-  if [ "$config_dir_owner" = "root" ]; then
-    return 0
+  if [ "$operation" != "normalize" ] \
+    && [ "$operation" != "capture" ] \
+    && [ "$operation" != "recover" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — invalid operation %s\n' "$operation" >&2
+    return 1
   fi
 
-  chmod -R g+rwX,o-rwx "$config_dir" 2>/dev/null || true
-  find "$config_dir" -type d -exec chmod g+s {} + 2>/dev/null || true
-  chmod 2770 "$config_dir" 2>/dev/null || true
-  chmod 660 "$config_dir/openclaw.json" "$config_dir/.config-hash" 2>/dev/null || true
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
+  local config_dir_uid
+  if ! config_dir_uid="$(
+    python3 -I - "$config_dir" <<'PY_CLASSIFY_MUTABLE_CONFIG'
+import os
+import stat
+import sys
+
+try:
+    metadata = os.lstat(sys.argv[1])
+except FileNotFoundError:
+    print("missing")
+    raise SystemExit(0)
+if not stat.S_ISDIR(metadata.st_mode):
+    raise SystemExit(1)
+print(metadata.st_uid)
+PY_CLASSIFY_MUTABLE_CONFIG
+  )"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe classification failed\n' >&2
+    return 1
+  fi
+  [ "$config_dir_uid" = "missing" ] && return 0
+  # Shields up: the root-owned config tree is intentionally locked.
+  [ "$config_dir_uid" = "0" ] && return 0
+
+  local expected_config_dir_uid expected_config_dir_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    if ! expected_config_dir_uid="$(id -u sandbox)" \
+      || ! expected_config_dir_gid="$(id -g sandbox)"; then
+      printf '[SECURITY] Refusing mutable config permission normalization — sandbox identity lookup failed\n' >&2
+      return 1
+    fi
+  else
+    expected_config_dir_uid="$(id -u)"
+    expected_config_dir_gid="$(id -g)"
+  fi
+  if [ "$config_dir_uid" != "$expected_config_dir_uid" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — config directory owner UID %s does not match sandbox UID %s\n' \
+      "$config_dir_uid" "$expected_config_dir_uid" >&2
+    return 1
+  fi
+
+  # The installed helper wins in production. Repository-relative resolution is
+  # only for source-tree tests and ad-hoc development runs.
+  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
+  if [ ! -f "$normalizer" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+      printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
+      return 1
+    elif [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
+      && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
+      normalizer="${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
+    elif [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
+      normalizer="scripts/lib/normalize_mutable_config_perms.py"
+    else
+      normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
+    fi
+  fi
+  if [ ! -f "$normalizer" ]; then
+    printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  # Root supervises an owner-UID child and receives the still-open config
+  # directory descriptor over a private authenticated socket. The descriptor
+  # stays pinned across the privilege boundary, so inode reuse cannot make the
+  # root baseline phase act on a substituted tree.
+  local -a normalizer_args=(
+    "$config_dir"
+    "$expected_config_dir_uid"
+    "$expected_config_dir_gid"
+  )
+  if [ "$operation" = "capture" ]; then
+    local node_binary
+    if ! node_binary="$(command -v node)" || [ -z "$node_binary" ]; then
+      printf '[config] ERROR: JSON5 baseline validator failed for openclaw.json\n' >&2
+      return 1
+    fi
+    normalizer_args+=(
+      capture
+      "$node_binary"
+      /opt/nemoclaw/node_modules/json5
+    )
+  elif [ "$operation" = "recover" ]; then
+    normalizer_args+=(recover)
+  fi
+
+  if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
+    printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+# Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
+# tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
+# 2770/660 group contract. The tightening originates at the OpenClaw command
+# boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
+# Regression proof lives in test/nemoclaw-start-perms.test.ts and the live
+# shields-config documented-exec phase. Issue #6047 tracks the boundary and its
+# removal condition: remove this wrapper only when the pinned OpenClaw preserves
+# 2770/660 after every command outcome; do not replace that upstream source fix
+# with a NemoClaw timeout or permission escape flag.
+run_oneshot_command() {
+  local _nemoclaw_oneshot_child_pid=""
+  local _nemoclaw_oneshot_signal=""
+  local _nemoclaw_oneshot_wait_rc=0
+  local _nemoclaw_oneshot_cleanup_rc=0
+
+  # Bash gives asynchronous commands /dev/null stdin and an ignored SIGINT
+  # when job control is off. The explicit stdin and signal reset preserve the
+  # foreground command contract; exec keeps the launched command as our one
+  # direct child rather than adding a forwarding process.
+  (
+    trap - TERM INT
+    exec "$@"
+  ) <&0 &
+  _nemoclaw_oneshot_child_pid=$!
+  trap '_nemoclaw_oneshot_signal=TERM; kill -TERM "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' TERM
+  trap '_nemoclaw_oneshot_signal=INT; kill -INT "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' INT
+
+  # A trapped signal interrupts `wait`. Forward it above, then wait again so
+  # the direct child is reaped and its final status remains authoritative.
+  while :; do
+    _nemoclaw_oneshot_signal=""
+    if wait "$_nemoclaw_oneshot_child_pid"; then
+      _nemoclaw_oneshot_wait_rc=0
+    else
+      _nemoclaw_oneshot_wait_rc=$?
+    fi
+    [ -n "$_nemoclaw_oneshot_signal" ] || break
+  done
+  _nemoclaw_oneshot_child_pid=""
+
+  if normalize_mutable_config_perms; then
+    _nemoclaw_oneshot_cleanup_rc=0
+  else
+    _nemoclaw_oneshot_cleanup_rc=$?
+  fi
+  trap - TERM INT
+
+  if [ "$_nemoclaw_oneshot_cleanup_rc" -ne 0 ]; then
+    printf '[one-shot] command status=%s; permission cleanup status=%s; returning cleanup failure\n' \
+      "$_nemoclaw_oneshot_wait_rc" "$_nemoclaw_oneshot_cleanup_rc" >&2
+    return "$_nemoclaw_oneshot_cleanup_rc"
+  fi
+  return "$_nemoclaw_oneshot_wait_rc"
 }
 
 openclaw_config_dir_owner() {
@@ -661,12 +777,16 @@ restore_openclaw_config_after_write() {
 # mode openclaw.json is root-owned and immutable, so an empty file there
 # implies tampering (which integrity check should catch) rather than the
 # #3118 trigger (which requires a writable config).
+# Remove this recovery only after upstream writes can no longer truncate
+# openclaw.json and regression coverage proves the empty-config state cannot
+# recur at any supported inference-update boundary.
 
-# Capture a known-good copy of openclaw.json for later restore. Idempotent:
-# only writes the baseline once. Runs at root after apply_model_override and
-# apply_cors_override so the baseline reflects the post-override config that
-# the user actually started with. Refuses to capture broken state (empty,
-# whitespace-only, or unparseable input).
+# Capture a known-good copy of openclaw.json for later restore. A pristine
+# root-owned baseline is retained; a sandbox-owned candidate is replaced from
+# the exact validated active-config descriptor. Runs at root after
+# apply_model_override and apply_cors_override so the baseline reflects the
+# post-override config that the user actually started with. Refuses to capture
+# broken state (empty, whitespace-only, or unparseable input).
 write_openclaw_config_baseline() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
@@ -676,94 +796,18 @@ write_openclaw_config_baseline() {
   [ -f "$config_file" ] || return 0
   [ "$(id -u)" -eq 0 ] || return 0
 
-  # Refuse to act through symlinks (mirrors apply_model_override's stance).
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$baseline_file" ]; then
-    return 0
+  local baseline_existed=0
+  [ -e "$baseline_file" ] && baseline_existed=1
+
+  # Capture and lock through the same pinned directory descriptor used by
+  # permission normalization. The permanently dropped child validates and
+  # pins the exact active config; root copies that descriptor into a fresh
+  # inode. No root path-based cp/chown/chmod operation follows an
+  # attacker-swappable entry in the mutable directory.
+  normalize_mutable_config_perms capture || return 1
+  if [ "$baseline_existed" -eq 0 ] && [ -f "$baseline_file" ]; then
+    printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
   fi
-
-  # Idempotent — only capture once per sandbox. Still re-lock an existing
-  # baseline because mutable permission normalization is intentionally broad.
-  if [ -f "$baseline_file" ]; then
-    lock_openclaw_config_baseline_if_present "$config_dir"
-    return $?
-  fi
-
-  # Skip in shields-up mode — config is supposed to be locked, baseline
-  # capture is unnecessary and the prepare/restore permission dance is
-  # already owned by the override paths.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Refuse to capture broken state. grep -q '[^[:space:]]' is false for both
-  # 0-byte and whitespace-only files.
-  if ! grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  # Refuse to capture content that doesn't parse as JSON5 — keeps the
-  # baseline a known-good restore target. openclaw.json is JSON5 (comments,
-  # trailing commas) everywhere else in the stack — OpenClaw uses
-  # JSON5.parse / parseJsonWithJson5Fallback, and migration-state.ts uses
-  # JSON5.parse — so use the real JSON5 parser instead of approximating the
-  # grammar with regexes.
-  local _json5_rc=0
-  node - "$config_file" <<'NODE_VALIDATE' || _json5_rc=$?
-  const fs = require("fs");
-
-  const configPath = process.argv[2];
-
-  // The entrypoint runs this validator as root. Only load the parser from the
-  // packaged plugin tree, never from sandbox-writable cwd or npm global roots.
-  const candidates = ["/opt/nemoclaw/node_modules/json5"];
-
-  const attempted = [];
-  let JSON5;
-  for (const candidate of [...new Set(candidates)]) {
-    try {
-      JSON5 = require(candidate);
-      if (JSON5 && typeof JSON5.parse === "function") {
-        break;
-      }
-      attempted.push(`${candidate}: missing parse()`);
-      JSON5 = undefined;
-    } catch {
-      attempted.push(candidate);
-    }
-  }
-
-  if (!JSON5) {
-    console.error(
-      `[config] ERROR: unable to load JSON5 parser for baseline validation. Tried: ${
-        attempted.length ? attempted.join(", ") : "(no candidate module paths found)"
-      }`,
-    );
-    process.exit(2);
-  }
-
-  try {
-    JSON5.parse(fs.readFileSync(configPath, "utf8"));
-  } catch {
-    process.exit(3);
-  }
-NODE_VALIDATE
-  case "$_json5_rc" in
-    0) ;;
-    3) return 0 ;;
-    *)
-      printf '[config] ERROR: JSON5 baseline validator failed for %s\n' "$config_file" >&2
-      return 1
-      ;;
-  esac
-
-  if ! cp "$config_file" "$baseline_file" 2>/dev/null; then
-    return 0
-  fi
-  # 0440 root:sandbox so the gateway/sandbox user can READ for recovery but
-  # cannot truncate or rewrite the baseline through the same path that
-  # corrupts the active config.
-  lock_openclaw_config_baseline_if_present "$config_dir" || return 1
-  printf '[config] Baseline snapshot created: %s\n' "$baseline_file" >&2
 }
 
 # Restore openclaw.json from a baseline when the active file has been
@@ -776,64 +820,15 @@ NODE_VALIDATE
 recover_openclaw_config_if_empty() {
   local config_dir="/sandbox/.openclaw"
   local config_file="$config_dir/openclaw.json"
-  local hash_file="$config_dir/.config-hash"
-  local baseline_file="$config_dir/openclaw.json.nemoclaw-baseline"
-  local last_good_file="$config_dir/openclaw.json.last-good"
 
   [ -d "$config_dir" ] || return 0
   [ -f "$config_file" ] || return 0
 
-  # Refuse to act through symlinks.
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    return 0
-  fi
-
-  # Skip in shields-up mode — see header comment.
-  if [ "$(openclaw_config_dir_owner "$config_dir")" = "root" ]; then
-    return 0
-  fi
-
-  # Active file is non-empty → no-op.
-  if grep -q '[^[:space:]]' "$config_file" 2>/dev/null; then
-    return 0
-  fi
-
-  local source=""
-  if [ -f "$last_good_file" ] && [ ! -L "$last_good_file" ] \
-    && grep -q '[^[:space:]]' "$last_good_file" 2>/dev/null; then
-    source="$last_good_file"
-  elif [ -f "$baseline_file" ] && [ ! -L "$baseline_file" ] \
-    && grep -q '[^[:space:]]' "$baseline_file" 2>/dev/null; then
-    source="$baseline_file"
-  fi
-
-  # Recovery failures must be loud, not silent. In mutable-default mode the
-  # downstream verify_config_integrity_if_locked is intentionally a no-op,
-  # so a soft-fail here would let startup continue with an empty (or
-  # restored-but-unhashed) config and crash much later in a less obvious
-  # place. Return non-zero so `set -e` aborts startup with the diagnostic
-  # already on stderr.
-  if [ -z "$source" ]; then
-    printf '[config] ERROR: openclaw.json is empty (%s). No baseline available; restart cannot recover. See issue #3118.\n' "$config_file" >&2
-    return 1
-  fi
-
-  if ! cp "$source" "$config_file" 2>/dev/null; then
-    printf '[config] ERROR: Failed to restore openclaw.json from %s (see #3118)\n' "$source" >&2
-    return 1
-  fi
-  chown sandbox:sandbox "$config_file" 2>/dev/null || true
-  chmod 660 "$config_file" 2>/dev/null || true
-
-  if (cd "$config_dir" && sha256sum openclaw.json >".config-hash") 2>/dev/null; then
-    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
-    chmod 660 "$hash_file" 2>/dev/null || true
-  else
-    printf '[config] ERROR: Restored openclaw.json from %s but failed to recompute %s (see #3118)\n' "$source" "$hash_file" >&2
-    return 1
-  fi
-
-  printf '[config] openclaw.json restored from %s (was empty — see #3118)\n' "$source" >&2
+  # The owner-identity phase pins the mutable directory and recovery source,
+  # then installs fresh sandbox-owned config/hash inodes with dir-fd-relative
+  # atomic replaces. Root never follows, writes, chowns, or chmods an existing
+  # sandbox-controlled pathname.
+  normalize_mutable_config_perms recover
 }
 
 # Refresh the mutable-default .config-hash so it matches the current
@@ -4703,7 +4698,9 @@ if [ "$(id -u)" -ne 0 ]; then
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
-    exec "${NEMOCLAW_CMD[@]}"
+    _nemoclaw_cmd_rc=0
+    run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+    exit "$_nemoclaw_cmd_rc"
   fi
 
   configure_messaging_channels
@@ -4871,7 +4868,9 @@ setup_auth_profile_as_sandbox
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
-  exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
+  _nemoclaw_cmd_rc=0
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  exit "$_nemoclaw_cmd_rc"
 fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
