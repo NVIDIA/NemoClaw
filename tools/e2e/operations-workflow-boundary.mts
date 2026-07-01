@@ -18,7 +18,7 @@ const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
 const ISSUE_MUTATION_BEYOND_COMMENT =
   /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
 const GENERIC_GITHUB_WRITE_SURFACE =
-  /github\s*(?:\.\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s*\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github\b|\bfetch\s*\(|\bgh\s+api\b/u;
+  /github\s*(?:(?:\?\.|\.)\s*(?:graphql|request)\b|\[\s*["'](?:graphql|request)["']\s*\])|\b(?:const|let|var)\s+(?:[A-Za-z_$][\w$]*\s*=\s*github\b|\{[^}]*\b(?:graphql|request)\b[^}]*\}\s*=\s*github(?:\.rest)?\b)|\bfetch\b|\bgh\s+api\b/u;
 const GENERIC_ISSUE_REST_MUTATION =
   /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
 const GENERIC_ISSUE_GRAPHQL_MUTATION =
@@ -182,7 +182,8 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
 
     // Deny these generic API clients by default. The scorecard's single fixed
     // Slack webhook call is the only allowlisted use outside report-to-pr;
-    // validateScorecard binds webhookUrl to a step-scoped Slack secret.
+    // validateScorecard binds webhookUrl to a step-scoped Slack secret. This
+    // textual scan is defense in depth; token permissions are the hard boundary.
     const sourceWithoutSlackPublisher =
       name === "scorecard"
         ? jobSource.replace(/\bfetch\s*\(\s*webhookUrl\s*,/u, "validatedSlackFetch(")

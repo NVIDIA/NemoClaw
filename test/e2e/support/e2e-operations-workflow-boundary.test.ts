@@ -144,8 +144,24 @@ describe("E2E operations workflow boundary", () => {
       'const { request: callApi } = github; await callApi("POST /repos/{owner}/{repo}/issues/1/comments", {});',
     ],
     [
+      "an indirect GitHub alias",
+      'const client = github; await client.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a nested destructured request",
+      'const { request } = github.rest; await request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "an optional-chained request",
+      'await github?.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
       "a fetch call",
       "await fetch('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
+    ],
+    [
+      "an aliased fetch call",
+      "const send = fetch; await send('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
     ],
     ["a gh api call", "gh api repos/NVIDIA/NemoClaw/issues/1/comments -f body=failed"],
   ])("rejects %s outside the PR reporter", (_label, mutation) => {
