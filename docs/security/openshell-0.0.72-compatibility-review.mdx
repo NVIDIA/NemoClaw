@@ -18,7 +18,8 @@ The dependency compatibility review was completed on June 29, 2026; the MCP inte
 - The stable tag is `NVIDIA/OpenShell@v0.0.72` at commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
 - The upstream [v0.0.72 release workflow](https://github.com/NVIDIA/OpenShell/actions/runs/28382086068) completed all 54 jobs at that commit, including the MCP conformance lane, package smoke tests, release publication, and GHCR tags.
 - NemoClaw pins the eight consumed CLI, gateway, and sandbox assets to the digests published by the [GitHub release API](https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72).
-- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`. Explicit operator overrides and the opt-in development channel remain separate trust decisions.
+- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`.
+  Explicit operator overrides and the opt-in development channel remain separate trust decisions.
 
 ## Source-of-Truth Boundaries
 
@@ -47,7 +48,8 @@ These version-specific pins are removed only when NemoClaw drops `0.0.72` suppor
 - `regressionTest`: `test/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
 - `removalCondition`: Remove the opt-in when NemoClaw no longer tests unreleased OpenShell builds or the development channel publishes artifacts through an independently verified immutable pipeline.
 
-The development channel is compatibility evidence only. Use it in trusted test environments, never as the stable shipping configuration.
+The development channel is compatibility evidence only.
+Use it in trusted test environments, never as the stable shipping configuration.
 
 ## Round-Trippable Policy Boundary
 
@@ -71,7 +73,7 @@ MCP rules can match methods and `tools/call` tool names, support allow and deny 
 The upstream MCP conformance lane passed `initialize`, `tools_call`, and `elicitation-sep1034-client-defaults` with no expected failures.
 
 NemoClaw preserves the new MCP and JSON-RPC YAML fields when it merges existing policies.
-The strict blueprint-addition schema does not author MCP endpoints; `nemoclaw <sandbox> mcp add` is the supported managed product path described in [Set Up MCP Servers](../deployment/set-up-mcp-bridge) and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
+The strict blueprint-addition schema does not author MCP endpoints; `nemoclaw <sandbox> mcp add` is the supported managed product path described in [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
 OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not stdio MCP or generic inbound traffic.
 
 ## DNS Pinning Source and Runtime Contract

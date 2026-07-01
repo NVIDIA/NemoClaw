@@ -20,8 +20,9 @@ The integration has three parts:
 - A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp` and applies explicit JSON-RPC MCP method rules.
 - An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
 
-This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.
-NemoClaw defaults to the pinned OpenShell v0.0.72 stable release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement. The explicit dev channel is reserved for current-main compatibility coverage.
+This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
+NemoClaw v0.0.73 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
+The optional OpenShell development channel is compatibility evidence only and is not a shipping target.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
 NemoClaw does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
@@ -30,7 +31,7 @@ No NemoClaw host process remains running after an `mcp` lifecycle command return
 
 ## Architecture Decision
 
-**Status:** [Accepted on June 30, 2026](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784) as the normative design for the next NemoClaw release and the implementation that supersedes the original acceptance text in NVIDIA/NemoClaw#566.
+**Status:** [Accepted on June 30, 2026](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784) as the normative design for NemoClaw v0.0.73 and the implementation that supersedes the original acceptance text in NVIDIA/NemoClaw#566.
 
 This native OpenShell design supersedes the original host-side stdio-to-HTTP proxy proposed in NVIDIA/NemoClaw#566.
 NemoClaw does not accept an inline secret-and-command tuple, persist the raw bearer value supplied through `--env`, or operate a host-side MCP data-plane process.
@@ -74,7 +75,8 @@ NemoClaw rejects `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `G
 NemoClaw also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
 The child-visible compatibility list is pinned to OpenShell `v0.0.72` commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963` and must be reviewed with every OpenShell version change.
 Choose a dedicated name such as `MY_SERVICE_MCP_TOKEN`.
-NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands. Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well because OpenShell attaches provider keys to fresh sandbox execs; use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
+NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands.
+Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well because OpenShell attaches provider keys to fresh sandbox execs; use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
 Every endpoint must use HTTPS.

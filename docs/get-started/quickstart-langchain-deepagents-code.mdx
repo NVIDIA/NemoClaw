@@ -78,7 +78,8 @@ Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, generated config, and hooks config when those files exist.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
-NemoClaw intentionally does not back up `.deepagents/.env` or user-authored portions of `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there. NemoClaw restores its managed MCP definitions separately from the credential-free registry; service credentials remain in OpenShell provider state.
+NemoClaw intentionally does not back up `.deepagents/.env` or user-authored portions of `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
+NemoClaw restores its managed MCP definitions separately from the credential-free registry; service credentials remain in OpenShell provider state.
 
 ## Optional Web Search
 
