@@ -978,20 +978,25 @@ exit 0
       const fakeBin = path.join(tmpDir, "bin");
       const cmdlinePath = path.join(tmpDir, "cmdline.txt");
       const environPath = path.join(tmpDir, "environ.txt");
+      const psPath = path.join(tmpDir, "ps.txt");
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
-# Capture the running shell's own /proc/<pid>/cmdline and environ so the
-# test can assert on what a process-list inspector (ps auxww, /proc) would
-# see. Use $$ rather than /proc/self because /proc/self resolves relative
-# to whatever subprocess opens the file, not this script.
+# Capture the running shell's own /proc/<pid>/cmdline and environ, and the
+# live process table via the exact tool issue #5966 names (ps auxww), so the
+# test asserts on what a host process-list inspector would see for the still
+# running curl. The probe is synchronous, so the shell captures its own live
+# process rather than a racy parent-side snapshot. Use $$ rather than
+# /proc/self because /proc/self resolves relative to whatever subprocess
+# opens the file, not this script.
 if [ -r /proc/$$/cmdline ]; then
   tr '\\0' ' ' < /proc/$$/cmdline > "${cmdlinePath}"
 fi
 if [ -r /proc/$$/environ ]; then
   tr '\\0' '\\n' < /proc/$$/environ > "${environPath}"
 fi
+ps auxww > "${psPath}" 2>/dev/null || true
 outfile=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -1032,6 +1037,11 @@ exit 0
         expect(recordedEnviron).not.toContain(apiKey);
         expect(recordedEnviron).not.toContain(ambientSecret);
         expect(recordedEnviron).not.toContain("Authorization: Bearer");
+
+        const recordedPs = fs.readFileSync(psPath, "utf8");
+        expect(recordedPs).toContain("--config");
+        expect(recordedPs).not.toContain(apiKey);
+        expect(recordedPs).not.toContain("Authorization: Bearer");
       } finally {
         process.env.PATH = originalPath;
         if (originalAmbient === undefined) {

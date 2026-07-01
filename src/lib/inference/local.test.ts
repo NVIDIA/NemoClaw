@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import fs, { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
@@ -36,6 +36,7 @@ import {
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
+  probeOllamaAuthProxyHealth,
   QWEN3_6_OLLAMA_MODEL,
   resetOllamaContainerPortCache,
   validateLocalProvider,
@@ -503,6 +504,25 @@ describe("local inference helpers", () => {
     });
     expect(result?.ok).toBe(true);
     expect(result?.detail).toContain("reachable");
+  });
+
+  it("reports the auth proxy as unhealthy when the auth config cannot be prepared", () => {
+    const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+    try {
+      const result = probeOllamaAuthProxyHealth({
+        loadOllamaProxyTokenImpl: () => "token",
+        runCurlProbeImpl: () => {
+          throw new Error("curl should not be spawned when auth config setup fails");
+        },
+      });
+      expect(result?.ok).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
+      expect(result?.detail).toContain("mkdtemp failed");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("returns null when provider health probing is not supported", () => {
