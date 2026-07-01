@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
+const listenerProcesses: ChildProcess[] = [];
 
 // Each fixture grabs a unique high port. Sharing port 18789 across tests
 // collides with real nemoclaw installs on the developer's machine: the
@@ -20,15 +21,45 @@ const tmpFixtures: string[] = [];
 let nextFixturePort = 47000 + (process.pid % 10000);
 
 afterEach(() => {
+  for (const child of listenerProcesses.splice(0)) {
+    child.kill("SIGTERM");
+  }
   for (const dir of tmpFixtures.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
+function startReachableForward(port: string): void {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `require("node:net").createServer(()=>{}).listen(${JSON.stringify(Number(port))},"127.0.0.1")`,
+    ],
+    { stdio: "ignore" },
+  );
+  listenerProcesses.push(child);
+
+  const probe =
+    "const net=require('node:net');" +
+    `const s=net.createConnection({host:'127.0.0.1',port:${Number(port)}});` +
+    "s.setTimeout(100);" +
+    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
+    "s.on('error',()=>process.exit(1));" +
+    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
+  const deadline = Date.now() + 2000;
+  let listenerReady = false;
+  while (Date.now() < deadline && !listenerReady) {
+    listenerReady = spawnSync(process.execPath, ["-e", probe], { stdio: "ignore" }).status === 0;
+  }
+  expect(listenerReady, `test forward listener failed to bind port ${port}`).toBe(true);
+}
+
 interface Fixture {
   tmpDir: string;
   sandboxName: string;
   invocationLog: string;
+  recoveryWaitMs: string;
 }
 
 function setupFixture(opts: {
@@ -38,6 +69,9 @@ function setupFixture(opts: {
   /** When false, `forward start` exits 0 but the post-restart probe keeps
    *  reporting the original dead/missing state — models a failed restart. */
   forwardStartHeals?: boolean;
+  /** Number of post-start list probes that remain stale before ownership is visible. */
+  forwardStartDelayPolls?: number;
+  recoveryWaitMs?: string;
   port?: string;
 }): Fixture {
   const sandboxName = opts.sandboxName;
@@ -76,7 +110,9 @@ function setupFixture(opts: {
       : `${sandboxName} 127.0.0.1 ${port} 12345 ${opts.forwardListStatus}\n`;
   const recoveredForwardListBody = `${sandboxName} 127.0.0.1 ${port} 99999 running\n`;
   const forwardStateFile = path.join(tmpDir, "forward-state");
+  const forwardPollCountFile = path.join(tmpDir, "forward-poll-count");
   fs.writeFileSync(forwardStateFile, "initial");
+  fs.writeFileSync(forwardPollCountFile, "0");
 
   // Fake openshell: emits the requested gateway-probe and forward-list
   // shapes, swallows mutating subcommands (forward stop / forward start)
@@ -122,7 +158,15 @@ if (args[0] === "sandbox" && args[1] === "exec") {
 }
 
 if (args[0] === "forward" && args[1] === "list") {
-  const state = fs.readFileSync(${JSON.stringify(forwardStateFile)}, "utf-8");
+  let state = fs.readFileSync(${JSON.stringify(forwardStateFile)}, "utf-8");
+  if (state === "pending") {
+    const polls = Number(fs.readFileSync(${JSON.stringify(forwardPollCountFile)}, "utf-8")) + 1;
+    fs.writeFileSync(${JSON.stringify(forwardPollCountFile)}, String(polls));
+    if (polls >= ${opts.forwardStartDelayPolls ?? 0}) {
+      fs.writeFileSync(${JSON.stringify(forwardStateFile)}, "running");
+      state = "running";
+    }
+  }
   process.stdout.write(state === "running"
     ? ${JSON.stringify(recoveredForwardListBody)}
     : ${JSON.stringify(initialForwardListBody)});
@@ -131,7 +175,10 @@ if (args[0] === "forward" && args[1] === "list") {
 
 if (args[0] === "forward" && args[1] === "start") {
   if (${opts.forwardStartHeals === false ? "false" : "true"}) {
-    fs.writeFileSync(${JSON.stringify(forwardStateFile)}, "running");
+    fs.writeFileSync(
+      ${JSON.stringify(forwardStateFile)},
+      ${opts.forwardStartDelayPolls ? '"pending"' : '"running"'},
+    );
   }
   process.exit(0);
 }
@@ -157,7 +204,18 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, sandboxName, invocationLog };
+  // A running OpenShell row is only healthy when its local socket also
+  // answers. Keep the listener alive in a separate process because runRecover
+  // uses spawnSync and blocks this Vitest worker's event loop.
+  const reachablePorts = opts.forwardStartHeals !== false ? [port] : [];
+  reachablePorts.forEach(startReachableForward);
+
+  return {
+    tmpDir,
+    sandboxName,
+    invocationLog,
+    recoveryWaitMs: opts.recoveryWaitMs ?? "0",
+  };
 }
 
 function runRecover(fixture: Fixture) {
@@ -173,6 +231,7 @@ function runRecover(fixture: Fixture) {
         HOME: fixture.tmpDir,
         PATH: "/usr/bin:/bin",
         NEMOCLAW_NO_CONNECT_HINT: "1",
+        NEMOCLAW_FORWARD_RECOVERY_WAIT_MS: fixture.recoveryWaitMs,
       },
       timeout: execTimeout(15_000),
     },
@@ -206,6 +265,30 @@ describe("nemoclaw <name> recover", () => {
   );
 
   it(
+    "polls until the exact forward owner appears after background start",
+    testTimeoutOptions(20_000),
+    () => {
+      const fixture = setupFixture({
+        sandboxName: "delayed-owner-sandbox",
+        gatewayProbe: "RUNNING",
+        forwardListStatus: "dead",
+        forwardStartDelayPolls: 3,
+        recoveryWaitMs: "2000",
+      });
+      const result = runRecover(fixture);
+      expect(result.status).toBe(0);
+
+      const calls = fs.readFileSync(fixture.invocationLog, "utf-8").split("\n");
+      const startIdx = calls.findIndex((line) => line.startsWith("forward start "));
+      const postStartListCalls = calls
+        .slice(startIdx + 1)
+        .filter((line) => line === "forward list");
+      expect(startIdx).toBeGreaterThanOrEqual(0);
+      expect(postStartListCalls.length).toBeGreaterThanOrEqual(3);
+    },
+  );
+
+  it(
     "reports a failure when forward start succeeds but the post-restart probe still shows dead",
     testTimeoutOptions(20_000),
     () => {
@@ -216,12 +299,11 @@ describe("nemoclaw <name> recover", () => {
         forwardStartHeals: false,
       });
       const result = runRecover(fixture);
-      expect(result.status).toBe(0);
+      expect(result.status).toBe(1);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      // Probe wrapper falls back to the plain "is running" line; the success
-      // suffix must not appear because the forward never came back.
       expect(combined).toContain("gateway is running in 'stuck-sandbox'");
+      expect(combined).toContain("primary dashboard/API host forward could not be re-established");
       expect(combined).not.toContain("restored dashboard port forward");
     },
   );

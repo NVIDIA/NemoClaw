@@ -7,16 +7,7 @@ vi.mock("../../state/registry", () => ({
   getSandbox: vi.fn(),
 }));
 
-vi.mock("../../runner", () => ({
-  shellQuote: (value: unknown) => `'${String(value)}'`,
-}));
-
 import type { AgentDefinition } from "../../agent/defs";
-import {
-  SECRET_BOUNDARY_OK_MARKER,
-  SECRET_BOUNDARY_REFUSED_MARKER,
-  SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER,
-} from "../../agent/hermes-recovery-boundary";
 import * as registry from "../../state/registry";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
 
@@ -67,24 +58,20 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("could not be loaded"));
   });
 
-  it("refuses recovery when the standalone boundary check cannot run", () => {
+  it("refuses recovery when the privileged controller check cannot run", () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => null);
 
     const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({ refused: true, reason: "exec-failed", stderr: "" });
-    expect(exec).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.stringContaining("validate-hermes-env-secret-boundary.py"),
-      30000,
-    );
+    expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
   });
 
   it("refuses recovery when the validator reports raw secret-shaped values", () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() =>
-      makeExecResult(`${SECRET_BOUNDARY_REFUSED_MARKER}\n`, "[SECURITY] raw key\n", 1),
+      makeExecResult("SECRET_BOUNDARY_REFUSED\n", "[SECURITY] raw key\n", 1),
     );
 
     const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
@@ -94,33 +81,36 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
       reason: "raw-secret",
       stderr: "[SECURITY] raw key\n",
     });
-    expect(exec).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.stringContaining("pkill -TERM -f '[h]ermes[[:space:]]+gateway"),
-      30000,
-    );
-    expect(exec).toHaveBeenCalledWith(
-      SANDBOX,
-      expect.stringContaining("pkill -KILL -f '[h]ermes[[:space:]]+dashboard"),
-      30000,
-    );
+    expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
     expect(consoleErrorSpy).toHaveBeenCalledWith("  [SECURITY] raw key");
   });
 
   it("allows recovery when the validator accepts the env file", () => {
     mockSandboxAgent("hermes");
-    const exec = vi.fn(() => makeExecResult(`noise\n${SECRET_BOUNDARY_OK_MARKER}\n`));
+    const exec = vi.fn(() => makeExecResult("GATEWAY_PID=4242\n"));
 
     const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 
     expect(result).toEqual({ refused: false });
   });
 
+  it("rejects a legacy-script ALREADY_RUNNING marker on the supervisor protocol", () => {
+    mockSandboxAgent("hermes");
+    const exec = vi.fn(() => makeExecResult("ALREADY_RUNNING\n"));
+
+    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+
+    expect(result).toEqual({
+      refused: true,
+      reason: "unexpected-marker",
+      stderr: "",
+    });
+    expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
+  });
+
   it("refuses recovery when an older sandbox image lacks the validator", () => {
     mockSandboxAgent("hermes");
-    const exec = vi.fn(() =>
-      makeExecResult(`${SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER}\n`, "missing\n"),
-    );
+    const exec = vi.fn(() => makeExecResult("SECRET_BOUNDARY_VALIDATOR_MISSING\n", "missing\n", 1));
 
     const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
 

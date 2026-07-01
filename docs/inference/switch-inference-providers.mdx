@@ -21,6 +21,17 @@ You do not need to restart the sandbox.
 - A running NemoClaw sandbox.
 - The OpenShell CLI on your `PATH`, which NemoClaw uses internally.
 
+## Find the Provider Name
+
+The `--provider` value must match a provider already configured on the sandbox.
+If you are not sure of the exact name, list the configured providers first:
+
+```bash
+$$nemoclaw credentials list
+```
+
+Use the provider ID shown there in the `inference set` commands below.
+
 ## Switch to a Different Model
 
 <AgentOnly variant="openclaw">

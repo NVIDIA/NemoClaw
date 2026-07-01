@@ -25,19 +25,20 @@ function workflowScript(jobName: string, stepName: string): string {
 }
 
 describe("E2E operations workflow boundary", () => {
-  it("keeps scheduled routing and scorecards aggregated over the report job set", () => {
+  it("keeps Actions reporting and scorecards aggregated over the report job set", () => {
     expect(validateE2eOperationsWorkflowBoundary()).toEqual([]);
 
     const workflow = readE2eOperationsWorkflow();
     const reportNeeds = workflow.jobs["report-to-pr"].needs as string[];
-    expect(workflow.jobs["notify-on-failure"].needs).toEqual(reportNeeds);
+    expect(workflow.jobs["notify-on-failure"]).toBeUndefined();
+    expect(workflow.jobs["report-to-pr"].permissions).toEqual({ "pull-requests": "write" });
     expect(workflow.jobs.scorecard.needs).toEqual(reportNeeds);
   });
 
   it("rejects aggregation, permission, and secret-scope drift", () => {
     const workflow = readE2eOperationsWorkflow();
-    (workflow.jobs["notify-on-failure"].needs as string[]).pop();
-    workflow.jobs["notify-on-failure"].permissions = { contents: "write", issues: "write" };
+    workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
+    (workflow.jobs.scorecard.needs as string[]).pop();
     workflow.jobs.scorecard.permissions = {
       actions: "read",
       contents: "read",
@@ -49,10 +50,143 @@ describe("E2E operations workflow boundary", () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
-        "notify-on-failure needs must exactly match report-to-pr needs",
-        "notify-on-failure must hold only issues: write",
+        "scorecard needs must exactly match report-to-pr needs",
         "scorecard permissions must be actions: read and contents: read",
         "scorecard must not expose credentials at job scope",
+      ]),
+    );
+  });
+
+  it("rejects restoration of scheduled issue routing or broad issue-write access", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.permissions = "write-all";
+    workflow.jobs["notify-on-failure"] = {
+      permissions: { issues: "write" },
+      steps: [{ run: "await github.rest.issues.create({});" }],
+    };
+    workflow.jobs.scorecard.permissions = { issues: "write" };
+    workflow.jobs.scorecard.steps!.push({
+      run: "await github.rest.issues.createComment({});",
+    });
+    workflow.jobs["cloud-onboard"].permissions = "write-all";
+    workflow.jobs["report-to-pr"].permissions = "write-all";
+    workflow.jobs["report-to-pr"].if = "${{ always() && github.event_name == 'schedule' }}";
+    workflow.jobs["report-to-pr"].steps!.push({
+      run: "await github.rest.issues.create({});",
+    });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "notify-on-failure must remain retired",
+        "E2E workflow must not grant top-level issues: write",
+        "E2E workflow must not grant top-level pull-requests: write",
+        "notify-on-failure must not hold issues: write",
+        "notify-on-failure must not mutate GitHub issues",
+        "scorecard must not hold issues: write",
+        "scorecard must not mutate GitHub issues",
+        "cloud-onboard must not hold issues: write",
+        "cloud-onboard must not hold pull-requests: write",
+        "report-to-pr must not hold issues: write",
+        "report-to-pr must hold only pull-requests: write",
+        "report-to-pr must run only for manual workflow dispatches",
+        "report-to-pr must contain only its PR-comment step",
+        "report-to-pr must not use issue mutations or generic GitHub write surfaces",
+      ]),
+    );
+  });
+
+  it("ties the remaining issue-comment permission to the validated PR", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const report = workflow.jobs["report-to-pr"].steps!.find(
+      (step) => step.name === "Post E2E target results to PR",
+    )!;
+    report.with!.script = String(report.with!.script)
+      .replace(
+        "issue_number: prNumber,",
+        "issue_number: 5093,\n              // issue_number: prNumber,",
+      )
+      .concat(
+        '\nawait github.request("POST /repos/{owner}/{repo}/issues", {});',
+        "\nconst createIssue = github.rest.issues.create; await createIssue({});",
+      );
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
+        "report-to-pr must not use issue mutations or generic GitHub write surfaces",
+      ]),
+    );
+  });
+
+  it.each([
+    ["an aliased issue API", "const issues = github.rest.issues; await issues.create({});"],
+    ["a bracketed issue API", 'await github.rest.issues["create"]({});'],
+    ["a generic REST request", 'await github.request("POST /repos/{owner}/{repo}/issues", {});'],
+    [
+      "a GraphQL mutation",
+      "await github.graphql(`mutation { createIssue(input: {}) { issue { id } } }`);",
+    ],
+  ])("rejects %s outside the PR reporter", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs.scorecard.steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not mutate GitHub issues",
+    );
+  });
+
+  it.each([
+    [
+      "an aliased generic REST request",
+      'const request = github.request; await request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a destructured generic REST request",
+      'const { request: callApi } = github; await callApi("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "an indirect GitHub alias",
+      'const client = github; await client.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a nested destructured request",
+      'const { request } = github.rest; await request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "an optional-chained request",
+      'await github?.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a fetch call",
+      "await fetch('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
+    ],
+    [
+      "an aliased fetch call",
+      "const send = fetch; await send('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
+    ],
+    ["a gh api call", "gh api repos/NVIDIA/NemoClaw/issues/1/comments -f body=failed"],
+  ])("rejects %s outside the PR reporter", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs.scorecard.steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not use unvalidated generic write surfaces",
+    );
+  });
+
+  it("reserves pull-request write permission for the validated PR reporter", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.permissions = { "pull-requests": "write" };
+    workflow.jobs.scorecard.permissions = {
+      actions: "read",
+      contents: "read",
+      "pull-requests": "write",
+    };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "E2E workflow must not grant top-level pull-requests: write",
+        "scorecard must not hold pull-requests: write",
       ]),
     );
   });
@@ -84,45 +218,6 @@ describe("E2E operations workflow boundary", () => {
         "scorecard Slack publisher must not execute workflow-ref code via GITHUB_WORKSPACE",
         "scorecard Slack publisher must not execute workflow-ref code via require(",
       ]),
-    );
-  });
-
-  it("creates the scheduled failure issue when no historical thread exists", async () => {
-    const script = workflowScript(
-      "notify-on-failure",
-      "Create or update scheduled E2E failure issue",
-    ).replace(
-      "${{ toJSON(needs) }}",
-      JSON.stringify({ cloud: { result: "failure" }, hermes: { result: "cancelled" } }),
-    );
-    const create = vi.fn().mockResolvedValue({ data: { number: 123 } });
-    const createComment = vi.fn();
-    const github = {
-      rest: {
-        issues: {
-          create,
-          createComment,
-          listForRepo: vi.fn().mockResolvedValue({ data: [] }),
-        },
-      },
-    };
-    const context = {
-      repo: { owner: "NVIDIA", repo: "NemoClaw" },
-      runId: 456,
-      serverUrl: "https://github.com",
-    };
-
-    await new AsyncFunction("github", "context", script)(github, context);
-
-    expect(createComment).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        body: expect.stringContaining("**Failed:** cloud\n**Cancelled:** hermes"),
-        labels: ["bug", "CI/CD"],
-        owner: "NVIDIA",
-        repo: "NemoClaw",
-        title: expect.stringMatching(/^Nightly E2E failed — \d{4}-\d{2}-\d{2}$/u),
-      }),
     );
   });
 
