@@ -46,15 +46,15 @@ describe("messaging channel policy presets", () => {
   });
 
   it("ships a policy file for every manifest-supported agent and preset", () => {
-    const missing: string[] = [];
-    for (const manifest of listBuiltInMessagingChannelManifests()) {
-      for (const agent of manifest.supportedAgents) {
-        for (const preset of listMessagingPolicyPresetMetadata({ manifests: [manifest], agent })) {
-          const resolved = resolveMessagingChannelPolicyPresetPath(preset.presetName, agent);
-          if (!resolved) missing.push(`${manifest.id}/${agent}/${preset.presetName}`);
-        }
-      }
-    }
+    const missing = listBuiltInMessagingChannelManifests().flatMap((manifest) =>
+      manifest.supportedAgents.flatMap((agent) =>
+        listMessagingPolicyPresetMetadata({ manifests: [manifest], agent }).flatMap((preset) =>
+          resolveMessagingChannelPolicyPresetPath(preset.presetName, agent)
+            ? []
+            : [`${manifest.id}/${agent}/${preset.presetName}`],
+        ),
+      ),
+    );
     expect(missing).toEqual([]);
   });
 });
