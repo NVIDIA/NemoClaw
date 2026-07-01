@@ -57,6 +57,7 @@ import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
   BREV_REMOTE_WRAPPER_GRACE_MS,
+  brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
   buildBrevRemoteVitestCommand,
 } from "../../tools/e2e/brev-remote-vitest.mts";
@@ -268,12 +269,15 @@ function sshEnv(
   { timeout = 600_000, stream = false }: { timeout?: number; stream?: boolean } = {},
 ): string {
   const gpuE2eModel = process.env.NEMOCLAW_GPU_E2E_MODEL || "qwen3.5:9b";
+  const harnessSandboxName = brevSuiteHarnessSandboxName(TEST_SUITE);
   const envParts = [
     `export NVIDIA_INFERENCE_API_KEY='${shellEscape(process.env.NVIDIA_INFERENCE_API_KEY)}'`,
     `export GITHUB_TOKEN='${shellEscape(process.env.GITHUB_TOKEN)}'`,
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
-    `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    ...(harnessSandboxName
+      ? [`export NEMOCLAW_SANDBOX_NAME='${shellEscape(harnessSandboxName)}'`]
+      : []),
     `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
   if (GPU_TEST_SUITE) {

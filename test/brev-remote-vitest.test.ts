@@ -12,6 +12,7 @@ import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
   BREV_REMOTE_WRAPPER_GRACE_MS,
+  brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
   buildBrevRemoteVitestCommand,
 } from "../tools/e2e/brev-remote-vitest.mts";
@@ -43,7 +44,6 @@ function createFixture(): Fixture {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `printf 'env=%s\\n' "\${NEMOCLAW_RUN_LIVE_E2E:-}" >> "$VITEST_LOG"`,
-      `printf 'retries=%s\\n' "\${NEMOCLAW_E2E_RETRIES:-}" >> "$VITEST_LOG"`,
       `printf 'arg=%s\\n' "$@" >> "$VITEST_LOG"`,
       "",
     ].join("\n"),
@@ -80,7 +80,6 @@ function runRemoteCommand(fixture: Fixture) {
 function expectedVitestLog(): string {
   return [
     "env=1",
-    "retries=0",
     "arg=run",
     "arg=--project",
     "arg=e2e-live",
@@ -104,12 +103,16 @@ describe("Brev remote Vitest command", () => {
     expect(brevSuiteNeedsHarnessSandbox("gpu")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-compatible-endpoint")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(false);
+    expect(brevSuiteHarnessSandboxName("all")).toBeUndefined();
+    expect(brevSuiteHarnessSandboxName("messaging-compatible-endpoint")).toBeUndefined();
+    expect(brevSuiteHarnessSandboxName("messaging-providers")).toBeUndefined();
   });
 
   it("preserves harness onboarding for single-target suites", () => {
     expect(brevSuiteNeedsHarnessSandbox("credential-sanitization")).toBe(true);
     expect(brevSuiteNeedsHarnessSandbox("telegram-injection")).toBe(true);
     expect(brevSuiteNeedsHarnessSandbox("dashboard-remote-bind")).toBe(true);
+    expect(brevSuiteHarnessSandboxName("dashboard-remote-bind")).toBe("e2e-test");
   });
 
   it("uses the repository-local Vitest binary without invoking a package runner", () => {

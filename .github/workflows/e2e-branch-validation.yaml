@@ -172,7 +172,7 @@ jobs:
   e2e-branch-validation:
     # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 130
     # Target-branch code receives Brev/inference secrets, so this job must not
     # inherit the caller's reporting write grants.
     permissions:

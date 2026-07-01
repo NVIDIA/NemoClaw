@@ -10,6 +10,7 @@ type ReusableCallerJob = {
   if?: string;
   outputs?: Record<string, unknown>;
   permissions?: Record<string, string>;
+  "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, unknown>;
     name?: string;
@@ -126,6 +127,7 @@ describe("Brev nightly workflow contract", () => {
       "messaging-compatible-endpoint",
       "full",
     ]);
+    expect(branchValidation.jobs?.["e2e-branch-validation"]?.["timeout-minutes"]).toBe(130);
   });
 
   it("keeps manual dispatch inputs out of the Brev credential boundary", () => {

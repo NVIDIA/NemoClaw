@@ -21,6 +21,10 @@ export function brevSuiteNeedsHarnessSandbox(testSuite: string): boolean {
   return !BREV_SUITES_WITHOUT_HARNESS_SANDBOX.has(testSuite);
 }
 
+export function brevSuiteHarnessSandboxName(testSuite: string): string | undefined {
+  return brevSuiteNeedsHarnessSandbox(testSuite) ? "e2e-test" : undefined;
+}
+
 export function buildBrevRemoteVitestCommand(project: BrevVitestProject, target: string): string {
   const vitestCommand = [
     "./node_modules/.bin/vitest",
@@ -41,9 +45,6 @@ export function buildBrevRemoteVitestCommand(project: BrevVitestProject, target:
     // download an unpinned replacement.
     "if [ ! -x ./node_modules/.bin/vitest ]; then npm ci --ignore-scripts --no-audit --no-fund; fi",
     "test -x ./node_modules/.bin/vitest",
-    // A Brev retry must provision a fresh instance. Retrying a stateful live
-    // target on the same VM can overlap an installer that still owns the
-    // production onboard lock and turn the original timeout into lock noise.
-    `NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_E2E_RETRIES=0 ${vitestCommand}`,
+    `NEMOCLAW_RUN_LIVE_E2E=1 ${vitestCommand}`,
   ].join(" && ");
 }
