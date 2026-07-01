@@ -575,7 +575,20 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 </AgentOnly>
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+
+<AgentOnly variant="openclaw">
+
+After an OpenClaw one-shot command exits, NemoClaw verifies and, when needed, restores the mutable config permission contract.
+When cleanup succeeds, `exec` returns the remote command's exit code.
+If cleanup cannot inspect, restore, or verify that contract, it fails closed and prints `OpenClaw permission cleanup failed (...)` to `stderr`.
+In that case, `exec` returns the cleanup failure instead of the remote command's status.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
 The exit code is the remote command's exit code.
+
+</AgentOnly>
 
 | Flag | Description |
 |------|-------------|
@@ -607,7 +620,8 @@ $$nemoclaw dcode-sandbox agent --help
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 ```
 
-The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it.
+When post-command permission cleanup succeeds, the wrapper inherits the remote command's exit code so host-side pipelines can branch on it.
+If cleanup fails closed, the wrapper prints the command and cleanup statuses to `stderr` and returns the cleanup failure.
 For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
 When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
 Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
@@ -928,8 +942,21 @@ $$nemoclaw my-assistant doctor [--json]
 ### `$$nemoclaw <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
+The command runs as the sandbox user with `HOME=/sandbox`.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
+
+<AgentOnly variant="openclaw">
+
+After the remote command exits, NemoClaw verifies and, when needed, restores the mutable OpenClaw config permission contract.
+When cleanup succeeds, `exec` preserves the remote command's exit code.
+When cleanup fails closed, `exec` returns the cleanup failure and reports both statuses on `stderr`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+The command exits with the remote command's exit code.
+
+</AgentOnly>
 
 ```bash
 $$nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
@@ -2064,6 +2091,27 @@ Values are not printed.
 ```bash
 $$nemoclaw credentials list
 ```
+
+### `$$nemoclaw credentials add <PROVIDER>`
+
+Register a provider credential with the OpenShell gateway by name and type.
+Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv.
+Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them.
+After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+
+Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes).
+If you want a provider available to only some sandboxes, scope it with `nemoclaw credentials reset <PROVIDER>` once those sandboxes finish using it.
+
+```bash
+$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
+| `--config <K=V>` | Provider configuration pair. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state |
 
 ### `$$nemoclaw credentials reset <PROVIDER>`
 

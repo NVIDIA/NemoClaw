@@ -436,6 +436,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
         },
       ],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[16]), { name: "tvly", sample: "tvly-abcdefghijklmnop" }],
       [
         fingerprint(CONTEXT_PATTERNS[0]),
         {
