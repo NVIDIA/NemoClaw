@@ -24,6 +24,7 @@ import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildMcpDnsRebindingProbeScript,
+  hostAddressForSandbox,
   installMcpTestCaInSandbox,
   isExpectedMcpCurlPolicyDenial,
   type McpDnsRebindingAdapter,
@@ -36,6 +37,7 @@ import {
   startFakeMcpHttpsServer,
   startPublicMcpHttpsTunnel,
 } from "./mcp-bridge-servers.ts";
+import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
@@ -82,28 +84,6 @@ function expectExitNonZero(result: ShellProbeResult, label: string, pattern: Reg
 
 function parseCurrentPolicy(raw: string): string {
   return parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true }).yamlBody;
-}
-
-async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
-  const probe = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        'ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk \'{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}\')"',
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "ip_addr=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"",
-        'if [ -n "$ip_addr" ]; then echo "$ip_addr"; exit 0; fi',
-        "echo 127.0.0.1",
-      ].join("\n"),
-    ],
-    {
-      artifactName: "host-ip-for-mcp-compatible-endpoint",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 30_000,
-    },
-  );
-  return probe.stdout.trim().split(/\s+/)[0] || "127.0.0.1";
 }
 
 async function bestEffortRemoveBridge(
@@ -893,6 +873,21 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
     artifactName: "onboard-openclaw-mcp-bridge",
   });
   await installMcpTestCaInSandbox(host, sandbox, OPENCLAW_SANDBOX_NAME, "openclaw");
+
+  // Exercise the raw OpenShell `allowed_ips` boundary before any NemoClaw MCP
+  // mutation. The helper uses a direct curl request with a /** binary grant,
+  // then restores this sandbox's exact base policy before returning, so this
+  // proof is independent of both the CLI implementation and adapter identity.
+  await assertRawOpenShellAllowedIpsRebindingDenied({
+    artifacts,
+    env: buildAvailabilityProbeEnv(),
+    host,
+    policySettleMs: 5_000,
+    sandbox,
+    sandboxName: OPENCLAW_SANDBOX_NAME,
+    timeoutMs: 120_000,
+  });
+
   cleanup.add("remove MCP bridge", () => bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME));
   cleanup.add("remove unexpected missing-secret MCP state", () =>
     bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret"),

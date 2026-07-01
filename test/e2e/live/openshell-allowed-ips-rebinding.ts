@@ -176,7 +176,9 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
 }): Promise<void> {
   const env = options.env ?? buildAvailabilityProbeEnv();
   const server = await startCountingMcpServer();
+  let basePolicyPath: string | undefined;
   let hostsFixture: DnsRebindingHostsFixture | undefined;
+  let policyMutationAttempted = false;
   try {
     const reboundAddress = await hostAddressForSandbox(options.host);
     expect(reboundAddress).not.toBe(RAW_OPENSHELL_REBIND_PINNED_IP);
@@ -210,16 +212,21 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     const basePolicyYaml = parseOpenShellPolicy(basePolicy.stdout, {
       allowUnmarkedPolicyBody: true,
     }).yamlBody;
+    basePolicyPath = options.artifacts.pathFor(
+      "policies/raw-openshell-allowed-ips-rebinding.base.yaml",
+    );
     const policyPath = options.artifacts.pathFor(
       "policies/raw-openshell-allowed-ips-rebinding.yaml",
     );
     fs.mkdirSync(path.dirname(policyPath), { recursive: true });
+    fs.writeFileSync(basePolicyPath, basePolicyYaml, "utf8");
     fs.writeFileSync(
       policyPath,
       buildRawOpenShellAllowedIpsRebindingPolicy(basePolicyYaml, server.port),
       "utf8",
     );
 
+    policyMutationAttempted = true;
     const applyPolicy = await options.sandbox.openshell(
       ["policy", "set", "--policy", policyPath, "--wait", options.sandboxName],
       {
@@ -270,11 +277,36 @@ export async function assertRawOpenShellAllowedIpsRebindingDenied(options: {
     ).toBe(0);
   } finally {
     try {
-      if (hostsFixture) {
-        await restoreDnsRebindingHostsFixture(options.host, options.sandboxName, hostsFixture);
+      if (policyMutationAttempted && basePolicyPath) {
+        const restorePolicy = await options.sandbox.openshell(
+          ["policy", "set", "--policy", basePolicyPath, "--wait", options.sandboxName],
+          {
+            artifactName: "raw-openshell-rebinding-policy-restore",
+            env,
+            timeoutMs: options.timeoutMs,
+          },
+        );
+        expect(restorePolicy.exitCode, resultText(restorePolicy)).toBe(0);
+        await new Promise((resolve) => setTimeout(resolve, options.policySettleMs));
+        const restoredPolicy = await options.sandbox.openshell(
+          ["policy", "get", "--base", options.sandboxName],
+          {
+            artifactName: "raw-openshell-rebinding-policy-verify-restored",
+            env,
+            timeoutMs: options.timeoutMs,
+          },
+        );
+        expect(restoredPolicy.exitCode, resultText(restoredPolicy)).toBe(0);
+        expect(restoredPolicy.stdout).not.toContain(RAW_OPENSHELL_REBIND_POLICY_KEY);
       }
     } finally {
-      await server.close();
+      try {
+        if (hostsFixture) {
+          await restoreDnsRebindingHostsFixture(options.host, options.sandboxName, hostsFixture);
+        }
+      } finally {
+        await server.close();
+      }
     }
   }
 }
