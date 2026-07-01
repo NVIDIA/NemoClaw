@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import { buildBrevRemoteVitestCommand } from "../tools/e2e/brev-remote-vitest.mts";
+
+const TARGET = "test/e2e/live/credential-sanitization.test.ts";
+
+type Fixture = {
+  fakeBin: string;
+  fixtureVitest: string;
+  npmLog: string;
+  root: string;
+  vitestLog: string;
+};
+
+function writeExecutable(target: string, source: string): void {
+  fs.writeFileSync(target, source, { mode: 0o755 });
+}
+
+function createFixture(): Fixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brev-vitest-"));
+  const fakeBin = path.join(root, "fake-bin");
+  const fixtureVitest = path.join(root, "fixture-vitest");
+  const npmLog = path.join(root, "npm.log");
+  const vitestLog = path.join(root, "vitest.log");
+  fs.mkdirSync(fakeBin, { recursive: true });
+  writeExecutable(
+    fixtureVitest,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `printf 'env=%s\\n' "\${NEMOCLAW_RUN_LIVE_E2E:-}" >> "$VITEST_LOG"`,
+      `printf 'arg=%s\\n' "$@" >> "$VITEST_LOG"`,
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    path.join(fakeBin, "npm"),
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `printf '%s\\n' "$*" >> "$NPM_LOG"`,
+      "mkdir -p node_modules/.bin",
+      `cp "$FIXTURE_VITEST" node_modules/.bin/vitest`,
+      "chmod +x node_modules/.bin/vitest",
+      "",
+    ].join("\n"),
+  );
+  return { fakeBin, fixtureVitest, npmLog, root, vitestLog };
+}
+
+function runRemoteCommand(fixture: Fixture) {
+  return spawnSync("bash", ["-c", buildBrevRemoteVitestCommand("e2e-live", TARGET)], {
+    cwd: fixture.root,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      FIXTURE_VITEST: fixture.fixtureVitest,
+      NPM_LOG: fixture.npmLog,
+      PATH: `${fixture.fakeBin}:${process.env.PATH ?? ""}`,
+      VITEST_LOG: fixture.vitestLog,
+    },
+  });
+}
+
+function expectedVitestLog(): string {
+  return [
+    "env=1",
+    "arg=run",
+    "arg=--project",
+    "arg=e2e-live",
+    `arg=${TARGET}`,
+    "arg=--silent=false",
+    "arg=--reporter=default",
+    "",
+  ].join("\n");
+}
+
+describe("Brev remote Vitest command", () => {
+  it("uses the repository-local Vitest binary without invoking a package runner", () => {
+    const fixture = createFixture();
+    try {
+      const localVitest = path.join(fixture.root, "node_modules/.bin/vitest");
+      fs.mkdirSync(path.dirname(localVitest), { recursive: true });
+      fs.copyFileSync(fixture.fixtureVitest, localVitest);
+      fs.chmodSync(localVitest, 0o755);
+
+      const result = runRemoteCommand(fixture);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(fixture.npmLog)).toBe(false);
+      expect(fs.readFileSync(fixture.vitestLog, "utf8")).toBe(expectedVitestLog());
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the lockfile graph when a prior suite prunes Vitest", () => {
+    const fixture = createFixture();
+    try {
+      const result = runRemoteCommand(fixture);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(fixture.npmLog, "utf8")).toBe(
+        "ci --ignore-scripts --no-audit --no-fund\n",
+      );
+      expect(fs.readFileSync(fixture.vitestLog, "utf8")).toBe(expectedVitestLog());
+    } finally {
+      fs.rmSync(fixture.root, { recursive: true, force: true });
+    }
+  });
+});

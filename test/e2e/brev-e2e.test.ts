@@ -54,6 +54,7 @@ import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../../src/lib/core/shell-quote";
+import { buildBrevRemoteVitestCommand } from "../../tools/e2e/brev-remote-vitest.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -425,10 +426,8 @@ function runRemoteCommand(
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runRemoteVitest(project: "cli" | "e2e-live", target: string): string {
-  return runRemoteCommand(
-    `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project ${project} ${target} --silent=false --reporter=default`,
-  );
+function runRemoteVitest(project: "cli" | "e2e-live", target: string, timeoutMs?: number): string {
+  return runRemoteCommand(buildBrevRemoteVitestCommand(project, target), timeoutMs);
 }
 
 function expectVitestPassed(output: string): void {
@@ -1219,28 +1218,33 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
   // with messaging tokens attached. It does not conflict with the e2e-test sandbox
   // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
+  it.runIf(TEST_SUITE === "messaging-providers")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/messaging-providers.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-providers.test.ts",
+        1_800_000,
+      );
       expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with messaging providers
+    1_900_000, // cold image rebuilds can push this past 15 minutes on Brev CPU
   );
 
   // NOTE: The compatible-endpoint messaging test creates its own sandbox
   // (e2e-msg-compat) with Telegram attached and a local OpenAI-compatible
   // mock endpoint. It covers the inference.local path used by Telegram turns.
-  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "messaging-providers")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
       const output = runRemoteVitest(
         "e2e-live",
         "test/e2e/live/messaging-compatible-endpoint.test.ts",
+        1_800_000,
       );
       expectVitestPassed(output);
     },
-    900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
+    1_900_000, // cold image rebuilds can push this past 15 minutes on Brev CPU
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(
