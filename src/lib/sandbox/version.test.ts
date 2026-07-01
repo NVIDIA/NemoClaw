@@ -161,7 +161,7 @@ describe("checkAgentVersion", () => {
     expect(updated?.agentVersion).toBe("2026.5.27");
   });
 
-  it("returns unavailable when SSH config fails", () => {
+  it("returns an unknown verdict when SSH config fails so callers do not read isStale as verified current", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
     vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
@@ -170,7 +170,8 @@ describe("checkAgentVersion", () => {
     });
 
     const result = checkAgentVersion("test-sb");
-    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.detectionMethod).toBe("unknown");
+    expect(result.unavailableReason).toBe("probe-failed");
     expect(result.isStale).toBe(false);
   });
 
@@ -214,7 +215,7 @@ describe("checkAgentVersion", () => {
     expect(result.sandboxVersion).toBe("2026.5.27");
   });
 
-  it("force probe does not trust cached metadata when live version probing is unavailable", () => {
+  it("force probe returns unknown when the live probe fails so cached metadata cannot silently mask drift", () => {
     registry.registerSandbox({
       name: "test-sb",
       agent: null,
@@ -229,7 +230,8 @@ describe("checkAgentVersion", () => {
 
     const result = checkAgentVersion("test-sb", { forceProbe: true });
 
-    expect(result.detectionMethod).toBe("unavailable");
+    expect(result.detectionMethod).toBe("unknown");
+    expect(result.unavailableReason).toBe("probe-failed");
     expect(result.sandboxVersion).toBeNull();
     expect(result.isStale).toBe(false);
     expect(spawnSync).not.toHaveBeenCalled();

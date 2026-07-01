@@ -101,7 +101,10 @@ export function classifyUpgradeableSandboxes(
             }
           : {}),
       });
-    } else if (versionCheck.detectionMethod === "unavailable") {
+    } else if (
+      versionCheck.detectionMethod === "unavailable" ||
+      versionCheck.detectionMethod === "unknown"
+    ) {
       unknown.push({
         name: sandbox.name,
         expected: versionCheck.expectedVersion,

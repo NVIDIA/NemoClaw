@@ -24,9 +24,30 @@ import { createTempSshConfig } from "./temp-ssh-config.js";
 export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
+  /**
+   * `isStale` is only meaningful when `detectionMethod` is `"registry"` or
+   * `"ssh-exec"` and `schemeMismatch` is not `true`. Any other combination
+   * means the check could not confirm staleness — callers must distinguish
+   * "definitely current" from "unknown" via `detectionMethod` and
+   * `schemeMismatch` rather than trusting `isStale === false` alone.
+   */
   isStale: boolean;
-  detectionMethod: "registry" | "ssh-exec" | "unavailable";
-  /** True only when the check ran and the sandbox is definitively current. */
+  /**
+   * How the staleness verdict was reached.
+   * - `"registry"` / `"ssh-exec"`: `isStale` is authoritative for this sandbox.
+   * - `"unavailable"`: no staleness check was attempted (missing expected
+   *   version, or the caller opted out of probing).
+   * - `"unknown"`: a probe was attempted but the runtime version could not be
+   *   inspected — callers should treat this as "unable to verify", not
+   *   "verified current".
+   */
+  detectionMethod: "registry" | "ssh-exec" | "unavailable" | "unknown";
+  /**
+   * `true` when the runtime and expected versions use different schemes
+   * (semver vs calendar). In that case `isStale` is forced to `false` because
+   * the two values cannot be compared numerically; treat this as "unable to
+   * verify" rather than "current".
+   */
   schemeMismatch?: boolean;
   /** Categorises why the result could not be computed, so callers can surface a distinct state. */
   unavailableReason?: "no-expected-version" | "skip-probe" | "probe-failed";
@@ -219,7 +240,7 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion,
       isStale: false,
-      detectionMethod: "unavailable",
+      detectionMethod: "unknown",
       unavailableReason: "probe-failed",
     };
   }

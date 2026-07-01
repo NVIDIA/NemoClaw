@@ -9,7 +9,7 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
-import type { SandboxGpuProofResult, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -215,7 +215,9 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
       console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
     } else if (
       shouldProbe &&
-      versionCheck.detectionMethod === "unavailable" &&
+      (versionCheck.detectionMethod === "unavailable" ||
+        versionCheck.detectionMethod === "unknown" ||
+        versionCheck.schemeMismatch) &&
       versionCheck.expectedVersion
     ) {
       console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
