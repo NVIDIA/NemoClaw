@@ -118,7 +118,8 @@ nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ```
 
 This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it.
-When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`, then rebuild affected sandboxes to converge their provider attachments.
+When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
+OpenShell rejects provider deletion while any sandbox still has it attached.
 
 ### Optional Tracing (LangSmith)
 
