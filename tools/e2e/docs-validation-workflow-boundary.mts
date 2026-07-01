@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import { PREPARE_E2E_ACTION, PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -104,11 +105,9 @@ export function validateDocsValidationWorkflow(workflow: DocsValidationWorkflow)
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
   }
 
-  const setup = findStep(job, "Set up Node");
-  if (!/^actions\/setup-node@[0-9a-f]{40}$/u.test(setup.uses ?? "")) {
-    errors.push(`${JOB_NAME} setup-node must pin a full action SHA`);
-  }
-  requireRunContains(errors, findStep(job, "Install root dependencies"), "npm ci --ignore-scripts");
+  const prepare = findStep(job, PREPARE_E2E_STEP);
+  requireEqual(errors, prepare.uses, PREPARE_E2E_ACTION, `${JOB_NAME} must use prepare-e2e`);
+  requireEqual(errors, prepare.with?.["build-cli"], "false", `${JOB_NAME} must skip the CLI build`);
 
   const run = findStep(job, "Run docs validation live Vitest test");
   requireRunContains(errors, run, "npx vitest run --project e2e-live");
