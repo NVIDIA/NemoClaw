@@ -54,6 +54,7 @@ const trustedPrActionPaths = {
 } as const;
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
+const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
 const installerHashBootstrapCommit = "6571063796e1f31648dfd63c7aee91d22612020d";
 const installerHashBootstrapTree = "4594dfb2d7bd451e36a3d42b3e5403ae448bf94b";
 const installerHashBootstrapCreatedAt = "2026-06-30T23:26:13Z";
@@ -190,6 +191,10 @@ describe("pull request and main workflow contracts", () => {
 
   it("runs pull request installer verification from immutable trusted code", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
+    const parserRuntimeSetup = requiredWorkflowStep(
+      job,
+      "Set up trusted installer hash parser runtime",
+    );
     const prCheckout = requiredWorkflowStep(job, "Checkout pull request head");
     const baseCheckout = requiredWorkflowStep(job, "Checkout base-trusted installer hash action");
     const trustedActionProbe = requiredWorkflowStep(
@@ -223,6 +228,8 @@ describe("pull request and main workflow contracts", () => {
 
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
     expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
+    expect(parserRuntimeSetup.uses).toBe(trustedSetupNodeAction);
+    expect(parserRuntimeSetup.with?.["node-version"]).toBe("22.16.0");
     expect(prCheckout.with?.repository).toBe(
       "${{ github.event.pull_request.head.repo.full_name }}",
     );
@@ -245,6 +252,9 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-hash-check",
     );
     expect(baseCheckout.with?.["sparse-checkout"]).toContain("scripts/check-installer-hash.sh");
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/checks/extract-installer-pins.mts",
+    );
 
     expect(trustedActionProbe.id).toBe("trusted-installer-hash");
     expect(trustedActionProbe.run).toContain(
@@ -279,6 +289,22 @@ describe("pull request and main workflow contracts", () => {
         "Verify pull request installer hashes from immutable bootstrap",
       ),
     );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(job, "Verify pull request installer hashes from base-trusted code"),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        job,
+        "Verify pull request installer hashes from immutable bootstrap",
+      ),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Set up trusted installer hash parser runtime"),
+    ).toBeLessThan(requiredWorkflowStepIndex(job, "Verify trusted event installer hashes"));
     expect(
       (Date.parse(installerHashBootstrapExpiresAt) - Date.parse(installerHashBootstrapCreatedAt)) /
         86_400_000,

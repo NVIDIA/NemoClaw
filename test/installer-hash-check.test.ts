@@ -51,7 +51,15 @@ type FixtureMode =
   | "failure"
   | "missing-brev-pin"
   | "partial"
-  | "pr-checker-bypass";
+  | "pr-checker-bypass"
+  | "pr-parser-bypass";
+type PinFormatting =
+  | "canonical"
+  | "comments"
+  | "equals-whitespace"
+  | "line-continuations"
+  | "mixed-whitespace"
+  | "quote-styles";
 
 const corruptFirstBrevPin = (source: string): string =>
   source.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64));
@@ -64,6 +72,7 @@ const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> =
   "missing-brev-pin": (source) =>
     source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
   "pr-checker-bypass": corruptFirstBrevPin,
+  "pr-parser-bypass": corruptFirstBrevPin,
 };
 const CHECKSUM_MANIFESTS = new Map([
   [
@@ -107,12 +116,63 @@ afterEach(() => {
   }
 });
 
-function createFixture(openshellVersion = "0.0.72"): string {
+function renderPinFunction(
+  functionName: string,
+  assets: string[],
+  openshellVersion: string,
+  formatting: PinFormatting,
+): string {
+  const functionOpening =
+    formatting === "mixed-whitespace" ? `${functionName}\t( )\t{` : `${functionName}() {`;
+  const localInputs =
+    formatting === "equals-whitespace"
+      ? '  local release_tag = "$1" asset = "$2"'
+      : formatting === "mixed-whitespace"
+        ? '\tlocal\trelease_tag="$1"\tasset="$2"'
+        : '  local release_tag="$1" asset="$2"';
+  const caseOpening =
+    formatting === "mixed-whitespace"
+      ? '\tcase\t"${release_tag}:${asset}"\tin'
+      : '  case "${release_tag}:${asset}" in';
+  const cases = assets
+    .map((asset) => {
+      const digest = ASSET_DIGESTS.get(asset) ?? "missing";
+      const pattern =
+        formatting === "quote-styles"
+          ? `    'v${openshellVersion}:${asset}')`
+          : formatting === "mixed-whitespace"
+            ? `\t  v${openshellVersion}:${asset}\t)`
+            : `    v${openshellVersion}:${asset})`;
+      const patternLine = formatting === "comments" ? `${pattern} # exact asset` : pattern;
+      const printfLine =
+        formatting === "line-continuations"
+          ? `      printf \\
+        '%s\\n' \\
+        "${digest}"`
+          : formatting === "quote-styles"
+            ? `      printf "%s\\n" '${digest}'`
+            : formatting === "mixed-whitespace"
+              ? `\t\tprintf\t'%s\\n'\t"${digest}"`
+              : `      printf '%s\\n' "${digest}"`;
+      const commentedPrintf =
+        formatting === "comments" ? `${printfLine} # published SHA-256` : printfLine;
+      const terminator = formatting === "mixed-whitespace" ? "\t\t;;" : "      ;;";
+      return `${patternLine}\n${commentedPrintf}\n${terminator}`;
+    })
+    .join("\n");
+  return `${functionOpening}\n${localInputs}\n${caseOpening}\n${cases}\n    *)\n      return 1\n      ;;\n  esac\n}\n`;
+}
+
+function createFixture(
+  openshellVersion = "0.0.72",
+  formatting: PinFormatting = "canonical",
+): string {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
+  const checksDir = path.join(scriptsDir, "checks");
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
-  fs.mkdirSync(scriptsDir, { recursive: true });
+  fs.mkdirSync(checksDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
   const checker = fs
     .readFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), "utf8")
@@ -121,24 +181,23 @@ function createFixture(openshellVersion = "0.0.72"): string {
       `OPENSHELL_RELEASE_VERSION="${openshellVersion}"`,
     );
   fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+    path.join(checksDir, "extract-installer-pins.mts"),
+  );
 
-  const cases = ASSETS.map(
-    (asset) =>
-      `    v${openshellVersion}:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
-  ).join("\n");
   fs.writeFileSync(
     path.join(scriptsDir, "install-openshell.sh"),
-    `openshell_pinned_sha256() {\n  case "\${1}:\${2}" in\n${cases}\n  esac\n}\n`,
+    renderPinFunction("openshell_pinned_sha256", ASSETS, openshellVersion, formatting),
   );
-  const brevCases = ASSETS.slice(0, 2)
-    .map(
-      (asset) =>
-        `    v${openshellVersion}:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
-    )
-    .join("\n");
   fs.writeFileSync(
     path.join(scriptsDir, "brev-launchable-ci-cpu.sh"),
-    `openshell_cli_pinned_sha256() {\n  case "\${1}:\${2}" in\n${brevCases}\n  esac\n}\n`,
+    renderPinFunction(
+      "openshell_cli_pinned_sha256",
+      ASSETS.slice(0, 2),
+      openshellVersion,
+      formatting,
+    ),
   );
   fs.writeFileSync(
     path.join(binDir, "curl"),
@@ -181,14 +240,29 @@ esac
   return fixtureRoot;
 }
 
-function runFixture(mode: FixtureMode, openshellVersion?: string, trustedChecker = false) {
-  const fixtureRoot = createFixture(openshellVersion);
+function runFixture(
+  mode: FixtureMode,
+  openshellVersion?: string,
+  trustedChecker = false,
+  formatting: PinFormatting = "canonical",
+) {
+  const fixtureRoot = createFixture(openshellVersion, formatting);
   const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
   const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
   const trustedCheckerPath = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
+  const trustedParserPath = path.join(
+    trustedRoot,
+    "scripts",
+    "checks",
+    "extract-installer-pins.mts",
+  );
   tempDirs.push(trustedRoot);
-  fs.mkdirSync(path.join(trustedRoot, "scripts"), { recursive: true });
+  fs.mkdirSync(path.dirname(trustedParserPath), { recursive: true });
   fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), trustedCheckerPath);
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts", "checks", "extract-installer-pins.mts"),
+    trustedParserPath,
+  );
   fs.writeFileSync(
     targetChecker,
     trustedChecker
@@ -200,6 +274,13 @@ function runFixture(mode: FixtureMode, openshellVersion?: string, trustedChecker
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   const mutateBrev = BREV_MUTATIONS[mode] ?? ((source: string) => source);
   fs.writeFileSync(brevInstaller, mutateBrev(brevSource));
+  const targetParser = path.join(fixtureRoot, "scripts", "checks", "extract-installer-pins.mts");
+  fs.writeFileSync(
+    targetParser,
+    mode === "pr-parser-bypass"
+      ? 'process.stdout.write("PR_PARSER_EXECUTED\\n");\n'
+      : fs.readFileSync(targetParser, "utf8"),
+  );
   return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -208,7 +289,8 @@ function runFixture(mode: FixtureMode, openshellVersion?: string, trustedChecker
       GITHUB_TOKEN: "",
       GH_TOKEN: "",
       NEMOCLAW_INSTALLER_HASH_REPO_ROOT: trustedChecker ? fixtureRoot : "",
-      NEMOCLAW_TEST_CURL_MODE: mode === "brev-mismatch" ? "complete" : mode,
+      NEMOCLAW_TEST_CURL_MODE:
+        mode.includes("bypass") || mode === "brev-mismatch" ? "complete" : mode,
       PATH: `${path.join(fixtureRoot, "bin")}:${process.env.PATH ?? ""}`,
     },
   });
@@ -230,6 +312,19 @@ describe("installer hash verification", () => {
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
+  it.each([
+    "equals-whitespace",
+    "comments",
+    "line-continuations",
+    "quote-styles",
+    "mixed-whitespace",
+  ] as const)("extracts pins across %s formatting", (formatting) => {
+    const result = runFixture("complete", undefined, false, formatting);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
   it("lets trusted checker code inspect a separate pull-request tree", () => {
     const result = runFixture("complete", undefined, true);
 
@@ -245,6 +340,7 @@ describe("installer hash verification", () => {
     const result = runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
     expect(result.stdout).toContain("expected 2 pinned Brev OpenShell v0.0.72 CLI assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
@@ -257,6 +353,17 @@ describe("installer hash verification", () => {
       "STALE: Brev launchable openshell-x86_64-unknown-linux-musl.tar.gz",
     );
     expect(result.stdout).not.toContain("PR_CHECKER_EXECUTED");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("does not let a pull request replace the trusted parser with a success stub", () => {
+    const result = runFixture("pr-parser-bypass", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "STALE: Brev launchable openshell-x86_64-unknown-linux-musl.tar.gz",
+    );
+    expect(result.stdout).not.toContain("PR_PARSER_EXECUTED");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
