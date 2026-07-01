@@ -308,6 +308,15 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
 // sandbox container is running.
 // ---------------------------------------------------------------------------
 
+// Recovery hint printed when shields cannot restore lockdown and leaves the
+// agent config mutable. It must stay driver-neutral: the docker and vm drivers
+// run per-sandbox direct containers with no k8s control plane, so a "kubectl
+// exec" instruction is invalid there — and the docker driver is the default on
+// v0.0.71. Both recoveries below are valid on every driver. (#6126)
+function manualRelockRecoveryHint(sandboxName: string): string {
+  return `  Recovery: re-run \`nemoclaw ${sandboxName} shields up\`, or rebuild a known-good baseline with \`nemoclaw ${sandboxName} rebuild --yes\`.`;
+}
+
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
   dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
     stdio: ["ignore", "pipe", "pipe"],
@@ -2208,9 +2217,7 @@ function rollbackShieldsDown(
     console.error("  Lockdown restored. Config was never left unguarded.");
   } else {
     console.error("  Config remains unlocked — manual intervention required.");
-    console.error(
-      `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
-    );
+    console.error(manualRelockRecoveryHint(sandboxName));
   }
 }
 
@@ -2914,9 +2921,7 @@ function shieldsUpWithoutHostLock(
     if (!activation.ok) {
       console.error(`  ERROR: ${activation.error ?? "unknown restore error"}`);
       console.error("  Config remains unlocked — manual intervention required.");
-      console.error(
-        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
-      );
+      console.error(manualRelockRecoveryHint(sandboxName));
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
     if (activation.fileHashes && typeof activation.chattrApplied === "boolean") {
@@ -2944,9 +2949,7 @@ function shieldsUpWithoutHostLock(
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains unlocked — manual intervention required.");
-      console.error(
-        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
-      );
+      console.error(manualRelockRecoveryHint(sandboxName));
       return failShieldsCommand(message, opts.throwOnError);
     }
     saveShieldsState(sandboxName, {
@@ -3237,6 +3240,7 @@ export {
   killTimer,
   lockAgentConfig,
   MAX_TIMEOUT_SECONDS,
+  manualRelockRecoveryHint,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,

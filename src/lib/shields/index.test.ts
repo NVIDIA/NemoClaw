@@ -1088,3 +1088,22 @@ describe("NC-2227-05: shields timer marker behavior", () => {
     expect(isShieldsDown("openclaw")).toBe(false);
   });
 });
+
+describe("#6126: shields relock recovery hint is driver-neutral", () => {
+  const loadHint = async () => {
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+    const { manualRelockRecoveryHint } = await import(sourceModulePath);
+    return manualRelockRecoveryHint as (sandboxName: string) => string;
+  };
+
+  it("does not tell docker/vm-driver users to kubectl exec (there is no k8s control plane)", async () => {
+    const hint = (await loadHint())("my-assistant");
+    expect(hint).not.toMatch(/kubectl/i);
+  });
+
+  it("offers recoveries valid on every driver and names the sandbox", async () => {
+    const hint = (await loadHint())("my-assistant");
+    expect(hint).toContain("nemoclaw my-assistant shields up");
+    expect(hint).toContain("nemoclaw my-assistant rebuild --yes");
+  });
+});
