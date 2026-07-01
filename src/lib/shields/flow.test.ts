@@ -223,11 +223,10 @@ describe("shields command flow", () => {
       "Cannot capture current policy",
     );
     expect(harness.runSpy).not.toHaveBeenCalled();
-    expect(
-      fs
-        .readdirSync(path.join(tmpDir, ".nemoclaw", "state"))
-        .filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name)),
-    ).toEqual([]);
+    const stateFiles = fs.readdirSync(path.join(tmpDir, ".nemoclaw", "state"));
+    expect(stateFiles.filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name))).toEqual(
+      [],
+    );
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {

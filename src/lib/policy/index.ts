@@ -369,45 +369,9 @@ function assertOpenshellResolvable(): void {
 }
 
 /**
- * Text-based fallback for merging preset entries into policy YAML.
- * Used when preset entries cannot be parsed as structured YAML.
- */
-function textBasedMerge(currentPolicy: string, presetEntries: string): string {
-  if (!currentPolicy) {
-    return "version: 1\n\nnetwork_policies:\n" + presetEntries;
-  }
-  let merged;
-  if (/^network_policies\s*:/m.test(currentPolicy)) {
-    const lines = currentPolicy.split("\n");
-    const result = [];
-    let inNp = false;
-    let inserted = false;
-    for (const line of lines) {
-      if (/^network_policies\s*:/.test(line)) {
-        inNp = true;
-        result.push(line);
-        continue;
-      }
-      if (inNp && /^\S.*:/.test(line) && !inserted) {
-        result.push(presetEntries);
-        inserted = true;
-        inNp = false;
-      }
-      result.push(line);
-    }
-    if (inNp && !inserted) result.push(presetEntries);
-    merged = result.join("\n");
-  } else {
-    merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
-  }
-  if (!merged.trimStart().startsWith("version:")) merged = "version: 1\n\n" + merged;
-  return merged;
-}
-
-/**
  * Merge preset entries into existing policy YAML using structured YAML
- * parsing. Replaces the previous text-based manipulation which could
- * produce invalid YAML when indentation or ordering varied.
+ * parsing. Invalid input fails closed instead of falling back to text
+ * manipulation that could produce a syntactically valid but unsafe policy.
  *
  * Behavior:
  *   - Parses both current policy and preset entries as YAML
@@ -420,28 +384,33 @@ function textBasedMerge(currentPolicy: string, presetEntries: string): string {
  * @returns {string} Merged YAML
  */
 function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): string {
-  const normalizedCurrentPolicy = stripProviderComposedPolicies(parseCurrentPolicy(currentPolicy));
+  const parsedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  if (currentPolicy.trim() && !parsedCurrentPolicy) {
+    throw new Error(
+      "Cannot merge policy preset: the current policy is not a valid YAML mapping. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parsedCurrentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
 
   // Parse preset entries. They come as indented content under network_policies:,
   // so we wrap them to make valid YAML for parsing.
-  let presetPolicies;
+  let presetPolicies: PolicyObject;
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetPolicies = isPolicyObject(parsed?.network_policies)
-      ? withoutProviderComposedPolicies(parsed.network_policies)
-      : parsed?.network_policies;
+    if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) {
+      throw new Error("network_policies is not a mapping");
+    }
+    presetPolicies = withoutProviderComposedPolicies(parsed.network_policies);
   } catch {
-    presetPolicies = null;
-  }
-
-  // If YAML parsing failed or entries are not a mergeable object,
-  // fall back to the text-based approach for backward compatibility.
-  if (!presetPolicies || typeof presetPolicies !== "object" || Array.isArray(presetPolicies)) {
-    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+    throw new Error(
+      "Cannot merge policy preset: preset network_policies entries must be a valid YAML mapping. " +
+        "Check the preset file and try again; no policy changes were made.",
+    );
   }
 
   if (!normalizedCurrentPolicy) {
@@ -452,9 +421,15 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   let current: PolicyDocument | null;
   try {
     const parsed = YAML.parse(normalizedCurrentPolicy);
-    current = isPolicyDocument(parsed) ? parsed : {};
+    current = isPolicyDocument(parsed) ? parsed : null;
   } catch {
-    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+    current = null;
+  }
+  if (!current) {
+    throw new Error(
+      "Cannot merge policy preset: the normalized current policy could not be parsed. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
   }
 
   // Structured merge: preset entries override existing on name collision.
@@ -513,26 +488,39 @@ function removePresetFromPolicy(
   currentPolicy: string,
   presetEntries: string | null | undefined,
 ): string {
-  const normalizedCurrentPolicy = stripProviderComposedPolicies(parseCurrentPolicy(currentPolicy));
+  const parsedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  if (currentPolicy.trim() && !parsedCurrentPolicy) {
+    throw new Error(
+      "Cannot remove policy preset: the current policy is not a valid YAML mapping. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parsedCurrentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
 
-  if (!normalizedCurrentPolicy) return "version: 1\n\nnetwork_policies:\n";
-
   // Parse preset entries to extract the network_policies key names.
   // They come as indented content under network_policies:,
   // so we wrap them to make valid YAML for parsing.
-  let presetKeys: string[];
+  let presetPolicies: PolicyObject;
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetKeys = parsed?.network_policies ? Object.keys(parsed.network_policies) : [];
+    if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) {
+      throw new Error("network_policies is not a mapping");
+    }
+    presetPolicies = parsed.network_policies;
   } catch {
-    presetKeys = [];
+    throw new Error(
+      "Cannot remove policy preset: preset network_policies entries must be a valid YAML mapping. " +
+        "Check the preset file and try again; no policy changes were made.",
+    );
   }
 
+  const presetKeys = Object.keys(presetPolicies);
   if (presetKeys.length === 0) return normalizedCurrentPolicy;
+  if (!normalizedCurrentPolicy) return "version: 1\n\nnetwork_policies:\n";
 
   // Parse the current policy as structured YAML
   let current: PolicyDocument | null;
@@ -540,10 +528,15 @@ function removePresetFromPolicy(
     const parsed = YAML.parse(normalizedCurrentPolicy);
     current = isPolicyDocument(parsed) ? parsed : null;
   } catch {
-    return normalizedCurrentPolicy;
+    current = null;
   }
 
-  if (!current) return normalizedCurrentPolicy;
+  if (!current) {
+    throw new Error(
+      "Cannot remove policy preset: the normalized current policy could not be parsed. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
 
   // Guard: network_policies may be an array in legacy policies — only
   // delete keys when it is a plain object.
