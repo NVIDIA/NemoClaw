@@ -6,6 +6,16 @@ import { describe, expect, it } from "vitest";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type ReusableCallerJob = {
+  if?: string;
+  outputs?: Record<string, unknown>;
+  permissions?: Record<string, string>;
+  steps?: Array<{
+    env?: Record<string, unknown>;
+    name?: string;
+    run?: string;
+    uses?: string;
+    with?: Record<string, unknown>;
+  }>;
   uses?: string;
   with?: Record<string, unknown>;
   secrets?: Record<string, unknown>;
@@ -56,6 +66,45 @@ describe("Brev nightly workflow contract", () => {
       checks: "write",
       "pull-requests": "write",
     });
+  });
+
+  it("keeps write permissions out of the secret-bearing target-branch job", () => {
+    const caller = nightly.jobs?.["brev-nightly-e2e"];
+    const validation = branchValidation.jobs?.["e2e-branch-validation"];
+    const reporter = branchValidation.jobs?.["report-pr"];
+    const checkout = validation?.steps?.find((step) => step.name === "Checkout target branch");
+    const resolveBranch = validation?.steps?.find(
+      (step) => step.name === "Resolve branch from PR number",
+    );
+    const recordRevision = validation?.steps?.find(
+      (step) => step.name === "Record exact tested revision",
+    );
+
+    expect(nightly.on?.workflow_dispatch?.inputs).not.toHaveProperty("branch");
+    expect(caller?.with?.branch).toBe("${{ github.ref_name }}");
+    expect(validation?.permissions).toEqual({
+      contents: "read",
+      "pull-requests": "read",
+    });
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+    expect(resolveBranch?.env?.PR_NUMBER).toBe("${{ inputs.pr_number }}");
+    expect(resolveBranch?.run).not.toContain("gh pr view ${{");
+    expect(validation?.outputs?.tested_sha).toBe("${{ steps.tested-ref.outputs.sha }}");
+    expect(recordRevision?.run).toContain("git rev-parse HEAD");
+    expect(reporter?.permissions).toEqual({
+      contents: "read",
+      checks: "write",
+      "pull-requests": "write",
+    });
+    expect(reporter?.if).toContain("inputs.pr_number != ''");
+    expect(reporter?.steps?.[0]?.env?.TESTED_SHA).toBe(
+      "${{ needs.e2e-branch-validation.outputs.tested_sha }}",
+    );
+    expect(reporter?.steps?.[0]?.run).toContain(
+      "PR head moved after Brev validation; refusing to report stale evidence",
+    );
+    expect(reporter?.steps?.some((step) => step.uses?.includes("checkout"))).toBe(false);
+    expect(JSON.stringify(reporter)).not.toMatch(/BREV_|NVIDIA_INFERENCE_API_KEY/);
   });
 
   it("keeps every suite in the nightly matrix in a distinct concurrency group", () => {
