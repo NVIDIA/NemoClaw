@@ -72,11 +72,10 @@ describe("MCP artifact credential scan", () => {
 
   it("fails closed on symbolic links inside the upload tree", () => {
     const root = artifactRoot();
-    const outside = path.join(os.tmpdir(), `nemoclaw-mcp-artifact-outside-${process.pid}`);
+    const outside = path.join(artifactRoot(), "outside");
     fs.writeFileSync(outside, "outside");
     fs.symlinkSync(outside, path.join(root, "linked"));
 
     expect(() => scanMcpArtifactSecrets(root)).toThrow(/refuses symbolic link/);
-    fs.rmSync(outside, { force: true });
   });
 });

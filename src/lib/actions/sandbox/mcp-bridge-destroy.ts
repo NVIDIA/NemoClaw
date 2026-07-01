@@ -16,7 +16,6 @@ import {
   discardSafeIncompleteMcpAdds,
   inspectExactMcpDestroyProvider,
 } from "./mcp-bridge-destroy-preflight";
-import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   attachProvider,
   deleteProvider,
@@ -37,9 +36,8 @@ import {
   getSandboxAgent,
   getSandboxOrThrow,
   nowIso,
-  setBridgeState,
 } from "./mcp-bridge-state";
-import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
+import { validateSandboxName } from "./mcp-bridge-validation";
 
 export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 export {

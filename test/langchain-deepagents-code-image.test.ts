@@ -15,9 +15,10 @@ function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
 }
 
-const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
-  process.cwd(),
+  repoRoot,
   "test",
   "e2e",
   "e2e-cloud-experimental",
@@ -25,7 +26,7 @@ const headlessCheckPath = path.join(
   "07-deepagents-code-headless-inference.sh",
 );
 const tuiStartupCheckPath = path.join(
-  process.cwd(),
+  repoRoot,
   "test",
   "e2e",
   "e2e-cloud-experimental",
@@ -135,10 +136,64 @@ function makeStartScriptFixture(tempDir: string): {
   return { envFile, scriptPath };
 }
 
-function runHeadlessCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
-  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", headlessCheckPath], {
+type HeadlessCheckOperation =
+  | "classify-output"
+  | "contains-secret"
+  | "managed-placeholder"
+  | "managed-route"
+  | "positive-integer";
+
+type HeadlessCheckEnvironment = Partial<
+  Record<
+    "CONFIG" | "DCODE_EXIT" | "DEEPAGENTS_HEADLESS_TIMEOUT" | "HEADLESS_OUTPUT" | "TOKEN",
+    string
+  >
+>;
+
+const HEADLESS_CHECK_HELPER_SCRIPT = `
+source test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh
+case "$1" in
+  managed-route)
+    printf "%s" "$CONFIG" | references_managed_inference_route && printf route
+    ;;
+  managed-placeholder)
+    printf "%s" "$CONFIG" | references_managed_placeholder_key && printf key
+    ;;
+  classify-output)
+    if classification="$(classify_headless_output "$DCODE_EXIT" "$HEADLESS_OUTPUT")"; then
+      printf "pass:%s" "$classification"
+    else
+      printf "fail:%s" "$classification"
+    fi
+    ;;
+  positive-integer)
+    if is_positive_integer "$HEADLESS_TIMEOUT"; then printf valid; else printf invalid; fi
+    ;;
+  contains-secret)
+    if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi
+    ;;
+  *)
+    printf "unsupported helper operation\\n" >&2
+    exit 64
+    ;;
+esac
+`;
+
+function runHeadlessCheckHelper(
+  operation: HeadlessCheckOperation,
+  env: HeadlessCheckEnvironment = {},
+): string {
+  return execFileSync("/bin/bash", ["-c", HEADLESS_CHECK_HELPER_SCRIPT, "bash", operation], {
+    cwd: repoRoot,
     encoding: "utf8",
-    env: { ...process.env, ...env },
+    env: {
+      CONFIG: env.CONFIG ?? "",
+      DCODE_EXIT: env.DCODE_EXIT ?? "",
+      DEEPAGENTS_HEADLESS_TIMEOUT: env.DEEPAGENTS_HEADLESS_TIMEOUT ?? "",
+      HEADLESS_OUTPUT: env.HEADLESS_OUTPUT ?? "",
+      PATH: "/usr/bin:/bin",
+      TOKEN: env.TOKEN ?? "",
+    },
   });
 }
 
@@ -427,7 +482,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("/opt/venv is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
     expect(pythonEgressCheck).toContain(`DCODE_CANONICAL_PATH="${DCODE_CANONICAL_PATH}"`);
-    expect(pythonEgressCheck).toContain('grep -Fxq "PATH=${DCODE_CANONICAL_PATH}"');
+    expect(pythonEgressCheck).toContain(`grep -Fxq "PATH=\${DCODE_CANONICAL_PATH}"`);
     expect(pythonEgressCheck).toContain('printf "PYTHON_REAL=%s\\n"');
     expect(pythonEgressCheck).toContain("^PYTHON=/opt/venv/bin/python3$");
     expect(pythonEgressCheck).toContain("^PIP=/opt/venv/bin/pip3$");
@@ -599,31 +654,23 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("requires the managed inference route and placeholder key in Deep Agents Code config", () => {
     expect(
-      runHeadlessCheckHelper(
-        'printf "%s" "$CONFIG" | references_managed_inference_route && printf route',
-        { CONFIG: 'base_url = "https://inference.local/v1"' },
-      ),
+      runHeadlessCheckHelper("managed-route", {
+        CONFIG: 'base_url = "https://inference.local/v1"',
+      }),
     ).toBe("route");
     expect(
-      runHeadlessCheckHelper(
-        'printf "%s" "$CONFIG" | references_managed_placeholder_key && printf key',
-        { CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"' },
-      ),
+      runHeadlessCheckHelper("managed-placeholder", {
+        CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      }),
     ).toBe("key");
   });
 
   it("classifies Deep Agents Code headless output without accepting local failures", () => {
     const classify = (exitCode: string, output: string) =>
-      runHeadlessCheckHelper(
-        [
-          'if classification="$(classify_headless_output "$DCODE_EXIT" "$HEADLESS_OUTPUT")"; then',
-          '  printf "pass:%s" "$classification";',
-          "else",
-          '  printf "fail:%s" "$classification";',
-          "fi",
-        ].join(" "),
-        { DCODE_EXIT: exitCode, HEADLESS_OUTPUT: output },
-      );
+      runHeadlessCheckHelper("classify-output", {
+        DCODE_EXIT: exitCode,
+        HEADLESS_OUTPUT: output,
+      });
 
     expect(classify("0", "PONG\nDCODE_EXIT:0")).toBe("pass:pong");
     expect(
@@ -639,10 +686,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("rejects unsafe headless timeout values before sandbox execution", () => {
     const validate = (timeout: string) =>
-      runHeadlessCheckHelper(
-        'if is_positive_integer "$HEADLESS_TIMEOUT"; then printf valid; else printf invalid; fi',
-        { DEEPAGENTS_HEADLESS_TIMEOUT: timeout },
-      );
+      runHeadlessCheckHelper("positive-integer", { DEEPAGENTS_HEADLESS_TIMEOUT: timeout });
 
     expect(validate("120")).toBe("valid");
     expect(validate("0")).toBe("invalid");
@@ -651,10 +695,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("detects representative secret families in headless inference artifacts", () => {
     const detectsSecret = (token: string) =>
-      runHeadlessCheckHelper(
-        'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
-        { TOKEN: token },
-      );
+      runHeadlessCheckHelper("contains-secret", { TOKEN: token });
     const secretSamples = [
       "nvapi-" + "A".repeat(10),
       "nvcf-" + "A".repeat(10),
