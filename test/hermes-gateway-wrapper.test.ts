@@ -208,17 +208,78 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--version");
   });
 
-  it("invokes the runtime-env validator and the config-show masker under python3 -I (isolated mode)", () => {
-    // The wrapper resolves python3 from a fixed trusted absolute-path list, so
-    // an intercepting PATH-planted stub cannot capture the argv it exec's with.
-    // Assert the isolated-mode flag directly on the wrapper source so a
-    // regression that drops `-I` from either invocation fails the test.
-    // `-I` matters because it disables PYTHONPATH / PYTHONHOME / user-site
-    // startup hooks that a hostile runtime environment could otherwise use to
-    // load attacker-controlled code before the validator or the masker runs.
-    const source = fs.readFileSync(WRAPPER, "utf-8");
-    expect(source).toMatch(/\[python3,\s*"-I",\s*guard_path,\s*"runtime-env"\]/);
-    expect(source).toMatch(/\[python3,\s*"-I",\s*guard_path,\s*"mask-config-output"\]/);
+  it("invokes the runtime-env validator with python3 -I (isolated mode)", () => {
+    // Redirect `_TRUSTED_PYTHON3` at a stub python3 that records its argv, so
+    // a regression that drops `-I` from the runtime-env invocation fails via
+    // real exec rather than source inspection. `-I` matters because it
+    // disables PYTHONPATH / PYTHONHOME / user-site startup hooks that a
+    // hostile runtime environment could otherwise use to load attacker-
+    // controlled code before the validator runs.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-"));
+    try {
+      const argvLog = path.join(dir, "argv.log");
+      const stubPython = path.join(dir, "trusted-python3");
+      fs.writeFileSync(
+        stubPython,
+        `#!/usr/bin/env bash\nprintf '%s\\n' "$@" > ${JSON.stringify(argvLog)}\nexit 1\n`,
+        { mode: 0o755 },
+      );
+      const wrapperSrc = fs
+        .readFileSync(WRAPPER, "utf-8")
+        .replace(/_TRUSTED_PYTHON3 = \([\s\S]*?\)/, `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`);
+      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      const run = spawnSync(path.join(dir, "hermes"), ["gateway", "run"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+      expect(run.status).not.toBe(0);
+      const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
+      expect(argv[0]).toBe("-I");
+      expect(argv[argv.length - 1]).toBe("runtime-env");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("invokes the config-show masker with python3 -I (isolated mode)", () => {
+    // Same behavioural check for `mask-config-output`. Two maskers spawn (one
+    // per Hermes stream) so the log captures the first one's argv; that is
+    // sufficient to prove `-I` reached the argv construction.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-argv-mask-"));
+    try {
+      const argvLog = path.join(dir, "argv.log");
+      const stubPython = path.join(dir, "trusted-python3");
+      fs.writeFileSync(
+        stubPython,
+        [
+          "#!/usr/bin/env bash",
+          `[ -e ${JSON.stringify(argvLog)} ] || printf '%s\\n' "$@" > ${JSON.stringify(argvLog)}`,
+          "exit 1",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const wrapperSrc = fs
+        .readFileSync(WRAPPER, "utf-8")
+        .replace(/_TRUSTED_PYTHON3 = \([\s\S]*?\)/, `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`);
+      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      const run = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+      expect(run.status).not.toBe(0);
+      const argv = fs.readFileSync(argvLog, "utf-8").trim().split("\n");
+      expect(argv[0]).toBe("-I");
+      expect(argv[argv.length - 1]).toBe("mask-config-output");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("masks api_key values in `config show` Python dict output", () => {
