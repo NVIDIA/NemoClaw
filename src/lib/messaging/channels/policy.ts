@@ -41,12 +41,18 @@ function channelPolicyPath(channelId: string, agent: MessagingAgentId): string |
 }
 
 function readPresetHeader(content: string): { name: string; description: string } | null {
-  const parsed = YAML.parse(content);
+  let parsed: { preset?: unknown } | null;
+  try {
+    parsed = YAML.parse(content);
+  } catch {
+    return null;
+  }
   const preset = parsed?.preset;
   if (!preset || typeof preset !== "object" || Array.isArray(preset)) return null;
-  const name = preset.name;
+  const fields = preset as Record<string, unknown>;
+  const name = fields.name;
   if (typeof name !== "string" || name.trim().length === 0) return null;
-  const description = typeof preset.description === "string" ? preset.description.trim() : "";
+  const description = typeof fields.description === "string" ? fields.description.trim() : "";
   return { name: name.trim(), description };
 }
 

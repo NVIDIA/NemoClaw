@@ -13,7 +13,7 @@ const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "state",
 const SOURCE_NODE_ARGS = ["--import", "tsx"];
 
 describe("sandbox-aware messaging policy resolution", () => {
-  it("does not use OpenClaw channel policies for unsupported sandbox agents", () => {
+  it("loadPresetForSandbox fails closed for unknown messaging agents without blocking central presets", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-agent-resolution-"));
     const script = String.raw`
 const registry = require(${REGISTRY_PATH});
