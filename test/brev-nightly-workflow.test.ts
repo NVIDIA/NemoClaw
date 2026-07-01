@@ -20,6 +20,11 @@ type ReusableCallerJob = {
   uses?: string;
   with?: Record<string, unknown>;
   secrets?: Record<string, unknown>;
+  strategy?: {
+    matrix?: {
+      test_suite?: string[];
+    };
+  };
 };
 
 type Workflow = {
@@ -112,6 +117,15 @@ describe("Brev nightly workflow contract", () => {
 
   it("keeps every suite in the nightly matrix in a distinct concurrency group", () => {
     expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
+  });
+
+  it("runs stateful messaging targets on separate fresh instances", () => {
+    expect(nightly.jobs?.["brev-nightly-e2e"]?.strategy?.matrix?.test_suite).toEqual([
+      "all",
+      "messaging-providers",
+      "messaging-compatible-endpoint",
+      "full",
+    ]);
   });
 
   it("keeps manual dispatch inputs out of the Brev credential boundary", () => {

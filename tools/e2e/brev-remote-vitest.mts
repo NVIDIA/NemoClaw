@@ -5,7 +5,17 @@ import { shellQuote } from "../../src/lib/core/shell-quote";
 
 export type BrevVitestProject = "cli" | "e2e-live";
 
-const BREV_SUITES_WITHOUT_HARNESS_SANDBOX = new Set(["all", "full", "gpu"]);
+export const BREV_MESSAGING_PROVIDER_TIMEOUT_MS = 70 * 60_000;
+export const BREV_MESSAGING_COMPAT_TIMEOUT_MS = 40 * 60_000;
+export const BREV_REMOTE_WRAPPER_GRACE_MS = 60_000;
+
+const BREV_SUITES_WITHOUT_HARNESS_SANDBOX = new Set([
+  "all",
+  "full",
+  "gpu",
+  "messaging-compatible-endpoint",
+  "messaging-providers",
+]);
 
 export function brevSuiteNeedsHarnessSandbox(testSuite: string): boolean {
   return !BREV_SUITES_WITHOUT_HARNESS_SANDBOX.has(testSuite);
@@ -31,6 +41,9 @@ export function buildBrevRemoteVitestCommand(project: BrevVitestProject, target:
     // download an unpinned replacement.
     "if [ ! -x ./node_modules/.bin/vitest ]; then npm ci --ignore-scripts --no-audit --no-fund; fi",
     "test -x ./node_modules/.bin/vitest",
-    `NEMOCLAW_RUN_LIVE_E2E=1 ${vitestCommand}`,
+    // A Brev retry must provision a fresh instance. Retrying a stateful live
+    // target on the same VM can overlap an installer that still owns the
+    // production onboard lock and turn the original timeout into lock noise.
+    `NEMOCLAW_RUN_LIVE_E2E=1 NEMOCLAW_E2E_RETRIES=0 ${vitestCommand}`,
   ].join(" && ");
 }

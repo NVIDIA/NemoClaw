@@ -42,11 +42,14 @@ name: E2E / Branch Validation
 #                              isolation, openclaw.json config patching, network reachability,
 #                              and L7 proxy token rewriting for Telegram + Discord. Creates
 #                              its own sandbox (e2e-msg-provider). (~15 min)
+#   messaging-compatible-endpoint — Telegram-enabled OpenClaw through a local
+#                              OpenAI-compatible endpoint. Creates its own sandbox
+#                              (e2e-msg-compat) on a separate fresh instance.
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
 #                              sandbox proof suite from source. (~45 min)
-#   all                      — Runs credential-sanitization + telegram-injection (NOT full,
-#                              which destroys the sandbox the security tests need).
+#   all                      — Runs credential-sanitization + telegram-injection, each with
+#                              its own sandbox lifecycle (NOT the independent full journey).
 #
 # Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_INFERENCE_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
@@ -68,6 +71,7 @@ on:
           - credential-sanitization
           - telegram-injection
           - messaging-providers
+          - messaging-compatible-endpoint
           - dashboard-remote-bind
           - gpu
           - all

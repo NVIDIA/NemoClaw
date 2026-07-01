@@ -54,6 +54,9 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../../src/lib/core/shell-quote";
 import {
+  BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+  BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+  BREV_REMOTE_WRAPPER_GRACE_MS,
   brevSuiteNeedsHarnessSandbox,
   buildBrevRemoteVitestCommand,
 } from "../../tools/e2e/brev-remote-vitest.mts";
@@ -1207,36 +1210,35 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     120_000,
   );
 
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
-  // with messaging tokens attached. It does not conflict with the e2e-test sandbox
-  // used by other tests, but it may recreate the gateway.
+  // This stateful target owns its sandbox and gateway lifecycle. Brev runs it
+  // single-shot on a dedicated instance; a retry means a new workflow run and
+  // therefore a new VM, never a second installer behind a live onboard lock.
   it.runIf(TEST_SUITE === "messaging-providers")(
     "messaging credential provider suite passes on remote VM",
     () => {
       const output = runRemoteVitest(
         "e2e-live",
         "test/e2e/live/messaging-providers.test.ts",
-        1_800_000,
+        BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
       );
       expectVitestPassed(output);
     },
-    1_900_000, // cold image rebuilds can push this past 15 minutes on Brev CPU
+    BREV_MESSAGING_PROVIDER_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
-  // NOTE: The compatible-endpoint messaging test creates its own sandbox
-  // (e2e-msg-compat) with Telegram attached and a local OpenAI-compatible
-  // mock endpoint. It covers the inference.local path used by Telegram turns.
-  it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "messaging-providers")(
+  // The compatible-endpoint target also owns its sandbox lifecycle and runs
+  // on a separate Brev instance so provider cleanup cannot leak across it.
+  it.runIf(TEST_SUITE === "messaging-compatible-endpoint")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
       const output = runRemoteVitest(
         "e2e-live",
         "test/e2e/live/messaging-compatible-endpoint.test.ts",
-        1_800_000,
+        BREV_MESSAGING_COMPAT_TIMEOUT_MS,
       );
       expectVitestPassed(output);
     },
-    1_900_000, // cold image rebuilds can push this past 15 minutes on Brev CPU
+    BREV_MESSAGING_COMPAT_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "dashboard-remote-bind")(

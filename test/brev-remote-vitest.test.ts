@@ -9,6 +9,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  BREV_MESSAGING_COMPAT_TIMEOUT_MS,
+  BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
+  BREV_REMOTE_WRAPPER_GRACE_MS,
   brevSuiteNeedsHarnessSandbox,
   buildBrevRemoteVitestCommand,
 } from "../tools/e2e/brev-remote-vitest.mts";
@@ -40,6 +43,7 @@ function createFixture(): Fixture {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `printf 'env=%s\\n' "\${NEMOCLAW_RUN_LIVE_E2E:-}" >> "$VITEST_LOG"`,
+      `printf 'retries=%s\\n' "\${NEMOCLAW_E2E_RETRIES:-}" >> "$VITEST_LOG"`,
       `printf 'arg=%s\\n' "$@" >> "$VITEST_LOG"`,
       "",
     ].join("\n"),
@@ -76,6 +80,7 @@ function runRemoteCommand(fixture: Fixture) {
 function expectedVitestLog(): string {
   return [
     "env=1",
+    "retries=0",
     "arg=run",
     "arg=--project",
     "arg=e2e-live",
@@ -87,16 +92,24 @@ function expectedVitestLog(): string {
 }
 
 describe("Brev remote Vitest command", () => {
+  it("leaves each messaging target inside the fresh-instance job budget", () => {
+    expect(BREV_MESSAGING_PROVIDER_TIMEOUT_MS).toBe(70 * 60_000);
+    expect(BREV_MESSAGING_COMPAT_TIMEOUT_MS).toBe(40 * 60_000);
+    expect(BREV_REMOTE_WRAPPER_GRACE_MS).toBe(60_000);
+  });
+
   it("does not seed shared harness state for suites that own their sandbox lifecycle", () => {
     expect(brevSuiteNeedsHarnessSandbox("all")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("full")).toBe(false);
     expect(brevSuiteNeedsHarnessSandbox("gpu")).toBe(false);
+    expect(brevSuiteNeedsHarnessSandbox("messaging-compatible-endpoint")).toBe(false);
+    expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(false);
   });
 
   it("preserves harness onboarding for single-target suites", () => {
     expect(brevSuiteNeedsHarnessSandbox("credential-sanitization")).toBe(true);
     expect(brevSuiteNeedsHarnessSandbox("telegram-injection")).toBe(true);
-    expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(true);
+    expect(brevSuiteNeedsHarnessSandbox("dashboard-remote-bind")).toBe(true);
   });
 
   it("uses the repository-local Vitest binary without invoking a package runner", () => {
