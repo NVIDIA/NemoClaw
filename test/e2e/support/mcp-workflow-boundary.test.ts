@@ -94,6 +94,26 @@ describe("MCP workflow artifact boundary", () => {
     }
   });
 
+  it("revokes Docker credentials before executing unverified dev artifacts", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
+    const workflowPath = path.join(directory, "e2e.yaml");
+    try {
+      const workflow = YAML.parse(fs.readFileSync(".github/workflows/e2e.yaml", "utf8")) as {
+        jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+      };
+      workflow.jobs["mcp-bridge-dev"].steps = workflow.jobs["mcp-bridge-dev"].steps.filter(
+        (step) => step.name !== "Revoke Docker auth before unverified dev tooling",
+      );
+      fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+      expect(validateMcpOpenShellWorkflowBoundary(workflowPath)).toContain(
+        "mcp-bridge-dev must revoke Docker auth before unverified dev tooling",
+      );
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects any additional artifact upload outside the scanned directory", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-workflow-"));
     const workflowPath = path.join(directory, "e2e.yaml");

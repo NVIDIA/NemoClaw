@@ -841,8 +841,9 @@ describe("atomic rebuild (#2273)", () => {
       expect(output).not.toContain("Missing credential: NOUS_API_KEY");
       expect(output).not.toContain("provider credential not found");
       expect(output).toContain(
-        "Hermes Provider is not registered in OpenShell; registering it from exported NOUS_API_KEY before rebuild.",
+        "Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
       );
+      expect(output).not.toContain("NOUS_API_KEY");
       expect(output).not.toContain("nous-key-from-env");
       expect(output).toContain("Backing up sandbox state");
       expect(output).toContain("State backed up");

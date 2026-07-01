@@ -9,6 +9,7 @@ const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
 const TERMINAL_JOBS = ["report-to-pr", "scorecard"] as const;
 const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const DEV_DOCKER_CLEANUP_NAME = "Revoke Docker auth before unverified dev tooling";
 const MCP_CLOUDFLARED_VERSION = "2026.6.1";
 const MCP_CLOUDFLARED_DEB_SHA256 =
   "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526";
@@ -175,6 +176,31 @@ function validateJobSecurity(
   }
   if (steps.indexOf(cleanup) !== steps.length - 1) {
     errors.push(`${jobName} Docker auth cleanup must remain the final step`);
+  }
+  if (jobName === "mcp-bridge-dev") {
+    const devCleanup = namedStep(job, DEV_DOCKER_CLEANUP_NAME);
+    const install = namedStep(job, "Install OpenShell CLI");
+    const expectedDevCleanup = {
+      name: DEV_DOCKER_CLEANUP_NAME,
+      shell: "bash",
+      run: DOCKER_CLEANUP_RUN,
+    };
+    if (JSON.stringify(devCleanup) !== JSON.stringify(expectedDevCleanup)) {
+      errors.push("mcp-bridge-dev must revoke Docker auth before unverified dev tooling");
+    }
+    const devCleanupIndex = steps.indexOf(devCleanup);
+    const installIndex = steps.indexOf(install);
+    if (devCleanupIndex <= steps.indexOf(login) || installIndex <= devCleanupIndex) {
+      errors.push(
+        "mcp-bridge-dev Docker auth revocation must follow setup and precede the dev installer",
+      );
+    }
+    if (
+      devCleanupIndex >= 0 &&
+      steps.slice(devCleanupIndex + 1).some((step) => step.name === "Authenticate to Docker Hub")
+    ) {
+      errors.push("mcp-bridge-dev must not restore Docker auth after dev-tooling revocation");
+    }
   }
 }
 

@@ -647,6 +647,10 @@ jobs:
       - name: Generate MCP test TLS
         run: bash test/e2e/setup-mcp-test-tls.sh
 
+      - name: Revoke Docker auth before unverified dev tooling
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
       - name: Install OpenShell CLI
         env:
           NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
