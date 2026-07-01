@@ -164,6 +164,21 @@ describe("shared Docker Hub authentication workflow boundary", () => {
     );
   });
 
+  it("rejects step-level Docker config overrides outside the canonical auth step", () => {
+    const errors = validateMutation((workflow) => {
+      const run = namedStep(workflow.jobs["runtime-overrides"], "Run runtime overrides live test");
+      expect(run).toBeDefined();
+      run!.env = {
+        ...run!.env,
+        DOCKER_CONFIG: "${{ runner.temp }}/alternate-docker-config",
+      };
+    });
+
+    expect(errors).toContain(
+      "runtime-overrides step 'Run runtime overrides live test' env must not include DOCKER_CONFIG",
+    );
+  });
+
   it("rejects trust, isolation, retry, password, and cleanup mapping drift", () => {
     const errors = validateMutation((workflow) => {
       const auth = namedStep(workflow.jobs.live, AUTH_STEP_NAME);

@@ -2580,6 +2580,7 @@ function validateDockerHubAuthBoundary(errors: string[], jobs: WorkflowRecord): 
       const stepEnv = asRecord(step.env);
       if (step !== auth) {
         for (const variable of [
+          "DOCKER_CONFIG",
           "DOCKERHUB_AUTH_REQUIRED",
           "DOCKERHUB_USERNAME",
           "DOCKERHUB_TOKEN",
