@@ -365,19 +365,23 @@ describe("mutable agent config permissions", () => {
     const tmpDir = mkdtempOnPosixFs("nemoclaw-6047-hardlink-");
     const configDir = path.join(tmpDir, ".openclaw");
     const configFile = path.join(configDir, "openclaw.json");
+    const earlierTreeAlias = path.join(configDir, ".a");
     const externalAlias = path.join(tmpDir, "external-config");
 
     try {
       fs.mkdirSync(configDir, { mode: 0o700 });
       fs.writeFileSync(externalAlias, "{}\n", { mode: 0o600 });
       fs.chmodSync(externalAlias, 0o600);
+      fs.linkSync(externalAlias, earlierTreeAlias);
       fs.linkSync(externalAlias, configFile);
 
       const result = runMutableConfigNormalizer(configDir, [tmpDir, configDir, externalAlias]);
 
       expect(result.status).not.toBe(0);
       expect(fs.statSync(configFile).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(fs.statSync(earlierTreeAlias).ino).toBe(fs.statSync(externalAlias).ino);
       expect(modeBits(configFile) & 0o7777).toBe(0o600);
+      expect(modeBits(earlierTreeAlias) & 0o7777).toBe(0o600);
       expect(modeBits(externalAlias) & 0o7777).toBe(0o600);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

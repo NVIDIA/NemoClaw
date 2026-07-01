@@ -205,6 +205,8 @@ def verify_fixed_files(
     root_fd: int,
     expected_uid: int,
     expected_gid: int,
+    *,
+    expected_mode: int | None = 0o660,
 ) -> None:
     root_metadata = os.fstat(root_fd)
     for name in FIXED_FILES:
@@ -219,7 +221,10 @@ def verify_fixed_files(
             or before.st_dev != root_metadata.st_dev
             or before.st_uid != expected_uid
             or before.st_gid != expected_gid
-            or stat.S_IMODE(before.st_mode) != 0o660
+            or (
+                expected_mode is not None
+                and stat.S_IMODE(before.st_mode) != expected_mode
+            )
             or before.st_nlink != 1
         ):
             raise UnsafeTree()
@@ -703,6 +708,14 @@ def normalize_owner_tree(
             or root_metadata.st_gid != expected_gid
         ):
             raise UnsafeTree()
+        # Reject unsafe fixed-file metadata before recursive normalization can
+        # mutate an earlier nonfixed alias of the same inode.
+        verify_fixed_files(
+            root_fd,
+            expected_uid,
+            expected_gid,
+            expected_mode=None,
+        )
         normalize_dir(root_fd, top_level=True)
         set_mode(root_fd, 0o2770, required=True)
         verify_fixed_files(root_fd, expected_uid, expected_gid)
