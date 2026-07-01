@@ -24,6 +24,7 @@ const path = require("path");
 const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
 const { run, runCapture, validateName } = require("../runner");
+const { CLI_NAME }: typeof import("../cli/branding") = require("../cli/branding");
 const {
   dockerExecFileSync,
   dockerSpawnSync,
@@ -308,13 +309,31 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
 // sandbox container is running.
 // ---------------------------------------------------------------------------
 
-// Recovery hint printed when shields cannot restore lockdown and leaves the
-// agent config mutable. It must stay driver-neutral: the docker and vm drivers
-// run per-sandbox direct containers with no k8s control plane, so a "kubectl
-// exec" instruction is invalid there — and the docker driver is the default on
-// v0.0.71. Both recoveries below are valid on every driver. (#6126)
-function manualRelockRecoveryHint(sandboxName: string): string {
-  return `  Recovery: re-run \`nemoclaw ${sandboxName} shields up\`, or rebuild a known-good baseline with \`nemoclaw ${sandboxName} rebuild --yes\`.`;
+/**
+ * Print recovery guidance when shields cannot restore lockdown.
+ *
+ * Keep this driver-neutral because docker and VM sandboxes have no Kubernetes
+ * control plane. Rebuild remains an escalation after the sandbox-ready retry
+ * rather than an equivalent first step. (#6126)
+ */
+function printManualRelockRecoveryHint(sandboxName: string): void {
+  console.error(
+    `  Recovery: confirm the sandbox is running and ready, then retry \`${CLI_NAME} ${sandboxName} shields up\`.`,
+  );
+  console.error(
+    `  If the retry still fails, rebuild a known-good baseline with \`${CLI_NAME} ${sandboxName} rebuild --yes\`.`,
+  );
+}
+
+// The guard also uses startup-not-ready for structural PID 1 incompatibility.
+// Match the complete transient diagnostic so a different detail or an
+// additional issue cannot downgrade an unsafe rollback from CRITICAL.
+const OPENCLAW_STARTUP_NOT_READY_DIAGNOSTIC =
+  /^(?:top-level config rollback failed: )?Config not locked: OpenClaw config guard lock \[startup-not-ready\] \/run\/nemoclaw\/openclaw-config-ready\.json: OpenClaw startup is not ready for host config mutations$/;
+
+function isOpenClawStartupNotReadyFailure(value: unknown): boolean {
+  const message = value instanceof Error ? value.message : String(value);
+  return OPENCLAW_STARTUP_NOT_READY_DIAGNOSTIC.test(message);
 }
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
@@ -1486,8 +1505,8 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 // user and the gateway UID can write the mutable config tree. Hermes keeps its
 // tighter single-user layout.
 //
-// Note on chattr: best-effort — it may silently fail if kubectl exec
-// lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
+// Note on chattr: best-effort — the privileged sandbox exec may lack
+// CAP_LINUX_IMMUTABLE, or the file may never have been immutable. That's fine:
 // the file becomes writable through the permissive policy (disables Landlock
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
@@ -1814,9 +1833,9 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
 //   2. UNIX permissions — 444 root:root (mandatory, verified here)
 //   3. chattr +i immutable bit — defense-in-depth (best-effort)
 //
-// Layer 3 is best-effort because kubectl exec may lack
-// CAP_LINUX_IMMUTABLE. Layers 1+2 are sufficient. We still attempt it
-// in case the runtime environment supports it.
+// Layer 3 is best-effort because the privileged sandbox exec may lack
+// CAP_LINUX_IMMUTABLE. Layers 1+2 are sufficient. We still attempt it in case
+// the runtime environment supports it.
 // ---------------------------------------------------------------------------
 
 function captureSealHashes(sandboxName: string, filesToHash: string[]): { [path: string]: string } {
@@ -2038,9 +2057,18 @@ function lockAgentConfigUnderMutationLock(
         restoreTop("lock");
       }
       if (rollbackIssues.length > 0) {
-        console.error(
-          `  CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackIssues.join(", ")}`,
-        );
+        if (
+          isOpenClawStartupNotReadyFailure(error) &&
+          rollbackIssues.every(isOpenClawStartupNotReadyFailure)
+        ) {
+          console.error(
+            `  Warning: OpenClaw lock rollback could not restore the trusted posture. Confirm the sandbox is running and ready, then retry the operation before rebuilding. ${rollbackIssues.join(", ")}`,
+          );
+        } else {
+          console.error(
+            `  CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackIssues.join(", ")}`,
+          );
+        }
       }
     }
     throw error;
@@ -2217,7 +2245,7 @@ function rollbackShieldsDown(
     console.error("  Lockdown restored. Config was never left unguarded.");
   } else {
     console.error("  Config remains unlocked — manual intervention required.");
-    console.error(manualRelockRecoveryHint(sandboxName));
+    printManualRelockRecoveryHint(sandboxName);
   }
 }
 
@@ -2858,6 +2886,7 @@ function shieldsUpWithoutHostLock(
       const message = relock.error ?? "Config re-lock did not re-confirm after settle window";
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains drifted — manual intervention required.");
+      printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(message, opts.throwOnError);
     }
     const lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } } =
@@ -2921,7 +2950,7 @@ function shieldsUpWithoutHostLock(
     if (!activation.ok) {
       console.error(`  ERROR: ${activation.error ?? "unknown restore error"}`);
       console.error("  Config remains unlocked — manual intervention required.");
-      console.error(manualRelockRecoveryHint(sandboxName));
+      printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
     if (activation.fileHashes && typeof activation.chattrApplied === "boolean") {
@@ -2932,7 +2961,7 @@ function shieldsUpWithoutHostLock(
     }
   } else {
     // 2b. Lock config file to read-only.
-    //     Uses kubectl exec to bypass Landlock (same as shields down).
+    //     Uses the registry-scoped privileged sandbox exec to bypass Landlock.
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
@@ -2949,7 +2978,7 @@ function shieldsUpWithoutHostLock(
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  ERROR: ${message}`);
       console.error("  Config remains unlocked — manual intervention required.");
-      console.error(manualRelockRecoveryHint(sandboxName));
+      printManualRelockRecoveryHint(sandboxName);
       return failShieldsCommand(message, opts.throwOnError);
     }
     saveShieldsState(sandboxName, {
@@ -3240,7 +3269,6 @@ export {
   killTimer,
   lockAgentConfig,
   MAX_TIMEOUT_SECONDS,
-  manualRelockRecoveryHint,
   parseDuration,
   prepareAutoRestoreTransitionTakeover,
   repairMutableConfigPerms,
