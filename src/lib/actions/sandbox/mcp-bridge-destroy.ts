@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
+import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
@@ -9,18 +9,19 @@ import {
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
 } from "./mcp-bridge-contracts";
+import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
-  assertGeneratedPolicyRegistrationMutationSafe,
-  removeGeneratedPolicy,
-} from "./mcp-bridge-policy";
+  assertMcpDestroySnapshotCurrent,
+  cloneMcpBridgeEntry,
+  discardSafeIncompleteMcpAdds,
+  inspectExactMcpDestroyProvider,
+} from "./mcp-bridge-destroy-preflight";
+import { removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   attachProvider,
   deleteProvider,
   detachProvider,
   inspectMcpProvider,
-  type McpProviderInspection,
-  providerMatchesCredential,
-  providerShapeDetail,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
@@ -40,166 +41,13 @@ import {
 } from "./mcp-bridge-state";
 import { assertAuthenticatedBridgeEntry, validateSandboxName } from "./mcp-bridge-validation";
 
-export interface McpDestroyPreparation {
-  entries: McpBridgeEntry[];
-  detachedProviderEntries: McpBridgeEntry[];
-  scrubbedAdapterEntries: McpBridgeEntry[];
-  /** True when phase one was completed by an earlier destroy process. */
-  destroyAlreadyPrepared: boolean;
-  /** True when a previous destroy already confirmed the sandbox was absent. */
-  destroyAlreadyPending: boolean;
-}
-
-export function cloneMcpBridgeEntry(entry: McpBridgeEntry): McpBridgeEntry {
-  return { ...entry, env: [...entry.env] };
-}
-
-function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boolean {
-  return (
-    left.server === right.server &&
-    left.agent === right.agent &&
-    left.adapter === right.adapter &&
-    left.url === right.url &&
-    left.providerName === right.providerName &&
-    left.providerId === right.providerId &&
-    left.policyName === right.policyName &&
-    left.addedAt === right.addedAt &&
-    left.updatedAt === right.updatedAt &&
-    left.addState === right.addState &&
-    left.env.length === right.env.length &&
-    left.env.every((name, index) => name === right.env[index])
-  );
-}
-
-export async function discardSafeIncompleteMcpAdds(
-  sandboxName: string,
-  sandbox: SandboxEntry,
-  options: { sandboxAbsent?: boolean } = {},
-): Promise<SandboxEntry> {
-  const bridges = bridgeState(sandbox);
-  const providerlessCandidates = Object.values(bridges).filter(
-    (entry) => entry.addState === "preflighted" && !entry.providerId,
-  );
-  if (providerlessCandidates.length > 0) await ensureSandboxGatewaySelected(sandboxName);
-  const remainingEntries: Array<[string, McpBridgeEntry]> = [];
-  const providerlessPreflighted: McpBridgeEntry[] = [];
-  for (const [server, entry] of Object.entries(bridges)) {
-    if (entry.addState === "prepared") continue;
-    if (entry.addState === "preflighted" && !entry.providerId) {
-      assertAuthenticatedBridgeEntry(entry);
-      const inspection = inspectMcpProvider(entry.providerName);
-      if (inspection.exists === false) {
-        providerlessPreflighted.push(entry);
-        continue;
-      }
-    }
-    remainingEntries.push([server, entry]);
-  }
-  const remaining = Object.fromEntries(remainingEntries);
-  if (Object.keys(remaining).length === Object.keys(bridges).length) {
-    return sandbox;
-  }
-  for (const entry of providerlessPreflighted) {
-    if (options.sandboxAbsent) {
-      const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
-      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
-    } else {
-      removeGeneratedPolicy(sandboxName, entry);
-    }
-  }
-  // A prepared add precedes all external side effects, so destroy must drop
-  // only its local manifest and must not inspect/delete same-name global state.
-  setBridgeState(sandboxName, remaining);
-  return getSandboxOrThrow(sandboxName);
-}
-
-function assertMcpDestroySnapshotCurrent(
-  sandboxName: string,
-  entries: readonly McpBridgeEntry[],
-): SandboxEntry {
-  const sandbox = getSandboxOrThrow(sandboxName);
-  const current = bridgeState(sandbox);
-  const expectedServers = new Set(entries.map((entry) => entry.server));
-  if (
-    Object.keys(current).length !== expectedServers.size ||
-    entries.some(
-      (entry) => !current[entry.server] || !mcpBridgeEntriesEqual(current[entry.server], entry),
-    )
-  ) {
-    throw new McpBridgeError(
-      `MCP bridge definitions changed while sandbox '${sandboxName}' was being destroyed. Cleanup state was preserved; re-run destroy to reconcile the current definitions.`,
-    );
-  }
-  return sandbox;
-}
-
-export function inspectExactMcpDestroyProvider(
-  entry: McpBridgeEntry,
-  options: { allowMissing: boolean; force?: boolean },
-): McpProviderInspection {
-  assertAuthenticatedBridgeEntry(entry);
-  if (!entry.providerId) {
-    throw new McpBridgeError(
-      `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
-    );
-  }
-  const inspection = inspectMcpProvider(entry.providerName);
-  if (inspection.exists === null) {
-    throw new McpBridgeError(
-      inspection.error ?? `Could not inspect OpenShell provider '${entry.providerName}'.`,
-    );
-  }
-  if (!inspection.exists) {
-    if (options.allowMissing) return inspection;
-    throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' is missing. Refusing to destroy sandbox state because a failed sandbox delete could not restore authenticated MCP without the preserved provider credential.`,
-    );
-  }
-  if (!providerMatchesCredential(inspection, entry.env[0], entry.providerId)) {
-    const forceDetail = options.force
-      ? " --force does not delete a non-matching global provider because it may be owned by another workflow."
-      : "";
-    throw new McpBridgeError(
-      `OpenShell provider '${entry.providerName}' no longer exactly matches MCP server '${entry.server}'. ${providerShapeDetail(inspection, entry.env[0], entry.providerId)}${forceDetail}`,
-    );
-  }
-  return inspection;
-}
-
-/**
- * Build the cleanup manifest when a gateway-pinned `sandbox list` has already
- * proved the sandbox is absent. No sandbox exec/adapter mutation is possible
- * in this branch; the current provider ID/type/key metadata must still match
- * the registry before delete confirmation and final cleanup.
- */
-export async function prepareMcpBridgesForAbsentSandboxDestroy(
-  sandboxName: string,
-  options: { force?: boolean } = {},
-): Promise<McpDestroyPreparation> {
-  validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName), {
-    sandboxAbsent: true,
-  });
-  const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
-  const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
-  const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
-  for (const entry of entries) {
-    // Missing providers are already converged once the sandbox is confirmed
-    // absent. Existing providers must still match exactly, including in force
-    // mode, so this path cannot delete another workflow's credential.
-    inspectExactMcpDestroyProvider(entry, {
-      allowMissing: true,
-      force: options.force,
-    });
-  }
-  return {
-    entries,
-    detachedProviderEntries: [],
-    scrubbedAdapterEntries: [],
-    destroyAlreadyPrepared,
-    destroyAlreadyPending,
-  };
-}
+export type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
+export {
+  cloneMcpBridgeEntry,
+  discardSafeIncompleteMcpAdds,
+  inspectExactMcpDestroyProvider,
+  prepareMcpBridgesForAbsentSandboxDestroy,
+} from "./mcp-bridge-destroy-preflight";
 
 /**
  * Phase one of sandbox destroy. Remove the adapter entry from the retained
