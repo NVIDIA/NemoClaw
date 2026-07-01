@@ -154,6 +154,36 @@ describe("onboard command options", () => {
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
   });
 
+  it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Installation cancelled");
+  });
+
+  it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw new Error("docker is not reachable");
+        },
+        error: () => {},
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("docker is not reachable");
+  });
+
   it("sets the Ollama autostart override before onboarding", async () => {
     const previous = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
     delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;

@@ -113,42 +113,6 @@ export function validateDocsValidationWorkflow(workflow: DocsValidationWorkflow)
   requireRunContains(errors, run, "npx vitest run --project e2e-live");
   requireRunContains(errors, run, "test/e2e/live/docs-validation.test.ts");
 
-  const upload = findStep(job, "Upload docs validation artifacts");
-  requireEqual(errors, upload.if, "always()", `${JOB_NAME} artifact upload must always run`);
-  if (!/^actions\/upload-artifact@[0-9a-f]{40}$/u.test(upload.uses ?? "")) {
-    errors.push(`${JOB_NAME} artifact upload must pin a full action SHA`);
-  }
-  requireEqual(
-    errors,
-    upload.with?.name,
-    "e2e-docs-validation",
-    `${JOB_NAME} artifact name must remain stable`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.path,
-    "e2e-artifacts/live/docs-validation/",
-    `${JOB_NAME} must upload docs-validation artifacts`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["include-hidden-files"],
-    false,
-    `${JOB_NAME} artifact upload must exclude hidden files`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["if-no-files-found"],
-    "ignore",
-    `${JOB_NAME} artifact upload must tolerate missing failure artifacts`,
-  );
-  requireEqual(
-    errors,
-    upload.with?.["retention-days"],
-    14,
-    `${JOB_NAME} artifact retention must remain 14 days`,
-  );
-
   const reportNeeds = workflow.jobs["report-to-pr"]?.needs;
   if (!Array.isArray(reportNeeds) || !reportNeeds.includes(JOB_NAME)) {
     errors.push(`report-to-pr must wait for ${JOB_NAME}`);

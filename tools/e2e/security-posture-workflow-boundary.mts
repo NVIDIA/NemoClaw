@@ -152,24 +152,6 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   requireRunContains(errors, run, "npx vitest run --project e2e-live");
   requireRunContains(errors, run, '"${{ matrix.test_file }}"');
 
-  const upload = namedStep(jobSteps, "Upload security posture artifacts");
-  if (upload.if !== "always()") errors.push(`${JOB_NAME} artifact upload must always run`);
-  if (record(upload.with).name !== "e2e-security-posture-${{ matrix.agent }}") {
-    errors.push(`${JOB_NAME} artifact name must identify the agent matrix leg`);
-  }
-  if (record(upload.with).path !== "e2e-artifacts/live/security-posture-${{ matrix.agent }}/") {
-    errors.push(`${JOB_NAME} artifact path must identify the agent matrix leg`);
-  }
-  if (record(upload.with)["include-hidden-files"] !== false) {
-    errors.push(`${JOB_NAME} artifact upload must exclude hidden files`);
-  }
-  if (record(upload.with)["if-no-files-found"] !== "ignore") {
-    errors.push(`${JOB_NAME} artifact upload must ignore missing files`);
-  }
-  if (record(upload.with)["retention-days"] !== 14) {
-    errors.push(`${JOB_NAME} artifact retention must be 14 days`);
-  }
-
   return errors;
 }
 

@@ -467,6 +467,7 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+
 The exit code is the remote command's exit code.
 
 | Flag | Description |
@@ -713,8 +714,10 @@ nemohermes my-assistant doctor [--json]
 ### `nemohermes <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
+The command runs as the sandbox user with `HOME=/sandbox`.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
+
+The command exits with the remote command's exit code.
 
 ```bash
 nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]

@@ -1,8 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { spawnExitCode } from "../../core/process-exit";
+import type {
+  MutableConfigPermsInspection,
+  MutableConfigRepairResult,
+} from "../../shields/mutable-config-perms";
+import type { SandboxEntry } from "../../state/registry";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -14,6 +19,45 @@ type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
   error?: Error;
+  releaseSignals?: () => void;
+};
+
+export type SandboxExecRunner = (
+  binary: string,
+  args: readonly string[],
+) => SpawnLikeResult | Promise<SpawnLikeResult>;
+
+export type SandboxExecChild = {
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  kill: (signal: NodeJS.Signals) => boolean;
+  once: {
+    (event: "error", listener: (error: Error) => void): unknown;
+    (
+      event: "close",
+      listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+    ): unknown;
+  };
+};
+
+export type SandboxExecSpawner = (binary: string, args: readonly string[]) => SandboxExecChild;
+
+export type SandboxExecSignalSource = {
+  add: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
+  remove: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
+};
+
+export type SandboxExecCleanupDeps = {
+  getSandbox: (sandboxName: string) => Pick<SandboxEntry, "agent"> | null;
+  inspectMutableConfigPerms: (sandboxName: string) => MutableConfigPermsInspection;
+  repairMutableConfigPerms: (sandboxName: string) => MutableConfigRepairResult;
+};
+
+export type SandboxExecCompletion = {
+  code: number;
+  commandCode: number;
+  invocationError?: string;
+  cleanupError?: string;
 };
 
 export type WorkdirProbeResult = {
@@ -66,6 +110,162 @@ export function computeExitCode(result: SpawnLikeResult): {
   return { code: spawnExitCode(result) };
 }
 
+function repairFailureDetail(
+  inspection: MutableConfigPermsInspection,
+  result: MutableConfigRepairResult,
+): string | null {
+  if (!result.applied) {
+    if (result.skipReason === "locked") return null;
+    return `repair skipped: ${result.reason}`;
+  }
+  if (result.verified) return null;
+  const before = inspection.applies ? inspection.issues.join("; ") : inspection.reason;
+  const errors = result.errors.join("; ") || "verification failed";
+  return `${errors}${before ? ` (before repair: ${before})` : ""}`;
+}
+
+/**
+ * Restore the mutable OpenClaw permission contract after the public
+ * `nemoclaw <sandbox> exec` command boundary. OpenShell executes the requested
+ * process directly, so the sandbox entrypoint's one-shot cleanup does not run
+ * on this path. Hermes and custom agents are deliberately left unchanged.
+ */
+export function cleanupOpenClawAfterExec(
+  sandboxName: string,
+  deps: SandboxExecCleanupDeps,
+): string | null {
+  let entry: Pick<SandboxEntry, "agent"> | null;
+  try {
+    entry = deps.getSandbox(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `sandbox registry lookup failed: ${detail}`;
+  }
+  if (!entry) return null;
+  if ((entry.agent ?? "openclaw") !== "openclaw") return null;
+
+  let inspection: MutableConfigPermsInspection;
+  try {
+    inspection = deps.inspectMutableConfigPerms(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `permission inspection failed: ${detail}`;
+  }
+  if (inspection.applies && inspection.ok) return null;
+
+  let repair: MutableConfigRepairResult;
+  try {
+    repair = deps.repairMutableConfigPerms(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `permission repair failed: ${detail}`;
+  }
+  const repairFailure = repairFailureDetail(inspection, repair);
+  if (repairFailure || !repair.applied) return repairFailure;
+
+  let verification: MutableConfigPermsInspection;
+  try {
+    verification = deps.inspectMutableConfigPerms(sandboxName);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return `post-repair permission verification failed: ${detail}`;
+  }
+  if (!verification.applies) {
+    if (verification.skipReason === "locked") return null;
+    return `post-repair permission verification unavailable: ${verification.reason}`;
+  }
+  if (!verification.ok) {
+    return `post-repair permission verification failed: ${verification.issues.join("; ")}`;
+  }
+  return null;
+}
+
+const defaultSandboxExecSpawner: SandboxExecSpawner = (binary, args) =>
+  spawn(binary, [...args], { stdio: "inherit" });
+
+const defaultSandboxExecSignalSource: SandboxExecSignalSource = {
+  add: (signal, listener) => process.on(signal, listener),
+  remove: (signal, listener) => process.off(signal, listener),
+};
+
+export async function runSandboxExecChild(
+  binary: string,
+  args: readonly string[],
+  spawnChild: SandboxExecSpawner = defaultSandboxExecSpawner,
+  signalSource: SandboxExecSignalSource = defaultSandboxExecSignalSource,
+): Promise<SpawnLikeResult> {
+  let child: SandboxExecChild;
+  try {
+    child = spawnChild(binary, args);
+  } catch (error) {
+    return { status: null, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+
+  return new Promise((resolve) => {
+    let spawnError: Error | undefined;
+    const forwardTerm = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    };
+    // A terminal Ctrl+C is already delivered to every member of the foreground
+    // process group, including the non-detached OpenShell child. Hold SIGINT in
+    // the parent without re-sending it so one Ctrl+C stays one child signal and
+    // cleanup can finish. Headless/PID-targeted cancellation must use TERM;
+    // distinguishing its signal origin would require out-of-scope process-group
+    // or native siginfo machinery.
+    const holdInt = () => {};
+    signalSource.add("SIGTERM", forwardTerm);
+    signalSource.add("SIGINT", holdInt);
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    child.once("close", (status, signal) => {
+      resolve({
+        status,
+        signal,
+        ...(spawnError ? { error: spawnError } : {}),
+        // Keep handlers installed through host-side permission cleanup. Once
+        // the child is reaped they suppress termination without forwarding.
+        releaseSignals: () => {
+          signalSource.remove("SIGTERM", forwardTerm);
+          signalSource.remove("SIGINT", holdInt);
+        },
+      });
+    });
+  });
+}
+
+export async function runSandboxExecCommand(
+  binary: string,
+  sandboxName: string,
+  command: readonly string[],
+  options: SandboxExecOptions,
+  run: SandboxExecRunner,
+  cleanupDeps: SandboxExecCleanupDeps,
+): Promise<SandboxExecCompletion> {
+  let result: SpawnLikeResult;
+  try {
+    result = await run(binary, buildOpenshellExecArgs(sandboxName, command, options));
+  } catch (error) {
+    result = { status: null, error: error instanceof Error ? error : new Error(String(error)) };
+  }
+  try {
+    const { code: commandCode, errorMessage: invocationError } = computeExitCode(result);
+    const cleanupError = cleanupOpenClawAfterExec(sandboxName, cleanupDeps) ?? undefined;
+    return {
+      code: cleanupError ? 1 : commandCode,
+      commandCode,
+      ...(invocationError ? { invocationError } : {}),
+      ...(cleanupError ? { cleanupError } : {}),
+    };
+  } finally {
+    result.releaseSignals?.();
+  }
+}
+
+export function cleanupFailureMessage(commandCode: number, detail: string): string {
+  return `  OpenClaw permission cleanup failed (command exit ${commandCode}; cleanup exit 1): ${detail}`;
+}
+
 const defaultWorkdirProbeRunner: WorkdirProbeRunner = (binary, args) => {
   const probe = spawnSync(binary, args, { stdio: ["ignore", "ignore", "ignore"] });
   return { status: probe.status, error: probe.error };
@@ -101,13 +301,29 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir);
   }
-  const result = spawnSync(binary, buildOpenshellExecArgs(sandboxName, command, options), {
-    stdio: "inherit",
-  });
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
-    console.error(`  Failed to invoke openshell: ${errorMessage}`);
+  const completion = await runSandboxExecCommand(
+    binary,
+    sandboxName,
+    command,
+    options,
+    runSandboxExecChild,
+    {
+      getSandbox: (name) =>
+        (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
+      inspectMutableConfigPerms: (name) =>
+        (require("../../shields") as typeof import("../../shields")).inspectMutableConfigPerms(
+          name,
+        ),
+      repairMutableConfigPerms: (name) =>
+        (require("../../shields") as typeof import("../../shields")).repairMutableConfigPerms(name),
+    },
+  );
+  if (completion.invocationError) {
+    console.error(`  Failed to invoke openshell: ${completion.invocationError}`);
     console.error("  Ensure 'openshell' is installed and on PATH.");
   }
-  process.exit(code);
+  if (completion.cleanupError) {
+    console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
+  }
+  process.exit(completion.code);
 }

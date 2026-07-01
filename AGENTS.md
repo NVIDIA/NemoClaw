@@ -41,7 +41,8 @@ Package-specific guides:
 
 | Task | Command |
 |------|---------|
-| Install all deps | `npm install && npm link && cd nemoclaw && npm install && npm run build && cd .. && cd nemoclaw-blueprint && uv sync && cd ..` |
+| Install all deps | `npm install && npm link && cd nemoclaw && npm install && npm run build && cd .. && uv sync` |
+| Check contributor environment | `npm run dev:doctor` |
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
@@ -165,8 +166,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. Run `make check` to verify your environment is set up correctly
-3. Check that `npm test` passes before starting
+2. Run `npm run dev:doctor` to verify the contributor environment without changing it
+3. Run tests targeted to the area you plan to change; reserve the full suite for broad changes
 
 ### Git and GitHub Access Failures
 

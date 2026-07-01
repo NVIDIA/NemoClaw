@@ -128,11 +128,8 @@ describe("spark install workflow boundary", () => {
           "spark-install live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "step 'Run Spark install live test' run script must include set -euo pipefail",
           "step 'Run Spark install live test' run script must include test/e2e/live/spark-install.test.ts",
-          "spark-install artifact upload name must be stable",
-          "artifact upload path must include e2e-artifacts/live/spark-install/",
-          "spark-install artifact upload must set include-hidden-files: false",
-          "spark-install artifact upload must ignore missing fixture artifacts",
-          "spark-install artifact upload retention-days must be 14",
+          "spark-install upload-e2e-artifacts invocation must not override its contract",
+          "spark-install upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {
