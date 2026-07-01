@@ -107,20 +107,34 @@ export async function ensureResumeProviderReady(
   const credentialValue = deps.hydrateCredentialEnv(resolvedCredentialEnv);
   const providerLabel = config?.label || deps.getProviderLabel(provider) || provider;
   const helpUrl = config?.helpUrl || null;
-  if (!credentialValue) {
+  const credentialError = credentialValue
+    ? deps.validateNvidiaApiKeyValue(credentialValue, resolvedCredentialEnv)
+    : null;
+  if (!credentialValue || credentialError) {
     if (deps.isNonInteractive()) {
-      deps.warn(
-        `  ${resolvedCredentialEnv} is required to recreate provider '${provider}' during resume.`,
-      );
-      deps.warn(
-        `  Re-run without --non-interactive to enter it, or set ${resolvedCredentialEnv} and retry.`,
-      );
+      if (credentialError) {
+        deps.warn(credentialError);
+        deps.warn(
+          `  Set a valid ${resolvedCredentialEnv} and retry, or re-run without --non-interactive to enter it.`,
+        );
+      } else {
+        deps.warn(
+          `  ${resolvedCredentialEnv} is required to recreate provider '${provider}' during resume.`,
+        );
+        deps.warn(
+          `  Re-run without --non-interactive to enter it, or set ${resolvedCredentialEnv} and retry.`,
+        );
+      }
       deps.exit(1);
       return { forceInferenceSetup: false, credentialEnv: resolvedCredentialEnv };
     }
     deps.log("");
     deps.log(`  [resume] Provider '${provider}' is missing from the gateway.`);
-    deps.log("  Re-enter the API key so onboarding can recreate it before rebuilding.");
+    deps.log(
+      credentialError
+        ? "  The stored API key is invalid. Re-enter it so onboarding can recreate the provider before rebuilding."
+        : "  Re-enter the API key so onboarding can recreate it before rebuilding.",
+    );
     await deps.replaceNamedCredential(
       resolvedCredentialEnv,
       `${providerLabel} API key`,
