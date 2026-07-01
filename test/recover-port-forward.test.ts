@@ -26,18 +26,17 @@ afterEach(() => {
   }
   for (const dir of tmpFixtures.splice(0)) {
     const listenerPidFile = path.join(dir, "forward-listener-pids");
-    if (fs.existsSync(listenerPidFile)) {
-      const listenerPids = fs
-        .readFileSync(listenerPidFile, "utf-8")
-        .split(/\s+/)
-        .map(Number)
-        .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
-      for (const pid of listenerPids) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-        }
+    const listenerPids = (
+      fs.existsSync(listenerPidFile) ? fs.readFileSync(listenerPidFile, "utf-8") : ""
+    )
+      .split(/\s+/)
+      .map(Number)
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+    for (const pid of listenerPids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
@@ -61,7 +60,7 @@ function forwardListenerScript(port: string): string {
 function startReachableForward(port: string, listenerPidFile: string): void {
   const child = spawn(process.execPath, ["-e", forwardListenerScript(port)], { stdio: "ignore" });
   listenerProcesses.push(child);
-  if (child.pid === undefined) throw new Error(`test forward listener failed to spawn for ${port}`);
+  expect(child.pid, `test forward listener failed to spawn for ${port}`).toBeDefined();
   fs.appendFileSync(listenerPidFile, `${String(child.pid)}\n`);
 
   const probe =
