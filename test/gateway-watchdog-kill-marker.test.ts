@@ -96,4 +96,31 @@ describe("gateway watchdog kill marker", () => {
     );
     expect(stdout).toBe("ABSENT");
   });
+
+  it("respawns when the loop snapshots the start identity before it is cleared", () => {
+    const { status } = runMarkerScenario(
+      [
+        `GATEWAY_PID_START_IDENTITY="456"`,
+        `EXITED_GATEWAY_PID="123"`,
+        `EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"`,
+        `record_gateway_watchdog_kill "123:456"`,
+        `GATEWAY_PID_START_IDENTITY=""`,
+        `consume_gateway_watchdog_kill "\${EXITED_GATEWAY_PID}:\${EXITED_GATEWAY_START_IDENTITY}"`,
+      ].join("\n"),
+    );
+    expect(status).toBe(0);
+  });
+
+  it("misses the marker when the loop reads the identity after it is cleared", () => {
+    const { status } = runMarkerScenario(
+      [
+        `GATEWAY_PID_START_IDENTITY="456"`,
+        `EXITED_GATEWAY_PID="123"`,
+        `record_gateway_watchdog_kill "123:456"`,
+        `GATEWAY_PID_START_IDENTITY=""`,
+        `consume_gateway_watchdog_kill "\${EXITED_GATEWAY_PID}:\${GATEWAY_PID_START_IDENTITY}"`,
+      ].join("\n"),
+    );
+    expect(status).toBe(1);
+  });
 });

@@ -4812,10 +4812,11 @@ if [ "$(id -u)" -ne 0 ]; then
     # non-zero, defeating the respawn loop entirely.
     RC=0
     EXITED_GATEWAY_PID="$GATEWAY_PID"
+    EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
     if [ "$RC" -eq 0 ] \
-      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${GATEWAY_PID_START_IDENTITY}"; then
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -5084,6 +5085,7 @@ while :; do
   fi
 
   EXITED_GATEWAY_PID="$GATEWAY_PID"
+  EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
   REAP_STATUS=0
   openclaw_reap_exited_gateway || REAP_STATUS=$?
   if [ "$REAP_STATUS" -eq 3 ]; then
@@ -5099,7 +5101,7 @@ while :; do
     continue
   fi
   if [ "$RC" -eq 0 ] \
-    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${GATEWAY_PID_START_IDENTITY}"; then
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
     exit 0
   fi
   NOW=$(date +%s)
