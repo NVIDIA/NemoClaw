@@ -49,7 +49,6 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
     };
   }
   if (request === "../adapters/http/probe") {
-    const fs = require("node:fs");
     return {
       getCurlTimingArgs() {
         return [];
@@ -58,15 +57,9 @@ Module._load = function patchedLoad(request, _parent, _isMain) {
         throw new Error("unexpected streaming probe");
       },
       runCurlProbe(args) {
-        let authConfigSummary = "no-auth";
-        const configIndex = args.indexOf("--config");
-        if (configIndex >= 0 && args[configIndex + 1]) {
-          const path = args[configIndex + 1];
-          const contents = fs.existsSync(path) ? fs.readFileSync(path, "utf8") : "";
-          const headerMatch = contents.match(/header = "([^"]+)"/);
-          authConfigSummary = headerMatch ? headerMatch[1] : "config:" + contents.trim();
-        }
-        calls.push(["runCurlProbe", args[args.length - 1], authConfigSummary]);
+        const authHeader =
+          args.find((arg) => String(arg).startsWith("Authorization: Bearer ")) || "no-auth";
+        calls.push(["runCurlProbe", args[args.length - 1], authHeader]);
         return {
           ok: true,
           httpStatus: 200,

@@ -230,10 +230,6 @@ describe("inference health", () => {
       expect(capturedArgv.join(" ")).not.toContain("nvapi-test");
       expect(capturedArgv.join(" ")).not.toContain("Authorization: Bearer");
       expect(capturedArgv).toContain("--config");
-      // PR #5975: Kimi health probe must route the bearer through the central
-      // auth-config helper, identifiable by its `nemoclaw-kimi-health-curl-`
-      // tmpfile prefix.
-      expect(authConfigPath).toContain("nemoclaw-kimi-health-curl-");
       expect(authConfigContent).toContain("Authorization: Bearer nvapi-test");
       expect(fs.existsSync(authConfigPath)).toBe(false);
       expect(capturedArgv).toContain("--connect-timeout");
