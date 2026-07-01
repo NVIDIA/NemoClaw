@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type ReusableCallerJob = {
+  env?: Record<string, unknown>;
   if?: string;
   outputs?: Record<string, unknown>;
   permissions?: Record<string, string>;
@@ -91,6 +92,7 @@ describe("Brev nightly workflow contract", () => {
     expect(resolveBranch?.run).not.toContain("gh pr view ${{");
     expect(validation?.outputs?.tested_sha).toBe("${{ steps.tested-ref.outputs.sha }}");
     expect(recordRevision?.run).toContain("git rev-parse HEAD");
+    expect(validation?.env?.BREV_E2E_INSTANCE_NAME).toContain("inputs.test_suite");
     expect(reporter?.permissions).toEqual({
       contents: "read",
       checks: "write",
@@ -100,6 +102,7 @@ describe("Brev nightly workflow contract", () => {
     expect(reporter?.steps?.[0]?.env?.TESTED_SHA).toBe(
       "${{ needs.e2e-branch-validation.outputs.tested_sha }}",
     );
+    expect(reporter?.steps?.[0]?.env?.INSTANCE_NAME).toContain("inputs.test_suite");
     expect(reporter?.steps?.[0]?.run).toContain(
       "PR head moved after Brev validation; refusing to report stale evidence",
     );

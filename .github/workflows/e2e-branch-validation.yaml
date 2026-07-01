@@ -183,7 +183,7 @@ jobs:
       contents: read
       pull-requests: read
     env:
-      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
     outputs:
       tested_sha: ${{ steps.tested-ref.outputs.sha }}
     steps:
@@ -336,7 +336,7 @@ jobs:
           VALIDATION_RESULT: ${{ needs.e2e-branch-validation.result }}
           TESTED_SHA: ${{ needs.e2e-branch-validation.outputs.tested_sha }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
-          INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ github.run_id }}-${{ github.run_attempt }}
+          INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
