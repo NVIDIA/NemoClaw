@@ -42,8 +42,10 @@ export interface MutableConfigTarget {
   sensitiveFiles?: string[];
 }
 
+export type MutableConfigInspectionSkipReason = "agent" | "locked" | "unreadable" | "unavailable";
+
 export type MutableConfigPermsInspection =
-  | { applies: false; reason: string }
+  | { applies: false; skipReason: MutableConfigInspectionSkipReason; reason: string }
   | {
       applies: true;
       ok: boolean;
@@ -118,6 +120,7 @@ export function inspectMutableConfigPerms(
   if (target.agentName !== "openclaw") {
     return {
       applies: false,
+      skipReason: "agent",
       reason: `agent ${target.agentName} does not use the mutable OpenClaw config contract`,
     };
   }
@@ -125,6 +128,7 @@ export function inspectMutableConfigPerms(
   if (blocked) {
     return {
       applies: false,
+      skipReason: postureMode === "locked" ? "locked" : "unreadable",
       reason:
         postureMode === "locked"
           ? "shields up (config intentionally locked)"
@@ -138,7 +142,11 @@ export function inspectMutableConfigPerms(
     file = parseStatModeOwner(statModeOwner(target.configPath));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { applies: false, reason: `could not stat config (${message})` };
+    return {
+      applies: false,
+      skipReason: "unavailable",
+      reason: `could not stat config (${message})`,
+    };
   }
   const issues: string[] = [];
   if (!dirSatisfiesMutableContract(dir.mode)) {
