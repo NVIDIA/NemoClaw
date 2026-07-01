@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./applier";
+export * from "./catalog";
 export * from "./channels";
 export * from "./compiler";
 export * from "./diagnostics";
