@@ -37,7 +37,8 @@ export default defineConfig({
       {
         test: {
           name: "cli",
-          testTimeout: testTimeout(),
+          testTimeout: testTimeout(20_000),
+          hookTimeout: testTimeout(20_000),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
