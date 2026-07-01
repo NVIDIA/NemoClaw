@@ -46,11 +46,12 @@ openssl x509 \
     "subjectAltName=DNS:host.openshell.internal,DNS:mcp-rebind.example.test") \
   -out "${tls_dir}/server.crt"
 
-# The live test installs this per-run CA into each ephemeral sandbox image and
-# restarts that container before creating the authenticated MCP policy. The
-# product never disables TLS verification or receives a test-only trust bypass.
+# The self-signed certificate secures only the loopback origin hop from
+# cloudflared, which is launched with --no-tls-verify for that local fixture.
+# Successful sandbox MCP connections use the public trycloudflare URL and its
+# publicly trusted edge certificate. The direct DNS-rebinding fixture is denied
+# by policy before TLS, so sandboxes never install or trust this private test CA.
 {
-  echo "NEMOCLAW_MCP_TLS_CA_CERT=${tls_dir}/ca.crt"
   echo "NEMOCLAW_MCP_TLS_CERT=${tls_dir}/server.crt"
   echo "NEMOCLAW_MCP_TLS_KEY=${tls_dir}/server.key"
 } >>"${GITHUB_ENV}"

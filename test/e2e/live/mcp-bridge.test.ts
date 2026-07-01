@@ -25,7 +25,6 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
-  installMcpTestCaInSandbox,
   isExpectedMcpCurlPolicyDenial,
   type McpDnsRebindingAdapter,
   remapDnsRebindingHostname,
@@ -872,8 +871,6 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
     sandboxName: OPENCLAW_SANDBOX_NAME,
     artifactName: "onboard-openclaw-mcp-bridge",
   });
-  await installMcpTestCaInSandbox(host, sandbox, OPENCLAW_SANDBOX_NAME, "openclaw");
-
   // Exercise the raw OpenShell `allowed_ips` boundary before any NemoClaw MCP
   // mutation. The helper uses a direct curl request with a /** binary grant,
   // then restores this sandbox's exact base policy before returning, so this
@@ -1175,7 +1172,6 @@ req.end(body);
     "openclaw-assert-secrets-absent-after-rotation",
   );
   await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
-  await installMcpTestCaInSandbox(host, sandbox, OPENCLAW_SANDBOX_NAME, "openclaw-rebuild");
   await assertSecretAbsentFromSandbox(
     sandbox,
     OPENCLAW_SANDBOX_NAME,
@@ -1244,9 +1240,6 @@ liveAgentMatrixTest(
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       artifactName: "onboard-hermes-mcp-bridge",
-    });
-    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes", {
-      verifyManagedAgentRuntime: true,
     });
     cleanup.add("remove Hermes MCP bridge", () =>
       bestEffortRemoveBridge(host, HERMES_SANDBOX_NAME),
@@ -1317,9 +1310,6 @@ liveAgentMatrixTest(
     );
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     const rebuildDiscoveryOffset = fakeMcp.requests.length;
-    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes-rebuild", {
-      verifyManagedAgentRuntime: true,
-    });
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
       requestOffset: rebuildDiscoveryOffset,
       expectedSecret: ROTATED_HOST_SECRET,
@@ -1396,7 +1386,6 @@ liveAgentMatrixTest(
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       artifactName: "onboard-deepagents-mcp-bridge",
     });
-    await installMcpTestCaInSandbox(host, sandbox, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     cleanup.add("remove Deep Agents MCP bridge", () =>
       bestEffortRemoveBridge(host, DEEPAGENTS_SANDBOX_NAME),
     );
@@ -1459,7 +1448,6 @@ liveAgentMatrixTest(
       "deepagents-assert-secrets-absent-after-rotation",
     );
     await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
-    await installMcpTestCaInSandbox(host, sandbox, DEEPAGENTS_SANDBOX_NAME, "deepagents-rebuild");
     await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(
       sandbox,
