@@ -89,10 +89,7 @@ function buildScrubbedCurlProbeEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.Proces
 
 function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {
   if (opts.replaceEnv) return opts.env ?? {};
-  if (opts.trustedConfigFiles?.length) {
-    return buildScrubbedCurlProbeEnv(opts.env ?? {});
-  }
-  return { ...process.env, ...opts.env };
+  return buildScrubbedCurlProbeEnv(opts.env ?? {});
 }
 
 function validateTempPrefix(prefix: string): string {
