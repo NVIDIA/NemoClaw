@@ -30,7 +30,7 @@
 # Environment overrides:
 #   OPENSHELL_VERSION          — OpenShell CLI release tag (default: v0.0.72)
 #   NEMOCLAW_OPENSHELL_CHANNEL — Release channel (stable/dev/auto)
-#   NEMOCLAW_ALLOW_DEV_NO_VERIFY — Required opt-in for the unverified dev channel
+#   NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL — Required opt-in for the unverified dev channel
 #   NEMOCLAW_REF               — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR         — Where to clone NemoClaw (default: ~/NemoClaw)
 #
@@ -82,8 +82,8 @@ if [ "${1:-}" = "--print-openshell-version" ]; then
   exit 0
 fi
 if [[ "$OPENSHELL_VERSION" = "dev" ]]; then
-  if [[ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  if [[ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
   fi
   warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 else

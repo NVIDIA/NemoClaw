@@ -14,10 +14,12 @@ export function buildRebuildHermesChildEnv(
   overlay: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const openshellChannel = base.NEMOCLAW_OPENSHELL_CHANNEL;
-  const allowDevNoVerify = base.NEMOCLAW_ALLOW_DEV_NO_VERIFY;
+  const acceptDevUnverifiedInstall = base.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL;
   return {
     ...buildAvailabilityProbeEnv(base),
-    ...(allowDevNoVerify === undefined ? {} : { NEMOCLAW_ALLOW_DEV_NO_VERIFY: allowDevNoVerify }),
+    ...(acceptDevUnverifiedInstall === undefined
+      ? {}
+      : { NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: acceptDevUnverifiedInstall }),
     ...(openshellChannel === undefined ? {} : { NEMOCLAW_OPENSHELL_CHANNEL: openshellChannel }),
     ...overlay,
   };

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
-# Checked: Ollama installer.
-# Runs on every PR and push to main, plus a weekly scheduled check.
+# Checked: OpenShell v0.0.72 installer and Brev release assets.
+# Reports the required network-backed drift check on every PR, every push to
+# main, and weekly. Pull requests execute checker code from their base commit;
+# the immutable bootstrap is used only for the PR that first adds that action.
 
 name: Security / Installer Hash Check
 
@@ -26,8 +28,129 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
-      - name: Verify installer hashes are current
-        run: bash scripts/check-installer-hash.sh
+      - name: Checkout trusted event
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Checkout base-trusted installer hash action
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Detect base-trusted installer hash action
+        id: trusted-installer-hash
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [[ -f .trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # invalidState: the first PR that introduces this action has no copy in
+      # its base commit. Running the mutable PR-side checker would let that PR
+      # authorize its own installer pins.
+      # sourceBoundary: this exact commit contains the reviewed action and
+      # checker; the PR head supplies only the installer files being inspected.
+      # whyNotSourceFix: a base commit cannot contain a new action before the
+      # introducing PR merges, so the bootstrap must name immutable code once.
+      # regressionTest: test/pr-workflow-contract.test.ts rejects mutable
+      # checker execution and any non-immutable bootstrap ref.
+      # removalCondition: remove the bootstrap checkout after this workflow has
+      # landed on every supported PR base. The fallback is refused after the
+      # explicit 180-day review window ending 2026-12-27T23:26:13Z.
+      - name: Enforce immutable installer hash bootstrap expiry
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        shell: bash
+        env:
+          BOOTSTRAP_COMMIT: 6571063796e1f31648dfd63c7aee91d22612020d
+          BOOTSTRAP_EXPIRES_AT: "2026-12-27T23:26:13Z"
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const commit = process.env.BOOTSTRAP_COMMIT ?? "";
+          const expiresAt = process.env.BOOTSTRAP_EXPIRES_AT ?? "";
+          const expiresAtMs = Date.parse(expiresAt);
+          const canonicalExpiresAt =
+            Number.isFinite(expiresAtMs) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(expiresAt)
+              ? new Date(expiresAtMs).toISOString().replace(".000Z", "Z")
+              : "";
+
+          if (!/^[a-f0-9]{40}$/u.test(commit) || canonicalExpiresAt !== expiresAt) {
+            console.error(
+              "::error::Immutable installer hash bootstrap expiry configuration is invalid; " +
+                "refusing the fallback. Expected a 40-character commit SHA and canonical UTC expiry.",
+            );
+            process.exit(1);
+          }
+
+          if (Date.now() >= expiresAtMs) {
+            console.error(
+              `::error::Immutable installer hash bootstrap ${commit} expired at ${expiresAt}. ` +
+                "Remove the bootstrap fallback or replace it with newly reviewed immutable checker code.",
+            );
+            process.exit(1);
+          }
+
+          const daysRemaining = Math.ceil((expiresAtMs - Date.now()) / 86_400_000);
+          console.log(
+            `Immutable installer hash bootstrap ${commit} remains valid for ${daysRemaining} day(s), ` +
+              `until ${expiresAt}.`,
+          );
+          NODE
+
+      - name: Checkout immutable installer hash bootstrap
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: 6571063796e1f31648dfd63c7aee91d22612020d
+          path: .bootstrap-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Verify pull request installer hashes from base-trusted code
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available == 'true'
+        uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
+      - name: Verify pull request installer hashes from immutable bootstrap
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        uses: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
+      - name: Verify trusted event installer hashes
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}

@@ -83,7 +83,9 @@ describe("OpenShell channel workflow boundary", () => {
   it("requires explicit opt-in before a launchable consumes unverified dev artifacts", () => {
     const result = runLaunchableDevGate();
     expect(result.status).not.toBe(0);
-    expect(`${result.stdout}${result.stderr}`).toContain("NEMOCLAW_ALLOW_DEV_NO_VERIFY=1");
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1",
+    );
 
     const source = fs.readFileSync(LAUNCHABLE, "utf8");
     expect(source).toContain(

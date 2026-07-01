@@ -13,16 +13,20 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
-import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import {
+  parseOpenShellPolicy,
+  withoutProviderComposedPolicies,
+} from "../shared/openshell-policy-boundary.cjs";
+import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -324,32 +328,9 @@ interface RouterConfig {
 
 const DEFAULT_ROUTER_PORT = 4000;
 
-function parseCurrentPolicy(raw: string): UnknownRecord {
-  const sepIndex = raw.indexOf("---");
-  const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
-  if (!yaml) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(yaml);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Current policy from openshell policy get --base is not valid YAML: ${detail}`);
-  }
-
-  if (!isObjectLike(parsed)) {
-    throw new Error("Current policy from openshell policy get --base must be a YAML mapping");
-  }
-  if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
-    throw new Error(
-      "Current policy from openshell policy get --base does not contain a policy YAML document",
-    );
-  }
-  return parsed;
-}
-
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
-  const current = parseCurrentPolicy(currentPolicyRaw);
+  // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+  const current = parseOpenShellPolicy(currentPolicyRaw).policy;
   if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
@@ -366,7 +347,10 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 
   output.version =
     typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
-  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  output.network_policies = withoutProviderComposedPolicies({
+    ...existingNetworkPolicies,
+    ...additions,
+  });
   return YAML.stringify(output);
 }
 

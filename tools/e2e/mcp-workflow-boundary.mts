@@ -115,7 +115,7 @@ function validateJobIdentity(
       "dev",
       "mcp-bridge-dev must select the OpenShell dev channel",
     );
-    if (Object.hasOwn(env, "NEMOCLAW_ALLOW_DEV_NO_VERIFY")) {
+    if (Object.hasOwn(env, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
       errors.push("mcp-bridge-dev must scope unverified artifact opt-in to its installer step");
     }
     if (asString(job.if).includes("inputs.jobs == ''")) {
@@ -257,11 +257,11 @@ function validateJobExecution(
   if (jobName === "mcp-bridge-dev") {
     requireEqual(
       errors,
-      installEnv.NEMOCLAW_ALLOW_DEV_NO_VERIFY,
+      installEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL,
       "1",
       "mcp-bridge-dev installer must explicitly authorize unverified dev artifacts",
     );
-  } else if (Object.hasOwn(installEnv, "NEMOCLAW_ALLOW_DEV_NO_VERIFY")) {
+  } else if (Object.hasOwn(installEnv, "NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL")) {
     errors.push("mcp-bridge stable installer must not authorize unverified dev artifacts");
   }
   requireContains(

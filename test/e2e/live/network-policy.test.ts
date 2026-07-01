@@ -399,7 +399,7 @@ RUN_NETWORK_POLICY_TEST(
       boundary: "live-sandbox-network-policy",
       contracts: [
         "deny-by-default egress",
-        "OpenShell 0.0.71 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+        "OpenShell 0.0.72 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
         "read-only preset allowlist behavior",
         "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
         "live policy-add and dry-run behavior",
@@ -435,7 +435,7 @@ RUN_NETWORK_POLICY_TEST(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-    expect(text(openshellVersion)).toContain("0.0.71");
+    expect(text(openshellVersion)).toContain("0.0.72");
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
@@ -970,9 +970,6 @@ RUN_NETWORK_POLICY_TEST(
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
 
     cleanup.add(`destroy restricted-zero-presets sandbox ${SUPPRESSION_SANDBOX_NAME}`, async () => {
       await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {

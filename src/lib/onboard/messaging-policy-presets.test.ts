@@ -8,6 +8,7 @@ import {
   hasDisabledMessagingPolicyPreset,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
   mergePolicyMessagingChannels,
+  mergeRebuildMessagingPolicyPresets,
   mergeRequiredMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
@@ -78,17 +79,16 @@ describe("messaging policy presets", () => {
   });
 
   it("recovers presets for enabled channels absent from sb.policies after a prior stop+rebuild (#5596)", () => {
-    const afterStopRebuildPolicies = ["npm", "pypi"];
     const enabledChannels = ["telegram", "discord", "whatsapp", "wechat", "slack"];
-    const channelPresets = allMessagingChannelPolicyPresets(enabledChannels);
-    const recovered = [...new Set([...afterStopRebuildPolicies, ...channelPresets])];
-    expect(recovered).toContain("telegram");
-    expect(recovered).toContain("discord");
-    expect(recovered).toContain("whatsapp");
-    expect(recovered).toContain("wechat");
-    expect(recovered).toContain("slack");
-    expect(recovered).toContain("npm");
-    expect(recovered).toContain("pypi");
+    expect(
+      mergeRebuildMessagingPolicyPresets(["npm", "npm", "telegram"], ["pypi"], enabledChannels, [
+        "telegram",
+        "wechat",
+      ]),
+    ).toEqual(["npm", "discord", "whatsapp", "slack"]);
+    expect(
+      mergeRebuildMessagingPolicyPresets(undefined, ["pypi"], enabledChannels, ["wechat"]),
+    ).toEqual(["pypi", "telegram", "discord", "whatsapp", "slack"]);
   });
 
   it("preserves unrelated applied presets when cleaning disabled messaging presets", () => {

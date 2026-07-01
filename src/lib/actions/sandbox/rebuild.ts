@@ -81,10 +81,7 @@ import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import {
-  allMessagingChannelPolicyPresets,
-  pruneDisabledMessagingPolicyPresets,
-} from "../../onboard/messaging-policy-presets";
+import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { agentSupportsWebSearch } from "../../onboard/web-search-support";
@@ -903,20 +900,6 @@ function hydrateMessagingConfigForRebuild(sandboxName: string, log: (msg: string
   }
 }
 
-function restoreEnabledMessagingPolicyPresets(
-  policyPresets: string[],
-  messagingPlan: SandboxMessagingPlan | null,
-): string[] {
-  const restored = [...policyPresets];
-  const enabledChannelIds = (messagingPlan?.channels ?? [])
-    .filter((channel) => !channel.disabled)
-    .map((channel) => channel.channelId);
-  for (const preset of allMessagingChannelPolicyPresets(enabledChannelIds)) {
-    if (!restored.includes(preset)) restored.push(preset);
-  }
-  return restored;
-}
-
 function printRebuildVersionSummary(
   sandboxName: string,
   agentName: string,
@@ -1391,16 +1374,18 @@ async function rebuildSandboxUnlocked(
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
+    const rebuildEnabledChannelIds = (rebuildMessagingPlan?.channels ?? [])
+      .filter((channel) => !channel.disabled)
+      .map((channel) => channel.channelId);
     // A prior stop+rebuild can legitimately prune disabled channel presets
     // from the registry. Restore every preset for channels that are enabled in
     // the durable plan so a later start+rebuild does not silently lose their
     // egress policy (#5596).
-    const rebuildPolicyPresets = restoreEnabledMessagingPolicyPresets(
-      pruneDisabledMessagingPolicyPresets(
-        backupManifest?.policyPresets ?? registryPolicyPresets,
-        rebuildDisabledChannels,
-      ),
-      rebuildMessagingPlan,
+    const rebuildPolicyPresets = mergeRebuildMessagingPolicyPresets(
+      backupManifest?.policyPresets,
+      registryPolicyPresets,
+      rebuildEnabledChannelIds,
+      rebuildDisabledChannels,
     );
     const rebuildSessionPolicyPresets = resolveRecreatePolicyPresets(
       rebuildPolicyPresets,

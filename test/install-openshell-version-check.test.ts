@@ -12,9 +12,12 @@ import { buildRebuildHermesChildEnv } from "./e2e/live/rebuild-hermes-env.ts";
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
+  cliLinuxArm64: "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
   cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
   gatewayDarwinArm64: "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
+  gatewayLinuxArm64: "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
   gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxArm64: "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
   sandboxBinaryLinuxX64: "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198",
 };
@@ -535,6 +538,125 @@ exit 0`,
     }
   });
 
+  it("downloads and verifies every Linux arm64 release asset during reinstall", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const downloadLog = path.join(tmp, "downloads.log");
+      const checksumLog = path.join(tmp, "checksums.log");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "aarch64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+      writeExecutable(path.join(fakeBin, "gh"), "#!/usr/bin/env bash\nexit 1\n");
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+echo "$@" >> ${JSON.stringify(downloadLog)}
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; out="$1"; fi
+  shift || true
+done
+case "$(basename "$out")" in
+openshell-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
+openshell-gateway-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+openshell-sandbox-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+*) : > "$out" ;;
+esac
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+[ "$#" -eq 2 ] && [ "$1" = "-c" ] && [ "$2" = "-" ] || exit 9
+line="$(cat)"
+case "$line" in
+'${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz') ;;
+*) exit 10 ;;
+esac
+printf '%s\n' "$line" >> ${JSON.stringify(checksumLog)}
+printf '%s\n' 'checksum OK'`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then outdir="$arg"; break; fi
+  prev="$arg"
+done
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+mkdir -p "$(dirname "$dest")"
+case "$(basename "$dest")" in
+openshell)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; else exit 0; fi\n# ${OPENSHELL_FEATURE_MARKERS}\n' > "$dest"
+  ;;
+openshell-sandbox)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-sandbox ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\n# ${OPENSHELL_MCP_FEATURE_MARKER}\nexit 0\n' > "$dest"
+  ;;
+openshell-gateway)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-gateway ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\nexit 0\n' > "$dest"
+  ;;
+*)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dest"
+  ;;
+esac
+chmod 755 "$dest"`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const downloads = fs.readFileSync(downloadLog, "utf8");
+      expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
+      expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
+      expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
+      expect(fs.readFileSync(checksumLog, "utf8").trim().split("\n")).toEqual([
+        `${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz`,
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("upgrades into the active writable openshell directory to avoid PATH shadowing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-active-dir-"));
     try {
@@ -816,20 +938,20 @@ exit 0`,
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
     const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
     expect(result.stdout).toMatch(/Dev channel install skips SHA-256 verification/);
   });
 
-  it("fails closed for dev-channel installs without explicit no-verify opt-in", () => {
+  it("fails closed for dev-channel installs without explicit risk acceptance", () => {
     const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs.",
+      "Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install.",
     );
   });
 
@@ -837,7 +959,7 @@ exit 0`,
     const result = runWithInstalledVersion(
       "0.0.72-dev.8+g7bce1223d",
       {
-        NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
       { driverVersion: "0.0.72-dev.8+g7bce1223" },
@@ -850,7 +972,7 @@ exit 0`,
     const result = runWithInstalledVersion(
       `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
       {
-        NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
       { driverBins: false, os: "Linux" },
@@ -864,7 +986,7 @@ exit 0`,
     const result = runWithInstalledVersion(
       `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
       {
-        NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
       { driverBins: "gateway", os: "Linux" },
@@ -877,7 +999,7 @@ exit 0`,
     const result = runWithInstalledVersion(
       "0.0.72-dev.8+g7bce1223d",
       {
-        NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       },
       { driverBins: "gateway", os: "Darwin", arch: "arm64" },
@@ -888,7 +1010,7 @@ exit 0`,
 
   it("refreshes an installed dev build when current main is required", () => {
     const result = runWithInstalledVersion("0.0.72-dev.8+g7bce1223d", {
-      NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
     });
@@ -914,7 +1036,7 @@ exit 0`,
       {
         HOME: process.env.HOME,
         PATH: process.env.PATH,
-        NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
         NEMOCLAW_OPENSHELL_CHANNEL: "dev",
         NVIDIA_API_KEY: "must-not-reach-child",
       },
@@ -922,7 +1044,7 @@ exit 0`,
     );
     const result = runWithInstalledVersion("0.0.36", childEnv);
 
-    expect(childEnv.NEMOCLAW_ALLOW_DEV_NO_VERIFY).toBe("1");
+    expect(childEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL).toBe("1");
     expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
     expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
     expect(result.status).not.toBe(0);
@@ -935,7 +1057,7 @@ exit 0`,
   it("upgrades stable OpenShell when the dev channel is requested", () => {
     const result = runWithInstalledVersion("0.0.36", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);

@@ -106,6 +106,7 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev \
     && test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); if (typeof boundary.parseOpenShellPolicy !== "function") throw new Error("OpenShell policy boundary is unavailable")' \
     && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \

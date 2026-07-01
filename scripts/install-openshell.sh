@@ -67,8 +67,8 @@ else
 fi
 
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
-  if [ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  if [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
   fi
   warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
@@ -117,6 +117,17 @@ else
   RELEASE_TAG="v${PIN_VERSION}"
 fi
 
+# invalidState: a consumed OpenShell release asset differs from the digest
+# published for the immutable v0.0.72 release, or a mutable registry tag moves.
+# sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
+# assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
+# whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
+# immutable, so it independently pins every consumed archive and supervisor.
+# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# eight mappings, and scripts/check-installer-hash.sh compares them with the
+# GitHub release API on every PR, main push, weekly run, and manual dispatch.
+# removalCondition: remove these v0.0.72 entries only when NemoClaw drops that
+# supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
