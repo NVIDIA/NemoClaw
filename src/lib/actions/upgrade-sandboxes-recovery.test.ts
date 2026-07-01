@@ -113,8 +113,9 @@ function createRecoveryHarness(
       manifest: args[2] as ReturnType<typeof makeManifest>,
     }),
   );
-  const managedEvidenceSpy = vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence");
-  if (!options.useRealManagedEvidence) managedEvidenceSpy.mockReturnValue(true);
+  const managedEvidenceSpy = options.useRealManagedEvidence
+    ? vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence")
+    : vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
   const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
 
   return {
