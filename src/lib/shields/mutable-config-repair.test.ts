@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
+const NORMALIZER_WATCHDOG = ["/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", "15s"];
 const requireSource = createRequire(import.meta.url);
 
 type DockerExecModule = typeof import("../adapters/docker/exec");
@@ -35,7 +36,7 @@ describe("mutable OpenClaw config repair", () => {
     delete require.cache[requireSource.resolve("./mutable-config-repair.js")];
   });
 
-  it("sanitizes every privileged identity and normalizer invocation", () => {
+  it("sanitizes identity probes and watchdogs the privileged normalizer", () => {
     const privilegedArgv = mockPrivilegedArgv();
     const dockerExecFileSync = vi
       .spyOn(dockerExec, "dockerExecFileSync")
@@ -50,7 +51,15 @@ describe("mutable OpenClaw config repair", () => {
       ["alpha", ["/usr/bin/id", "-g", "sandbox"], false, true],
       [
         "alpha",
-        ["/usr/bin/python3", "-I", NORMALIZER, "/sandbox/.openclaw", "1000", "1001"],
+        [
+          ...NORMALIZER_WATCHDOG,
+          "/usr/bin/python3",
+          "-I",
+          NORMALIZER,
+          "/sandbox/.openclaw",
+          "1000",
+          "1001",
+        ],
         false,
         true,
       ],
@@ -59,12 +68,21 @@ describe("mutable OpenClaw config repair", () => {
     expect(dockerExecFileSync.mock.calls.map(([argv]) => argv)).toEqual([
       ["privileged", "/usr/bin/id", "-u", "sandbox"],
       ["privileged", "/usr/bin/id", "-g", "sandbox"],
-      ["privileged", "/usr/bin/python3", "-I", NORMALIZER, "/sandbox/.openclaw", "1000", "1001"],
+      [
+        "privileged",
+        ...NORMALIZER_WATCHDOG,
+        "/usr/bin/python3",
+        "-I",
+        NORMALIZER,
+        "/sandbox/.openclaw",
+        "1000",
+        "1001",
+      ],
     ]);
     expect(dockerExecFileSync.mock.calls.map(([, options]) => options)).toEqual([
       { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
       { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+      { stdio: ["ignore", "pipe", "pipe"], timeout: 25000 },
     ]);
   });
 
@@ -119,7 +137,15 @@ describe("mutable OpenClaw config repair", () => {
     expect(() => normalizeMutableOpenClawConfig("alpha", "/sandbox/.openclaw")).toThrow(failure);
     expect(privilegedArgv).toHaveBeenLastCalledWith(
       "alpha",
-      ["/usr/bin/python3", "-I", NORMALIZER, "/sandbox/.openclaw", "1000", "1001"],
+      [
+        ...NORMALIZER_WATCHDOG,
+        "/usr/bin/python3",
+        "-I",
+        NORMALIZER,
+        "/sandbox/.openclaw",
+        "1000",
+        "1001",
+      ],
       false,
       true,
     );

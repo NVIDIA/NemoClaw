@@ -5,6 +5,13 @@ const dockerExec: typeof import("../adapters/docker/exec") = require("../adapter
 const privilegedExecModule: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 
 const MUTABLE_CONFIG_NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
+const MUTABLE_CONFIG_NORMALIZER_HOST_TIMEOUT_MS = 25000;
+const MUTABLE_CONFIG_NORMALIZER_WATCHDOG = [
+  "/usr/bin/timeout",
+  "--signal=TERM",
+  "--kill-after=5s",
+  "15s",
+] as const;
 
 function runPrivileged(sandboxName: string, cmd: string[], timeout = 15000): void {
   dockerExec.dockerExecFileSync(
@@ -30,6 +37,8 @@ function privilegedExecCapture(sandboxName: string, cmd: string[], timeout = 150
 
 function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {
   const id = privilegedExecCapture(sandboxName, ["/usr/bin/id", flag, "sandbox"]);
+  // Keep the ownership target non-root so privileged repair cannot become a
+  // confused-deputy path.
   if (!/^[1-9][0-9]*$/.test(id)) {
     const kind = flag === "-u" ? "UID" : "GID";
     throw new Error(`sandbox identity lookup returned an invalid ${kind}`);
@@ -41,12 +50,20 @@ function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {
 export function normalizeMutableOpenClawConfig(sandboxName: string, configDir: string): void {
   const sandboxUid = sandboxIdentityId(sandboxName, "-u");
   const sandboxGid = sandboxIdentityId(sandboxName, "-g");
-  runPrivileged(sandboxName, [
-    "/usr/bin/python3",
-    "-I",
-    MUTABLE_CONFIG_NORMALIZER,
-    configDir,
-    sandboxUid,
-    sandboxGid,
-  ]);
+  // The in-sandbox watchdog signals the Python process group and reaps its
+  // direct child before the longer host-side Docker timeout can release the
+  // shields transition lock.
+  runPrivileged(
+    sandboxName,
+    [
+      ...MUTABLE_CONFIG_NORMALIZER_WATCHDOG,
+      "/usr/bin/python3",
+      "-I",
+      MUTABLE_CONFIG_NORMALIZER,
+      configDir,
+      sandboxUid,
+      sandboxGid,
+    ],
+    MUTABLE_CONFIG_NORMALIZER_HOST_TIMEOUT_MS,
+  );
 }
