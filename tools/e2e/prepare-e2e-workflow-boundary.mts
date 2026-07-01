@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,8 +11,12 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
 
-export const PREPARE_E2E_ACTION =
-  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28";
+const PREPARE_E2E_ACTION_PROVENANCE = {
+  reference: "NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28",
+  contentSha256: "eca1994acd70f4305cddae2990d1604e9fac455b45d3d89dfb4b08a07d7552a1",
+} as const;
+
+export const PREPARE_E2E_ACTION = PREPARE_E2E_ACTION_PROVENANCE.reference;
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
 
 const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
@@ -50,8 +55,15 @@ function steps(value: unknown): WorkflowStep[] {
 }
 
 export function validatePrepareE2eAction(actionPath = DEFAULT_ACTION_PATH): string[] {
-  const action = record(YAML.parse(readFileSync(actionPath, "utf8")));
+  const actionSource = readFileSync(actionPath, "utf8");
+  const action = record(YAML.parse(actionSource));
   const errors: string[] = [];
+  if (
+    createHash("sha256").update(actionSource).digest("hex") !==
+    PREPARE_E2E_ACTION_PROVENANCE.contentSha256
+  ) {
+    errors.push("prepare-e2e content must match the action reviewed at its immutable commit pin");
+  }
   const expectedInput = {
     description: "Build the CLI after installing dependencies.",
     required: false,
