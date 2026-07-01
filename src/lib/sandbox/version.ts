@@ -92,6 +92,21 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
+const CALENDAR_VERSION_MIN_MAJOR = 1000;
+
+function versionsComparable(left: string, right: string): boolean {
+  const major = (value: string): number =>
+    Number.parseInt(String(value).split(".")[0] ?? "", 10) || 0;
+  const leftIsCalendar = major(left) >= CALENDAR_VERSION_MIN_MAJOR;
+  const rightIsCalendar = major(right) >= CALENDAR_VERSION_MIN_MAJOR;
+  return leftIsCalendar === rightIsCalendar;
+}
+
+function isAgentStale(sandboxVersion: string, expectedVersion: string): boolean {
+  if (!versionsComparable(sandboxVersion, expectedVersion)) return false;
+  return !versionGte(sandboxVersion, expectedVersion);
+}
+
 /**
  * Check whether a sandbox is running an outdated agent version.
  *
@@ -118,7 +133,7 @@ export function checkAgentVersion(
 
   // Fast path: version already cached in registry
   if (sb?.agentVersion && !opts?.forceProbe) {
-    const isStale = !versionGte(sb.agentVersion, expectedVersion);
+    const isStale = isAgentStale(sb.agentVersion, expectedVersion);
     return {
       sandboxVersion: sb.agentVersion,
       expectedVersion,
@@ -152,7 +167,7 @@ export function checkAgentVersion(
     };
   }
 
-  const isStale = !versionGte(probed, expectedVersion);
+  const isStale = isAgentStale(probed, expectedVersion);
   return {
     sandboxVersion: probed,
     expectedVersion,

@@ -36,14 +36,19 @@ vi.mock("../adapters/openshell/client.js", () => ({
 }));
 
 vi.mock("../agent/defs.js", () => ({
-  loadAgent: vi.fn((name: string) => ({
-    name,
-    displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
-    versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
-    expectedVersion: name === "openclaw" ? "2026.5.27" : "2026.5.16",
-    stateDirs: [],
-    configPaths: { dir: "/sandbox/.openclaw" },
-  })),
+  loadAgent: vi.fn((name: string) => {
+    let expectedVersion = "0.17.0";
+    if (name === "openclaw") expectedVersion = "2026.5.27";
+    else if (name === "hermes-calendar-pin") expectedVersion = "2026.6.19";
+    return {
+      name,
+      displayName: name === "openclaw" ? "OpenClaw" : "Hermes Agent",
+      versionCommand: name === "openclaw" ? "openclaw --version" : "hermes --version",
+      expectedVersion,
+      stateDirs: [],
+      configPaths: { dir: "/sandbox/.openclaw" },
+    };
+  }),
 }));
 
 vi.mock("child_process", async (importOriginal) => {
@@ -225,6 +230,65 @@ describe("checkAgentVersion", () => {
     expect(result.sandboxVersion).toBeNull();
     expect(result.isStale).toBe(false);
     expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("does not flag an update for a hermes runtime that matches the expected semver", () => {
+    registry.registerSandbox({
+      name: "hermes-sb",
+      agent: "hermes",
+      agentVersion: "0.17.0",
+    });
+
+    const result = checkAgentVersion("hermes-sb");
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.isStale).toBe(false);
+  });
+
+  it("flags a hermes runtime that is behind the expected semver", () => {
+    registry.registerSandbox({
+      name: "hermes-sb",
+      agent: "hermes",
+      agentVersion: "0.16.9",
+    });
+
+    const result = checkAgentVersion("hermes-sb");
+    expect(result.sandboxVersion).toBe("0.16.9");
+    expect(result.isStale).toBe(true);
+  });
+
+  it("does not flag an update when the expected calendar version and runtime semver differ in scheme", () => {
+    registry.registerSandbox({
+      name: "hermes-sb",
+      agent: "hermes-calendar-pin",
+      agentVersion: "0.17.0",
+    });
+
+    const result = checkAgentVersion("hermes-sb");
+    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.isStale).toBe(false);
+  });
+
+  it("probes a hermes runtime over ssh and does not flag a matching semver", () => {
+    registry.registerSandbox({ name: "hermes-sb", agent: "hermes" });
+
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
+      status: 0,
+      output: "Host openshell-hermes-sb\n  HostName 127.0.0.1\n",
+    });
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: "hermes 0.17.0\n",
+      stderr: "",
+      pid: 4321,
+      output: [],
+      signal: null,
+    });
+
+    const result = checkAgentVersion("hermes-sb");
+    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.isStale).toBe(false);
   });
 });
 
