@@ -95,6 +95,7 @@ function uploadsCompiledCliArtifact(
   const outputDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-output-"));
   const outputPath = join(outputDirectory, "github-output");
   try {
+    // Execute the repository-owned action body so producer selection stays a behavioral contract.
     const result = spawnSync("bash", ["-c", validationRun], {
       encoding: "utf8",
       env: {
@@ -104,15 +105,17 @@ function uploadsCompiledCliArtifact(
         GITHUB_OUTPUT: outputPath,
       },
     });
-    if (result.status !== 0) {
-      throw new Error(`Shard validation failed for ${shard}/${shardCount}: ${result.stderr}`);
-    }
+    expect(
+      result.status,
+      `Shard validation failed for ${shard}/${shardCount}: ${result.stderr}`,
+    ).toBe(0);
     const output = readFileSync(outputPath, "utf8").match(
       /^upload_build_artifact=(true|false)$/mu,
     )?.[1];
-    if (!output) {
-      throw new Error(`Shard validation omitted its artifact output for ${shard}/${shardCount}`);
-    }
+    expect(
+      output,
+      `Shard validation omitted its artifact output for ${shard}/${shardCount}`,
+    ).toBeDefined();
     return output === "true";
   } finally {
     rmSync(outputDirectory, { force: true, recursive: true });
