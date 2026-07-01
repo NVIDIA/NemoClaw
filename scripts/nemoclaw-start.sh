@@ -753,10 +753,14 @@ PY_LOCK_CONFIG_BASELINE
   fi
 }
 
-# OpenClaw assumes a single-UID 700/600 config tree, while NemoClaw's separate
-# sandbox and gateway UIDs require the mutable 2770/660 group contract. Keep
-# this one-shot wrapper until OpenClaw preserves that contract after commands
-# such as `doctor --fix` and the post-command normalization is no longer needed.
+# Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
+# tree, while NemoClaw's separate sandbox and gateway UIDs require the mutable
+# 2770/660 group contract. The tightening originates at the OpenClaw command
+# boundary; NemoClaw owns restoring its multi-UID postcondition afterward.
+# Regression proof lives in test/nemoclaw-start-perms.test.ts and the live
+# shields-config documented-exec phase. Remove this wrapper only when the
+# pinned OpenClaw preserves 2770/660 after every command outcome; do not replace
+# that upstream source fix with a NemoClaw timeout or permission escape flag.
 run_oneshot_command() {
   local _nemoclaw_oneshot_child_pid=""
   local _nemoclaw_oneshot_signal=""
