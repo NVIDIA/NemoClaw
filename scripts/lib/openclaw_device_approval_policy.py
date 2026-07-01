@@ -127,9 +127,7 @@ def _requested_scope_view(entry):
     return views[0]
 
 
-def _is_same_identity_scope_replacement(
-    original, replacement, paired_entry, paired_scopes, requested
-):
+def _is_same_identity_scope_replacement(original, replacement, paired_entry, requested):
     """Match the exact non-admin request replacement emitted by OpenClaw 2026.6.x."""
 
     if not all(
@@ -158,8 +156,8 @@ def _is_same_identity_scope_replacement(
         == {"operator"}
         and replacement_scopes is not None
         and replacement_scopes.issubset(ALLOWED_SCOPES)
-        and _canonical_operator_scopes(paired_scopes | replacement_scopes)
-        == _canonical_operator_scopes(paired_scopes | requested)
+        and _canonical_operator_scopes(replacement_scopes)
+        == _canonical_operator_scopes(requested)
     )
 
 
@@ -254,7 +252,14 @@ def recover_failed_scope_approval(
         return None
 
     still_pending = original_key is not None
-    if not still_pending and requested.issubset(paired_scopes):
+    same_device_pending = [
+        (key, item)
+        for key, item in pending.items()
+        if isinstance(item, dict)
+        and _norm(item.get("requestId")) != request_id
+        and _norm(item.get("deviceId")) == device_id
+    ]
+    if not still_pending and not same_device_pending and requested.issubset(paired_scopes):
         return {
             "requestId": request_id,
             "deviceId": device_id,
@@ -267,7 +272,6 @@ def recover_failed_scope_approval(
     mentioned = []
     same_scope_candidates = []
     same_scope_mentioned = []
-    same_device_pending = []
     for key, item in pending.items():
         item_scopes = _scope_set(item) if isinstance(item, dict) else set()
         same_scope_view = _requested_scope_view(item)
@@ -275,16 +279,10 @@ def recover_failed_scope_approval(
             isinstance(item, dict)
             and _norm(item.get("requestId")) != request_id
             and _norm(item.get("deviceId")) == device_id
-        ):
-            same_device_pending.append((key, item))
-        if (
-            isinstance(item, dict)
-            and _norm(item.get("requestId")) != request_id
-            and _norm(item.get("deviceId")) == device_id
             and same_scope_view is not None
             and same_scope_view.issubset(allowed)
             and _is_same_identity_scope_replacement(
-                original, item, paired_entry, paired_scopes, requested
+                original, item, paired_entry, requested
             )
         ):
             same_scope_candidates.append((key, item))
@@ -313,11 +311,16 @@ def recover_failed_scope_approval(
     ):
         recovery_key = same_scope_mentioned[0][0]
         compatibility = "openclaw-approve-recovered-same-scope-replacement"
-    elif len(mentioned) == 1:
+    elif not still_pending and len(same_device_pending) == 1 and len(mentioned) == 1:
         recovery_key = mentioned[0][0]
         compatibility = "openclaw-approve-recovered-replacement"
-    elif len(candidates) == 1 and not re.search(
-        r"\brequestId\b|\brequest[-_ ]?id\b", approve_output or "", re.IGNORECASE
+    elif (
+        not still_pending
+        and len(same_device_pending) == 1
+        and len(candidates) == 1
+        and not re.search(
+            r"\brequestId\b|\brequest[-_ ]?id\b", approve_output or "", re.IGNORECASE
+        )
     ):
         recovery_key = candidates[0][0]
         compatibility = "openclaw-approve-recovered-replacement"

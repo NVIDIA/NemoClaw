@@ -3089,7 +3089,7 @@ def requested_scope_view(entry):
         return None
     return views[0]
 
-def is_same_identity_scope_replacement(original, replacement, paired_device, paired_scope_set, requested):
+def is_same_identity_scope_replacement(original, replacement, paired_device, requested):
     original_key = norm(original.get("publicKey"))
     replacement_key = norm(replacement.get("publicKey"))
     paired_key = norm(paired_device.get("publicKey"))
@@ -3109,8 +3109,8 @@ def is_same_identity_scope_replacement(original, replacement, paired_device, pai
         and roles(original) == roles(replacement) == roles(paired_device) == {"operator"}
         and replacement_scopes is not None
         and replacement_scopes.issubset({"operator.pairing", "operator.read", "operator.write"})
-        and canonical_operator_scopes(paired_scope_set | replacement_scopes)
-        == canonical_operator_scopes(paired_scope_set | requested)
+        and canonical_operator_scopes(replacement_scopes)
+        == canonical_operator_scopes(requested)
     )
 
 def output_mentions_request_id(value):
@@ -3141,9 +3141,17 @@ if (not request_id or norm(before.get("requestId")) != request_id or not device_
         or "operator.pairing" not in paired_scopes or not isinstance(paired_entry, dict)
         or norm(paired_entry.get("deviceId")) != device_id):
     raise SystemExit(1)
+same_device_pending = [
+    (key, item) for key, item in pending.items()
+    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
+        and norm(item.get("deviceId")) == device_id)
+]
 # Compatibility boundary: treat a nonzero approve as success only when OpenClaw
-# already removed the pending request and persisted the requested paired scopes.
-if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
+# already removed every same-device pending request and persisted the requested
+# paired scopes. A replacement request must flow through the exact-identity
+# recovery below even when OpenClaw persisted the scopes before returning.
+if (request_id and requested and not still_pending and not same_device_pending
+        and isinstance(paired_entry, dict) and requested.issubset(paired_scopes)):
     print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
     raise SystemExit(0)
 
@@ -3160,17 +3168,13 @@ candidates = []
 mentioned = []
 same_scope_candidates = []
 same_scope_mentioned = []
-same_device_pending = []
 for key, item in pending.items():
     item_scopes = scope_set(item) if isinstance(item, dict) else set()
     same_scope_view = requested_scope_view(item) if isinstance(item, dict) else None
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
-            and norm(item.get("deviceId")) == device_id):
-        same_device_pending.append((key, item))
-    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
             and norm(item.get("deviceId")) == device_id and same_scope_view is not None
             and same_scope_view.issubset(allowed)
-            and is_same_identity_scope_replacement(before, item, paired_entry, paired_scopes, requested)):
+            and is_same_identity_scope_replacement(before, item, paired_entry, requested)):
         same_scope_candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             same_scope_mentioned.append((key, item))
@@ -3186,9 +3190,10 @@ if (is_scope_upgrade_approval_compat_failure(approve_output)
         and len(same_scope_mentioned) == 1):
     replacement_key, replacement = same_scope_mentioned[0]
     compatibility = "openclaw-approve-recovered-same-scope-replacement"
-elif len(mentioned) == 1:
+elif not still_pending and len(same_device_pending) == 1 and len(mentioned) == 1:
     replacement_key, replacement = mentioned[0]
-elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
+elif (not still_pending and len(same_device_pending) == 1 and len(candidates) == 1
+        and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE)):
     replacement_key, replacement = candidates[0]
 elif (still_pending and not candidates and not same_device_pending
         and is_scope_upgrade_approval_compat_failure(approve_output)):

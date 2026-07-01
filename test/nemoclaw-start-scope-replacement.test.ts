@@ -44,7 +44,11 @@ const PAIRED_DEVICE = {
 function runReplacementCase(
   replacement: Record<string, unknown>,
   mentionedId = "request-2",
-  options: { coexistOriginal?: boolean } = {},
+  options: {
+    additionalPending?: Record<string, Record<string, unknown>>;
+    coexistOriginal?: boolean;
+    persistedApprovedScopes?: boolean;
+  } = {},
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-scope-replacement-"));
   const fakeBin = path.join(tmpDir, "bin");
@@ -56,11 +60,22 @@ function runReplacementCase(
   fs.mkdirSync(fakeBin);
   fs.mkdirSync(devicesDir, { recursive: true });
   fs.writeFileSync(pendingFile, JSON.stringify({ original: ORIGINAL_REQUEST }));
-  fs.writeFileSync(pairedFile, JSON.stringify({ "device-1": PAIRED_DEVICE }));
+  const approvedScopes = ["operator.pairing", "operator.read", "operator.write"];
+  const pairedDevice = options.persistedApprovedScopes
+    ? {
+        ...PAIRED_DEVICE,
+        scopes: approvedScopes,
+        approvedScopes,
+        tokens: { operator: { role: "operator", scopes: approvedScopes } },
+      }
+    : PAIRED_DEVICE;
+  fs.writeFileSync(pairedFile, JSON.stringify({ "device-1": pairedDevice }));
   const pairedBefore = fs.readFileSync(pairedFile, "utf8");
-  const replacementState = options.coexistOriginal
-    ? { original: ORIGINAL_REQUEST, replacement }
-    : { replacement };
+  const replacementState = {
+    ...(options.coexistOriginal ? { original: ORIGINAL_REQUEST } : {}),
+    replacement,
+    ...options.additionalPending,
+  };
   fs.writeFileSync(
     path.join(fakeBin, "openclaw"),
     `#!/usr/bin/env bash
@@ -146,6 +161,92 @@ describe("nemoclaw-start scope replacement recovery (#4462)", () => {
         "operator.write",
       ]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the exact replacement after OpenClaw already persisted the approved scopes", () => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+    };
+    const run = runReplacementCase(replacement, "request-2", {
+      persistedApprovedScopes: true,
+    });
+    try {
+      expect(run.result.status, run.result.stderr).toBe(0);
+      expect(JSON.parse(run.result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-same-scope-replacement",
+      );
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({});
+      expect(JSON.stringify(JSON.parse(fs.readFileSync(run.pairedFile, "utf8")))).not.toContain(
+        "operator.admin",
+      );
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept an unmentioned replacement after approved scopes persisted", () => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+    };
+    const run = runReplacementCase(replacement, "request-9", {
+      persistedApprovedScopes: true,
+    });
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({ replacement });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a divergent mentioned replacement after approved scopes persisted", () => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing"],
+    };
+    const run = runReplacementCase(replacement, "request-2", {
+      persistedApprovedScopes: true,
+    });
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({ replacement });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
+    } finally {
+      fs.rmSync(run.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a mentioned admin residual beside an exact persisted replacement", () => {
+    const replacement = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-2",
+      scopes: ["operator.pairing", "operator.read", "operator.write"],
+    };
+    const admin = {
+      ...ORIGINAL_REQUEST,
+      requestId: "request-admin",
+      scopes: ["operator.pairing", "operator.read", "operator.write", "operator.admin"],
+    };
+    const run = runReplacementCase(replacement, "request-admin", {
+      additionalPending: { admin },
+      persistedApprovedScopes: true,
+    });
+    try {
+      expect(run.result.status).toBe(1);
+      expect(JSON.parse(fs.readFileSync(run.pendingFile, "utf8"))).toEqual({
+        replacement,
+        admin,
+      });
+      expect(fs.readFileSync(run.pairedFile, "utf8")).toBe(run.pairedBefore);
     } finally {
       fs.rmSync(run.tmpDir, { recursive: true, force: true });
     }

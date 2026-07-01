@@ -102,6 +102,16 @@ function sameScopeReplacement(requestId = "request-2"): Record<string, unknown> 
   };
 }
 
+function persistApprovedScopes(stateDir: string): void {
+  const pairedFile = path.join(stateDir, "devices", "paired.json");
+  const paired = JSON.parse(fs.readFileSync(pairedFile, "utf8"));
+  const approved = ["operator.pairing", "operator.read", "operator.write"];
+  paired["device-1"].scopes = approved;
+  paired["device-1"].approvedScopes = approved;
+  paired["device-1"].tokens.operator.scopes = approved;
+  fs.writeFileSync(pairedFile, JSON.stringify(paired));
+}
+
 describe("openclaw device approval policy (#4462)", () => {
   it("recovers allowlisted upgrades when the failed approve leaves the original request pending", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
@@ -183,6 +193,126 @@ describe("openclaw device approval policy (#4462)", () => {
         "operator.write",
       ]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the exact replacement after approved scopes already persisted", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, { replacement: sameScopeReplacement() });
+      persistApprovedScopes(stateDir);
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-2)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-same-scope-replacement",
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(stateDir, "devices", "pending.json"), "utf8")),
+      ).toEqual({});
+      expect(fs.readFileSync(path.join(stateDir, "devices", "paired.json"), "utf8")).not.toContain(
+        "operator.admin",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept an unmentioned replacement after approved scopes persisted", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeReplacementState(stateDir, { replacement: sameScopeReplacement() });
+      persistApprovedScopes(stateDir);
+      const pendingFile = path.join(stateDir, "devices", "pending.json");
+      const pairedFile = path.join(stateDir, "devices", "paired.json");
+      const pendingBefore = fs.readFileSync(pendingFile, "utf8");
+      const pairedBefore = fs.readFileSync(pairedFile, "utf8");
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-9)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(fs.readFileSync(pendingFile, "utf8")).toBe(pendingBefore);
+      expect(fs.readFileSync(pairedFile, "utf8")).toBe(pairedBefore);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a divergent mentioned replacement after approved scopes persisted", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      const replacement = {
+        ...sameScopeReplacement(),
+        scopes: ["operator.pairing"],
+      };
+      writeReplacementState(stateDir, { replacement });
+      persistApprovedScopes(stateDir);
+      const pendingFile = path.join(stateDir, "devices", "pending.json");
+      const pairedFile = path.join(stateDir, "devices", "paired.json");
+      const pendingBefore = fs.readFileSync(pendingFile, "utf8");
+      const pairedBefore = fs.readFileSync(pairedFile, "utf8");
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-2)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(fs.readFileSync(pendingFile, "utf8")).toBe(pendingBefore);
+      expect(fs.readFileSync(pairedFile, "utf8")).toBe(pairedBefore);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a mentioned admin residual beside an exact persisted replacement", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      const replacement = sameScopeReplacement();
+      const admin = {
+        ...originalRequest(),
+        requestId: "request-admin",
+        scopes: ["operator.pairing", "operator.read", "operator.write", "operator.admin"],
+      };
+      writeReplacementState(stateDir, { replacement, admin });
+      persistApprovedScopes(stateDir);
+      const pendingFile = path.join(stateDir, "devices", "pending.json");
+      const pairedFile = path.join(stateDir, "devices", "paired.json");
+      const pendingBefore = fs.readFileSync(pendingFile, "utf8");
+      const pairedBefore = fs.readFileSync(pairedFile, "utf8");
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        "GatewayClientRequestError: scope upgrade pending approval (requestId: request-admin)",
+        originalRequest(),
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(fs.readFileSync(pendingFile, "utf8")).toBe(pendingBefore);
+      expect(fs.readFileSync(pairedFile, "utf8")).toBe(pairedBefore);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
