@@ -40,6 +40,7 @@ const { EXPECTED_VERSION_BY_AGENT } = vi.hoisted(() => ({
     openclaw: "2026.5.27",
     "hermes-calendar-pin": "2026.6.19",
     "high-major-semver": "999.9.9",
+    "low-year-semver": "2010.0.0",
   } as Record<string, string>,
 }));
 
@@ -300,6 +301,20 @@ describe("checkAgentVersion", () => {
     const result = checkAgentVersion("high-major-sb");
     expect(result.verificationFailed).toBe(false);
     expect(result.isStale).toBe(true);
+  });
+
+  it("treats a semver with a pre-2020 four-digit major as semver, not calendar (#6049)", () => {
+    registry.registerSandbox({
+      name: "low-year-sb",
+      agent: "low-year-semver",
+      agentVersion: "2010.0.0",
+    });
+
+    const result = checkAgentVersion("low-year-sb");
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("2010.0.0");
+    expect(result.schemeMismatch).toBeFalsy();
+    expect(result.isStale).toBe(false);
   });
 
   it("flags a scheme mismatch discovered during an ssh probe as stale (#6049)", () => {

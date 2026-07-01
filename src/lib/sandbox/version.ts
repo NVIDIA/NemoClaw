@@ -125,22 +125,30 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
-// Classify versions by their surface shape: a `YYYY.M.D` tag with a
-// four-digit year in 2000–9999 is treated as calendar, everything else as
-// semver. The lower bound of 2000 keeps semvers with a large four-digit
-// major (e.g. `1000.0.0`) from being misclassified as calendar; the upper
-// bound is only limited by the regex character class, giving future or
-// intentionally-future test fixtures (`9999.12.31`) the same calendar shape.
-// Agents that expose ambiguous versions (e.g. a real semver whose major
-// falls inside the year range) should set `version_scheme` explicitly in
-// their manifest to override this heuristic.
-const CALENDAR_VERSION_PATTERN = /^[2-9]\d{3}\.\d+\.\d+/;
+// Classify versions by their surface shape: a `YYYY.M.D` tag with a year in
+// 2020–2099 or 3000–9999 is treated as calendar; everything else is semver.
+// The lower bound of 2020 excludes semvers whose major happens to be a small
+// four-digit number (e.g. `2000.0.0`, `1000.0.0`) — no NemoClaw agent ships
+// a calendar tag from before 2020, so nothing real is lost, and it stops the
+// heuristic from misclassifying legitimate semvers just because their major
+// looks like a year. The upper `3000–9999` alternative keeps intentionally
+// future-dated test fixtures (`9999.12.31`) recognisable.
+const CALENDAR_VERSION_PATTERN = /^(20[2-9]\d|[3-9]\d{3})\.\d+\.\d+/;
 
 function classifyVersionShape(value: string): "calendar" | "semver" {
   return CALENDAR_VERSION_PATTERN.test(String(value)) ? "calendar" : "semver";
 }
 
-function resolveVersionScheme(
+// The observed sandbox version is always classified by its actual shape, so
+// a legacy calendar cache under a `semver` manifest still surfaces as a
+// mismatch instead of being coerced into agreement with the declared scheme.
+// The expected value prefers the manifest declaration and falls back to the
+// shape classifier when no scheme is declared.
+function classifyObservedVersion(value: string): "calendar" | "semver" {
+  return classifyVersionShape(value);
+}
+
+function classifyExpectedVersion(
   agentScheme: "semver" | "calendar" | null,
   value: string,
 ): "semver" | "calendar" {
@@ -149,10 +157,10 @@ function resolveVersionScheme(
 
 function versionsComparable(
   agentScheme: "semver" | "calendar" | null,
-  left: string,
-  right: string,
+  observed: string,
+  expected: string,
 ): boolean {
-  return resolveVersionScheme(agentScheme, left) === resolveVersionScheme(agentScheme, right);
+  return classifyObservedVersion(observed) === classifyExpectedVersion(agentScheme, expected);
 }
 
 const warnedSchemeMismatchKeys = new Set<string>();
