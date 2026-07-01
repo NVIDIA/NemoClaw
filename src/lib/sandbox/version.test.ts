@@ -317,6 +317,57 @@ describe("checkAgentVersion", () => {
     expect(result.isStale).toBe(false);
   });
 
+  it("without a manifest version_scheme, falls back to shape classification so a matching-shape cached value is treated as current (#6049)", () => {
+    registry.registerSandbox({ name: "openclaw-sb", agent: null, agentVersion: "2026.5.27" });
+
+    const result = checkAgentVersion("openclaw-sb");
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("2026.5.27");
+    expect(result.schemeMismatch).toBeFalsy();
+    expect(result.isStale).toBe(false);
+  });
+
+  it("flags a calendar-manifest agent with a semver runtime as scheme-mismatched and stale (#6049)", () => {
+    registry.registerSandbox({ name: "openclaw-sb", agent: "openclaw", agentVersion: "1.2.3" });
+
+    const result = checkAgentVersion("openclaw-sb");
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("1.2.3");
+    expect(result.schemeMismatch).toBe(true);
+    expect(result.isStale).toBe(true);
+  });
+
+  it("emits a structured JSON payload to stderr when a scheme mismatch is detected (#6049)", () => {
+    registry.registerSandbox({
+      name: "hermes-warn-sb",
+      agent: "hermes-calendar-pin",
+      agentVersion: "0.17.0",
+    });
+
+    const stderrChunks: string[] = [];
+    const originalWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrChunks.push(chunk.toString());
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      checkAgentVersion("hermes-warn-sb");
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    const line = stderrChunks.join("");
+    const jsonStart = line.indexOf("{");
+    const payload = JSON.parse(line.slice(jsonStart).trim());
+    expect(payload).toEqual({
+      event: "sandbox_version_scheme_mismatch",
+      sandbox: "hermes-warn-sb",
+      sandboxVersion: "0.17.0",
+      expectedVersion: "2026.6.19",
+      action: "flagged_as_stale",
+    });
+  });
+
   it("flags a scheme mismatch discovered during an ssh probe as stale (#6049)", () => {
     registry.registerSandbox({ name: "hermes-sb", agent: "hermes-calendar-pin" });
 
