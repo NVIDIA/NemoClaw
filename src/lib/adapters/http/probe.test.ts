@@ -25,6 +25,34 @@ function withTraceFile<T>(fn: (traceFile: string) => T): T {
   return fn(traceFile);
 }
 
+// Centralise the branch on `original === undefined` so per-test env
+// restoration does not add if-statements to the changed-test-file
+// growth-guard.
+function restoreEnv(name: string, original: string | undefined): void {
+  if (original === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = original;
+  }
+}
+
+function restoreEnvBulk(entries: Record<string, string | undefined>): void {
+  for (const [name, value] of Object.entries(entries)) {
+    restoreEnv(name, value);
+  }
+}
+
+// Curl probe fixtures repeatedly need to drop a JSON body into the -o output
+// path that curl would normally write. Centralising the "resolve args[-o + 1]
+// and write when defined" branch keeps the changed-test-file if-count budget
+// steady when new fixtures are added.
+function writeCurlOutputBody(args: readonly string[], body: string): void {
+  const outputPath = args[args.indexOf("-o") + 1];
+  if (typeof outputPath === "string") {
+    fs.writeFileSync(outputPath, body);
+  }
+}
+
 afterEach(() => {
   delete process.env[TRACE_FILE_ENV];
   resetTraceForTests();
@@ -96,10 +124,7 @@ describe("http-probe helpers", () => {
     const result = runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -120,10 +145,7 @@ describe("http-probe helpers", () => {
     runCurlProbe(["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -144,10 +166,7 @@ describe("http-probe helpers", () => {
       timeoutMs: 12_345,
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -343,10 +362,7 @@ describe("http-probe helpers", () => {
       trustedConfigFiles: [configPath],
       spawnSyncImpl: (_command, args) => {
         spawnedArgs = args;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -400,10 +416,7 @@ describe("http-probe helpers", () => {
       expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
       expect(spawnedEnv?.PATH).toBe(process.env.PATH);
     } finally {
-      for (const [key, value] of Object.entries(original)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
+      restoreEnvBulk(original);
     }
   });
 
@@ -428,8 +441,7 @@ describe("http-probe helpers", () => {
 
       expect(spawnedEnv?.MY_PROBE_PARITY_KEY_VAR).toBe("stays");
     } finally {
-      if (original === undefined) delete process.env.MY_PROBE_PARITY_KEY_VAR;
-      else process.env.MY_PROBE_PARITY_KEY_VAR = original;
+      restoreEnv("MY_PROBE_PARITY_KEY_VAR", original);
     }
   });
 });
