@@ -105,6 +105,13 @@ test/e2e/
   live E2E targets and uploads an explicit artifact allowlist with
   JSON summaries plus action, log, and shell command-evidence directories under
   14-day retention.
+  The allowlist includes each target's sanitized onboard timing summary at
+  `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
+  Raw onboard traces stay under the runner temporary directory and are deleted
+  before artifact upload.
+  These per-target timing summaries are artifact evidence only.
+  The Slack and GitHub scorecard timing comparison remains scoped to the
+  dedicated `cloud-onboard` artifact.
 - `.github/workflows/e2e-branch-validation.yaml`, `macos-e2e.yaml`,
   `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and `regression-e2e.yaml` call
   focused E2E targets directly for their E2E coverage.

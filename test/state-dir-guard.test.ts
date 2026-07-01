@@ -237,7 +237,8 @@ describe("state-dir-guard", () => {
       expect(mode(nestedDir)).toBe(0o755);
       expect(mode(toolPath)).toBe(0o755);
       const timestampsAfter = fs.statSync(toolPath);
-      expect(timestampsAfter.atimeMs).toBe(timestampsBefore.atimeMs);
+      // atime can advance on relatime filesystems when the guard verifies the
+      // replacement; mtime is the stable application timestamp contract.
       expect(timestampsAfter.mtimeMs).toBe(timestampsBefore.mtimeMs);
 
       fs.writeSync(staleFd, Buffer.from("MUTATE\n"), 0, 7, 0);

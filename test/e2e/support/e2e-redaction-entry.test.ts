@@ -22,11 +22,29 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { redactString } from "../fixtures/redaction.ts";
+import { buildChildEnv, redactString } from "../fixtures/redaction.ts";
 import { SecretStore } from "../fixtures/secrets.ts";
 import { ShellProbe, trustedShellCommand } from "../fixtures/shell-probe.ts";
 
 describe("fixture redaction entry point", () => {
+  it("passes only the workflow-owned trace directory through child env", () => {
+    const childEnv = buildChildEnv(
+      {
+        PATH: "/usr/bin",
+        NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces",
+        NEMOCLAW_TRACE_FILE: "/tmp/nemoclaw-trace.json",
+        NEMOCLAW_TRACE_EXPORTER: "debug",
+        NEMOCLAW_LOG_LEVEL: "debug",
+      },
+      { fixtureOverlay: {} },
+    );
+
+    expect(childEnv.NEMOCLAW_TRACE_DIR).toBe("/tmp/nemoclaw-traces");
+    expect(childEnv.NEMOCLAW_TRACE_FILE).toBeUndefined();
+    expect(childEnv.NEMOCLAW_TRACE_EXPORTER).toBeUndefined();
+    expect(childEnv.NEMOCLAW_LOG_LEVEL).toBe("debug");
+  });
+
   it("redacts explicit values with [REDACTED] and canonical shapes with <REDACTED>", () => {
     const explicit = "test-secret-aBcD";
     const canonical = `nvapi-${"x".repeat(24)}`;
