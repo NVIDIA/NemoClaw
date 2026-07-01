@@ -551,7 +551,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "4"];
+const answers = ["1", "3"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -654,7 +654,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "9", "custom/provider-model"];
+const answers = ["1", "8", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -740,7 +740,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"z-ai/glm-5.1"}]}'
+  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
 fi
 printf '%s' "$body" > "$outfile"
 printf '%s' "$status"
@@ -752,7 +752,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "9", "bad/model", "z-ai/glm-5.1"];
+const answers = ["1", "8", "bad/model", "custom/provider-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -804,7 +804,7 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "z-ai/glm-5.1");
+    assert.equal(payload.result.model, "custom/provider-model");
     assert.equal(
       payload.messages.filter((message: string) => /NVIDIA Endpoints model id:/.test(message))
         .length,

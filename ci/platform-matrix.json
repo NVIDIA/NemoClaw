@@ -156,7 +156,7 @@
       "name": "Hermes",
       "status": "caveated",
       "default": false,
-      "notes": "First-class agent with dedicated CLI (`$$nemohermes`), Dockerfile, manifest, docs, and nightly E2E job coverage (`hermes-e2e` job in `.github/workflows/nightly-e2e.yaml` plus the `hermes-*-vitest` jobs in `e2e-vitest-scenarios.yaml`). Onboard with `$$nemohermes onboard` or pass `--agent hermes` to `$$nemoclaw onboard`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
+      "notes": "First-class agent with dedicated CLI (`$$nemohermes`), Dockerfile, manifest, docs, and Hermes E2E coverage in `.github/workflows/e2e.yaml` (`hermes-e2e`, `hermes-*`, and Hermes rebuild/switch jobs). Onboard with `$$nemohermes onboard` or pass `--agent hermes` to `$$nemoclaw onboard`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
     },
     {
       "name": "LangChain Deep Agents Code",

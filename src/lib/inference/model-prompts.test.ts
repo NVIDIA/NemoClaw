@@ -34,7 +34,7 @@ describe("model prompt helpers", () => {
   });
 
   it("returns Minimax M2.7 from the default cloud model menu", async () => {
-    const promptFn = promptSequence(["5"]);
+    const promptFn = promptSequence(["4"]);
     const result = await promptCloudModel({
       promptFn,
       writeLine: vi.fn(),

@@ -28,7 +28,6 @@ describe("inference selection config", () => {
     expect(CLOUD_MODEL_OPTIONS).toEqual([
       { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
       { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
-      { id: "z-ai/glm-5.1", label: "GLM 5.1" },
       { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
       { id: "minimaxai/minimax-m2.7", label: "Minimax M2.7" },
     ]);
@@ -49,6 +48,11 @@ describe("inference selection config", () => {
       "openai/gpt-5.5",
     ]);
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
+  });
+
+  it("retires GLM 5.1 only from the NVIDIA Endpoints picker", () => {
+    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain("z-ai/glm-5.1");
+    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain("z-ai/glm-5.1");
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {

@@ -49,7 +49,7 @@ function main(): void {
     env: {
       ...process.env,
       NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1",
-      NEMOCLAW_RUN_E2E_SCENARIOS: "1",
+      NEMOCLAW_RUN_LIVE_E2E: "1",
     },
   });
 

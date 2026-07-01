@@ -80,21 +80,28 @@ NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may
 
 ## Optional Web Search
 
-Deep Agents Code uses Tavily web search when you provide a Tavily credential in the runtime environment.
+Deep Agents Code can reach Tavily web search once you register a Tavily credential with the OpenShell gateway on the host.
+NemoClaw never accepts the raw key inside the sandbox, in `.env`, or in Deep Agents config files; the gateway injects it at egress instead.
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
-To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, then supply the credential.
+To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
 
 ```bash
 # Preview the endpoints the preset opens:
 nemo-deepagents <sandbox-name> policy-add tavily --dry-run
 # Apply it:
 nemo-deepagents <sandbox-name> policy-add tavily --yes
+# Export the key on the host (NemoClaw reads it from the current shell):
+export TAVILY_API_KEY=tvly-...
+# Register the provider with the gateway:
+nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+# Attach the new provider to the sandbox:
+nemo-deepagents <sandbox-name> rebuild
 ```
 
 The `tavily` preset only opens egress to `api.tavily.com:443`.
-Provide the Tavily API key to the agent at runtime; NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image.
+Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
 Remove the access again when it is no longer needed.
