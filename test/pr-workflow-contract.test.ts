@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -81,6 +84,42 @@ function requiredStepIndex(action: CompositeAction, stepName: string): number {
     throw new Error(`Missing shared action step: ${stepName}`);
   }
   return stepIndex;
+}
+
+function uploadsCompiledCliArtifact(
+  action: CompositeAction,
+  shard: number,
+  shardCount: number,
+): boolean {
+  const validationRun = requiredStep(action, "Validate shard inputs").run ?? "";
+  const outputDirectory = mkdtempSync(join(tmpdir(), "nemoclaw-cli-shard-output-"));
+  const outputPath = join(outputDirectory, "github-output");
+  try {
+    // Execute the repository-owned action body so producer selection stays a behavioral contract.
+    const result = spawnSync("bash", ["-c", validationRun], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        CLI_SHARD: String(shard),
+        CLI_SHARD_COUNT: String(shardCount),
+        GITHUB_OUTPUT: outputPath,
+      },
+    });
+    expect(
+      result.status,
+      `Shard validation failed for ${shard}/${shardCount}: ${result.stderr}`,
+    ).toBe(0);
+    const output = readFileSync(outputPath, "utf8").match(
+      /^upload_build_artifact=(true|false)$/mu,
+    )?.[1];
+    expect(
+      output,
+      `Shard validation omitted its artifact output for ${shard}/${shardCount}`,
+    ).toBeDefined();
+    return output === "true";
+  } finally {
+    rmSync(outputDirectory, { force: true, recursive: true });
+  }
 }
 
 function requiredWorkflowStep(job: WorkflowJob, stepName: string): WorkflowStep {
@@ -441,7 +480,8 @@ describe("pull request and main workflow contracts", () => {
     expect(cliShardRuns).not.toContain("${{ inputs.shard");
     expect(cliShardRuns).not.toContain("scripts/check-coverage-ratchet.ts");
 
-    expect(cliMergeRuns).toContain("npm run build:cli");
+    expect(cliMergeRuns).not.toContain("npm run build:cli");
+    expect(cliMergeRuns).toContain("test -s dist/nemoclaw.js");
     expect(cliMergeRuns).toContain("npx tsx scripts/check-dist-sourcemaps.ts dist");
     expect(cliMergeRuns).toContain('blob=".vitest-reports/blob-${shard}-${CLI_SHARD_COUNT}.json"');
     expect(cliMergeRuns).toContain(
@@ -582,9 +622,17 @@ describe("pull request and main workflow contracts", () => {
     expect(sharedActions.cliCoverageShard.inputs?.["shard-count"]?.default).toBe(cliShardCount);
     expect(sharedActions.cliCoverageMerge.inputs?.["shard-count"]?.default).toBe(cliShardCount);
 
+    const compiledCliUploadStep = requiredStep(
+      sharedActions.cliCoverageShard,
+      "Upload compiled CLI artifact",
+    );
     const shardUploadStep = requiredStep(
       sharedActions.cliCoverageShard,
       "Upload CLI shard blob report",
+    );
+    const compiledCliDownloadStep = requiredStep(
+      sharedActions.cliCoverageMerge,
+      "Download compiled CLI artifact",
     );
     const downloadStep = requiredStep(
       sharedActions.cliCoverageMerge,
@@ -594,6 +642,25 @@ describe("pull request and main workflow contracts", () => {
       sharedActions.cliCoverageMerge,
       "Verify CLI shard blob reports",
     ).run;
+
+    expect(compiledCliUploadStep.if).toBe(
+      "${{ steps.validate-shard-inputs.outputs.upload_build_artifact == 'true' && success() }}",
+    );
+    expect(compiledCliUploadStep.uses).toContain("actions/upload-artifact@");
+    expect(compiledCliUploadStep.with).toEqual({
+      name: "cli-build-output",
+      path: "dist",
+      "if-no-files-found": "error",
+      "retention-days": 1,
+    });
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageShard, "Build CLI for coverage shard"),
+    ).toBeLessThan(
+      requiredStepIndex(sharedActions.cliCoverageShard, "Upload compiled CLI artifact"),
+    );
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageShard, "Upload compiled CLI artifact"),
+    ).toBeLessThan(requiredStepIndex(sharedActions.cliCoverageShard, "Run CLI coverage shard"));
 
     expect(shardUploadStep.if).toBe(
       "${{ always() && steps.validate-shard-inputs.outcome == 'success' }}",
@@ -606,6 +673,22 @@ describe("pull request and main workflow contracts", () => {
     expect(shardUploadStep.with?.["if-no-files-found"]).toBe("error");
     expect(shardUploadStep.with?.["retention-days"]).toBe(1);
 
+    expect(compiledCliDownloadStep.uses).toContain("actions/download-artifact@");
+    expect(compiledCliDownloadStep.with).toEqual({
+      name: "cli-build-output",
+      path: "dist",
+    });
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Download compiled CLI artifact"),
+    ).toBeLessThan(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Verify compiled CLI artifact"),
+    );
+    expect(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Verify compiled CLI artifact"),
+    ).toBeLessThan(
+      requiredStepIndex(sharedActions.cliCoverageMerge, "Download CLI shard blob reports"),
+    );
+
     expect(downloadStep.uses).toContain("actions/download-artifact@");
     expect(downloadStep.with?.pattern).toBe("cli-blob-report-*");
     expect(downloadStep.with?.path).toBe(".vitest-reports");
@@ -617,6 +700,17 @@ describe("pull request and main workflow contracts", () => {
     expect(stepRuns(sharedActions.cliCoverageMerge).join("\n")).toContain(
       'scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"',
     );
+  });
+
+  it("selects an available shard to publish the compiled CLI artifact", () => {
+    for (const shardCount of [1, 2, 3, 5]) {
+      const expectedProducer = Math.min(4, shardCount);
+      const producers = Array.from({ length: shardCount }, (_, index) => index + 1).filter(
+        (shard) => uploadsCompiledCliArtifact(sharedActions.cliCoverageShard, shard, shardCount),
+      );
+
+      expect(producers, `${shardCount} total shards`).toEqual([expectedProducer]);
+    }
   });
 
   it("keeps final aggregate checks for PR and main workflows", () => {
