@@ -9,6 +9,7 @@ import {
   hasOpenShellGatewayUserService,
   startPackageManagedDockerDriverGateway,
   startOpenShellGatewayUserService,
+  stopOpenShellGatewayUserService,
   type SpawnSyncLikeResult,
 } from "./docker-driver-gateway-service";
 
@@ -252,6 +253,32 @@ describe("docker-driver-gateway-service", () => {
     );
   });
 
+  it("stops the upstream user service with systemctl --user after validating identity", () => {
+    const events: string[] = [];
+    const spawnSyncImpl = vi.fn((_command: string, args: string[]) => {
+      events.push(args[1] ?? args[0] ?? "");
+      return args.includes("show") ? spawnResult(0, "", trustedShowOutput()) : spawnResult();
+    });
+
+    const result = stopOpenShellGatewayUserService({
+      commandExists: (command) => command === "systemctl",
+      env: {},
+      existsSync: (candidate) => candidate === "/lib/systemd/user/openshell-gateway.service",
+      platform: "linux",
+      spawnSyncImpl,
+    });
+
+    expect(result).toEqual({ attempted: true, stopped: true });
+    expect(events).toEqual(["show", "stop"]);
+    expect(spawnSyncImpl.mock.calls.map(([command, args]) => [command, args])).toEqual([
+      [
+        "systemctl",
+        ["--user", "show", "openshell-gateway", "--property=FragmentPath", "--property=ExecStart"],
+      ],
+      ["systemctl", ["--user", "stop", "openshell-gateway"]],
+    ]);
+  });
+
   it("uses the package-managed service only after endpoint, metadata, and gRPC health are ready", async () => {
     const events: string[] = [];
     let registerCount = 0;
@@ -289,6 +316,41 @@ describe("docker-driver-gateway-service", () => {
     ).resolves.toBe(true);
 
     expect(events).toEqual(["register", "sleep", "register", "ready", "clear", "verify"]);
+  });
+
+  it("stops the package-managed service when the sandbox bridge is unreachable", async () => {
+    const events: string[] = [];
+
+    await expect(
+      startPackageManagedDockerDriverGateway({
+        clearDockerDriverGatewayRuntimeFiles: () => events.push("clear"),
+        exitOnFailure: false,
+        gatewayName: "nemoclaw",
+        hasOpenShellGatewayUserService: () => true,
+        healthPollCount: 1,
+        healthPollInterval: 0,
+        isDockerDriverGatewayReady: async () => true,
+        registerDockerDriverGatewayEndpoint: () => true,
+        runCaptureOpenshell: (args) => (args[0] === "status" ? STATUS_CONNECTED : GATEWAY_INFO),
+        skipSandboxBridgeReachability: false,
+        startOpenShellGatewayUserService: () => ({
+          attempted: true,
+          fallbackAllowed: false,
+          started: true,
+        }),
+        stopOpenShellGatewayUserService: () => {
+          events.push("stop-service");
+          return { attempted: true, stopped: true };
+        },
+        verifySandboxBridgeGatewayReachableOrExit: async (_exitOnFailure, options) => {
+          events.push("verify");
+          await options?.onUnreachable?.();
+          throw new Error("Docker-driver sandbox-bridge unreachable (tcp_failed)");
+        },
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+
+    expect(events).toEqual(["clear", "verify", "stop-service"]);
   });
 
   it("falls back to standalone when package-managed service startup is unavailable", async () => {

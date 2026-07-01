@@ -825,10 +825,53 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
       verifySandboxBridgeGatewayReachableOrExit(false, {
         reachabilityImpl: () => unreachable,
         onUnreachable,
+        retryAttempts: 1,
       }),
     ).rejects.toThrow("sandbox-bridge unreachable");
     expect(onUnreachable).toHaveBeenCalledTimes(1);
     error.mockRestore();
+  });
+
+  it("does not mask the fatal probe failure when onUnreachable throws", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(false, {
+        reachabilityImpl: () => unreachable,
+        onUnreachable: () => {
+          throw new Error("cleanup failed");
+        },
+        retryAttempts: 1,
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Gateway cleanup after sandbox-bridge failure failed: cleanup failed",
+      ),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("does not mask the fatal probe failure when async onUnreachable rejects", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(false, {
+        reachabilityImpl: () => unreachable,
+        onUnreachable: async () => {
+          throw new Error("async cleanup failed");
+        },
+        retryAttempts: 1,
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Gateway cleanup after sandbox-bridge failure failed: async cleanup failed",
+      ),
+    );
+    error.mockRestore();
+    warn.mockRestore();
   });
 
   it("does not invoke onUnreachable when the probe succeeds", async () => {

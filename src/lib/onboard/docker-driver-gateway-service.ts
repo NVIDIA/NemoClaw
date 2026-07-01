@@ -28,6 +28,12 @@ export interface OpenShellGatewayUserServiceStartResult {
   started: boolean;
 }
 
+export interface OpenShellGatewayUserServiceStopResult {
+  attempted: boolean;
+  reason?: string;
+  stopped: boolean;
+}
+
 export interface SpawnSyncLikeResult {
   error?: Error;
   status: number | null;
@@ -40,6 +46,11 @@ export type SpawnSyncLike = (
   args: string[],
   options?: SpawnSyncOptions,
 ) => SpawnSyncLikeResult;
+
+interface SandboxBridgeVerifierOptions {
+  onUnreachable?: () => Promise<void> | void;
+  skip?: boolean;
+}
 
 export interface PackageManagedDockerDriverGatewayOptions {
   clearDockerDriverGatewayRuntimeFiles: () => void;
@@ -57,9 +68,10 @@ export interface PackageManagedDockerDriverGatewayOptions {
   startOpenShellGatewayUserService?: (
     opts?: Pick<OpenShellGatewayUserServiceOptions, "prepareServiceEnv">,
   ) => OpenShellGatewayUserServiceStartResult;
+  stopOpenShellGatewayUserService?: () => OpenShellGatewayUserServiceStopResult;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
-    options?: { skip?: boolean },
+    options?: SandboxBridgeVerifierOptions,
   ) => Promise<void>;
 }
 
@@ -199,6 +211,45 @@ function readTrustedOpenShellGatewayUserServiceIdentity(
   return { fallbackAllowed: false, ok: true };
 }
 
+export function stopOpenShellGatewayUserService(
+  opts: Omit<OpenShellGatewayUserServiceOptions, "prepareServiceEnv"> = {},
+): OpenShellGatewayUserServiceStopResult {
+  const platform = opts.platform ?? process.platform;
+  if (platform !== "linux") {
+    return { attempted: false, stopped: false, reason: "not a Linux host" };
+  }
+  const existsSync = opts.existsSync ?? fs.existsSync;
+  if (!hasOpenShellGatewayUserService({ existsSync, platform })) {
+    return { attempted: false, stopped: false, reason: "service unit not installed" };
+  }
+
+  const env = opts.env ?? process.env;
+  const commandExists = opts.commandExists ?? ((command) => defaultCommandExists(command, env));
+  if (!commandExists("systemctl")) {
+    return { attempted: true, stopped: false, reason: "systemctl is not available" };
+  }
+
+  const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  const identity = readTrustedOpenShellGatewayUserServiceIdentity({ env, spawnSyncImpl });
+  if (!identity.ok) {
+    return { attempted: true, stopped: false, reason: identity.reason };
+  }
+
+  const result = runSystemctlUser(["stop", OPENSHELL_GATEWAY_USER_SERVICE], {
+    env,
+    spawnSyncImpl,
+  });
+  if (!result.ok) {
+    return {
+      attempted: true,
+      stopped: false,
+      reason: `systemctl --user stop ${OPENSHELL_GATEWAY_USER_SERVICE} failed: ${result.reason}`,
+    };
+  }
+
+  return { attempted: true, stopped: true };
+}
+
 export function startOpenShellGatewayUserService(
   opts: OpenShellGatewayUserServiceOptions = {},
 ): OpenShellGatewayUserServiceStartResult {
@@ -298,6 +349,8 @@ export async function startPackageManagedDockerDriverGateway({
   skipSandboxBridgeReachability,
   startOpenShellGatewayUserService:
     startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
+  stopOpenShellGatewayUserService:
+    stopOpenShellGatewayUserServiceImpl = stopOpenShellGatewayUserService,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
   if (!hasOpenShellGatewayUserServiceImpl()) return false;
@@ -350,6 +403,13 @@ export async function startPackageManagedDockerDriverGateway({
     clearDockerDriverGatewayRuntimeFiles();
     await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
       skip: skipSandboxBridgeReachability,
+      onUnreachable: () => {
+        const stop = stopOpenShellGatewayUserServiceImpl();
+        if (!stop.stopped) {
+          const detail = stop.reason ? `: ${stop.reason}` : "";
+          throw new Error(`failed to stop OpenShell gateway user service${detail}`);
+        }
+      },
     });
     console.log("  ✓ OpenShell gateway user service is healthy");
     return true;
