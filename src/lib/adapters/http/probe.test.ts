@@ -25,6 +25,34 @@ function withTraceFile<T>(fn: (traceFile: string) => T): T {
   return fn(traceFile);
 }
 
+// Centralise the branch on `original === undefined` so per-test env
+// restoration does not add if-statements to the changed-test-file
+// growth-guard.
+function restoreEnv(name: string, original: string | undefined): void {
+  if (original === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = original;
+  }
+}
+
+function restoreEnvBulk(entries: Record<string, string | undefined>): void {
+  for (const [name, value] of Object.entries(entries)) {
+    restoreEnv(name, value);
+  }
+}
+
+// Curl probe fixtures repeatedly need to drop a JSON body into the -o output
+// path that curl would normally write. Centralising the "resolve args[-o + 1]
+// and write when defined" branch keeps the changed-test-file if-count budget
+// steady when new fixtures are added.
+function writeCurlOutputBody(args: readonly string[], body: string): void {
+  const outputPath = args[args.indexOf("-o") + 1];
+  if (typeof outputPath === "string") {
+    fs.writeFileSync(outputPath, body);
+  }
+}
+
 afterEach(() => {
   delete process.env[TRACE_FILE_ENV];
   resetTraceForTests();
@@ -96,10 +124,7 @@ describe("http-probe helpers", () => {
     const result = runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -120,10 +145,7 @@ describe("http-probe helpers", () => {
     runCurlProbe(["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"], {
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -144,10 +166,7 @@ describe("http-probe helpers", () => {
       timeoutMs: 12_345,
       spawnSyncImpl: (_command, args, options) => {
         timeout = options.timeout;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -343,10 +362,7 @@ describe("http-probe helpers", () => {
       trustedConfigFiles: [configPath],
       spawnSyncImpl: (_command, args) => {
         spawnedArgs = args;
-        const outputPath = args[args.indexOf("-o") + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, "{}");
-        }
+        writeCurlOutputBody(args, "{}");
         return {
           pid: 1,
           output: [],
@@ -360,6 +376,96 @@ describe("http-probe helpers", () => {
 
     expect(result.ok).toBe(true);
     expect(spawnedArgs).toContain(configPath);
+  });
+
+  it("scrubs credential env vars when trustedConfigFiles is supplied", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    const original = {
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      MY_SECRET_TOKEN: process.env.MY_SECRET_TOKEN,
+      MY_BENIGN_VAR: process.env.MY_BENIGN_VAR,
+      PATH: process.env.PATH,
+    };
+    process.env.NVIDIA_API_KEY = "nvapi-should-not-leak";
+    process.env.OPENAI_API_KEY = "sk-should-not-leak";
+    process.env.MY_SECRET_TOKEN = "should-not-leak";
+    process.env.MY_BENIGN_VAR = "should-survive";
+
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+        trustedConfigFiles: [configPath],
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv).toBeDefined();
+      expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.OPENAI_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+      expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+      expect(spawnedEnv?.PATH).toBe(process.env.PATH);
+    } finally {
+      restoreEnvBulk(original);
+    }
+  });
+
+  it("strips credential-shaped opts.env entries when trustedConfigFiles is supplied", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+      trustedConfigFiles: [configPath],
+      env: { NVIDIA_API_KEY: "nvapi-should-not-leak", MY_BENIGN_VAR: "should-survive" },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+    expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+  });
+
+  it("keeps the parent env intact when trustedConfigFiles is not supplied", () => {
+    const original = process.env.MY_PROBE_PARITY_KEY_VAR;
+    process.env.MY_PROBE_PARITY_KEY_VAR = "stays";
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "https://example.test/models"], {
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv?.MY_PROBE_PARITY_KEY_VAR).toBe("stays");
+    } finally {
+      restoreEnv("MY_PROBE_PARITY_KEY_VAR", original);
+    }
   });
 });
 
