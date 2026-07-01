@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type DestroySandbox = (typeof import("./destroy"))["destroySandbox"];
+type DestroySandbox = typeof import("./destroy")["destroySandbox"];
 
 const requireDist = createRequire(import.meta.url);
 const destroyModulePath = "./destroy.js";

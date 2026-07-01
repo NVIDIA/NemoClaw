@@ -308,7 +308,8 @@ function runAdapterCommand(
 }
 
 export type AdapterRegistrationInspection =
-  { state: "absent" | "registered" | "mismatch" } | { state: "error"; detail: string };
+  | { state: "absent" | "registered" | "mismatch" }
+  | { state: "error"; detail: string };
 
 export function parseAdapterRegistrationInspection(
   result: SandboxCommandResult,
