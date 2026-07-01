@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../trace";
 import {
   getCurlTimingArgs,
@@ -23,23 +24,6 @@ function withTraceFile<T>(fn: (traceFile: string) => T): T {
   process.env[TRACE_FILE_ENV] = traceFile;
   resetTraceForTests();
   return fn(traceFile);
-}
-
-// Centralise the branch on `original === undefined` so per-test env
-// restoration does not add if-statements to the changed-test-file
-// growth-guard.
-function restoreEnv(name: string, original: string | undefined): void {
-  if (original === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = original;
-  }
-}
-
-function restoreEnvBulk(entries: Record<string, string | undefined>): void {
-  for (const [name, value] of Object.entries(entries)) {
-    restoreEnv(name, value);
-  }
 }
 
 // Curl probe fixtures repeatedly need to drop a JSON body into the -o output

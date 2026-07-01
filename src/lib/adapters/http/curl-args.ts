@@ -3,6 +3,7 @@
 
 import path from "node:path";
 
+import { isCredentialShapedName } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 
 export interface CurlProbeArgOptions {
@@ -66,15 +67,10 @@ const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-
 // Defence-in-depth: primary protection is routing all secrets through trusted
 // --config tmpfiles. This denylist refuses URLs whose query-parameter names
 // look credential-shaped, so a regression at the caller can never quietly
-// leak a secret into the curl argv element. Covers common credential stem
-// words (key, secret, token, password, auth, credential) appearing either as
-// the exact parameter name, joined to another word with `_`/`-`, or in the
-// `api`/`apikey` no-separator form.
-const CURL_SECRET_QUERY_PARAM_PATTERN =
-  /(?:^|[_-])(?:api[_-]?key|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
-
+// leak a secret into the curl argv element. The credential-shaped test is
+// shared with the curl probe environment scrubber (security/credential-env).
 function isCredentialShapedQueryParam(name: string): boolean {
-  return CURL_SECRET_QUERY_PARAM_PATTERN.test(name);
+  return isCredentialShapedName(name);
 }
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
