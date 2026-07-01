@@ -40,6 +40,7 @@ const {
   RETRIABLE_HTTP_PROBE_STATUSES,
   runChatCompletionsRetryLoop,
 } = require("./probe-retry");
+const { probeAnthropicEndpoint } = require("./probe-anthropic");
 
 const {
   getCurlTimingArgs,
@@ -859,51 +860,6 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
-
-function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
-  let authConfig;
-  try {
-    authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
-    const result = runCurlProbe(
-      [
-        "-sS",
-        ...getCurlTimingArgs(),
-        ...authConfig.args,
-        "-H",
-        "anthropic-version: 2023-06-01",
-        "-H",
-        "content-type: application/json",
-        "-d",
-        JSON.stringify({
-          model,
-          max_tokens: 16,
-          messages: [{ role: "user", content: "Reply with exactly: OK" }],
-        }),
-        `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`,
-      ],
-      { trustedConfigFiles: authConfig.trustedConfigFiles },
-    );
-    if (result.ok) {
-      return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
-    }
-    return {
-      ok: false,
-      message: result.message,
-      failures: [
-        {
-          name: "Anthropic Messages API",
-          httpStatus: result.httpStatus,
-          curlStatus: result.curlStatus,
-          message: result.message,
-        },
-      ],
-    };
-  } catch (error) {
-    return openAiLikeFailureFromError(error);
-  } finally {
-    authConfig?.cleanup();
-  }
-}
 
 module.exports = {
   isSandboxInternalUrl,

@@ -44,14 +44,13 @@ export function probeRegistrySize(model: string, capture: CaptureFn = runCapture
   const body = capture(
     [
       "curl",
-      ...buildValidatedCurlCommandArgs([
-        "-sfL",
-        "--max-time",
-        String(PROBE_TIMEOUT_SECONDS),
-        "-H",
-        MANIFEST_ACCEPT_HEADER,
-        url,
-      ]),
+      ...buildValidatedCurlCommandArgs(
+        ["-sfL", "--max-time", String(PROBE_TIMEOUT_SECONDS), "-H", MANIFEST_ACCEPT_HEADER, url],
+        // Redirect-following is required because the public Ollama manifest
+        // registry responds with 307s; the URL is built from a hardcoded
+        // MANIFEST_HOST and a structurally validated model name.
+        { allowRedirects: true },
+      ),
     ],
     { ignoreError: true },
   );

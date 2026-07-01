@@ -74,23 +74,43 @@ describe("curl auth config helper", () => {
     }
   });
 
-  it("routes the OpenAI-like helper through Bearer auth by default", () => {
+  it("routes the OpenAI-like helper through Bearer auth by default and emits no url-query entry", () => {
     const config = createOpenAiLikeAuthConfig("sk-test");
     try {
       const contents = fs.readFileSync(config.args[1], "utf8");
       expect(contents).toContain('header = "Authorization: Bearer sk-test"');
+      expect(contents).not.toContain("url-query =");
     } finally {
       config.cleanup();
     }
   });
 
-  it("routes the OpenAI-like helper through query-param auth when requested", () => {
+  it("routes the OpenAI-like helper through query-param auth when requested and emits no Authorization header", () => {
     const config = createOpenAiLikeAuthConfig("AIzaFakeKey123", "query-param");
     try {
       const contents = fs.readFileSync(config.args[1], "utf8");
       expect(contents).toContain('url-query = "key=AIzaFakeKey123"');
+      expect(contents).not.toContain('header = "Authorization');
     } finally {
       config.cleanup();
     }
+  });
+
+  it("honours a caller-supplied tmpfile prefix so health probes are identifiable in /proc", () => {
+    const config = createBearerAuthConfig("nvapi-test", { prefix: "nemoclaw-kimi-health-curl" });
+    try {
+      expect(config.args[1]).toContain("nemoclaw-kimi-health-curl-");
+    } finally {
+      config.cleanup();
+    }
+  });
+
+  it("rejects an invalid prefix value to keep tmpfile paths predictable", () => {
+    expect(() => createBearerAuthConfig("nvapi-test", { prefix: "../escape" })).toThrow(
+      /invalid curl auth config prefix/,
+    );
+    expect(() => createBearerAuthConfig("nvapi-test", { prefix: "" })).toThrow(
+      /invalid curl auth config prefix/,
+    );
   });
 });

@@ -11,10 +11,10 @@ import os from "node:os";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
 import { compactText } from "../../core/url-utils";
-import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 import type { ProbeResult } from "../../onboard/types";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
+import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 
 export type CurlProbeResult = ProbeResult;
 
@@ -40,6 +40,58 @@ export interface StreamingProbeResult {
 
 const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
 const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
+
+// Drops env vars whose name looks credential-shaped — defence-in-depth so a
+// future provider env var that follows the convention is automatically
+// scrubbed without an allowlist update.
+const CURL_PROBE_ENV_DENY_PATTERN =
+  /(?:^|[_-])(?:api[_-]?key|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
+
+// Known provider credential env var names that do not match the generic
+// credential-shaped pattern. Drop these explicitly so a regression in the
+// pattern cannot leak a provider key into the curl child's environment.
+const CURL_PROBE_ENV_EXPLICIT_DENY = new Set([
+  "NGC_API_KEY",
+  "NVIDIA_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "TAVILY_API_KEY",
+  "HF_TOKEN",
+  "HUGGINGFACE_TOKEN",
+  "HUGGINGFACE_API_TOKEN",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AZURE_API_KEY",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+]);
+
+function shouldStripCurlProbeEnv(name: string): boolean {
+  if (CURL_PROBE_ENV_EXPLICIT_DENY.has(name)) return true;
+  return CURL_PROBE_ENV_DENY_PATTERN.test(name);
+}
+
+function buildScrubbedCurlProbeEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const scrubbed: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (value !== undefined && !shouldStripCurlProbeEnv(name)) {
+      scrubbed[name] = value;
+    }
+  }
+  return { ...scrubbed, ...extra };
+}
+
+function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {
+  if (opts.replaceEnv) return opts.env ?? {};
+  if (opts.trustedConfigFiles?.length) {
+    return buildScrubbedCurlProbeEnv(opts.env ?? {});
+  }
+  return { ...process.env, ...opts.env };
+}
 
 function validateTempPrefix(prefix: string): string {
   if (
@@ -230,7 +282,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: opts.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts.env },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
@@ -339,10 +391,7 @@ function runChatCompletionsStreamingProbeImpl(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: {
-          ...process.env,
-          ...opts.env,
-        },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
 
@@ -460,10 +509,7 @@ function runStreamingEventProbeImpl(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: {
-          ...process.env,
-          ...opts.env,
-        },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
 

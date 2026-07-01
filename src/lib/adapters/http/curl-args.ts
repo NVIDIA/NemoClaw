@@ -8,6 +8,13 @@ import { ROOT } from "../../state/paths";
 export interface CurlProbeArgOptions {
   cwd?: string;
   trustedConfigFiles?: readonly string[];
+  /**
+   * Permit redirect-following flags (`-L`, `-sfL`, `--location`) for this probe.
+   * Opt-in per call site because following redirects on a user-supplied URL
+   * widens the SSRF surface; only enable for probes against a fixed,
+   * hardcoded host.
+   */
+  allowRedirects?: boolean;
 }
 
 const CURL_CONFIG_OPTIONS = new Set(["--config", "-K"]);
@@ -35,33 +42,40 @@ const CURL_DATA_OPTIONS = new Set([
   "-F",
 ]);
 const CURL_HEADER_OPTIONS = new Set(["--header", "--proxy-header", "-H"]);
-// -L/-sfL/--location remain on the safe-flag allowlist because the Ollama
-// manifest probe (src/lib/inference/ollama/model-size.ts) follows redirects
-// from a fixed, hardcoded registry host. Per-call-site SSRF validation for
-// user-supplied probe URLs that would still need to follow redirects is being
-// tracked separately in PR #5564; this PR is scoped to credential leakage and
-// does not introduce any new probe call site that follows redirects on a
-// user-controlled URL.
 const CURL_SAFE_FLAG_OPTIONS = new Set([
   "-s",
   "-S",
   "-sS",
   "-sf",
   "-f",
-  "-L",
-  "-sfL",
   "--fail",
   "--silent",
   "--show-error",
-  "--location",
   "--compressed",
   "--get",
 ]);
+// Redirect-following flags are NOT globally safe — they widen the SSRF
+// surface whenever a user-controlled URL is involved. Call sites that
+// genuinely need to follow redirects from a fixed, hardcoded host (e.g. the
+// Ollama manifest probe) must opt in via CurlProbeArgOptions.allowRedirects.
+const CURL_REDIRECT_FLAG_OPTIONS = new Set(["-L", "-sfL", "--location"]);
 const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X", "--request"]);
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
 
-const CURL_SECRET_QUERY_PARAM_KEYS = new Set(["key", "api_key", "apikey", "access_token", "token"]);
+// Defence-in-depth: primary protection is routing all secrets through trusted
+// --config tmpfiles. This denylist refuses URLs whose query-parameter names
+// look credential-shaped, so a regression at the caller can never quietly
+// leak a secret into the curl argv element. Covers common credential stem
+// words (key, secret, token, password, auth, credential) appearing either as
+// the exact parameter name, joined to another word with `_`/`-`, or in the
+// `api`/`apikey` no-separator form.
+const CURL_SECRET_QUERY_PARAM_PATTERN =
+  /(?:^|[_-])(?:api[_-]?key|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
+
+function isCredentialShapedQueryParam(name: string): boolean {
+  return CURL_SECRET_QUERY_PARAM_PATTERN.test(name);
+}
 
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
@@ -75,7 +89,7 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
     throw new Error("curl probe URL must not embed credentials");
   }
   for (const param of url.searchParams.keys()) {
-    if (CURL_SECRET_QUERY_PARAM_KEYS.has(param.toLowerCase())) {
+    if (isCredentialShapedQueryParam(param)) {
       throw new Error(
         `curl probe URL must not embed credentials in the ${param} query parameter; route via --config`,
       );
@@ -208,6 +222,14 @@ export function validateCurlProbeArgs(
       continue;
     }
     if (CURL_SAFE_FLAG_OPTIONS.has(option)) {
+      continue;
+    }
+    if (CURL_REDIRECT_FLAG_OPTIONS.has(option)) {
+      if (!opts.allowRedirects) {
+        throw new Error(
+          `curl probe option is not allowed without explicit allowRedirects opt-in: ${option}`,
+        );
+      }
       continue;
     }
     if (!arg.startsWith("-")) {

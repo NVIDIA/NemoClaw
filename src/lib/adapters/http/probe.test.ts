@@ -361,6 +361,77 @@ describe("http-probe helpers", () => {
     expect(result.ok).toBe(true);
     expect(spawnedArgs).toContain(configPath);
   });
+
+  it("scrubs credential env vars when trustedConfigFiles is supplied", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    const original = {
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+      MY_SECRET_TOKEN: process.env.MY_SECRET_TOKEN,
+      MY_BENIGN_VAR: process.env.MY_BENIGN_VAR,
+      PATH: process.env.PATH,
+    };
+    process.env.NVIDIA_API_KEY = "nvapi-should-not-leak";
+    process.env.OPENAI_API_KEY = "sk-should-not-leak";
+    process.env.MY_SECRET_TOKEN = "should-not-leak";
+    process.env.MY_BENIGN_VAR = "should-survive";
+
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+        trustedConfigFiles: [configPath],
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv).toBeDefined();
+      expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.OPENAI_API_KEY).toBeUndefined();
+      expect(spawnedEnv?.MY_SECRET_TOKEN).toBeUndefined();
+      expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+      expect(spawnedEnv?.PATH).toBe(process.env.PATH);
+    } finally {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("keeps the parent env intact when trustedConfigFiles is not supplied", () => {
+    const original = process.env.MY_PROBE_PARITY_KEY_VAR;
+    process.env.MY_PROBE_PARITY_KEY_VAR = "stays";
+    try {
+      let spawnedEnv: NodeJS.ProcessEnv | undefined;
+      runCurlProbe(["-sS", "https://example.test/models"], {
+        spawnSyncImpl: (_command, _args, options) => {
+          spawnedEnv = options.env as NodeJS.ProcessEnv;
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      });
+
+      expect(spawnedEnv?.MY_PROBE_PARITY_KEY_VAR).toBe("stays");
+    } finally {
+      if (original === undefined) delete process.env.MY_PROBE_PARITY_KEY_VAR;
+      else process.env.MY_PROBE_PARITY_KEY_VAR = original;
+    }
+  });
 });
 
 describe("runChatCompletionsStreamingProbe", () => {
