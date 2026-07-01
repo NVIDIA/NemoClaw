@@ -114,6 +114,33 @@ describe("Brev nightly workflow contract", () => {
     expect(branchValidation.concurrency?.group).toContain("inputs.test_suite");
   });
 
+  it("keeps manual dispatch inputs out of the Brev credential boundary", () => {
+    const validation = branchValidation.jobs?.["e2e-branch-validation"];
+    const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
+    const run = validation?.steps?.find((step) => step.name === "Run ephemeral Brev E2E");
+
+    expect(branchValidation.on?.workflow_dispatch?.inputs).not.toHaveProperty("brev_token");
+    expect(install?.env?.BREV_API_TOKEN).toBe("${{ secrets.BREV_API_TOKEN }}");
+    expect(run?.env?.BREV_API_TOKEN).toBe("${{ secrets.BREV_API_TOKEN }}");
+    expect(JSON.stringify(validation)).not.toContain("inputs.brev_token");
+  });
+
+  it("verifies the pinned Brev CLI digest before extracting it", () => {
+    const validation = branchValidation.jobs?.["e2e-branch-validation"];
+    const install = validation?.steps?.find((step) => step.name === "Install Brev CLI");
+    const script = install?.run ?? "";
+
+    expect(install?.env?.BREV_CLI_VERSION).toBe("0.6.324");
+    expect(install?.env?.BREV_CLI_SHA256).toBe(
+      "c7056c17d4810134e3fe7194c233619b1b888a640df1929ea7c6f69c0425e58c",
+    );
+    expect(script).toContain("releases/download/v${BREV_CLI_VERSION}");
+    expect(script).toContain("brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz");
+    expect(script).toContain("sha256sum -c -");
+    expect(script.indexOf("sha256sum -c -")).toBeGreaterThan(script.indexOf("curl -fsSL"));
+    expect(script.indexOf("tar -xzf")).toBeGreaterThan(script.indexOf("sha256sum -c -"));
+  });
+
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
     const callerInputs = Object.values(nightly.jobs ?? {}).flatMap((job) =>

@@ -81,10 +81,6 @@ on:
         required: false
         type: boolean
         default: false
-      brev_token:
-        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
-        required: false
-        default: ""
       brev_provider:
         description: "Brev provider filter for provisioning (blank = Brev default/any)"
         required: false
@@ -221,13 +217,17 @@ jobs:
 
       - name: Install Brev CLI
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+          BREV_CLI_VERSION: "0.6.324"
+          BREV_CLI_SHA256: "c7056c17d4810134e3fe7194c233619b1b888a640df1929ea7c6f69c0425e58c"
         run: |
+          set -euo pipefail
           # Brev CLI v0.6.324+ — CPU instances use `brev search cpu | brev create`
           # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.324/brev-cli_0.6.324_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" /tmp/brev.tar.gz | sha256sum -c -
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
 
@@ -258,7 +258,7 @@ jobs:
       - name: Run ephemeral Brev E2E
         env:
           NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1"
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
