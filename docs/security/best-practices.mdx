@@ -87,7 +87,6 @@ flowchart TB
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Gateway Authentication | Unauthorized devices or clients reaching the gateway and its dashboard. | OpenShell gateway | No. Set at image build / onboarding time. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use the NemoClaw inference switching command. |
-| Credential discovery | Host credential leakage and impossible ambient-provider probes. | Host adapter or agent runtime | No. New discovery sources require explicit provider design and validation. |
 
 ## Network Controls
 
