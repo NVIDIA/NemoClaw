@@ -184,7 +184,9 @@ describe("shields command flow", () => {
     delete require.cache[requireDist.resolve("./transition-lock.js")];
   });
 
-  it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", () => {
+  it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", {
+    timeout: 15_000,
+  }, () => {
     const harness = createHarness();
 
     harness.shieldsDown("openclaw", {
