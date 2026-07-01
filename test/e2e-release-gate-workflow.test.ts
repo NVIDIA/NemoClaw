@@ -50,7 +50,9 @@ describe("release gate workflow resource contracts", () => {
     expect(auth?.["continue-on-error"]).toBeUndefined();
     expect(auth?.env).toHaveProperty("DOCKERHUB_AUTH_REQUIRED");
     expect(auth?.run).toEqual(expect.any(String));
-    expect(stepIndex("Authenticate to Docker Hub")).toBeLessThan(stepIndex("Set up Node"));
+    expect(stepIndex("Authenticate to Docker Hub")).toBeLessThan(
+      stepIndex("Prepare E2E workspace"),
+    );
     expect(stepIndex("Authenticate to Docker Hub")).toBeLessThan(
       stepIndex("Run Spark install live test"),
     );

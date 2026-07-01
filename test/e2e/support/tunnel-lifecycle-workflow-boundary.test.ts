@@ -81,14 +81,6 @@ describe("tunnel lifecycle workflow boundary", () => {
       "persist-credentials": true,
     };
 
-    const install = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(install).toBeDefined();
-    install!.env = {
-      NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-    };
-    install!.run = "npm install";
-
     const cloudflared = job.steps.find(
       (step) => step.name === "Install and verify cloudflared prerequisite",
     );
@@ -118,9 +110,6 @@ describe("tunnel lifecycle workflow boundary", () => {
         expect.arrayContaining([
           "tunnel-lifecycle job must not set DOCKER_CONFIG at job level",
           "tunnel-lifecycle checkout step must set persist-credentials=false",
-          "tunnel-lifecycle step 'Install root dependencies' env must not include NVIDIA_INFERENCE_API_KEY",
-          "tunnel-lifecycle step 'Install root dependencies' env must not include NVIDIA_API_KEY",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_INFERENCE_API_KEY",
           "tunnel-lifecycle step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_API_KEY",
           "tunnel-lifecycle cloudflared prerequisite step env must not include NVIDIA_INFERENCE_API_KEY",
