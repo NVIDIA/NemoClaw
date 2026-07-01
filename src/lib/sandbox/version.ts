@@ -92,14 +92,13 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
-// Classify versions by their surface shape: `YYYY.M.D` is treated as a
-// calendar tag, everything else as semver. A four-digit major is the marker
-// because no supported agent runtime ships a semver whose major is a
-// plausible year — the guard is a safety net for legacy Hermes calendar pins
-// that predate the semver manifest, not a permanent scheme contract. If an
+// Classify versions by their surface shape: `20YY.M.D` is treated as a
+// calendar tag, everything else as semver. The major is required to start
+// with `20` so the pattern only matches plausible release years and cannot
+// misclassify a semver whose major happens to be a four-digit number. If an
 // agent ever needs a third scheme, add an explicit `version_scheme` field to
 // the manifest rather than teaching this regex a new shape.
-const CALENDAR_VERSION_PATTERN = /^\d{4}\.\d+\.\d+/;
+const CALENDAR_VERSION_PATTERN = /^20\d{2}\.\d+\.\d+/;
 
 function isCalendarVersion(value: string): boolean {
   return CALENDAR_VERSION_PATTERN.test(String(value));
@@ -109,14 +108,25 @@ function versionsComparable(left: string, right: string): boolean {
   return isCalendarVersion(left) === isCalendarVersion(right);
 }
 
-const warnedSchemeMismatchPairs = new Set<string>();
+const warnedSchemeMismatchKeys = new Set<string>();
 
-function warnSchemeMismatch(sandboxVersion: string, expectedVersion: string): void {
-  const key = `${sandboxVersion}|${expectedVersion}`;
-  if (warnedSchemeMismatchPairs.has(key)) return;
-  warnedSchemeMismatchPairs.add(key);
+function warnSchemeMismatch(
+  sandboxName: string,
+  sandboxVersion: string,
+  expectedVersion: string,
+): void {
+  const key = `${sandboxName}|${sandboxVersion}|${expectedVersion}`;
+  if (warnedSchemeMismatchKeys.has(key)) return;
+  warnedSchemeMismatchKeys.add(key);
+  const payload = JSON.stringify({
+    event: "sandbox_version_scheme_mismatch",
+    sandbox: sandboxName,
+    sandboxVersion,
+    expectedVersion,
+    action: "staleness_check_skipped",
+  });
   process.stderr.write(
-    `warning: sandbox agent version ${sandboxVersion} and expected version ${expectedVersion} use different schemes; staleness check skipped.\n`,
+    `warning: sandbox '${sandboxName}' agent version ${sandboxVersion} and expected version ${expectedVersion} use different schemes; staleness check skipped. ${payload}\n`,
   );
 }
 
@@ -125,12 +135,17 @@ function warnSchemeMismatch(sandboxVersion: string, expectedVersion: string): vo
 // `versionGte` would let the calendar year dominate and every sandbox would
 // look stale (see #6049). Silencing here means a genuine update is missed
 // only until both sides align on the same scheme again, which the Hermes
-// updater now enforces via `HERMES_SEMVER`. A stderr warning surfaces the
-// mismatch so operators can see when a check is being skipped rather than
-// silently trusting a cached calendar version.
-function isAgentStale(sandboxVersion: string, expectedVersion: string): boolean {
+// updater now enforces via `HERMES_SEMVER`. A stderr warning with a
+// structured JSON payload surfaces the mismatch so operators and log
+// pipelines can detect when a check has been skipped rather than silently
+// trusting a cached calendar version.
+function isAgentStale(
+  sandboxName: string,
+  sandboxVersion: string,
+  expectedVersion: string,
+): boolean {
   if (!versionsComparable(sandboxVersion, expectedVersion)) {
-    warnSchemeMismatch(sandboxVersion, expectedVersion);
+    warnSchemeMismatch(sandboxName, sandboxVersion, expectedVersion);
     return false;
   }
   return !versionGte(sandboxVersion, expectedVersion);
@@ -162,7 +177,7 @@ export function checkAgentVersion(
 
   // Fast path: version already cached in registry
   if (sb?.agentVersion && !opts?.forceProbe) {
-    const isStale = isAgentStale(sb.agentVersion, expectedVersion);
+    const isStale = isAgentStale(sandboxName, sb.agentVersion, expectedVersion);
     return {
       sandboxVersion: sb.agentVersion,
       expectedVersion,
@@ -196,7 +211,7 @@ export function checkAgentVersion(
     };
   }
 
-  const isStale = isAgentStale(probed, expectedVersion);
+  const isStale = isAgentStale(sandboxName, probed, expectedVersion);
   return {
     sandboxVersion: probed,
     expectedVersion,
