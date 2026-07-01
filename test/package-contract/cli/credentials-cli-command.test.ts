@@ -317,6 +317,7 @@ describe("credentials oclif commands", () => {
 
   it("credentials add forwards env-key-only --credential to OpenShell provider create", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
+    process.env.UNRELATED_API_KEY = "unrelated-secret-67890";
     const extraProviderCalls: string[] = [];
     const calls = installRuntimeBridge({
       runOpenshell: (args, opts) => {
@@ -344,7 +345,13 @@ describe("credentials oclif commands", () => {
       expect(calls).toEqual([
         {
           args: ["provider", "profile", "import", "--file", TAVILY_PROFILE_PATH],
-          opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+          opts: {
+            env: expect.any(Object),
+            ignoreError: true,
+            replaceEnv: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 30_000,
+          },
         },
         {
           args: [
@@ -357,14 +364,25 @@ describe("credentials oclif commands", () => {
             "--credential",
             "TAVILY_API_KEY",
           ],
-          opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+          opts: {
+            env: expect.any(Object),
+            ignoreError: true,
+            replaceEnv: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 30_000,
+          },
         },
       ]);
+      expect(calls[0]?.opts?.env?.TAVILY_API_KEY).toBeUndefined();
+      expect(calls[1]?.opts?.env?.UNRELATED_API_KEY).toBeUndefined();
+      expect(calls[1]?.opts?.env?.TAVILY_API_KEY).toBe("tvly-test-12345");
+      expect(calls[1]?.args).not.toContain("tvly-test-12345");
       expect(extraProviderCalls).toEqual(["tavily-search"]);
       expect(output.stdout).toContain("Registered provider 'tavily-search'");
       expect(output.stdout).toContain("rebuild");
     } finally {
       delete process.env.TAVILY_API_KEY;
+      delete process.env.UNRELATED_API_KEY;
     }
   });
 
