@@ -360,7 +360,7 @@ jobs:
 
       - name: Upload E2E artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-${{ matrix.id }}
           path: |
@@ -373,9 +373,6 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -417,13 +414,7 @@ jobs:
 
       - name: Upload OpenShell version-pin artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openshell-version-pin
-          path: e2e-artifacts/live/openshell-version-pin/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   openshell-gateway-auth-contract:
     needs: generate-matrix
@@ -481,13 +472,7 @@ jobs:
 
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openshell-gateway-auth-contract
-          path: e2e-artifacts/live/openshell-gateway-auth-contract/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -524,13 +509,7 @@ jobs:
 
       - name: Upload onboard negative-paths artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-negative-paths
-          path: e2e-artifacts/live/onboard-negative-paths/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # Live skill injection and real OpenClaw agent-turn contract.
   skill-agent:
@@ -586,7 +565,7 @@ jobs:
 
       - name: Upload skill-agent artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-skill-agent
           path: |
@@ -598,9 +577,6 @@ jobs:
             e2e-artifacts/live/skill-agent/*/shell/*.result.json
             e2e-artifacts/live/skill-agent/*/shell/*.stdout.txt
             e2e-artifacts/live/skill-agent/*/shell/*.stderr.txt
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
   # Direct OpenClaw skills CLI contract.
 
@@ -644,13 +620,7 @@ jobs:
 
       - name: Upload OpenClaw skill CLI artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-skill-cli
-          path: e2e-artifacts/live/openclaw-skill-cli/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -690,13 +660,7 @@ jobs:
 
       - name: Upload docs validation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-docs-validation
-          path: e2e-artifacts/live/docs-validation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   hermes-root-entrypoint-smoke:
     needs: generate-matrix
@@ -732,13 +696,7 @@ jobs:
 
       - name: Upload Hermes root entrypoint smoke artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-root-entrypoint-smoke
-          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -779,13 +737,7 @@ jobs:
 
       - name: Upload Hermes sandbox secret-boundary artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-sandbox-secret-boundary
-          path: e2e-artifacts/live/hermes-sandbox-secret-boundary/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -825,13 +777,7 @@ jobs:
 
       - name: Upload inference routing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-inference-routing
-          path: e2e-artifacts/live/inference-routing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   cloud-inference:
     needs: generate-matrix
@@ -872,13 +818,7 @@ jobs:
 
       - name: Upload cloud inference artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cloud-inference
-          path: e2e-artifacts/live/cloud-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -933,13 +873,7 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/gpu-e2e.test.ts             --silent=false --reporter=default
       - name: Upload GPU E2E artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gpu-e2e
-          path: e2e-artifacts/live/gpu-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -998,13 +932,7 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/agent-turn-latency.test.ts             --silent=false --reporter=default
       - name: Upload agent turn latency artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-agent-turn-latency
-          path: e2e-artifacts/live/agent-turn-latency/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1047,13 +975,7 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/kimi-inference-compat.test.ts             --silent=false --reporter=default
       - name: Upload Kimi compatibility artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-kimi-inference-compat
-          path: e2e-artifacts/live/kimi-inference-compat/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1119,13 +1041,10 @@ jobs:
           npx vitest run --project e2e-live             test/e2e/live/hermes-inference-switch.test.ts             --silent=false --reporter=default
       - name: Upload Hermes inference switch artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-hermes-inference-switch-${{ matrix.mode }}
           path: e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -1183,13 +1102,7 @@ jobs:
 
       - name: Upload Brave search artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-brave-search
-          path: e2e-artifacts/live/brave-search/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1227,13 +1140,7 @@ jobs:
 
       - name: Upload Ollama auth proxy artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-ollama-auth-proxy
-          path: e2e-artifacts/live/ollama-auth-proxy/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1290,13 +1197,7 @@ jobs:
 
       - name: Upload cron preflight inference.local artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cron-preflight-inference-local
-          path: e2e-artifacts/live/cron-preflight-inference-local/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1379,13 +1280,7 @@ jobs:
 
       - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-4434-tui-unreachable-inference
-          path: e2e-artifacts/live/issue-4434-tui-unreachable-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1431,13 +1326,7 @@ jobs:
 
       - name: Upload credential sanitization artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-credential-sanitization
-          path: e2e-artifacts/live/credential-sanitization/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1488,13 +1377,7 @@ jobs:
 
       - name: Upload credential migration artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-credential-migration
-          path: e2e-artifacts/live/credential-migration/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1547,13 +1430,7 @@ jobs:
 
       - name: Upload sessions/agents CLI artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sessions-agents-cli
-          path: e2e-artifacts/live/sessions-agents-cli/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1593,13 +1470,7 @@ jobs:
 
       - name: Upload runtime overrides artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-runtime-overrides
-          path: e2e-artifacts/live/runtime-overrides/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1651,13 +1522,10 @@ jobs:
 
       - name: Upload Hermes Slack artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-hermes-slack
           path: e2e-artifacts/live/hermes-slack-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -1703,13 +1571,7 @@ jobs:
 
       - name: Upload Hermes live Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-e2e
-          path: e2e-artifacts/live/hermes-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1756,13 +1618,7 @@ jobs:
 
       - name: Upload Hermes dashboard live Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-dashboard
-          path: e2e-artifacts/live/hermes-dashboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1813,13 +1669,7 @@ jobs:
 
       - name: Upload Hermes Discord artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-hermes-discord
-          path: e2e-artifacts/live/hermes-discord/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1896,13 +1746,7 @@ jobs:
 
       - name: Upload network-policy artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-network-policy
-          path: e2e-artifacts/live/network-policy/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -1972,13 +1816,7 @@ jobs:
 
       - name: Upload common-egress agent artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-common-egress-agent
-          path: e2e-artifacts/live/common-egress-agent/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2026,14 +1864,11 @@ jobs:
 
       - name: Upload shields-config artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-shields-config
           path: |
             e2e-artifacts/live/shields-config/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -2094,13 +1929,7 @@ jobs:
 
       - name: Upload OpenClaw rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-openclaw
-          path: e2e-artifacts/live/rebuild-openclaw/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2154,13 +1983,7 @@ jobs:
 
       - name: Upload Hermes rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-hermes
-          path: e2e-artifacts/live/rebuild-hermes/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2214,13 +2037,7 @@ jobs:
 
       - name: Upload Hermes stale-base rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-rebuild-hermes-stale-base
-          path: e2e-artifacts/live/rebuild-hermes-stale-base/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2282,13 +2099,7 @@ jobs:
 
       - name: Upload sandbox rebuild artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-rebuild
-          path: e2e-artifacts/live/sandbox-rebuild/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2352,13 +2163,7 @@ jobs:
 
       - name: Upload sandbox rlimit connect artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-rlimits-connect
-          path: e2e-artifacts/live/sandbox-rlimits-connect/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2403,13 +2208,7 @@ jobs:
 
       - name: Upload overlayfs autofix artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-overlayfs-autofix
-          path: e2e-artifacts/live/overlayfs-autofix/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2472,13 +2271,7 @@ jobs:
 
       - name: Upload state backup restore artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-state-backup-restore
-          path: e2e-artifacts/live/state-backup-restore/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2540,13 +2333,7 @@ jobs:
 
       - name: Upload upgrade stale sandbox artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-upgrade-stale-sandbox
-          path: e2e-artifacts/live/upgrade-stale-sandbox/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2601,13 +2388,7 @@ jobs:
 
       - name: Upload double-onboard Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-double-onboard
-          path: e2e-artifacts/live/double-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2670,13 +2451,7 @@ jobs:
 
       - name: Upload Jetson nvmap GPU artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-jetson-nvmap-gpu
-          path: e2e-artifacts/live/jetson-nvmap-gpu/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2731,13 +2506,7 @@ jobs:
 
       - name: Upload concurrent gateway ports Vitest artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-concurrent-gateway-ports
-          path: e2e-artifacts/live/concurrent-gateway-ports/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2791,13 +2560,7 @@ jobs:
 
       - name: Upload onboard-resume artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-resume
-          path: e2e-artifacts/live/onboard-resume/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2857,13 +2620,7 @@ jobs:
 
       - name: Upload full-e2e artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-full-e2e
-          path: e2e-artifacts/live/full-e2e/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -2931,13 +2688,10 @@ jobs:
 
       - name: Upload security posture artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-security-posture-${{ matrix.agent }}
           path: e2e-artifacts/live/security-posture-${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -3028,13 +2782,7 @@ jobs:
 
       - name: Upload cloud-onboard artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-cloud-onboard
-          path: e2e-artifacts/live/cloud-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3090,13 +2838,7 @@ jobs:
 
       - name: Upload gpu-double-onboard artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gpu-double-onboard
-          path: e2e-artifacts/live/gpu-double-onboard/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3150,13 +2892,7 @@ jobs:
 
       - name: Upload onboard-repair artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-onboard-repair
-          path: e2e-artifacts/live/onboard-repair/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3213,13 +2949,7 @@ jobs:
 
       - name: Upload issue-4462-scope-upgrade-approval artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-4462-scope-upgrade-approval
-          path: e2e-artifacts/live/issue-4462-scope-upgrade-approval/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3269,13 +2999,7 @@ jobs:
 
       - name: Upload token rotation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-token-rotation
-          path: e2e-artifacts/live/token-rotation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3321,13 +3045,7 @@ jobs:
 
       - name: Upload messaging compatible endpoint artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-messaging-compatible-endpoint
-          path: e2e-artifacts/live/messaging-compatible-endpoint/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3375,13 +3093,7 @@ jobs:
 
       - name: Upload OpenShell gateway upgrade artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openshell-gateway-upgrade
-          path: e2e-artifacts/live/openshell-gateway-upgrade/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3437,13 +3149,7 @@ jobs:
 
       - name: Upload messaging providers artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-messaging-providers
-          path: e2e-artifacts/live/messaging-providers/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3493,13 +3199,7 @@ jobs:
 
       - name: Upload launchable smoke artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-launchable-smoke
-          path: e2e-artifacts/live/launchable-smoke/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # Provider-routed Model Router inference contract.
 
@@ -3544,13 +3244,7 @@ jobs:
 
       - name: Upload Model Router provider-routed inference artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-model-router-provider-routed-inference
-          path: e2e-artifacts/live/model-router-provider-routed-inference/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3598,13 +3292,7 @@ jobs:
 
       - name: Upload snapshot commands artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-snapshot-commands
-          path: e2e-artifacts/live/snapshot-commands/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3669,13 +3357,7 @@ jobs:
 
       - name: Upload sandbox operations artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-operations
-          path: e2e-artifacts/live/sandbox-operations/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3722,13 +3404,7 @@ jobs:
 
       - name: Upload sandbox survival artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-sandbox-survival
-          path: e2e-artifacts/live/sandbox-survival/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3774,13 +3450,7 @@ jobs:
 
       - name: Upload diagnostics artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-diagnostics
-          path: e2e-artifacts/live/diagnostics/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -3820,13 +3490,7 @@ jobs:
 
       - name: Upload gateway drift preflight artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-drift-preflight
-          path: e2e-artifacts/live/gateway-drift-preflight/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # The #2603/#3145 OpenClaw websocket protocol/history contract.
   openclaw-tui-chat-correlation:
@@ -3870,13 +3534,7 @@ jobs:
 
       - name: Upload OpenClaw TUI chat correlation artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-tui-chat-correlation
-          path: e2e-artifacts/live/openclaw-tui-chat-correlation/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   # ── Free-standing recovery targets (#2701) ─────────────────────────
   # Recovery / disruption targets don't fit the steady-state expected-state
@@ -3963,13 +3621,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-guard-recovery
-          path: e2e-artifacts/live/gateway-guard-recovery/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4040,13 +3692,10 @@ jobs:
 
       - name: Upload OpenClaw inference switch artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-openclaw-inference-switch-${{ matrix.mode }}
           path: e2e-artifacts/live/openclaw-inference-switch/${{ matrix.mode }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -4099,13 +3748,10 @@ jobs:
 
       - name: Upload Bedrock Runtime compatible Anthropic artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: e2e-artifacts/live/bedrock-runtime-compatible-anthropic/${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -4149,13 +3795,7 @@ jobs:
 
       - name: Upload gateway health honesty artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-gateway-health-honest
-          path: e2e-artifacts/live/gateway-health-honest/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
   device-auth-health:
     needs: generate-matrix
@@ -4207,13 +3847,7 @@ jobs:
 
       - name: Upload device auth health artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-device-auth-health
-          path: e2e-artifacts/live/device-auth-health/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4289,13 +3923,7 @@ jobs:
 
       - name: Upload channels add/remove artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-channels-add-remove
-          path: e2e-artifacts/live/channels-add-remove/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4361,13 +3989,7 @@ jobs:
 
       - name: Upload Telegram injection artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-telegram-injection
-          path: e2e-artifacts/live/telegram-injection/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4444,13 +4066,10 @@ jobs:
 
       - name: Upload channels stop/start artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
         with:
           name: e2e-channels-stop-start-${{ matrix.agent }}
           path: e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Clean up Docker auth
         if: always()
@@ -4516,13 +4135,7 @@ jobs:
 
       - name: Upload OpenClaw Slack pairing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-slack-pairing
-          path: e2e-artifacts/live/openclaw-slack-pairing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4579,13 +4192,7 @@ jobs:
 
       - name: "Upload issue #2478 crash-loop recovery artifacts"
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-issue-2478-crash-loop-recovery
-          path: e2e-artifacts/live/issue-2478-crash-loop-recovery/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4650,13 +4257,7 @@ jobs:
 
       - name: Upload OpenClaw Discord pairing artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-openclaw-discord-pairing
-          path: e2e-artifacts/live/openclaw-discord-pairing/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4732,13 +4333,7 @@ jobs:
 
       - name: Upload tunnel lifecycle artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-tunnel-lifecycle
-          path: e2e-artifacts/live/tunnel-lifecycle/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
@@ -4790,13 +4385,7 @@ jobs:
 
       - name: Upload Spark install artifacts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-spark-install
-          path: e2e-artifacts/live/spark-install/
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
       - name: Clean up Docker auth
         if: always()
