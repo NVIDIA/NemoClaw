@@ -214,7 +214,7 @@ describe("agent base image provisioning", () => {
         "e2e-artifacts/nemoclaw-agent-build-context-test",
         "worktrees/nemoclaw-agent-build-context-test",
       ];
-      let buildCtx = path.join(root, ".nonexistent-agent-build-context-test");
+      let buildCtx: string | null = null;
 
       try {
         for (const relativeFile of generatedFiles) {
@@ -237,7 +237,9 @@ describe("agent base image provisioning", () => {
         expect(fs.existsSync(path.join(buildCtx, "e2e-artifacts"))).toBe(false);
         expect(fs.existsSync(path.join(buildCtx, "worktrees"))).toBe(false);
       } finally {
-        fs.rmSync(buildCtx, { recursive: true, force: true });
+        if (buildCtx) {
+          fs.rmSync(buildCtx, { recursive: true, force: true });
+        }
         for (const relativeDir of cleanupDirs) {
           fs.rmSync(path.join(root, relativeDir), { recursive: true, force: true });
         }
