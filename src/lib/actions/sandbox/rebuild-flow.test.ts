@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { makeActiveTeamsMessagingPlan } from "./rebuild-flow-test-fixtures";
 
 type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 const requireDist = createRequire(import.meta.url);
@@ -71,6 +72,8 @@ type RebuildFlowOverrides = {
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
   customImagePreflight?: { ok: true; imageTag: string | null } | { ok: false; detail: string };
+  removeSandboxRegistryEntry?: () => void;
+  clearShieldsState?: () => void;
 };
 type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
@@ -331,7 +334,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     });
   const removeSandboxRegistryEntrySpy = vi
     .spyOn(destroy, "removeSandboxRegistryEntry")
-    .mockImplementation(() => undefined);
+    .mockImplementation(overrides.removeSandboxRegistryEntry ?? (() => undefined));
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -360,7 +363,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
   vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
-  vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);
+  vi.spyOn(shields, "clearShieldsState").mockImplementation(
+    overrides.clearShieldsState ?? (() => undefined),
+  );
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
@@ -421,75 +426,6 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     restoreMcpBridgesAfterRebuildSpy,
     warnUnpreservedUserManagedFilesSpy,
     session,
-  };
-}
-function makeActiveTeamsMessagingPlan() {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "openclaw",
-    workflow: "rebuild",
-    channels: [
-      {
-        channelId: "teams",
-        displayName: "Microsoft Teams",
-        authMode: "token-paste",
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: [
-          {
-            channelId: "teams",
-            inputId: "appId",
-            kind: "config",
-            required: true,
-            sourceEnv: "MSTEAMS_APP_ID",
-            statePath: "teamsConfig.appId",
-            value: "teams-app-id",
-          },
-          {
-            channelId: "teams",
-            inputId: "clientSecret",
-            kind: "secret",
-            required: true,
-            sourceEnv: "MSTEAMS_APP_PASSWORD",
-            credentialAvailable: true,
-          },
-          {
-            channelId: "teams",
-            inputId: "tenantId",
-            kind: "config",
-            required: true,
-            sourceEnv: "MSTEAMS_TENANT_ID",
-            statePath: "teamsConfig.tenantId",
-            value: "teams-tenant-id",
-          },
-          {
-            channelId: "teams",
-            inputId: "webhookPort",
-            kind: "config",
-            required: false,
-            sourceEnv: "MSTEAMS_PORT",
-            statePath: "teamsConfig.webhookPort",
-            value: "3978",
-          },
-        ],
-        hostForward: {
-          channelId: "teams",
-          port: 3978,
-          label: "Microsoft Teams webhook",
-        },
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: ["teams"], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
   };
 }
 describe("rebuildSandbox flow", () => {
@@ -590,6 +526,47 @@ describe("rebuildSandbox flow", () => {
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuilt successfully",
+    );
+  });
+
+  it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
+    const harness = createRebuildFlowHarness({
+      removeSandboxRegistryEntry: () => {
+        throw new Error("registry cleanup after delete failed");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("registry cleanup after delete failed");
+
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenLastCalledWith(
+      "alpha",
+      expect.any(Object),
+      false,
+      "nemoclaw",
+    );
+  });
+
+  it("relocks as present when shields postwork throws after successful onboard", async () => {
+    const harness = createRebuildFlowHarness({
+      staleRecovery: true,
+      clearShieldsState: () => {
+        throw new Error("post-onboard shields cleanup failed");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("post-onboard shields cleanup failed");
+
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
+    expect(harness.relockSpy).toHaveBeenLastCalledWith(
+      "alpha",
+      expect.any(Object),
+      true,
+      "nemoclaw",
     );
   });
 

@@ -115,9 +115,11 @@ async function rebuildSandboxUnlocked(
       log,
       bail,
       relockShieldsIfNeeded,
+      onDeleted: () => {
+        sandboxStillExists = false;
+      },
     });
     if (!mcpPreparation) return;
-    sandboxStillExists = false;
 
     const recreated = await runRebuildRecreatePhase({
       sandboxName,
@@ -142,11 +144,13 @@ async function rebuildSandboxUnlocked(
       mcpEntries: mcpPreparation.entries,
       rebuildShieldsWindow,
       relockShieldsIfNeeded,
+      onCreated: () => {
+        sandboxStillExists = true;
+      },
       log,
       bail,
     });
     if (!recreated) return;
-    sandboxStillExists = true;
 
     const restored = runRebuildRestorePhase({
       sandboxName,

@@ -25,6 +25,7 @@ export interface RebuildDestroyPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  onDeleted: () => void;
 }
 
 /**
@@ -43,6 +44,7 @@ export async function runRebuildDestroyPhase(
     log,
     bail,
     relockShieldsIfNeeded,
+    onDeleted,
   } = input;
 
   // Step 3: Delete sandbox without tearing down gateway or session.
@@ -107,6 +109,7 @@ export async function runRebuildDestroyPhase(
     );
     return null;
   }
+  onDeleted();
   if (rebuildMcpEntries.length === 0) {
     removeSandboxRegistryEntry(sandboxName);
   } else {

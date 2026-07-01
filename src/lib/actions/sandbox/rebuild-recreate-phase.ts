@@ -53,6 +53,7 @@ export interface RebuildRecreatePhaseInput {
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  onCreated: () => void;
   log: RebuildLog;
   bail: RebuildBail;
 }
@@ -86,6 +87,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
     relockShieldsIfNeeded,
+    onCreated,
     log,
     bail,
   } = input;
@@ -193,6 +195,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     else process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
   }
 
+  if (!onboardFailed) onCreated();
   if (onboardFailed) {
     try {
       markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
