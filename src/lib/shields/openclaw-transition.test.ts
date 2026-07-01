@@ -135,9 +135,14 @@ describe("OpenClaw shields top-config transaction", () => {
   it("repairs doctor-tightened permissions without starting a shields transition (#6047)", () => {
     dockerExecSpy.mockImplementation((cmd) => {
       const argv = cmd as string[];
-      if (argv[0] === "/usr/bin/id") return "1000\n";
-      if (argv[0] === "/usr/bin/python3") return "";
-      throw new Error(`unexpected privileged command: ${argv.join(" ")}`);
+      switch (argv[0]) {
+        case "/usr/bin/id":
+          return "1000\n";
+        case "/usr/bin/python3":
+          return "";
+        default:
+          throw new Error(`unexpected privileged command: ${argv.join(" ")}`);
+      }
     });
 
     expect(shields.repairMutableConfigPerms("openclaw")).toEqual({

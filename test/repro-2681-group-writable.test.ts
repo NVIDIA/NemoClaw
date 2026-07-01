@@ -75,13 +75,16 @@ function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
     },
     timeout: 5000,
   };
-  if (process.getuid?.() === 0) {
-    const unprivilegedId = 65534;
-    for (const ownedPath of [...ownedPaths, normalizerPath]) {
-      fs.chownSync(ownedPath, unprivilegedId, unprivilegedId);
+  switch (process.getuid?.()) {
+    case 0: {
+      const unprivilegedId = 65534;
+      for (const ownedPath of [...ownedPaths, normalizerPath]) {
+        fs.chownSync(ownedPath, unprivilegedId, unprivilegedId);
+      }
+      spawnOptions.uid = unprivilegedId;
+      spawnOptions.gid = unprivilegedId;
+      break;
     }
-    spawnOptions.uid = unprivilegedId;
-    spawnOptions.gid = unprivilegedId;
   }
   return spawnSync(
     "bash",
