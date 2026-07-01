@@ -45,7 +45,6 @@ describe("channels lifecycle workflow boundary", () => {
       "persist-credentials": true,
     };
 
-
     const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
     expect(installOpenShellStep).toBeDefined();
     installOpenShellStep!.run = "bash scripts/install-openshell.sh";

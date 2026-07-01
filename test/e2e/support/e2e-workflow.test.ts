@@ -1133,7 +1133,6 @@ jobs:
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
       jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
-
     };
     for (const [jobName, stepName] of [
       [
@@ -1160,8 +1159,6 @@ jobs:
         expect.arrayContaining([
           "openclaw-channels-credential-rewrite step 'Run OpenClaw channels credential rewrite live Vitest test' env must not include GITHUB_TOKEN",
           "openclaw-channels-telegram-injection-safety step 'Run OpenClaw channels Telegram injection safety live test' env must not include GITHUB_TOKEN",
-
-
         ]),
       );
     } finally {
