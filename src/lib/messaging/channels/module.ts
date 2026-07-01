@@ -15,6 +15,7 @@ export interface MessagingPolicyContribution {
   readonly preset: string;
   readonly agent?: MessagingAgentId;
   readonly agents?: readonly MessagingAgentId[];
+  readonly sourceRoot?: string;
   readonly source: string;
   readonly policyKeys?: readonly string[];
   readonly requiredAtCreate?: boolean;

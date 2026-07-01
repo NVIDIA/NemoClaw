@@ -4,12 +4,15 @@
 // Policy preset management — list, load, merge, and apply presets.
 
 import type { JsonObject, JsonValue } from "../core/json-types";
+import { createBuiltInMessagingCatalog, type MessagingCatalog } from "../messaging/catalog";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
   listBuiltInMessagingChannelManifests,
   listMessagingPolicyPresetMetadata,
 } from "../messaging/channels";
+import type { MessagingPolicyContribution } from "../messaging/channels/module";
+import type { MessagingAgentId } from "../messaging/manifest";
 
 const fs = require("fs");
 const path = require("path");
@@ -26,6 +29,12 @@ const openshellResolveModule = require("../adapters/openshell/resolve");
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
 const MAX_PRESET_FILE_BYTES = 10_000_000;
+const MESSAGING_POLICY_AGENTS = [
+  "openclaw",
+  "hermes",
+] as const satisfies readonly MessagingAgentId[];
+
+let builtInMessagingCatalog: MessagingCatalog | null = null;
 
 type PresetInfo = {
   file: string;
@@ -50,47 +59,127 @@ type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
 };
 
+type MergePresetNamesIntoPolicyOptions = {
+  agent?: string | null;
+};
+
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function getBuiltInMessagingCatalog(): MessagingCatalog {
+  builtInMessagingCatalog ??= createBuiltInMessagingCatalog();
+  return builtInMessagingCatalog;
+}
+
 /**
- * Enumerate every preset YAML under `nemoclaw-blueprint/policies/presets/`
- * and return `{ file, name, description }` triples parsed from the file's
- * `preset:` header.
+ * Enumerate every built-in preset and return `{ file, name, description }`
+ * triples parsed from the preset's `preset:` header.
  */
 function listPresets(): PresetInfo[] {
+  return uniquePresetInfos([...listFilePresets(), ...listMessagingPolicyPresets()]);
+}
+
+function listFilePresets(): PresetInfo[] {
   if (!fs.existsSync(PRESETS_DIR)) return [];
   return fs
     .readdirSync(PRESETS_DIR)
     .filter((f: string) => f.endsWith(".yaml"))
     .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
-      const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^\n"]*)"?$/m);
-      return {
-        file: f,
-        name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
-        description: descMatch ? descMatch[1].trim() : "",
-      };
+      return presetInfoFromContent(f, f.replace(".yaml", ""), content);
     });
 }
 
 /**
- * Read a built-in preset by short name from `PRESETS_DIR`. Guards against
- * path traversal and returns `null` if the preset does not exist.
+ * Read a built-in preset by short name. Non-messaging presets live under
+ * `PRESETS_DIR`; messaging presets are owned by their channel modules.
+ * Guards against path traversal and returns `null` if the preset does not exist.
  */
 function loadPreset(name: string): string | null {
+  return loadPresetForAgent(name, null);
+}
+
+function loadPresetForAgent(name: string, agent: MessagingAgentId | null): string | null {
   const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
   if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
     console.error(`  Invalid preset name: ${name}`);
     return null;
   }
-  if (!fs.existsSync(file)) {
-    console.error(`  Preset not found: ${name}`);
-    return null;
+  if (fs.existsSync(file)) return fs.readFileSync(file, "utf-8");
+  const messagingPreset = loadMessagingPolicyPreset(name, agent);
+  if (messagingPreset) return messagingPreset;
+  console.error(`  Preset not found: ${name}`);
+  return null;
+}
+
+function listMessagingPolicyPresets(): PresetInfo[] {
+  const seen = new Set<string>();
+  const result: PresetInfo[] = [];
+  for (const contribution of getBuiltInMessagingCatalog().listPolicyContributions()) {
+    if (seen.has(contribution.preset)) continue;
+    const agent = firstMessagingPolicyAgent(contribution);
+    const content = loadMessagingPolicyPreset(contribution.preset, agent);
+    if (!content) continue;
+    const sourcePath = resolveMessagingPolicyContributionPath(contribution);
+    const file = sourcePath
+      ? path.relative(PRESETS_DIR, sourcePath)
+      : `${contribution.preset}.yaml`;
+    result.push(presetInfoFromContent(file, contribution.preset, content));
+    seen.add(contribution.preset);
   }
-  return fs.readFileSync(file, "utf-8");
+  return result;
+}
+
+function loadMessagingPolicyPreset(
+  name: string,
+  agent: MessagingAgentId | null = null,
+): string | null {
+  if (agent) return getBuiltInMessagingCatalog().loadPolicyPreset(name, { agent });
+  for (const candidate of MESSAGING_POLICY_AGENTS) {
+    const content = getBuiltInMessagingCatalog().loadPolicyPreset(name, { agent: candidate });
+    if (content) return content;
+  }
+  return null;
+}
+
+function firstMessagingPolicyAgent(
+  contribution: MessagingPolicyContribution,
+): MessagingAgentId | null {
+  if (isMessagingAgentId(contribution.agent)) return contribution.agent;
+  return contribution.agents?.find(isMessagingAgentId) ?? null;
+}
+
+function isMessagingAgentId(value: unknown): value is MessagingAgentId {
+  return value === "openclaw" || value === "hermes";
+}
+
+function resolveMessagingPolicyContributionPath(
+  contribution: MessagingPolicyContribution,
+): string | null {
+  const sourceRoot = path.resolve(contribution.sourceRoot ?? PRESETS_DIR);
+  const sourcePath = path.resolve(sourceRoot, contribution.source);
+  if (sourcePath !== sourceRoot && !sourcePath.startsWith(sourceRoot + path.sep)) return null;
+  return sourcePath;
+}
+
+function presetInfoFromContent(file: string, fallbackName: string, content: string): PresetInfo {
+  const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
+  const descMatch = content.match(/^\s*description:\s*"?([^\n"]*)"?$/m);
+  return {
+    file,
+    name: nameMatch ? nameMatch[1].trim() : fallbackName,
+    description: descMatch ? descMatch[1].trim() : "",
+  };
+}
+
+function uniquePresetInfos(presets: PresetInfo[]): PresetInfo[] {
+  const seen = new Set<string>();
+  return presets.filter((preset) => {
+    if (seen.has(preset.name)) return false;
+    seen.add(preset.name);
+    return true;
+  });
 }
 
 function isPolicyObject(value: PolicyValue): value is PolicyObject {
@@ -179,7 +268,11 @@ function loadAgentPresetContent(
 }
 
 function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
-  const builtinPresetContent = loadPreset(presetName);
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const builtinPresetContent = loadPresetForAgent(
+    presetName,
+    isMessagingAgentId(sandboxAgent) ? sandboxAgent : null,
+  );
   if (!builtinPresetContent) return null;
   return (
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
@@ -498,13 +591,15 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
 function mergePresetNamesIntoPolicy(
   currentPolicy: string,
   presetNames: string[],
+  options: MergePresetNamesIntoPolicyOptions = {},
 ): { policy: string; appliedPresets: string[]; missingPresets: string[] } {
   let merged = currentPolicy;
   const appliedPresets: string[] = [];
   const missingPresets: string[] = [];
+  const agent = isMessagingAgentId(options.agent) ? options.agent : null;
 
   for (const presetName of [...new Set(presetNames)]) {
-    const presetContent = loadPreset(presetName);
+    const presetContent = loadPresetForAgent(presetName, agent);
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       missingPresets.push(presetName);
@@ -859,8 +954,8 @@ function applyPresetContent(
 
 /**
  * Apply a built-in preset (by name) to a running sandbox. Loads the preset
- * from `nemoclaw-blueprint/policies/presets/<name>.yaml` and delegates to
- * `applyPresetContent`. Returns `false` if the named preset does not exist.
+ * from its built-in owner and delegates to `applyPresetContent`. Returns
+ * `false` if the named preset does not exist.
  */
 function applyPreset(
   sandboxName: string,

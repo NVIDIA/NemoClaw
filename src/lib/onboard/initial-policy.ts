@@ -294,7 +294,9 @@ export function prepareInitialSandboxCreatePolicy(
     };
   }
 
-  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
+    agent: options.agentName,
+  });
   if (mergedPolicy.missingPresets.length > 0) {
     throw new Error(
       `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,

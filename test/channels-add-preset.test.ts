@@ -787,7 +787,7 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing whatsapp.yaml must not write messaging plan state; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing WhatsApp policy preset must not write messaging plan state; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),

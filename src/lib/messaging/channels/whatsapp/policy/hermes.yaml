@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: whatsapp
+  description: WhatsApp Web WebSocket and media access (Hermes)
+network_policies:
+  whatsapp:
+    name: whatsapp
+    endpoints:
+      - host: web.whatsapp.com
+        port: 443
+        access: full
+        tls: skip
+      - host: "*.web.whatsapp.com"
+        port: 443
+        access: full
+        tls: skip
+      - host: whatsapp.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /**
+          - allow:
+              method: POST
+              path: /**
+      - host: "*.whatsapp.net"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /**
+          - allow:
+              method: POST
+              path: /**
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: /WhiskeySockets/Baileys/master/src/Defaults/index.ts
+    binaries:
+      - path: /usr/local/bin/node
+      - path: /usr/bin/node

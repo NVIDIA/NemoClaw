@@ -1475,6 +1475,28 @@ exit 1
       expect(result.policy).toContain("slack:");
       expect(result.policy).toContain("wss-primary.slack.com");
     });
+
+    it("uses agent-specific messaging policy content when merging built-in presets", () => {
+      const result = policies.mergePresetNamesIntoPolicy(
+        "version: 1\nnetwork_policies: {}\n",
+        ["slack"],
+        {
+          agent: "hermes",
+        },
+      );
+      const parsed = YAML.parse(result.policy);
+      const binaries = parsed.network_policies.slack.binaries.map(
+        (entry: { path: string }) => entry.path,
+      );
+
+      expect(result.appliedPresets).toEqual(["slack"]);
+      expect(binaries).toEqual([
+        "/usr/local/bin/hermes",
+        "/usr/bin/python3*",
+        "/opt/hermes/.venv/bin/python",
+      ]);
+      expect(binaries).not.toContain("/usr/local/bin/node");
+    });
   });
 
   describe("preset YAML schema", () => {
@@ -1620,10 +1642,13 @@ exit 1
     it("Slack REST endpoints opt into OpenShell request-body credential rewrite", () => {
       const policySources = [
         fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/slack.yaml"),
+          path.join(REPO_ROOT, "src/lib/messaging/channels/slack/policy/openclaw.yaml"),
           "utf8",
         ),
-        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"), "utf8"),
+        fs.readFileSync(
+          path.join(REPO_ROOT, "src/lib/messaging/channels/slack/policy/hermes.yaml"),
+          "utf8",
+        ),
         fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"), "utf8"),
         fs.readFileSync(
           path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml"),
@@ -1661,17 +1686,26 @@ exit 1
 
     it("Hermes messaging gateway policies use native inspected WebSocket policy", () => {
       const policyFiles = [
-        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
-        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
-      ];
-      const cases = [
-        "gateway.discord.gg",
-        "*.discord.gg",
-        "wss-primary.slack.com",
-        "wss-backup.slack.com",
+        {
+          file: path.join(REPO_ROOT, "src/lib/messaging/channels/discord/policy/hermes.yaml"),
+          hosts: ["gateway.discord.gg", "*.discord.gg"],
+        },
+        {
+          file: path.join(REPO_ROOT, "src/lib/messaging/channels/slack/policy/hermes.yaml"),
+          hosts: ["wss-primary.slack.com", "wss-backup.slack.com"],
+        },
+        {
+          file: path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
+          hosts: [
+            "gateway.discord.gg",
+            "*.discord.gg",
+            "wss-primary.slack.com",
+            "wss-backup.slack.com",
+          ],
+        },
       ];
 
-      for (const file of policyFiles) {
+      for (const { file, hosts } of policyFiles) {
         const content = fs.readFileSync(file, "utf8");
         const parsed = YAML.parse(content) as {
           network_policies?: Record<
@@ -1691,7 +1725,7 @@ exit 1
         const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
           (policy) => policy.endpoints ?? [],
         );
-        for (const host of cases) {
+        for (const host of hosts) {
           const endpoint = endpoints.find((candidate) => candidate.host === host);
           expect(endpoint).toBeTruthy();
           expect(endpoint).toMatchObject({
@@ -1712,7 +1746,7 @@ exit 1
     });
 
     it("Hermes Discord REST mutations are scoped to discord.com", () => {
-      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
+      const parsed = parseRepoYaml("src/lib/messaging/channels/discord/policy/hermes.yaml");
       const networkPolicies = parsed.network_policies as Record<
         string,
         {

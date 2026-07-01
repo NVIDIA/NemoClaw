@@ -383,7 +383,7 @@ describe("base sandbox policy", () => {
     // base network_policies, so every sandbox could call the Telegram
     // Bot API regardless of whether the user selected the telegram
     // messaging channel or policy preset. The fix keeps Telegram access
-    // inside `presets/telegram.yaml`. This assertion blocks a regression
+    // inside the Telegram channel-owned policy preset. This assertion blocks a regression
     // where someone re-adds a telegram entry to the base policy and
     // silently re-grants every sandbox unscoped Telegram access.
     const np = policy.network_policies as Record<string, unknown> | undefined;
@@ -417,7 +417,7 @@ describe("base sandbox policy", () => {
     // Slack was never in the baseline, but guard against it being added
     // in the same merge-conflict-resolution pattern that re-added
     // Telegram and Discord after #1705. Slack access is in
-    // presets/slack.yaml only.
+    // the Slack channel-owned policy preset only.
     const np = policy.network_policies as Record<string, unknown> | undefined;
     expect(np && typeof np === "object" && "slack" in np).toBe(false);
 
@@ -545,6 +545,15 @@ describe("Hermes sandbox policy", () => {
     expectManagedInferenceSecurityShape();
   });
 
+  it("keeps messaging channel policies out of the Hermes baseline", () => {
+    const np = policy.network_policies ?? {};
+    expect(np).not.toHaveProperty("telegram");
+    expect(np).not.toHaveProperty("discord");
+    expect(np).not.toHaveProperty("slack");
+    expect(np).not.toHaveProperty("teams");
+    expect(np).not.toHaveProperty("wechat_bridge");
+  });
+
   function expectGithubBaselineAbsent(): void {
     const np = policy.network_policies ?? {};
     expect("github" in np).toBe(false);
@@ -664,11 +673,11 @@ describe("jira preset", () => {
 
 describe("messaging WebSocket presets", () => {
   const DISCORD_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    "../src/lib/messaging/channels/discord/policy/openclaw.yaml",
     import.meta.url,
   );
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
 
@@ -724,7 +733,7 @@ describe("messaging WebSocket presets", () => {
 
 describe("Slack REST credential rewrite", () => {
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
   const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);

@@ -56,7 +56,7 @@ Start with the manifest. Add core code only when the manifest vocabulary cannot 
 2. Add `channels/<channel>/template-resolver.ts` only for derived render values, such as allowlist normalization, booleans, proxy URLs, or agent-specific schema differences.
 3. Add hooks under `channels/<channel>/hooks/` only for enrollment, external reachability checks, QR capture, conflict checks, runtime status, or health probes that cannot be static manifest data.
 4. Register the manifest in `channels/built-ins.ts`, template resolver in `channels/template-resolver.ts`, and hook handlers in `hooks/builtins.ts`.
-5. Add `nemoclaw-blueprint/policies/presets/<channel>.yaml` when the manifest declares a policy preset. Keep messaging-specific egress opt-in unless the project policy says otherwise.
+5. Add `src/lib/messaging/channels/<channel>/policy/<agent-or-shared>.yaml` and expose it through the channel module `policies()` method when the manifest declares a policy preset. Keep messaging-specific egress opt-in unless the project policy says otherwise.
 6. Declare channel support only in `src/lib/messaging/channels/<channel>/manifest.ts` through `supportedAgents`. Do not edit agent manifests for channel availability unless a separate agent contract changed.
 7. Add agent package install metadata when the channel needs an external agent plugin. For OpenClaw plugin packages, use this shape unless source evidence says otherwise:
 

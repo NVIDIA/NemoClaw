@@ -142,10 +142,9 @@ export class StaticMessagingCatalog implements MessagingCatalog {
       const explicit = module.policies?.();
       const contributions =
         explicit && explicit.length > 0
-          ? explicit.map((contribution) => ({
-              ...contribution,
-              channelId: contribution.channelId ?? module.id,
-            }))
+          ? explicit.map((contribution) =>
+              normalizeExplicitPolicyContribution(contribution, module.manifest(), this.policyRoot),
+            )
           : policyContributionsFromManifest(module.manifest(), this.policyRoot);
       return agent
         ? contributions.filter((contribution) => contributionSupportsAgent(contribution, agent))
@@ -158,10 +157,8 @@ export class StaticMessagingCatalog implements MessagingCatalog {
       (entry) => entry.preset === preset,
     );
     if (!contribution) return null;
-    const sourcePath = path.resolve(this.policyRoot, contribution.source);
-    if (!sourcePath.startsWith(`${this.policyRoot}${path.sep}`) && sourcePath !== this.policyRoot) {
-      return null;
-    }
+    const sourcePath = resolvePolicyContributionSourcePath(contribution, this.policyRoot);
+    if (!sourcePath) return null;
     return fs.existsSync(sourcePath) ? fs.readFileSync(sourcePath, "utf-8") : null;
   }
 
@@ -261,6 +258,7 @@ function policyContributionsFromManifest(
           channelId: manifest.id,
           preset: normalized.name,
           agents: manifest.supportedAgents,
+          sourceRoot: policyRoot,
           source,
           policyKeys: normalized.policyKeys ?? [normalized.name],
           requiredAtCreate: normalized.requiredAtCreate === true,
@@ -273,6 +271,7 @@ function policyContributionsFromManifest(
       channelId: manifest.id,
       preset: normalized.name,
       agent,
+      sourceRoot: policyRoot,
       source,
       policyKeys: normalized.agentPolicyKeys?.[agent] ?? normalized.policyKeys ?? [normalized.name],
       requiredAtCreate: normalized.requiredAtCreate === true,
@@ -285,6 +284,45 @@ function normalizePolicyPreset(preset: ChannelPolicyPresetReference): ChannelPol
   return typeof preset === "string" ? { name: preset } : preset;
 }
 
+function normalizeExplicitPolicyContribution(
+  contribution: MessagingPolicyContribution,
+  manifest: ChannelManifest,
+  policyRoot: string,
+): MessagingPolicyContribution {
+  const manifestPolicy = (manifest.policyPresets ?? [])
+    .map(normalizePolicyPreset)
+    .find((preset) => preset.name === contribution.preset);
+  return {
+    channelId: contribution.channelId ?? manifest.id,
+    agent: contribution.agent,
+    agents:
+      contribution.agent === undefined
+        ? (contribution.agents ?? manifest.supportedAgents)
+        : contribution.agents,
+    preset: contribution.preset,
+    sourceRoot: contribution.sourceRoot ?? policyRoot,
+    source: contribution.source,
+    policyKeys: contribution.policyKeys ?? policyKeysForContribution(contribution, manifestPolicy),
+    requiredAtCreate: contribution.requiredAtCreate ?? manifestPolicy?.requiredAtCreate === true,
+    validationWarningLines:
+      contribution.validationWarningLines ?? manifestPolicy?.validationWarningLines ?? [],
+  };
+}
+
+function policyKeysForContribution(
+  contribution: MessagingPolicyContribution,
+  manifestPolicy: ChannelPolicyPresetSpec | undefined,
+): readonly string[] {
+  if (!manifestPolicy) return [contribution.preset];
+  if (contribution.agent) {
+    return (
+      manifestPolicy.agentPolicyKeys?.[contribution.agent] ??
+      manifestPolicy.policyKeys ?? [manifestPolicy.name]
+    );
+  }
+  return manifestPolicy.policyKeys ?? [manifestPolicy.name];
+}
+
 function contributionSupportsAgent(
   contribution: MessagingPolicyContribution,
   agent: MessagingAgentId,
@@ -295,6 +333,17 @@ function contributionSupportsAgent(
 
 function contributionChannelId(contribution: MessagingPolicyContribution): string {
   return contribution.channelId ?? contribution.preset;
+}
+
+function resolvePolicyContributionSourcePath(
+  contribution: MessagingPolicyContribution,
+  fallbackRoot: string,
+): string | null {
+  const sourceRoot = path.resolve(contribution.sourceRoot ?? fallbackRoot);
+  const sourcePath = path.resolve(sourceRoot, contribution.source);
+  return sourcePath === sourceRoot || sourcePath.startsWith(`${sourceRoot}${path.sep}`)
+    ? sourcePath
+    : null;
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

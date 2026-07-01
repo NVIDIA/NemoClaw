@@ -677,7 +677,11 @@ function detectRiskyAreas(changedFiles: string[]): string[] {
       areas.add("installer/bootstrap shell");
     if (file === "src/lib/onboard.ts" || file === "bin/nemoclaw.js" || file.startsWith("scripts/"))
       areas.add("onboarding/host glue");
-    if (file.startsWith("nemoclaw/src/blueprint/") || file.startsWith("nemoclaw-blueprint/"))
+    if (
+      file.startsWith("nemoclaw/src/blueprint/") ||
+      file.startsWith("nemoclaw-blueprint/") ||
+      /^src\/lib\/messaging\/channels\/[^/]+\/policy\//.test(file)
+    )
       areas.add("sandbox/policy/SSRF");
     if (file.startsWith(".github/workflows/") || file.includes("prek") || file.includes("dco"))
       areas.add("workflow/enforcement");
@@ -710,6 +714,7 @@ export function classifyTestDepth(
       /(^|\/)(install|setup|brev-setup|nemoclaw-start)\.sh$/.test(file) ||
       file.startsWith("nemoclaw-blueprint/policies/") ||
       file.startsWith("nemoclaw/src/blueprint/") ||
+      /^src\/lib\/messaging\/channels\/[^/]+\/policy\//.test(file) ||
       file.startsWith("test/e2e/") ||
       file.includes("sandbox") ||
       file.includes("gateway") ||

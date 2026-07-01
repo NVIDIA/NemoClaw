@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 
 import {
   BUILT_IN_CHANNEL_MANIFESTS,
@@ -70,6 +71,18 @@ describe("MessagingCatalog", () => {
       requiredAtCreate: true,
       policyKeys: ["slack"],
     });
+    expect(
+      Object.keys(
+        YAML.parse(requirePolicy(catalog.loadPolicyPreset("telegram", { agent: "openclaw" })))
+          .network_policies,
+      ),
+    ).toEqual(["telegram_bot"]);
+    expect(
+      Object.keys(
+        YAML.parse(requirePolicy(catalog.loadPolicyPreset("telegram", { agent: "hermes" })))
+          .network_policies,
+      ),
+    ).toEqual(["telegram"]);
   });
 
   it("rejects invalid or duplicate channel modules", () => {
@@ -105,4 +118,9 @@ function minimalManifest(id: string): ChannelManifest {
     render: [],
     hooks: [],
   };
+}
+
+function requirePolicy(content: string | null): string {
+  expect(content).toBeTruthy();
+  return content ?? "";
 }

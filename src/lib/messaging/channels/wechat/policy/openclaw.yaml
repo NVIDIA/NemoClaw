@@ -3,9 +3,7 @@
 
 # WeChat (personal) channel egress over Tencent's iLink Bot API.
 #
-# Used by two bridge implementations: @tencent-weixin/openclaw-weixin (Node,
-# OpenClaw) and the built-in Hermes WeChat adapter (Python aiohttp). Both
-# hit the same iLink hosts, so a single preset covers both agents.
+# Used by @tencent-weixin/openclaw-weixin for OpenClaw.
 #
 # OpenShell's SSRF engine matches `host:` as a literal string — `*.wechat.com`
 # style wildcards are accepted by NemoClaw's preset validator but never expand
@@ -15,8 +13,6 @@
 #
 # Known hosts (extend when an operator observes a new IDC redirect):
 #   - ilinkai.weixin.qq.com           bootstrap; hard-coded in src/lib/messaging/channels/wechat/qr.ts
-#                                     and Hermes' WEIXIN_BASE_URL default per
-#                                     hermes-agent docs/messaging/weixin
 #   - ilinkai.wechat.com              per-account baseUrl returned after QR confirm
 #
 # To discover more: tail the sandbox OCSF log for `DENIED ... -> <host>:443`
@@ -25,7 +21,7 @@
 # operator's own account at login time.
 preset:
   name: wechat
-  description: "WeChat (personal) iLink API access (OpenClaw + Hermes)"
+  description: "WeChat (personal) iLink API access (OpenClaw)"
 
 network_policies:
   wechat_bridge:
@@ -45,11 +41,6 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-    # Each bridge runs under its agent's interpreter — Node for OpenClaw,
-    # Python for Hermes. Listing both keeps the preset apply idempotent
-    # across agents; unused entries never match anything in the sandbox.
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
-      - { path: /usr/bin/python3* }
-      - { path: /opt/hermes/.venv/bin/python }
