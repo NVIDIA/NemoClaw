@@ -471,13 +471,13 @@ describe("nemoclaw-start non-root fallback", () => {
       'install_messaging_runtime_preloads() { echo "ORDER:install"; }',
       'verify_messaging_runtime_secret_scans() { echo "ORDER:verify"; }',
       "seed_default_workspace_templates() { :; }",
+      extractShellFunctionFromSource(src, "run_oneshot_command"),
       "_SANDBOX_HOME=/sandbox",
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
       nonRootFallbackBlock(src),
       'echo "SHOULD_NOT_REACH"',
     ].join("\n");
     const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
-
     expect(result.status).toBe(23);
     expect(result.stdout).toContain("EXPLICIT_COMMAND");
     expect(result.stdout).toMatch(/ORDER:install[\s\S]*ORDER:verify[\s\S]*EXPLICIT_COMMAND/);

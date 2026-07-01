@@ -542,6 +542,56 @@ normalize_mutable_config_perms() {
   lock_openclaw_config_baseline_if_present "$config_dir" || return 1
 }
 
+# OpenClaw assumes a single-UID 700/600 config tree, while NemoClaw's separate
+# sandbox and gateway UIDs require the mutable 2770/660 group contract. Keep
+# this one-shot wrapper until OpenClaw preserves that contract after commands
+# such as `doctor --fix` and the post-command normalization is no longer needed.
+run_oneshot_command() {
+  local _nemoclaw_oneshot_child_pid=""
+  local _nemoclaw_oneshot_signal=""
+  local _nemoclaw_oneshot_wait_rc=0
+  local _nemoclaw_oneshot_cleanup_rc=0
+
+  # Bash gives asynchronous commands /dev/null stdin and an ignored SIGINT
+  # when job control is off. The explicit stdin and signal reset preserve the
+  # foreground command contract; exec keeps the launched command as our one
+  # direct child rather than adding a forwarding process.
+  (
+    trap - TERM INT
+    exec "$@"
+  ) <&0 &
+  _nemoclaw_oneshot_child_pid=$!
+  trap '_nemoclaw_oneshot_signal=TERM; kill -TERM "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' TERM
+  trap '_nemoclaw_oneshot_signal=INT; kill -INT "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' INT
+
+  # A trapped signal interrupts `wait`. Forward it above, then wait again so
+  # the direct child is reaped and its final status remains authoritative.
+  while :; do
+    _nemoclaw_oneshot_signal=""
+    if wait "$_nemoclaw_oneshot_child_pid"; then
+      _nemoclaw_oneshot_wait_rc=0
+    else
+      _nemoclaw_oneshot_wait_rc=$?
+    fi
+    [ -n "$_nemoclaw_oneshot_signal" ] || break
+  done
+  _nemoclaw_oneshot_child_pid=""
+
+  if normalize_mutable_config_perms; then
+    _nemoclaw_oneshot_cleanup_rc=0
+  else
+    _nemoclaw_oneshot_cleanup_rc=$?
+  fi
+  trap - TERM INT
+
+  if [ "$_nemoclaw_oneshot_cleanup_rc" -ne 0 ]; then
+    printf '[one-shot] command status=%s; permission cleanup status=%s; returning cleanup failure\n' \
+      "$_nemoclaw_oneshot_wait_rc" "$_nemoclaw_oneshot_cleanup_rc" >&2
+    return "$_nemoclaw_oneshot_cleanup_rc"
+  fi
+  return "$_nemoclaw_oneshot_wait_rc"
+}
+
 openclaw_config_dir_owner() {
   local config_dir="$1"
   stat -c '%U' "$config_dir" 2>/dev/null || stat -f '%Su' "$config_dir" 2>/dev/null || echo unknown
@@ -4704,9 +4754,8 @@ if [ "$(id -u)" -ne 0 ]; then
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
     _nemoclaw_cmd_rc=0
-    "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
-    normalize_mutable_config_perms
-    exit $_nemoclaw_cmd_rc
+    run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+    exit "$_nemoclaw_cmd_rc"
   fi
 
   configure_messaging_channels
@@ -4875,9 +4924,8 @@ setup_auth_profile_as_sandbox
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   _nemoclaw_cmd_rc=0
-  "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
-  normalize_mutable_config_perms
-  exit $_nemoclaw_cmd_rc
+  run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
+  exit "$_nemoclaw_cmd_rc"
 fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.

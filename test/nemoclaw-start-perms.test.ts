@@ -1,76 +1,133 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Regression tests for #6047: nemoclaw exec collapses /sandbox/.openclaw permissions.
-// Verifies that normalize_mutable_config_perms runs AFTER NEMOCLAW_CMD in both
-// the non-root and root/step-down entrypoint paths, and that the command's exit
-// code is preserved through the normalize call.
-
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const startSource = fs.readFileSync(START_SCRIPT, "utf-8");
 
-// Module-scope extraction helpers. The marker assertions live here (not inside
-// the test cases) so they validate the slice against the real script without
-// being source-shape assertions on production behavior.
-function nonRootCmdBlock(src: string): string {
-  const base = src.indexOf("# ── Non-root fallback");
-  expect(base).toBeGreaterThan(-1);
-  const start = src.indexOf("  if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then\n", base);
-  expect(start).toBeGreaterThan(base);
-  const end = src.indexOf("\n  fi\n", start);
-  expect(end).toBeGreaterThan(start);
-  return src.slice(start, end + "\n  fi".length + 1);
+function extractShellFunction(name: string): string {
+  const match = startSource.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
+  if (!match) {
+    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
+  }
+  return `${name}() {${match[1]}\n}`;
 }
 
-function rootCmdBlock(src: string): string {
-  const base = src.indexOf("# ── Root path");
-  expect(base).toBeGreaterThan(-1);
-  const start = src.indexOf("# If a command was passed", base);
-  expect(start).toBeGreaterThan(base);
-  const end = src.indexOf("\nfi\n", start);
-  expect(end).toBeGreaterThan(start);
-  return src.slice(start, end + "\nfi".length + 1);
+function runBash(script: string) {
+  return spawnSync("bash", ["-c", script], {
+    encoding: "utf-8",
+    timeout: 10_000,
+  });
 }
 
-describe("nemoclaw-start NEMOCLAW_CMD permission restore (#6047)", () => {
-  it("normalizes .openclaw perms after non-root command and preserves exit code", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+function mode(filePath: string): number {
+  return fs.statSync(filePath).mode & 0o7777;
+}
+
+const oneShotFunction = extractShellFunction("run_oneshot_command");
+
+describe("nemoclaw-start one-shot command lifecycle", () => {
+  it("restores a real mutable config tree and preserves child exit status (#6047)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-perms-"));
+    const configDir = path.join(root, ".openclaw");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+
+    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    );
     const script = [
       "set -euo pipefail",
-      'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
-      "install_messaging_runtime_preloads() { :; }",
-      "verify_messaging_runtime_secret_scans() { :; }",
-      "NEMOCLAW_CMD=(bash -c 'echo ORDER:cmd; exit 42')",
-      nonRootCmdBlock(src),
-      'echo "SHOULD_NOT_REACH"',
+      "lock_openclaw_config_baseline_if_present() { return 0; }",
+      normalizeFunction,
+      oneShotFunction,
+      "rc=0",
+      `run_oneshot_command bash -c 'chmod 700 "$1"; chmod 600 "$1/openclaw.json" "$1/.config-hash"; exit 42' bash ${JSON.stringify(configDir)} || rc=$?`,
+      'printf "rc=%s\\n" "$rc"',
     ].join("\n");
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
-    expect(result.status).toBe(42);
-    expect(result.stdout).toMatch(/ORDER:cmd[\s\S]*ORDER:normalize/);
-    expect(result.stdout).not.toContain("SHOULD_NOT_REACH");
+    try {
+      const result = runBash(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("rc=42");
+      expect(mode(configDir)).toBe(0o2770);
+      expect(mode(path.join(configDir, "openclaw.json"))).toBe(0o660);
+      expect(mode(path.join(configDir, ".config-hash"))).toBe(0o660);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
-  it("normalizes .openclaw perms after root step-down command and preserves exit code", () => {
-    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  it("forwards TERM and INT to the direct child, reaps it, and still runs cleanup (#6047)", () => {
+    for (const signal of ["TERM", "INT"] as const) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-signal-"));
+      const childScript = path.join(root, "child.sh");
+      const childPidFile = path.join(root, "child.pid");
+      const signalMarker = path.join(root, "signal.marker");
+      const cleanupMarker = path.join(root, "cleanup.marker");
+      fs.writeFileSync(
+        childScript,
+        [
+          "#!/usr/bin/env bash",
+          'pid_file="$1"',
+          'signal_marker="$2"',
+          'signal="$3"',
+          'trap \'printf "%s\\n" "$signal" >"$signal_marker"; exit 23\' "$signal"',
+          'printf "%s\\n" "$$" >"$pid_file"',
+          "while :; do sleep 0.05; done",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const script = [
+        "set -euo pipefail",
+        `normalize_mutable_config_perms() { printf 'cleanup\\n' >${JSON.stringify(cleanupMarker)}; }`,
+        oneShotFunction,
+        "rc=0",
+        `run_oneshot_command bash ${JSON.stringify(childScript)} ${JSON.stringify(childPidFile)} ${JSON.stringify(signalMarker)} ${signal} &`,
+        "runner_pid=$!",
+        `for _ in {1..100}; do [ -s ${JSON.stringify(childPidFile)} ] && break; sleep 0.02; done`,
+        `[ -s ${JSON.stringify(childPidFile)} ] || { kill -KILL "$runner_pid" 2>/dev/null || true; exit 90; }`,
+        `kill -${signal} "$runner_pid"`,
+        'wait "$runner_pid" || rc=$?',
+        `child_pid="$(cat ${JSON.stringify(childPidFile)})"`,
+        'orphan=0; kill -0 "$child_pid" 2>/dev/null && orphan=1',
+        'printf "rc=%s orphan=%s\\n" "$rc" "$orphan"',
+      ].join("\n");
+
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("rc=23 orphan=0");
+        expect(fs.readFileSync(signalMarker, "utf-8")).toBe(`${signal}\n`);
+        expect(fs.readFileSync(cleanupMarker, "utf-8")).toBe("cleanup\n");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("returns cleanup failure and reports both statuses (#6047)", () => {
     const script = [
       "set -euo pipefail",
-      'normalize_mutable_config_perms() { echo "ORDER:normalize"; }',
-      "setup_auth_profile_as_sandbox() { :; }",
-      // env passes the remaining args through unchanged, simulating a no-op step-down
-      "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      "NEMOCLAW_CMD=(bash -c 'echo ORDER:cmd; exit 42')",
-      rootCmdBlock(src),
-      'echo "SHOULD_NOT_REACH"',
+      "normalize_mutable_config_perms() { return 17; }",
+      oneShotFunction,
+      "rc=0",
+      "run_oneshot_command bash -c 'exit 42' || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
     ].join("\n");
-    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
 
-    expect(result.status).toBe(42);
-    expect(result.stdout).toMatch(/ORDER:cmd[\s\S]*ORDER:normalize/);
-    expect(result.stdout).not.toContain("SHOULD_NOT_REACH");
+    const result = runBash(script);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rc=17");
+    expect(result.stderr).toContain(
+      "[one-shot] command status=42; permission cleanup status=17; returning cleanup failure",
+    );
   });
 });
