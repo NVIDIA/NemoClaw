@@ -92,21 +92,32 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
-// Heuristic scheme classifier: a major component >= 1000 is treated as a
-// calendar year (`YYYY.M.D`), anything smaller as semver (`X.Y.Z`). This
-// assumes no supported agent ever ships a semver major above 999, which is
-// vastly beyond any real-world runtime version; the guard is a safety net for
-// legacy Hermes calendar pins that predate the semver manifest, not a
-// permanent contract. If an agent ever needs a fourth scheme, add an explicit
-// `version_scheme` field to the manifest instead of raising this threshold.
-const CALENDAR_VERSION_MIN_MAJOR = 1000;
+// Classify versions by their surface shape: `YYYY.M.D` is treated as a
+// calendar tag, everything else as semver. A four-digit major is the marker
+// because no supported agent runtime ships a semver whose major is a
+// plausible year — the guard is a safety net for legacy Hermes calendar pins
+// that predate the semver manifest, not a permanent scheme contract. If an
+// agent ever needs a third scheme, add an explicit `version_scheme` field to
+// the manifest rather than teaching this regex a new shape.
+const CALENDAR_VERSION_PATTERN = /^\d{4}\.\d+\.\d+/;
+
+function isCalendarVersion(value: string): boolean {
+  return CALENDAR_VERSION_PATTERN.test(String(value));
+}
 
 function versionsComparable(left: string, right: string): boolean {
-  const major = (value: string): number =>
-    Number.parseInt(String(value).split(".")[0] ?? "", 10) || 0;
-  const leftIsCalendar = major(left) >= CALENDAR_VERSION_MIN_MAJOR;
-  const rightIsCalendar = major(right) >= CALENDAR_VERSION_MIN_MAJOR;
-  return leftIsCalendar === rightIsCalendar;
+  return isCalendarVersion(left) === isCalendarVersion(right);
+}
+
+const warnedSchemeMismatchPairs = new Set<string>();
+
+function warnSchemeMismatch(sandboxVersion: string, expectedVersion: string): void {
+  const key = `${sandboxVersion}|${expectedVersion}`;
+  if (warnedSchemeMismatchPairs.has(key)) return;
+  warnedSchemeMismatchPairs.add(key);
+  process.stderr.write(
+    `warning: sandbox agent version ${sandboxVersion} and expected version ${expectedVersion} use different schemes; staleness check skipped.\n`,
+  );
 }
 
 // Cross-scheme staleness is silenced deliberately: comparing a semver runtime
@@ -114,9 +125,14 @@ function versionsComparable(left: string, right: string): boolean {
 // `versionGte` would let the calendar year dominate and every sandbox would
 // look stale (see #6049). Silencing here means a genuine update is missed
 // only until both sides align on the same scheme again, which the Hermes
-// updater now enforces via `HERMES_SEMVER`.
+// updater now enforces via `HERMES_SEMVER`. A stderr warning surfaces the
+// mismatch so operators can see when a check is being skipped rather than
+// silently trusting a cached calendar version.
 function isAgentStale(sandboxVersion: string, expectedVersion: string): boolean {
-  if (!versionsComparable(sandboxVersion, expectedVersion)) return false;
+  if (!versionsComparable(sandboxVersion, expectedVersion)) {
+    warnSchemeMismatch(sandboxVersion, expectedVersion);
+    return false;
+  }
   return !versionGte(sandboxVersion, expectedVersion);
 }
 
