@@ -254,11 +254,16 @@ Refer to [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for 
 
 When a maintained NemoClaw release becomes available, update the host CLI and then check whether existing sandboxes need rebuilds.
 The standard installer follows the admin-promoted `lkg` release tag by default.
-If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.65 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
+```
+
+If a support workflow asks you to pass the maintained tag explicitly, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
 Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.

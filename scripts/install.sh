@@ -49,6 +49,7 @@ resolve_repo_root() {
 }
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 DEFAULT_INSTALL_REF="lkg"
+INSTALL_TAG_EXAMPLE="vX.Y.Z"
 TOTAL_STEPS=3
 
 is_mutable_install_ref() {
@@ -623,9 +624,9 @@ usage() {
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
-  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: lkg)\n"
+  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
   printf "                                  In curl pipes, set this on bash or export it first.\n"
-  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
+  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"

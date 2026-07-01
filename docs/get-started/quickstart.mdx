@@ -36,6 +36,7 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained OpenClaw build without a version override.
 The third-party software notice runs before the installer installs Node.js or the NemoClaw CLI.
 The piped installer can prompt through your terminal when a TTY is available.
 In non-TTY contexts, such as CI, an SSH command with piped stdin, or a shell script, pass explicit acceptance to the `bash` side of the pipe:
