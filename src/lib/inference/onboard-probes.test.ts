@@ -960,29 +960,37 @@ exit 0
     }
   });
 
-  // PR #5975 review note PRA-3 (Standard). The unit tests assert that
-  // constructed argv arrays do not contain the API key. This integration
-  // test makes the same guarantee at the live curl process boundary by
-  // recording /proc/self/cmdline inside a fake curl and asserting the key
-  // is absent and --config is present. Runs only on Linux because /proc
-  // is not generally available elsewhere.
+  // PR #5975 review notes PRA-3 (Standard) and PRA-2 (Required). The unit
+  // tests assert that constructed argv arrays do not contain the API key.
+  // This integration test makes the same guarantee at the live curl process
+  // boundary by recording both /proc/<pid>/cmdline and /proc/<pid>/environ
+  // inside a fake curl and asserting the key is absent from each while
+  // --config is present in argv. An ambient credential-shaped env var is set
+  // before the probe to prove the spawn-env scrubber strips it from the
+  // child. Runs only on Linux because /proc is not generally available
+  // elsewhere.
   it.runIf(process.platform === "linux")(
-    "does not expose the API key in the running curl process command line",
+    "keeps the API key out of the running curl argv and environment",
     () => {
       const apiKey = "nvapi-process-list-secret";
+      const ambientSecret = "nvapi-environ-leak-canary";
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proc-cmdline-"));
       const fakeBin = path.join(tmpDir, "bin");
       const cmdlinePath = path.join(tmpDir, "cmdline.txt");
+      const environPath = path.join(tmpDir, "environ.txt");
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.writeFileSync(
         path.join(fakeBin, "curl"),
         `#!/usr/bin/env bash
-# Capture the running shell's own /proc/<pid>/cmdline so the test can
-# assert on what a process-list inspector (ps auxww, /proc) would see.
-# Use $$ rather than /proc/self/cmdline because /proc/self resolves
-# relative to whatever subprocess opens the file, not this script.
+# Capture the running shell's own /proc/<pid>/cmdline and environ so the
+# test can assert on what a process-list inspector (ps auxww, /proc) would
+# see. Use $$ rather than /proc/self because /proc/self resolves relative
+# to whatever subprocess opens the file, not this script.
 if [ -r /proc/$$/cmdline ]; then
   tr '\\0' ' ' < /proc/$$/cmdline > "${cmdlinePath}"
+fi
+if [ -r /proc/$$/environ ]; then
+  tr '\\0' '\\n' < /proc/$$/environ > "${environPath}"
 fi
 outfile=""
 while [ "$#" -gt 0 ]; do
@@ -1004,7 +1012,9 @@ exit 0
       );
 
       const originalPath = process.env.PATH;
+      const originalAmbient = process.env.NEMOCLAW_PROBE_ENVIRON_SECRET;
       process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      process.env.NEMOCLAW_PROBE_ENVIRON_SECRET = ambientSecret;
       try {
         probeOpenAiLikeEndpoint(
           "https://integrate.api.nvidia.com/v1",
@@ -1017,8 +1027,18 @@ exit 0
         expect(recordedCmdline).not.toContain(apiKey);
         expect(recordedCmdline).not.toContain("Authorization: Bearer");
         expect(recordedCmdline).toContain("--config");
+
+        const recordedEnviron = fs.readFileSync(environPath, "utf8");
+        expect(recordedEnviron).not.toContain(apiKey);
+        expect(recordedEnviron).not.toContain(ambientSecret);
+        expect(recordedEnviron).not.toContain("Authorization: Bearer");
       } finally {
         process.env.PATH = originalPath;
+        if (originalAmbient === undefined) {
+          delete process.env.NEMOCLAW_PROBE_ENVIRON_SECRET;
+        } else {
+          process.env.NEMOCLAW_PROBE_ENVIRON_SECRET = originalAmbient;
+        }
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     },

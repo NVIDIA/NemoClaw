@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createBearerAuthConfig,
@@ -112,5 +112,48 @@ describe("curl auth config helper", () => {
     expect(() => createBearerAuthConfig("nvapi-test", { prefix: "" })).toThrow(
       /invalid curl auth config prefix/,
     );
+  });
+
+  it("rethrows when the tmpdir cannot be created and leaves no config behind", () => {
+    const spy = vi.spyOn(fs, "mkdtempSync").mockImplementation(() => {
+      throw new Error("mkdtemp failed");
+    });
+    try {
+      expect(() => createBearerAuthConfig("nvapi-test")).toThrow(/mkdtemp failed/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("removes the tmpdir and rethrows when chmod fails", () => {
+    const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+    const chmodSpy = vi.spyOn(fs, "chmodSync").mockImplementation(() => {
+      throw new Error("chmod failed");
+    });
+    try {
+      expect(() => createBearerAuthConfig("nvapi-test")).toThrow(/chmod failed/);
+      const created = mkdtempSpy.mock.results[0]?.value as string;
+      expect(created).toBeTruthy();
+      expect(() => fs.statSync(created)).toThrow(/ENOENT/);
+    } finally {
+      chmodSpy.mockRestore();
+      mkdtempSpy.mockRestore();
+    }
+  });
+
+  it("removes the tmpdir and rethrows when writing the config file fails", () => {
+    const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+    const writeSpy = vi.spyOn(fs, "writeFileSync").mockImplementation(() => {
+      throw new Error("write failed");
+    });
+    try {
+      expect(() => createBearerAuthConfig("nvapi-test")).toThrow(/write failed/);
+      const created = mkdtempSpy.mock.results[0]?.value as string;
+      expect(created).toBeTruthy();
+      expect(() => fs.statSync(created)).toThrow(/ENOENT/);
+    } finally {
+      writeSpy.mockRestore();
+      mkdtempSpy.mockRestore();
+    }
   });
 });
