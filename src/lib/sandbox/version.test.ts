@@ -262,31 +262,18 @@ describe("checkAgentVersion", () => {
     expect(result.isStale).toBe(true);
   });
 
-  it("invalidates a cross-scheme cached agent version and re-probes over ssh so the runtime scheme wins (#6049)", () => {
+  it("flags a scheme-mismatched cached version as stale so the rebuild flow realigns runtime and manifest (#6049)", () => {
     registry.registerSandbox({
       name: "hermes-sb",
       agent: "hermes-calendar-pin",
       agentVersion: "0.17.0",
     });
 
-    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
-      status: 0,
-      output: "Host openshell-hermes-sb\n  HostName 127.0.0.1\n",
-    });
-    vi.mocked(spawnSync).mockReturnValue({
-      status: 0,
-      stdout: "hermes 2026.6.19\n",
-      stderr: "",
-      pid: 4321,
-      output: [],
-      signal: null,
-    });
-
     const result = checkAgentVersion("hermes-sb");
-    expect(result.detectionMethod).toBe("ssh-exec");
-    expect(result.sandboxVersion).toBe("2026.6.19");
-    expect(result.isStale).toBe(false);
-    expect(result.verificationFailed).toBe(false);
+    expect(result.detectionMethod).toBe("registry");
+    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.schemeMismatch).toBe(true);
+    expect(result.isStale).toBe(true);
   });
 
   it("treats a semver with a four-digit major that does not start with 20 as semver, not calendar (#6049)", () => {
@@ -315,23 +302,27 @@ describe("checkAgentVersion", () => {
     expect(result.isStale).toBe(true);
   });
 
-  it("returns an unknown verdict when the cross-scheme cache is invalidated and ssh cannot re-probe", () => {
-    registry.registerSandbox({
-      name: "hermes-sb",
-      agent: "hermes-calendar-pin",
-      agentVersion: "0.17.0",
-    });
+  it("flags a scheme mismatch discovered during an ssh probe as stale (#6049)", () => {
+    registry.registerSandbox({ name: "hermes-sb", agent: "hermes-calendar-pin" });
 
     vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
-      status: 1,
-      output: "",
+      status: 0,
+      output: "Host openshell-hermes-sb\n  HostName 127.0.0.1\n",
+    });
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: "hermes 0.17.0\n",
+      stderr: "",
+      pid: 4321,
+      output: [],
+      signal: null,
     });
 
     const result = checkAgentVersion("hermes-sb");
-    expect(result.detectionMethod).toBe("unknown");
-    expect(result.unavailableReason).toBe("probe-failed");
-    expect(result.verificationFailed).toBe(true);
-    expect(result.isStale).toBe(false);
+    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.schemeMismatch).toBe(true);
+    expect(result.isStale).toBe(true);
   });
 
   it("surfaces the reason when checkAgentVersion cannot inspect the sandbox", () => {

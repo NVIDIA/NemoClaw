@@ -139,14 +139,14 @@ describe("upgrade sandboxes helpers", () => {
     });
   });
 
-  it("routes verification-failed sandboxes to the unknown bucket so upgrade does not silently skip them (#6049)", () => {
+  it("routes probe-failed sandboxes to unknown and scheme-mismatched sandboxes to stale so upgrade does not silently skip them (#6049)", () => {
     const checks: Record<string, SandboxVersionCheck> = {
       schemeMismatch: {
-        isStale: false,
+        isStale: true,
         sandboxVersion: "0.17.0",
         expectedVersion: "2026.6.19",
         detectionMethod: "registry",
-        verificationFailed: true,
+        verificationFailed: false,
       },
       probeFailed: {
         isStale: false,
@@ -169,9 +169,16 @@ describe("upgrade sandboxes helpers", () => {
       new Set(["schemeMismatch", "current"]),
       (name) => checks[name],
     );
-    expect(classification.stale).toEqual([]);
+    expect(classification.stale).toEqual([
+      {
+        name: "schemeMismatch",
+        current: "0.17.0",
+        expected: "2026.6.19",
+        running: true,
+        reasons: ["agent-version"],
+      },
+    ]);
     expect(classification.unknown).toEqual([
-      { name: "schemeMismatch", expected: "2026.6.19", running: true },
       { name: "probeFailed", expected: "0.17.0", running: false },
     ]);
   });

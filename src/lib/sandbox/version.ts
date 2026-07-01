@@ -25,18 +25,17 @@ export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
   /**
-   * `isStale` is only meaningful when `verificationFailed` is `false`. When
-   * `verificationFailed` is `true` (probe failure or scheme mismatch), the
-   * check could not determine staleness and callers must not read
-   * `isStale === false` as "verified current".
+   * True when the sandbox should be rebuilt. This includes scheme-mismatch
+   * cases, which are fail-closed: an incomparable pair is treated as stale so
+   * the rebuild flow realigns the runtime and cache.
    */
   isStale: boolean;
   /**
-   * True whenever the check could not confirm the sandbox is at the expected
-   * version — probe failed, no expected version, opted-out probing, or the
-   * runtime and expected versions use different schemes. Callers should
-   * render an "unable to verify" state rather than treat `isStale === false`
-   * as a positive signal.
+   * True whenever the check could not observe a runtime version — probe
+   * failed, no expected version, or opted-out probing. Callers should render
+   * an "unable to verify" state rather than treat `isStale === false` as a
+   * positive signal. Scheme mismatches do NOT set this: they set
+   * `schemeMismatch` and `isStale`.
    */
   verificationFailed: boolean;
   /**
@@ -52,9 +51,10 @@ export interface VersionCheckResult {
   detectionMethod: "registry" | "ssh-exec" | "unavailable" | "unknown";
   /**
    * `true` when the runtime and expected versions use different schemes
-   * (semver vs calendar). In that case `isStale` is forced to `false` because
-   * the two values cannot be compared numerically; treat this as "unable to
-   * verify" rather than "current".
+   * (semver vs calendar). In that case `isStale` is forced to `true` so the
+   * normal rebuild flow realigns the runtime with the current manifest; the
+   * flag lets callers distinguish this fail-closed path from a numeric
+   * comparison that observed a genuinely older version.
    */
   schemeMismatch?: boolean;
   /** Categorises why the result could not be computed, so callers can surface a distinct state. */
@@ -170,22 +170,20 @@ function warnSchemeMismatch(
     sandbox: sandboxName,
     sandboxVersion,
     expectedVersion,
-    action: "staleness_check_skipped",
+    action: "flagged_as_stale",
   });
   process.stderr.write(
-    `warning: sandbox '${sandboxName}' agent version ${sandboxVersion} and expected version ${expectedVersion} use different schemes; staleness check skipped. ${payload}\n`,
+    `warning: sandbox '${sandboxName}' agent version ${sandboxVersion} and expected version ${expectedVersion} use different schemes; flagging as stale so a rebuild aligns them. ${payload}\n`,
   );
 }
 
-// Cross-scheme staleness is silenced deliberately: comparing a semver runtime
-// (e.g. `0.17.0`) against a calendar manifest pin (e.g. `2026.6.19`) with
-// `versionGte` would let the calendar year dominate and every sandbox would
-// look stale (see #6049). Silencing here means a genuine update is missed
-// only until both sides align on the same scheme again, which the Hermes
-// updater now enforces via `HERMES_SEMVER`. A stderr warning with a
-// structured JSON payload surfaces the mismatch so operators and log
-// pipelines can detect when a check has been skipped rather than silently
-// trusting a cached calendar version.
+// #6049 fixed the primary bug — the manifest and Hermes runtime now share
+// the semver scheme — but stale cross-scheme cache entries can still be
+// observed on sandboxes that predate the migration. `evaluateStaleness`
+// treats any residual mismatch as stale and lets the normal rebuild flow
+// realign the runtime and cache; a structured stderr warning surfaces the
+// event so operators and log pipelines can trace which sandboxes tripped
+// the fail-closed path.
 interface StalenessVerdict {
   isStale: boolean;
   schemeMismatch: boolean;
@@ -199,7 +197,12 @@ function evaluateStaleness(
 ): StalenessVerdict {
   if (!versionsComparable(agentScheme, sandboxVersion, expectedVersion)) {
     warnSchemeMismatch(sandboxName, sandboxVersion, expectedVersion);
-    return { isStale: false, schemeMismatch: true };
+    // Fail-closed on scheme mismatch: the runtime and manifest cannot be
+    // compared numerically, so the sandbox is treated as stale and routed
+    // through the normal rebuild flow. A stale calendar cache from before
+    // the semver migration self-heals — the rebuild upgrades the runtime
+    // and repopulates the cache with a matching-scheme value.
+    return { isStale: true, schemeMismatch: true };
   }
   return { isStale: !versionGte(sandboxVersion, expectedVersion), schemeMismatch: false };
 }
@@ -232,14 +235,11 @@ export function checkAgentVersion(
 
   // Fast path: version already cached in registry. A scheme mismatch here
   // means the cached value predates the current expected-version scheme
-  // (e.g. a calendar tag left over before Hermes moved to semver, #6049)
-  // rather than an actual version disagreement. Invalidate the entry — a
-  // single atomic write, no follow-up read that could race — and fall
-  // through to the SSH probe so the current runtime version, which is
-  // guaranteed to share the manifest scheme once the sandbox is rebuilt or
-  // reprobed, replaces it. This closes the fail-open path where a stale
-  // cross-scheme cache would otherwise remain forever without triggering a
-  // rebuild.
+  // (e.g. a calendar tag left over before Hermes moved to semver, #6049).
+  // `evaluateStaleness` fails closed with `isStale: true` in that case, so
+  // the sandbox is routed through the normal rebuild flow — no cache write
+  // and no follow-up probe race — and the rebuild itself repopulates the
+  // cache with a matching-scheme value.
   if (sb?.agentVersion && !opts?.forceProbe) {
     const verdict = evaluateStaleness(
       sandboxName,
@@ -247,16 +247,14 @@ export function checkAgentVersion(
       sb.agentVersion,
       expectedVersion,
     );
-    if (!verdict.schemeMismatch) {
-      return {
-        sandboxVersion: sb.agentVersion,
-        expectedVersion,
-        isStale: verdict.isStale,
-        verificationFailed: false,
-        detectionMethod: "registry",
-      };
-    }
-    registry.updateSandbox(sandboxName, { agentVersion: null });
+    return {
+      sandboxVersion: sb.agentVersion,
+      expectedVersion,
+      isStale: verdict.isStale,
+      verificationFailed: false,
+      detectionMethod: "registry",
+      schemeMismatch: verdict.schemeMismatch,
+    };
   }
 
   if (opts?.skipProbe && !opts.forceProbe) {
@@ -298,7 +296,7 @@ export function checkAgentVersion(
     sandboxVersion: probed,
     expectedVersion,
     isStale: verdict.isStale,
-    verificationFailed: verdict.schemeMismatch,
+    verificationFailed: false,
     detectionMethod: "ssh-exec",
     schemeMismatch: verdict.schemeMismatch,
   };
