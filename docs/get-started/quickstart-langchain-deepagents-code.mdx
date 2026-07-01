@@ -88,7 +88,8 @@ NemoClaw never accepts the raw key inside the sandbox, in `.env`, or in Deep Age
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
-To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+To enable Tavily for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
 
 ```bash
 # Preview the endpoints the preset opens:
@@ -99,20 +100,25 @@ nemo-deepagents <sandbox-name> policy-add tavily --yes
 export TAVILY_API_KEY=tvly-...
 # Register the provider with the gateway:
 nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+# Remove the raw key from the host shell after the gateway stores it:
+unset TAVILY_API_KEY
 # Attach the new provider to the sandbox:
 nemo-deepagents <sandbox-name> rebuild
 ```
 
 The `tavily` preset only opens egress to `api.tavily.com:443`.
 Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in.
-Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
+Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
-Remove the access again when it is no longer needed.
+Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 
 ```bash
 nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ```
+
+This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it.
+When no sandbox needs the provider, remove it globally with `nemo-deepagents credentials reset tavily-search --yes`, then rebuild affected sandboxes to converge their provider attachments.
 
 ### Optional Tracing (LangSmith)
 
