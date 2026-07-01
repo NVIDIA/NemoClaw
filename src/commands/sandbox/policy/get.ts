@@ -3,13 +3,8 @@
 
 import { Flags } from "@oclif/core";
 
+import { getSandboxPolicy } from "../../../lib/actions/sandbox/policy-get";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-import {
-  assertOpenshellResolvable,
-  buildPolicyGetCommand,
-  parseCurrentPolicy,
-} from "../../../lib/policy/index";
-import { runCapture } from "../../../lib/runner";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 
 export default class SandboxPolicyGetCommand extends NemoClawCommand {
@@ -36,20 +31,17 @@ export default class SandboxPolicyGetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxPolicyGetCommand);
 
-    assertOpenshellResolvable();
+    const { raw, yaml } = getSandboxPolicy(args.sandboxName);
 
-    const output = runCapture(buildPolicyGetCommand(args.sandboxName));
-
-    if (!output) {
+    if (!raw) {
       this.error("Failed to retrieve policy from sandbox.");
     }
 
     if (flags.raw) {
-      this.log(output);
+      this.log(raw);
       return;
     }
 
-    const yaml = parseCurrentPolicy(output);
     if (!yaml) {
       this.error("Failed to parse policy YAML from sandbox output.");
     }
