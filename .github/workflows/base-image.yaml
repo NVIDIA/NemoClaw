@@ -78,7 +78,11 @@ jobs:
 
       - name: Validate OpenClaw version input
         if: inputs.openclaw_version != ''
-        run: echo "${{ inputs.openclaw_version }}" | grep -qxE '[0-9]+(\.[0-9]+)*'
+        env:
+          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$OPENCLAW_VERSION_INPUT" | grep -qxE '[0-9]+(\.[0-9]+)*'
 
       - name: Validate production Docker build args
         env:

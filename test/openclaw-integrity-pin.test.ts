@@ -97,6 +97,7 @@ function runInstallBlock(
     codexAcpPackIntegrity?: string;
     packFilename?: string;
     allowLegacyFixture?: boolean;
+    installedOpenClawVersion?: string;
   } = {},
 ) {
   const {
@@ -111,6 +112,7 @@ function runInstallBlock(
     codexAcpPackIntegrity = codexAcpCommittedIntegrity,
     packFilename = "",
     allowLegacyFixture = false,
+    installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
   } = options;
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-integrity-"));
   const blueprint = path.join(tmp, "blueprint.yaml");
@@ -129,7 +131,7 @@ function runInstallBlock(
     `OPENCLAW_2026_4_24_INTEGRITY=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_4_24_TARBALL=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL)}`,
     `CODEX_ACP_0_11_1_INTEGRITY=${JSON.stringify(codexAcpCommittedIntegrity)}`,
-    'openclaw() { if [ "${1:-}" = "--version" ]; then printf \'openclaw 2026.3.11\\n\'; else return 127; fi; }',
+    `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' ${JSON.stringify(installedOpenClawVersion)}; else return 127; fi; }`,
     "codex-acp() { :; }",
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
@@ -520,6 +522,30 @@ describe("OpenClaw npm integrity pins", () => {
     expect(base.calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
     expect(base.calls).toContain("npm install -g ");
     expect(base.calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
+  });
+
+  it("reinstalls the reviewed OpenClaw archive when the base already reports the pinned version", () => {
+    const { result, calls } = runInstallBlock(
+      extractRunBlock(
+        DOCKERFILE,
+        "# OPENCLAW_VERSION is the NemoClaw runtime build target",
+        "# Patch OpenClaw media fetch",
+      ),
+      {
+        openclawVersion: PINNED_OPENCLAW_VERSION,
+        installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+        committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+        registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      `Base image OpenClaw ${PINNED_OPENCLAW_VERSION} matches target; reinstalling reviewed archive`,
+    );
+    expect(calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+    expect(calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
   });
 
   it("rejects npm pack filenames outside the fresh pack directories", () => {

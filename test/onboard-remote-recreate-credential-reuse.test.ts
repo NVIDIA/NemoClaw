@@ -93,6 +93,14 @@ registry.registerSandbox({
   ...registryRoute,
   credentialEnv: "COMPATIBLE_API_KEY",
 });
+if (process.env.NEMOCLAW_TEST_CONFLICTING_ENDPOINT === "1") {
+  registry.registerSandbox({
+    name: "conflicting-custom",
+    ...registryRoute,
+    endpointUrl: "https://other.example/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+  });
+}
 registry.removeSandbox("recovered-custom");
 const { setupNim, setupInference } = require(${onboardPath});
 
@@ -227,6 +235,39 @@ const { setupNim, setupInference } = require(${onboardPath});
           !unauthorizedOpenshellLog.includes("provider update compatible-endpoint") &&
             !unauthorizedOpenshellLog.includes("inference set"),
           `smoke suppression alone must not authorize gateway credential reuse: ${unauthorizedOpenshellLog}`,
+        );
+
+        fs.writeFileSync(openshellLogPath, "");
+        const conflictingEndpointResult = spawnSync(process.execPath, [scriptPath], {
+          cwd: REPO_ROOT,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: home,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            VITEST: "false",
+            NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
+            NEMOCLAW_TEST_NO_SLEEP: "1",
+            NEMOCLAW_TEST_CONFLICTING_ENDPOINT: "1",
+            OPENSHELL_FAKE_CURL_LOG: curlLogPath,
+            OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
+            COMPATIBLE_API_KEY: "",
+            NVIDIA_INFERENCE_API_KEY: "",
+          },
+          timeout: 80_000,
+        });
+        const conflictingEndpointOutput = `${conflictingEndpointResult.stdout || ""}\n${conflictingEndpointResult.stderr || ""}`;
+        assert.notEqual(conflictingEndpointResult.status, 0, conflictingEndpointOutput);
+        assert.match(conflictingEndpointOutput, /NVIDIA Endpoints endpoint validation failed/);
+        assert.ok(
+          !conflictingEndpointOutput.includes("Reusing existing gateway credential"),
+          conflictingEndpointOutput,
+        );
+        const conflictingEndpointOpenshellLog = fs.readFileSync(openshellLogPath, "utf8");
+        assert.ok(
+          !conflictingEndpointOpenshellLog.includes("provider update compatible-endpoint") &&
+            !conflictingEndpointOpenshellLog.includes("inference set"),
+          `endpoint drift must fail before provider or route mutation: ${conflictingEndpointOpenshellLog}`,
         );
       } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

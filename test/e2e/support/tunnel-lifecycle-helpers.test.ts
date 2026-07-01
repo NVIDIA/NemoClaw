@@ -14,6 +14,7 @@ import {
   getCloudflaredLogPath,
   publicTunnelProbeCurlArgs,
   registerTunnelLifecycleCleanup,
+  tunnelLifecycleInstallArgs,
 } from "../live/tunnel-lifecycle-helpers.ts";
 
 function shellResult(overrides: Partial<ShellProbeResult> = {}): ShellProbeResult {
@@ -108,6 +109,15 @@ describe("tunnel lifecycle cleanup registration", () => {
 });
 
 describe("tunnel lifecycle cloudflared log attribution", () => {
+  it("starts onboarding fresh so stale runner sessions cannot block the tunnel contract", () => {
+    expect(tunnelLifecycleInstallArgs()).toEqual([
+      "install.sh",
+      "--non-interactive",
+      "--fresh",
+      "--yes-i-accept-third-party-software",
+    ]);
+  });
+
   it("does not follow redirects from the public trycloudflare probe", () => {
     expect(publicTunnelProbeCurlArgs("https://current.trycloudflare.com/")).toEqual([
       "-sS",

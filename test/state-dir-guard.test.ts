@@ -137,6 +137,38 @@ afterEach(() => {
 });
 
 describe("state-dir-guard", () => {
+  it("rejects a config root reached through a symlinked ancestor", () => {
+    const rawRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-dir-guard-"));
+    fixtures.push(rawRoot);
+    const root = fs.realpathSync(rawRoot);
+    const realParent = path.join(root, "real-parent");
+    const linkedParent = path.join(root, "linked-parent");
+    const realConfigDir = path.join(realParent, ".agent");
+    fs.mkdirSync(realConfigDir, { recursive: true });
+    fs.symlinkSync(realParent, linkedParent);
+    const configDir = path.join(linkedParent, ".agent");
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "config-open-failed",
+          path: configDir,
+        }),
+        expect.objectContaining({
+          type: "result",
+          action: "preflight",
+          status: "failed",
+          issueCount: 1,
+        }),
+      ]),
+    );
+  });
+
   it("rejects an external nested symlink without touching its target", () => {
     const { root, configDir } = fixture();
     const pluginDir = path.join(configDir, "plugins", "nested");

@@ -427,6 +427,29 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     }
   });
 
+  it("validates the base-image dispatch version through the environment only", () => {
+    const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
+    const buildAndPush = baseImages.jobs["build-and-push"] as WorkflowJob;
+    const validation = requiredStep(buildAndPush, "Validate OpenClaw version input");
+
+    expect(validation.env).toEqual({
+      OPENCLAW_VERSION_INPUT: "${{ inputs.openclaw_version }}",
+    });
+    expect(validation.run).toContain(`printf '%s\\n' "$OPENCLAW_VERSION_INPUT"`);
+    expect(validation.run).toContain("grep -qxE '[0-9]+(\\.[0-9]+)*'");
+    expect(requiredStepIndex(buildAndPush, "Validate OpenClaw version input")).toBeLessThan(
+      requiredStepIndex(buildAndPush, "Validate production Docker build args"),
+    );
+
+    for (const [jobName, job] of Object.entries(baseImages.jobs)) {
+      for (const step of job.steps ?? []) {
+        expect(step.run ?? "", `${jobName}:${step.name ?? "unnamed step"}`).not.toContain(
+          "${{ inputs.openclaw_version }}",
+        );
+      }
+    }
+  });
+
   it("runs and gates the real patched-distribution harness only from trusted main code", () => {
     const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
     const main = readYaml<Workflow>(".github/workflows/main.yaml");

@@ -185,12 +185,12 @@ RUN set -eu; \
     command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
+# Reinstall from the reviewed archive even when the base reports the target.
 #
-# The GHCR base image (sandbox-base:latest) may lag behind the version pinned
-# in Dockerfile.base. When that happens the fetch-guard patches below fail
-# because the target functions don't exist in the older OpenClaw. Rather than
-# silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
-# in-place so every build gets the version the patches expect.
+# The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
+# Dockerfile.base, or a mutable/stale base may report the target version while
+# carrying different package bytes. Reinstalling from the locally verified
+# archive gives every production build the exact runtime the patches expect.
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
@@ -249,22 +249,20 @@ RUN set -eu; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || true); \
     CUR_VER="${CUR_VER:-0.0.0}"; \
     if [ "$CUR_VER" = "$OPENCLAW_VERSION" ]; then \
-        echo "INFO: OpenClaw $CUR_VER matches reviewed target $OPENCLAW_VERSION, no upgrade needed"; \
+        echo "INFO: Base image OpenClaw $CUR_VER matches target; reinstalling reviewed archive"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
         echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $OPENCLAW_VERSION"; \
-        # npm 10's atomic-move install can hit EROFS on overlayfs when the
-        # prior install spans multiple image layers (e.g. openclaw was
-        # baked into sandbox-base, then we upgrade on top here). Clearing
-        # at the shell level first gives npm a clean slate and avoids the
-        # rmdir failure inside npm's own install path.
-        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-        OPENCLAW_PACK_DIR="$(mktemp -d)"; \
-        OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
-        npm install -g --no-audit --no-fund --no-progress "$OPENCLAW_PACK_PATH"; \
-        rm -rf "$OPENCLAW_PACK_DIR"; \
-    fi
+    fi; \
+    OPENCLAW_PACK_DIR="$(mktemp -d)"; \
+    OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
+    # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
+    # install spans image layers. Removing it first also prevents unreviewed
+    # files from surviving a same-version reinstall.
+    rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+    npm install -g --no-audit --no-fund --no-progress "$OPENCLAW_PACK_PATH"; \
+    rm -rf "$OPENCLAW_PACK_DIR"
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
