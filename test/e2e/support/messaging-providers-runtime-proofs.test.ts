@@ -9,7 +9,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildRawTokenProcessProbeScript,
   buildSandboxNodeInvocation,
+  buildSandboxShellInvocation,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
   parseRuntimeProofPort,
 } from "../live/messaging-providers-helpers.ts";
@@ -41,6 +43,51 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("keeps raw process-probe tokens out of argv and fails closed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-process-token-probe-"));
+    const token = `xoxb-nemoclaw-process-probe-secret-${process.pid}`;
+
+    try {
+      const selfProc = path.join(dir, "101");
+      fs.mkdirSync(selfProc);
+      const script = buildRawTokenProcessProbeScript(token, dir);
+      const invocation = buildSandboxShellInvocation(script);
+      fs.writeFileSync(path.join(selfProc, "cmdline"), `${invocation.join("\0")}\0`);
+
+      expect(script).not.toContain(token);
+      expect(script).not.toContain("grep");
+      expect(script).toContain('case "$cmdline" in');
+      expect(invocation.every((argument) => !argument.includes(token))).toBe(true);
+
+      const [command, ...args] = invocation;
+      const selfOnlyResults = Array.from({ length: 20 }, () =>
+        spawnSync(command, args, { encoding: "utf8" }),
+      );
+      expect(selfOnlyResults.map((result) => result.status)).toEqual(Array(20).fill(0));
+      expect(selfOnlyResults.map((result) => result.stdout.trim())).toEqual(
+        Array(20).fill("ABSENT"),
+      );
+
+      const otherProc = path.join(dir, "202");
+      fs.mkdirSync(otherProc);
+      fs.writeFileSync(
+        path.join(otherProc, "cmdline"),
+        `node\0worker.js\0--messaging-token=${token}\0`,
+      );
+      const tokenInOtherProcess = spawnSync(command, args, { encoding: "utf8" });
+      expect(tokenInOtherProcess.status, tokenInOtherProcess.stderr).toBe(0);
+      expect(tokenInOtherProcess.stdout.trim()).toBe("FOUND");
+
+      fs.rmSync(selfProc, { recursive: true });
+      fs.rmSync(otherProc, { recursive: true });
+      const noProcessData = spawnSync(command, args, { encoding: "utf8" });
+      expect(noProcessData.status).not.toBe(0);
+      expect(noProcessData.stdout.trim()).toBe("ERROR");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("reconstructs multi-argument Node source byte-for-byte below the OpenShell limit", () => {
     const source = [
       'import fs from "node:fs";',
