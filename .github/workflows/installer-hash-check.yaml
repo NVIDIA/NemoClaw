@@ -68,12 +68,12 @@ jobs:
       # invalidState: the first PR that introduces this action has no copy in
       # its base commit. Running the mutable PR-side checker would let that PR
       # authorize its own installer pins.
-      # sourceBoundary: this exact commit contains the reviewed action and
-      # checker; the PR head supplies only the installer files being inspected.
+      # sourceBoundary: this exact commit and reviewed Git tree contain the
+      # trusted action and checker; the PR head supplies only inspected files.
       # whyNotSourceFix: a base commit cannot contain a new action before the
       # introducing PR merges, so the bootstrap must name immutable code once.
       # regressionTest: test/pr-workflow-contract.test.ts rejects mutable
-      # checker execution and any non-immutable bootstrap ref.
+      # checker execution, non-immutable refs, and a mismatched reviewed tree.
       # removalCondition: remove the bootstrap checkout after this workflow has
       # landed on every supported PR base. The fallback is refused after the
       # explicit 180-day review window ending 2026-12-27T23:26:13Z.
@@ -82,14 +82,11 @@ jobs:
           github.event_name == 'pull_request' &&
           steps.trusted-installer-hash.outputs.available != 'true'
         shell: bash
-        env:
-          BOOTSTRAP_COMMIT: 6571063796e1f31648dfd63c7aee91d22612020d
-          BOOTSTRAP_EXPIRES_AT: "2026-12-27T23:26:13Z"
         run: |
           set -euo pipefail
           node <<'NODE'
-          const commit = process.env.BOOTSTRAP_COMMIT ?? "";
-          const expiresAt = process.env.BOOTSTRAP_EXPIRES_AT ?? "";
+          const commit = "6571063796e1f31648dfd63c7aee91d22612020d";
+          const expiresAt = "2026-12-27T23:26:13Z";
           const expiresAtMs = Date.parse(expiresAt);
           const canonicalExpiresAt =
             Number.isFinite(expiresAtMs) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(expiresAt)
@@ -132,6 +129,26 @@ jobs:
             .github/actions/ci-installer-hash-check
             scripts/check-installer-hash.sh
           sparse-checkout-cone-mode: false
+
+      - name: Verify immutable installer hash bootstrap tree
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly expected_commit="6571063796e1f31648dfd63c7aee91d22612020d"
+          readonly expected_tree="4594dfb2d7bd451e36a3d42b3e5403ae448bf94b"
+          actual_commit="$(git -C .bootstrap-installer-hash rev-parse HEAD)"
+          actual_tree="$(git -C .bootstrap-installer-hash rev-parse 'HEAD^{tree}')"
+          if [[ "${actual_commit}" != "${expected_commit}" ]]; then
+            echo "::error::Immutable installer hash bootstrap checkout does not match the reviewed commit." >&2
+            exit 1
+          fi
+          if [[ "${actual_tree}" != "${expected_tree}" ]]; then
+            echo "::error::Immutable installer hash bootstrap checkout does not match the reviewed tree." >&2
+            exit 1
+          fi
 
       - name: Verify pull request installer hashes from base-trusted code
         if: >-

@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -53,6 +55,7 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
 const installerHashBootstrapCommit = "6571063796e1f31648dfd63c7aee91d22612020d";
+const installerHashBootstrapTree = "4594dfb2d7bd451e36a3d42b3e5403ae448bf94b";
 const installerHashBootstrapCreatedAt = "2026-06-30T23:26:13Z";
 const installerHashBootstrapExpiresAt = "2026-12-27T23:26:13Z";
 
@@ -197,6 +200,10 @@ describe("pull request and main workflow contracts", () => {
       job,
       "Checkout immutable installer hash bootstrap",
     );
+    const bootstrapTreeVerification = requiredWorkflowStep(
+      job,
+      "Verify immutable installer hash bootstrap tree",
+    );
     const bootstrapExpiry = requiredWorkflowStep(
       job,
       "Enforce immutable installer hash bootstrap expiry",
@@ -248,15 +255,30 @@ describe("pull request and main workflow contracts", () => {
     expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
     expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
     expect((bootstrapExpiry as WorkflowStep & { shell?: string }).shell).toBe("bash");
-    expect(bootstrapExpiry.env).toEqual({
-      BOOTSTRAP_COMMIT: installerHashBootstrapCommit,
-      BOOTSTRAP_EXPIRES_AT: installerHashBootstrapExpiresAt,
-    });
+    expect(bootstrapExpiry.env).toBeUndefined();
+    expect(bootstrapExpiry.run).toContain(installerHashBootstrapCommit);
+    expect(bootstrapExpiry.run).toContain(installerHashBootstrapExpiresAt);
     expect(bootstrapExpiry.if).toBe(bootstrapCheckout.if);
     expect(bootstrapExpiry.if).toBe(bootstrapVerification.if);
+    expect(bootstrapTreeVerification.if).toBe(bootstrapCheckout.if);
+    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapCommit);
+    expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapTree);
     expect(
       requiredWorkflowStepIndex(job, "Enforce immutable installer hash bootstrap expiry"),
     ).toBeLessThan(requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"));
+    expect(
+      requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
+    );
+    expect(
+      requiredWorkflowStepIndex(job, "Verify immutable installer hash bootstrap tree"),
+    ).toBeLessThan(
+      requiredWorkflowStepIndex(
+        job,
+        "Verify pull request installer hashes from immutable bootstrap",
+      ),
+    );
     expect(
       (Date.parse(installerHashBootstrapExpiresAt) - Date.parse(installerHashBootstrapCreatedAt)) /
         86_400_000,
@@ -297,19 +319,28 @@ describe("pull request and main workflow contracts", () => {
       installerHashWorkflow.jobs["check-hash"],
       "Enforce immutable installer hash bootstrap expiry",
     );
-    const valid = runWorkflowShellStep(expiryStep, {
-      BOOTSTRAP_EXPIRES_AT: "2999-12-27T23:26:13Z",
-    });
-    const expired = runWorkflowShellStep(expiryStep, {
-      BOOTSTRAP_EXPIRES_AT: "2000-12-27T23:26:13Z",
-    });
-    const malformedExpiry = runWorkflowShellStep(expiryStep, {
-      BOOTSTRAP_EXPIRES_AT: "not-a-canonical-utc-date",
-    });
-    const mutableRef = runWorkflowShellStep(expiryStep, {
-      BOOTSTRAP_COMMIT: "main",
-      BOOTSTRAP_EXPIRES_AT: "2999-12-27T23:26:13Z",
-    });
+    const expired = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "2000-12-27T23:26:13Z"),
+      },
+      {},
+    );
+    const malformedExpiry = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapExpiresAt, "not-a-canonical-utc-date"),
+      },
+      {},
+    );
+    const mutableRef = runWorkflowShellStep(
+      {
+        ...expiryStep,
+        run: expiryStep.run?.replace(installerHashBootstrapCommit, "main"),
+      },
+      {},
+    );
+    const valid = runWorkflowShellStep(expiryStep, {});
 
     expect(valid.status).toBe(0);
     expect(valid.stdout).toContain("remains valid");
@@ -320,6 +351,47 @@ describe("pull request and main workflow contracts", () => {
     expect(malformedExpiry.stderr).toContain("expiry configuration is invalid");
     expect(mutableRef.status).not.toBe(0);
     expect(mutableRef.stderr).toContain("refusing the fallback");
+  });
+
+  it("fails closed when the immutable installer hash bootstrap tree differs", () => {
+    const treeStep = requiredWorkflowStep(
+      installerHashWorkflow.jobs["check-hash"],
+      "Verify immutable installer hash bootstrap tree",
+    );
+    const fakeBin = mkdtempSync(join(tmpdir(), "nemoclaw-bootstrap-git-"));
+    const fakeGit = join(fakeBin, "git");
+    writeFileSync(
+      fakeGit,
+      [
+        "#!/bin/sh",
+        'case "$*" in',
+        '  *"HEAD^{tree}"*) printf \'%s\\n\' "${FAKE_TREE}" ;;',
+        `  *) printf '%s\\n' ${installerHashBootstrapCommit} ;;`,
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const env = {
+        GITHUB_WORKSPACE: tmpdir(),
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      };
+      const valid = runWorkflowShellStep(treeStep, {
+        ...env,
+        FAKE_TREE: installerHashBootstrapTree,
+      });
+      const mismatch = runWorkflowShellStep(treeStep, {
+        ...env,
+        FAKE_TREE: "0000000000000000000000000000000000000000",
+      });
+
+      expect(valid.status).toBe(0);
+      expect(mismatch.status).not.toBe(0);
+      expect(mismatch.stderr).toContain("does not match the reviewed tree");
+    } finally {
+      rmSync(fakeBin, { recursive: true, force: true });
+    }
   });
 
   it("keeps the installer verifier inside the trusted composite action", () => {

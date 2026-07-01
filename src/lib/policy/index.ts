@@ -107,6 +107,14 @@ function isPolicyObject(value: PolicyValue): value is PolicyObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isPresetPolicyMap(value: PolicyValue): value is PolicyObject {
+  return (
+    isPolicyObject(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(isPolicyObject)
+  );
+}
+
 function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
   if (!content) return null;
   try {
@@ -403,8 +411,8 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) {
-      throw new Error("network_policies is not a mapping");
+    if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) {
+      throw new Error("network_policies must be a non-empty mapping of policy objects");
     }
     presetPolicies = withoutProviderComposedPolicies(parsed.network_policies);
   } catch {
@@ -508,8 +516,8 @@ function removePresetFromPolicy(
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) {
-      throw new Error("network_policies is not a mapping");
+    if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) {
+      throw new Error("network_policies must be a non-empty mapping of policy objects");
     }
     presetPolicies = parsed.network_policies;
   } catch {

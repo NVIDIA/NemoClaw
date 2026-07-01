@@ -102,9 +102,15 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     });
   });
 
-  it("rejects malformed preset entries instead of text-merging an invalid policy", () => {
+  it.each([
+    ["unterminated YAML", "  malformed: [unterminated"],
+    ["an array", "  - host: example.com"],
+    ["a scalar policy value", "  key: scalar"],
+    ["an empty mapping", "  {}"],
+    ["non-mapping content", "  not yaml at all"],
+  ])("rejects preset entries containing %s", (_shape, presetEntries) => {
     expect(() =>
-      policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), "  malformed: [unterminated"),
+      policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), presetEntries),
     ).toThrow(/preset network_policies entries must be a valid YAML mapping/);
   });
 
