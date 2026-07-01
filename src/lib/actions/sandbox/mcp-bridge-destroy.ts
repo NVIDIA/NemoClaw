@@ -5,11 +5,6 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
-  assertMcpAdapterConfigMutationsAllowed,
-  assertMcpAdapterTeardownRuntimeCapabilities,
-  restoreExistingMcpBridgeRuntime,
-} from "./mcp-bridge-add-restart";
-import {
   isAgentMcpAdapter,
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
@@ -29,6 +24,11 @@ import {
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
 } from "./mcp-bridge-provider";
+import { restoreExistingMcpBridgeRuntime } from "./mcp-bridge-restart";
+import {
+  assertMcpAdapterConfigMutationsAllowed,
+  assertMcpAdapterTeardownRuntimeCapabilities,
+} from "./mcp-bridge-runtime-capabilities";
 import {
   bridgeState,
   ensureSandboxGatewaySelected,

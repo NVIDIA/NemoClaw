@@ -50,7 +50,7 @@ import {
   prepareMcpBridgesForDestroy,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
-import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-add-restart";
+import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-runtime-capabilities";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };

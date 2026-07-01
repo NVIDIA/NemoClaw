@@ -3,10 +3,7 @@
 
 import type { AgentDefinition } from "../../agent/defs";
 import type { McpBridgeEntry } from "../../state/registry";
-import {
-  addMcpBridge as addMcpBridgeLifecycle,
-  restartMcpBridge as restartMcpBridgeLifecycle,
-} from "./mcp-bridge-add-restart";
+import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
 import {
   type McpBridgeAddOptions,
   McpBridgeError,
@@ -26,6 +23,7 @@ import {
   restoreMcpBridgesAfterRebuild as restoreMcpBridgesAfterRebuildLifecycle,
 } from "./mcp-bridge-rebuild";
 import { removeMcpBridge as removeMcpBridgeLifecycle } from "./mcp-bridge-remove";
+import { restartMcpBridge as restartMcpBridgeLifecycle } from "./mcp-bridge-restart";
 import { getSandboxAgent, getSandboxOrThrow } from "./mcp-bridge-state";
 import { buildJsonSummary, statusMcpBridge } from "./mcp-bridge-status";
 import { parseMcpAddArgs } from "./mcp-bridge-validation";
