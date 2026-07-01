@@ -22,6 +22,7 @@ if [[ -n "${NEMOCLAW_INSTALLER_HASH_REPO_ROOT:-}" ]]; then
 else
   REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fi
+CHECKER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPENSHELL_RELEASE_VERSION="0.0.72"
 
 case "${1:-}" in
@@ -70,6 +71,7 @@ check_openshell_release_assets() {
   local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
   local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_RELEASE_VERSION}"
   local workspace manifests spec manifest expected actual source asset pinned upstream matches
+  local pin_records parser_error parser_errors
   local count=0 brev_count=0 published_count=0 failures=0
   local -a manifest_specs=(
     "openshell-checksums-sha256.txt:0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
@@ -106,52 +108,49 @@ check_openshell_release_assets() {
     cat "${workspace}/${manifest}" >>"$manifests"
   done
 
-  while IFS=$'\t' read -r source asset pinned; do
-    if [[ "$source" == "installer" ]]; then
-      count=$((count + 1))
-    else
-      brev_count=$((brev_count + 1))
-    fi
-    matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
-    upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
-    if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
-      published_count=$((published_count + 1))
-      echo "  OK: ${source} ${asset} (${pinned})"
-    else
-      echo "  STALE: ${source} ${asset} does not match exactly one v${OPENSHELL_RELEASE_VERSION} checksum entry."
-      echo "    pinned:   ${pinned}"
-      echo "    upstream: ${upstream:-missing}"
-      echo "    matches:  ${matches}"
-      failures=$((failures + 1))
-    fi
-  done < <(
-    awk -v marker="v${OPENSHELL_RELEASE_VERSION}:" '
-      /^openshell_pinned_sha256\(\)/ { in_function = 1; next }
-      in_function && /^}/ { exit }
-      in_function && index($0, marker) {
-        asset = substr($0, index($0, marker) + length(marker))
-        sub(/\).*$/, "", asset)
-        next
-      }
-      in_function && /printf .*"[a-f0-9]+"/ {
-        split($0, fields, "\"")
-        print "installer\t" asset "\t" fields[2]
-      }
-    ' "$installer"
-    awk -v marker="v${OPENSHELL_RELEASE_VERSION}:" '
-      /^openshell_cli_pinned_sha256\(\)/ { in_function = 1; next }
-      in_function && /^}/ { exit }
-      in_function && index($0, marker) {
-        asset = substr($0, index($0, marker) + length(marker))
-        sub(/\).*$/, "", asset)
-        next
-      }
-      in_function && /printf .*"[a-f0-9]+"/ {
-        split($0, fields, "\"")
-        print "Brev launchable\t" asset "\t" fields[2]
-      }
-    ' "$brev_installer"
-  )
+  # invalidState: target-controlled shell formatting hides, duplicates, or
+  # changes a pin while the trusted release-asset check still reports success.
+  # sourceBoundary: the parser beside this trusted checker defines the accepted
+  # static shell subset; pull-request installer files are read only as data.
+  # whyNotSourceFix: installers need shell-native lookup before dependencies are
+  # available, and sourcing target-controlled shell here would execute PR code.
+  # regressionTest: test/installer-hash-check.test.ts covers resilient formatting
+  # plus missing and ambiguous pins; the workflow contract pins the parser path.
+  # removalCondition: replace this parser when both installers directly consume
+  # one canonical machine-readable pin manifest.
+  parser_errors="${workspace}/pin-parser-errors.txt"
+  if ! pin_records=$(node --experimental-strip-types \
+    "${CHECKER_ROOT}/checks/extract-installer-pins.mts" \
+    --release-version "$OPENSHELL_RELEASE_VERSION" \
+    --installer "$installer" \
+    --brev-installer "$brev_installer" \
+    --format tsv 2>"$parser_errors"); then
+    echo "  STALE: unable to extract the OpenShell installer pin tables with trusted parser code."
+    while IFS= read -r parser_error; do
+      echo "    ${parser_error}"
+    done <"$parser_errors"
+    failures=$((failures + 1))
+  else
+    while IFS=$'\t' read -r source asset pinned; do
+      if [[ "$source" == "installer" ]]; then
+        count=$((count + 1))
+      else
+        brev_count=$((brev_count + 1))
+      fi
+      matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
+      upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
+      if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
+        published_count=$((published_count + 1))
+        echo "  OK: ${source} ${asset} (${pinned})"
+      else
+        echo "  STALE: ${source} ${asset} does not match exactly one v${OPENSHELL_RELEASE_VERSION} checksum entry."
+        echo "    pinned:   ${pinned}"
+        echo "    upstream: ${upstream:-missing}"
+        echo "    matches:  ${matches}"
+        failures=$((failures + 1))
+      fi
+    done <<<"$pin_records"
+  fi
 
   if [[ "$count" -ne 8 ]]; then
     echo "  STALE: expected 8 pinned OpenShell v${OPENSHELL_RELEASE_VERSION} assets, found ${count}."

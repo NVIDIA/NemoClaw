@@ -7,7 +7,8 @@ import YAML from "yaml";
 
 const DEFAULT_WORKFLOW_PATH = ".github/workflows/e2e.yaml";
 const MCP_JOBS = ["mcp-bridge", "mcp-bridge-dev"] as const;
-const TERMINAL_JOBS = ["notify-on-failure", "report-to-pr", "scorecard"] as const;
+const TERMINAL_JOBS = ["report-to-pr", "scorecard"] as const;
+const DOCKER_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const MCP_CLOUDFLARED_VERSION = "2026.6.1";
 const MCP_CLOUDFLARED_DEB_SHA256 =
   "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526";
@@ -128,6 +129,7 @@ function validateJobSecurity(
   errors: string[],
   jobName: (typeof MCP_JOBS)[number],
   job: UnknownRecord,
+  canonicalDockerAuth: UnknownRecord,
 ): void {
   const permissions = asRecord(job.permissions);
   if (Object.keys(permissions).sort().join(",") !== "contents" || permissions.contents !== "read") {
@@ -150,36 +152,29 @@ function validateJobSecurity(
     errors.push(`${jobName} must not receive inference or GitHub credentials`);
   }
 
-  const configure = namedStep(job, "Configure isolated Docker auth directory");
   const login = namedStep(job, "Authenticate to Docker Hub");
   const cleanup = namedStep(job, "Clean up Docker auth");
-  requireContains(
-    errors,
-    configure.run,
-    `docker-config-${jobName}`,
-    `${jobName} must use an isolated Docker auth directory`,
-  );
-  requireEqual(
-    errors,
-    login.if,
-    "github.ref == 'refs/heads/main'",
-    `${jobName} must withhold Docker Hub credentials from feature refs`,
-  );
-  if (!/^docker\/login-action@[0-9a-f]{40}$/.test(asString(login.uses))) {
-    errors.push(`${jobName} must use a SHA-pinned Docker login action`);
+  if (JSON.stringify(login) !== JSON.stringify(canonicalDockerAuth)) {
+    errors.push(`${jobName} must reuse the canonical isolated Docker Hub auth step`);
   }
-  requireEqual(
-    errors,
-    cleanup.if,
-    "always()",
-    `${jobName} Docker auth cleanup must be unconditional`,
+  const expectedCleanup = {
+    name: "Clean up Docker auth",
+    if: "always()",
+    shell: "bash",
+    run: DOCKER_CLEANUP_RUN,
+  };
+  if (JSON.stringify(cleanup) !== JSON.stringify(expectedCleanup)) {
+    errors.push(`${jobName} must use the canonical unconditional Docker auth cleanup`);
+  }
+  const steps = asSteps(job);
+  const checkoutIndex = steps.findIndex((step) =>
+    asString(step.uses).startsWith("actions/checkout@"),
   );
-  for (const required of [
-    `docker-config-${jobName}`,
-    "docker logout docker.io || true",
-    'rm -rf -- "${DOCKER_CONFIG}"',
-  ]) {
-    requireContains(errors, cleanup.run, required, `${jobName} Docker cleanup is incomplete`);
+  if (steps.indexOf(login) !== checkoutIndex + 1) {
+    errors.push(`${jobName} must authenticate immediately after credential-free checkout`);
+  }
+  if (steps.indexOf(cleanup) !== steps.length - 1) {
+    errors.push(`${jobName} Docker auth cleanup must remain the final step`);
   }
 }
 
@@ -340,6 +335,7 @@ export function validateMcpOpenShellWorkflowBoundary(
   const workflowText = fs.readFileSync(workflowPath, "utf8");
   const workflow = asRecord(YAML.parse(workflowText));
   const jobs = asRecord(workflow.jobs);
+  const canonicalDockerAuth = namedStep(asRecord(jobs.live), "Authenticate to Docker Hub");
   const inputs = asRecord(asRecord(asRecord(workflow.on).workflow_dispatch).inputs);
   const globalEnv = asRecord(workflow.env);
 
@@ -373,7 +369,7 @@ export function validateMcpOpenShellWorkflowBoundary(
       continue;
     }
     validateJobIdentity(errors, jobName, job);
-    validateJobSecurity(errors, jobName, job);
+    validateJobSecurity(errors, jobName, job, canonicalDockerAuth);
     validateJobExecution(errors, jobName, job);
   }
 

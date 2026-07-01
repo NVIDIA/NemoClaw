@@ -11,9 +11,11 @@ describe("MCP OpenShell workflow boundary", () => {
   it("keeps the setup docs aligned with the stable default", () => {
     const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
 
-    expect(setupDocs).toContain("defaults to the pinned OpenShell v0.0.72 stable release");
     expect(setupDocs).toContain(
-      "The explicit dev channel is reserved for current-main compatibility coverage.",
+      "NemoClaw v0.0.73 defaults to the pinned stable OpenShell `0.0.72` release",
+    );
+    expect(setupDocs).toContain(
+      "The optional OpenShell development channel is compatibility evidence only and is not a shipping target.",
     );
     expect(setupDocs).not.toContain("requires an OpenShell build from current main");
   });

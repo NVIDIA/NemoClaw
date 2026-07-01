@@ -25,6 +25,10 @@ const BRAVE_PROVIDER_PROFILE_PATH = new URL(
   "../nemoclaw-blueprint/provider-profiles/brave.yaml",
   import.meta.url,
 );
+const TAVILY_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/tavily.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
@@ -109,6 +113,7 @@ type ProviderProfile = {
   id?: string;
   credentials?: ProviderProfileCredential[];
   endpoints?: ProviderProfileEndpoint[];
+  binaries?: string[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -468,6 +473,42 @@ describe("Brave Search provider profile", () => {
         access: "read-write",
         enforcement: "enforce",
       }),
+    ]);
+  });
+});
+
+describe("Tavily Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_PATH);
+
+  it("routes TAVILY_API_KEY through a bearer authorization header", () => {
+    expect(profile.id).toBe("tavily");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["TAVILY_API_KEY"],
+        auth_style: "bearer",
+        header_name: "authorization",
+      }),
+    ]);
+  });
+
+  it("matches the Tavily Search API endpoint used by the policy preset", () => {
+    expect(profile.endpoints).toEqual([
+      expect.objectContaining({
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      }),
+    ]);
+  });
+
+  it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
+    expect(profile.binaries).toEqual([
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
     ]);
   });
 });

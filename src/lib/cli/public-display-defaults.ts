@@ -24,10 +24,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
-  "credentials:list": [
+  "credentials:add": [
     {
       group: "Credentials",
       order: 38,
+      description: "Register a provider credential with the OpenShell gateway",
+      flags: "<PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+    },
+  ],
+  "credentials:list": [
+    {
+      group: "Credentials",
+      order: 38.5,
       description: "List stored credential keys",
     },
   ],

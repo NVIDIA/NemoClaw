@@ -8,6 +8,13 @@ import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { isBlockedMcpUrlTargetHost, MCP_SERVER_URL_MAX_LENGTH } from "../security/mcp-url-target";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import {
+  applyAddExtraProvider,
+  applyRemoveExtraProvider,
+  isValidExtraProviderName,
+  normalizeExtraProviders,
+  readExtraProviders,
+} from "./extra-providers";
 import type { SandboxMessagingState } from "./registry-messaging";
 
 export {
@@ -154,6 +161,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+  extraProviders?: string[];
 }
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
@@ -370,7 +378,8 @@ export function save(data: SandboxRegistry): void {
 }
 
 function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
-  return {
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
@@ -379,10 +388,13 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
       ]),
     ),
   };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
 }
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
-  return {
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
@@ -391,6 +403,8 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
       ]),
     ),
   };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
 }
 
 function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
@@ -693,6 +707,29 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+export function listExtraProviders(): string[] {
+  return readExtraProviders(load());
+}
+
+export function addExtraProvider(name: string): boolean {
+  if (!isValidExtraProviderName(name)) return false;
+  return withLock(() => {
+    const data = load();
+    if (!applyAddExtraProvider(name, data)) return false;
+    save(data);
+    return true;
+  });
+}
+
+export function removeExtraProvider(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    if (!applyRemoveExtraProvider(name, data)) return false;
+    save(data);
+    return true;
   });
 }
 
