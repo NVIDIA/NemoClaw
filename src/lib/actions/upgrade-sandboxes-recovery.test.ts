@@ -104,11 +104,13 @@ function createRecoveryHarness(names: string[]): {
 afterEach(() => {
   vi.restoreAllMocks();
   delete require.cache[requireDist.resolve(upgradeModulePath)];
-  if (originalRecoverySignal === undefined) {
-    delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
-  } else {
-    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = originalRecoverySignal;
-  }
+  delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+  Object.assign(
+    process.env,
+    originalRecoverySignal === undefined
+      ? {}
+      : { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: originalRecoverySignal },
+  );
 });
 
 describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {

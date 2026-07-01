@@ -45,11 +45,8 @@ function writeBackup(
 }
 
 afterAll(() => {
-  if (ORIGINAL_HOME === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = ORIGINAL_HOME;
-  }
+  delete process.env.HOME;
+  Object.assign(process.env, ORIGINAL_HOME === undefined ? {} : { HOME: ORIGINAL_HOME });
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
