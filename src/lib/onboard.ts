@@ -539,9 +539,7 @@ const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
-const notReadyRecreate: typeof import("./onboard/not-ready-recreate") = require(
-  "./onboard/not-ready-recreate",
-);
+const notReadyRecreate: typeof import("./onboard/not-ready-recreate") = require("./onboard/not-ready-recreate");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
@@ -2641,19 +2639,12 @@ async function createSandbox(
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
 
-  if (!liveExists && existingRegistryEntryBeforePrune && shouldRestoreLatestBackupOnRecreate()) {
-    const latestBackup = sandboxState.getLatestBackup(sandboxName);
-    if (latestBackup?.backupPath) {
-      pendingStateRestoreBackupPath = latestBackup.backupPath;
-      note(
-        `  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`,
-      );
-    } else {
-      note(
-        `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
-      );
-    }
-  }
+  pendingStateRestoreBackupPath = notReadyRecreate.selectPreUpgradeBackupForCreate({
+    liveExists,
+    hasExistingRegistryEntry: existingRegistryEntryBeforePrune !== null,
+    sandboxName,
+    note,
+  });
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2794,25 +2785,10 @@ async function createSandbox(
             return sandboxName;
           }
         } else {
-          const latestBackup = shouldRestoreLatestBackupOnRecreate()
-            ? sandboxState.getLatestBackup(sandboxName)
-            : null;
-          const decision = notReadyRecreate.decideNonInteractiveNotReadyAction({
+          pendingStateRestoreBackupPath = notReadyRecreate.applyNonInteractiveNotReadyDecision(
             sandboxName,
-            installerRestoreOnRecreate: shouldRestoreLatestBackupOnRecreate(),
-            latestBackupPath: latestBackup?.backupPath ?? null,
-          });
-          if (decision.kind === "exit") {
-            console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-            console.error(
-              "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.",
-            );
-            process.exit(1);
-          }
-          if (decision.restoreBackupPath) {
-            pendingStateRestoreBackupPath = decision.restoreBackupPath;
-          }
-          note(decision.note);
+            note,
+          );
         }
       } else if (existingSandboxState === "ready") {
         if (confirmedSelectionDrift) {
@@ -2903,11 +2879,8 @@ async function createSandbox(
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
-    if (
-      pendingStateRestore === null &&
-      pendingStateRestoreBackupPath === null &&
-      !shouldSkipPreRecreateBackup(process.env)
-    ) {
+    const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
+    if (noRestorePending && !shouldSkipPreRecreateBackup(process.env)) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = backupSandboxBeforeRecreate({ sandboxName });
       if (!result.ok) {

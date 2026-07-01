@@ -10,7 +10,8 @@ describe("decideNonInteractiveNotReadyAction", () => {
     const decision = decideNonInteractiveNotReadyAction({
       sandboxName: "my-assistant",
       installerRestoreOnRecreate: false,
-      latestBackupPath: "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z",
+      latestBackupPath:
+        "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z",
     });
 
     expect(decision).toEqual({ kind: "exit" });
@@ -27,8 +28,7 @@ describe("decideNonInteractiveNotReadyAction", () => {
   });
 
   it("returns recreate with the pre-upgrade backup path when installer restore intent and a backup are present", () => {
-    const backupPath =
-      "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z";
+    const backupPath = "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z";
     const decision = decideNonInteractiveNotReadyAction({
       sandboxName: "my-assistant",
       installerRestoreOnRecreate: true,
