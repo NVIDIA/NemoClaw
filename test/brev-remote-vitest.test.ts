@@ -12,6 +12,7 @@ import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
   BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_SECURITY_SUITE_TIMEOUT_MS,
   BREV_WORKFLOW_OWNERSHIP_ENV,
   brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
@@ -94,6 +95,7 @@ function expectedVitestLog(): string {
 
 describe("Brev remote Vitest command", () => {
   it("leaves each messaging target inside the fresh-instance job budget", () => {
+    expect(BREV_SECURITY_SUITE_TIMEOUT_MS).toBe(20 * 60_000);
     expect(BREV_MESSAGING_PROVIDER_TIMEOUT_MS).toBe(70 * 60_000);
     expect(BREV_MESSAGING_COMPAT_TIMEOUT_MS).toBe(40 * 60_000);
     expect(BREV_REMOTE_WRAPPER_GRACE_MS).toBe(120_000);

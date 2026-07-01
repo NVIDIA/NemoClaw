@@ -5,6 +5,7 @@ import { shellQuote } from "../../src/lib/core/shell-quote";
 
 export type BrevVitestProject = "cli" | "e2e-live";
 
+export const BREV_SECURITY_SUITE_TIMEOUT_MS = 20 * 60_000;
 export const BREV_MESSAGING_PROVIDER_TIMEOUT_MS = 70 * 60_000;
 export const BREV_MESSAGING_COMPAT_TIMEOUT_MS = 40 * 60_000;
 export const BREV_REMOTE_WRAPPER_GRACE_MS = 120_000;

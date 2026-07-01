@@ -57,6 +57,7 @@ import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
   BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_SECURITY_SUITE_TIMEOUT_MS,
   brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
   brevWorkflowOwnsInstance,
@@ -1190,19 +1191,27 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/credential-sanitization.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/credential-sanitization.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
       expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/telegram-injection.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/telegram-injection.test.ts",
+        BREV_SECURITY_SUITE_TIMEOUT_MS,
+      );
       expectVitestPassed(output);
     },
-    600_000,
+    BREV_SECURITY_SUITE_TIMEOUT_MS + BREV_REMOTE_WRAPPER_GRACE_MS,
   );
 
   it.runIf(TEST_SUITE === "deploy-cli")(
