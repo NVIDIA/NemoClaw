@@ -210,7 +210,14 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
         `    Agent:    ${agentName} version not verified (expected v${versionCheck.expectedVersion})`,
       );
     }
-    if (versionCheck.isStale) {
+    if (versionCheck.isStale && versionCheck.schemeMismatch) {
+      console.log(
+        `    ${YW}Update:   scheme mismatch (runtime v${versionCheck.sandboxVersion} vs expected v${versionCheck.expectedVersion})${R}`,
+      );
+      console.log(
+        `              Run \`${CLI_NAME} ${sandboxName} rebuild\` to realign version schemes`,
+      );
+    } else if (versionCheck.isStale) {
       console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
       console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
     } else if (shouldProbe && versionCheck.verificationFailed && versionCheck.expectedVersion) {
