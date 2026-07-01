@@ -171,7 +171,9 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     process.exit(1);
   } else {
     console.warn(
-      `  ⚠ Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
+      warnLine(
+        `Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
+      ),
     );
     if (bridgeStart.details) {
       for (const line of String(bridgeStart.details).split("\n").slice(-3)) {
