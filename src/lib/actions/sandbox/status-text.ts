@@ -213,13 +213,7 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
     if (versionCheck.isStale) {
       console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
       console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
-    } else if (
-      shouldProbe &&
-      (versionCheck.detectionMethod === "unavailable" ||
-        versionCheck.detectionMethod === "unknown" ||
-        versionCheck.schemeMismatch) &&
-      versionCheck.expectedVersion
-    ) {
+    } else if (shouldProbe && versionCheck.verificationFailed && versionCheck.expectedVersion) {
       console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
       console.log(
         `              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`,

@@ -25,16 +25,24 @@ export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
   /**
-   * `isStale` is only meaningful when `detectionMethod` is `"registry"` or
-   * `"ssh-exec"` and `schemeMismatch` is not `true`. Any other combination
-   * means the check could not confirm staleness — callers must distinguish
-   * "definitely current" from "unknown" via `detectionMethod` and
-   * `schemeMismatch` rather than trusting `isStale === false` alone.
+   * `isStale` is only meaningful when `verificationFailed` is `false`. When
+   * `verificationFailed` is `true` (probe failure or scheme mismatch), the
+   * check could not determine staleness and callers must not read
+   * `isStale === false` as "verified current".
    */
   isStale: boolean;
   /**
+   * True whenever the check could not confirm the sandbox is at the expected
+   * version — probe failed, no expected version, opted-out probing, or the
+   * runtime and expected versions use different schemes. Callers should
+   * render an "unable to verify" state rather than treat `isStale === false`
+   * as a positive signal.
+   */
+  verificationFailed: boolean;
+  /**
    * How the staleness verdict was reached.
-   * - `"registry"` / `"ssh-exec"`: `isStale` is authoritative for this sandbox.
+   * - `"registry"` / `"ssh-exec"`: `isStale` is authoritative for this sandbox
+   *   as long as `verificationFailed` is `false`.
    * - `"unavailable"`: no staleness check was attempted (missing expected
    *   version, or the caller opted out of probing).
    * - `"unknown"`: a probe was attempted but the runtime version could not be
@@ -199,6 +207,7 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion: null,
       isStale: false,
+      verificationFailed: true,
       detectionMethod: "unavailable",
       unavailableReason: "no-expected-version",
     };
@@ -213,6 +222,7 @@ export function checkAgentVersion(
       sandboxVersion: sb.agentVersion,
       expectedVersion,
       isStale: verdict.isStale,
+      verificationFailed: verdict.schemeMismatch,
       detectionMethod: "registry",
       schemeMismatch: verdict.schemeMismatch,
     };
@@ -223,6 +233,7 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion,
       isStale: false,
+      verificationFailed: true,
       detectionMethod: "unavailable",
       unavailableReason: "skip-probe",
     };
@@ -240,6 +251,7 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion,
       isStale: false,
+      verificationFailed: true,
       detectionMethod: "unknown",
       unavailableReason: "probe-failed",
     };
@@ -250,6 +262,7 @@ export function checkAgentVersion(
     sandboxVersion: probed,
     expectedVersion,
     isStale: verdict.isStale,
+    verificationFailed: verdict.schemeMismatch,
     detectionMethod: "ssh-exec",
     schemeMismatch: verdict.schemeMismatch,
   };

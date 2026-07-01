@@ -369,6 +369,7 @@ describe("formatStalenessWarning", () => {
       sandboxVersion: "2026.3.11",
       expectedVersion: "2026.5.27",
       isStale: true,
+      verificationFailed: false,
       detectionMethod: "registry",
     });
     const joined = lines.join("\n");
