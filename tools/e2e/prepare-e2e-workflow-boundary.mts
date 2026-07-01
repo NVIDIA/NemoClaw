@@ -10,8 +10,11 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_ACTION_PATH = join(REPO_ROOT, ".github", "actions", "prepare-e2e", "action.yaml");
 
-export const PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
+export const PREPARE_E2E_ACTION =
+  "NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28";
 export const PREPARE_E2E_STEP = "Prepare E2E workspace";
+
+const CHECKOUT_LOCAL_PREPARE_E2E_ACTION = "./.github/actions/prepare-e2e";
 
 const NO_BUILD_JOBS = new Set([
   "docs-validation",
@@ -103,6 +106,9 @@ export function validatePrepareE2eInvocations(workflow: WorkflowRecord): string[
 
   for (const [jobName, value] of Object.entries(jobs)) {
     const jobSteps = steps(record(value).steps);
+    if (jobSteps.some((step) => step.uses === CHECKOUT_LOCAL_PREPARE_E2E_ACTION)) {
+      errors.push(`${jobName} must not load prepare-e2e from the target checkout`);
+    }
     const prepareSteps = jobSteps.filter((step) => step.uses === PREPARE_E2E_ACTION);
     if (!expectedJobs.has(jobName)) {
       if (prepareSteps.length > 0) errors.push(`${jobName} must not use prepare-e2e`);

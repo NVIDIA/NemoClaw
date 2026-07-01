@@ -9,10 +9,7 @@ import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workfl
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
-import {
-  PREPARE_E2E_ACTION,
-  validatePrepareE2eWorkflowBoundary,
-} from "./prepare-e2e-workflow-boundary.mts";
+import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 import { validateSecurityPostureWorkflowBoundary } from "./security-posture-workflow-boundary.mts";
 
@@ -620,9 +617,7 @@ function validateFreeStandingInventoryBoundary(
     requireNoDispatchInputInterpolation(errors, steps);
     for (const step of steps) {
       if (step.uses) {
-        if (step.uses !== PREPARE_E2E_ACTION) {
-          requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
-        }
+        requireFullShaAction(errors, step, `${jobName} step '${step.name ?? step.uses}'`);
         if (stringValue(step.uses).startsWith("actions/upload-artifact@")) {
           requireUploadPathDoesNotContain(errors, stringValue(asRecord(step.with).path), "/tmp/");
         }

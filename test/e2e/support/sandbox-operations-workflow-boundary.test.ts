@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { PREPARE_E2E_ACTION } from "../../../tools/e2e/prepare-e2e-workflow-boundary.mts";
 import {
   readSandboxOperationsWorkflow,
   validateSandboxOperationsWorkflow,
@@ -17,6 +18,10 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 
 const WORKFLOW_PATH = join(process.cwd(), ".github", "workflows", "e2e.yaml");
+const PREPARE_STEP_SOURCE = [
+  "      - name: Prepare E2E workspace",
+  `        uses: ${PREPARE_E2E_ACTION}`,
+].join("\n");
 
 function validateCentralWorkflowMutation(mutate: (source: string) => string): string[] {
   const directory = mkdtempSync(join(tmpdir(), "nemoclaw-sandbox-operations-boundary-"));
@@ -188,12 +193,12 @@ describe("sandbox operations workflow boundary", () => {
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
+            PREPARE_STEP_SOURCE,
             [
               "      - name: Prepare E2E workspace",
               "        env:",
               "          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}",
-              "        uses: ./.github/actions/prepare-e2e",
+              `        uses: ${PREPARE_E2E_ACTION}`,
             ].join("\n"),
           ),
         ),
@@ -205,12 +210,12 @@ describe("sandbox operations workflow boundary", () => {
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
+            PREPARE_STEP_SOURCE,
             [
               "      - name: Prepare E2E workspace",
               "        env:",
               '          DOCKER_CONFIG: "${{ runner.temp }}/docker"',
-              "        uses: ./.github/actions/prepare-e2e",
+              `        uses: ${PREPARE_E2E_ACTION}`,
             ].join("\n"),
           ),
         ),
@@ -222,12 +227,12 @@ describe("sandbox operations workflow boundary", () => {
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
+            PREPARE_STEP_SOURCE,
             [
               "      - name: Prepare E2E workspace",
               "        run: |",
               '          echo "DOCKER_CONFIG=${{ github.workspace }}/docker" >> "$GITHUB_ENV"',
-              "        uses: ./.github/actions/prepare-e2e",
+              `        uses: ${PREPARE_E2E_ACTION}`,
             ].join("\n"),
           ),
         ),
@@ -238,8 +243,7 @@ describe("sandbox operations workflow boundary", () => {
       label: "a persistent workspace Docker config outside shared auth",
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) => {
-          const prepareMarker =
-            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e\n";
+          const prepareMarker = `${PREPARE_STEP_SOURCE}\n`;
           expect(jobSource).toContain(prepareMarker);
           return jobSource.replace(
             prepareMarker,
