@@ -24,9 +24,20 @@ describe("isCredentialShapedName", () => {
     }
   });
 
-  it("matches the api/apikey no-separator form", () => {
-    expect(isCredentialShapedName("APIKEY")).toBe(true);
-    expect(isCredentialShapedName("apikey")).toBe(true);
+  it("matches api/apikey and other run-together compound forms", () => {
+    for (const name of [
+      "APIKEY",
+      "apikey",
+      "accesskey",
+      "accessKey",
+      "secretkey",
+      "authtoken",
+      "refreshToken",
+      "accesstoken",
+      "clientsecret",
+    ]) {
+      expect(isCredentialShapedName(name)).toBe(true);
+    }
   });
 
   it("does not match benign names", () => {

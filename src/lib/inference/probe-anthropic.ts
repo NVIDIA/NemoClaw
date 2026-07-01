@@ -8,9 +8,7 @@
 
 import { createXApiKeyAuthConfig } from "../adapters/http/auth-config";
 import { getCurlTimingArgs, runCurlProbe } from "../adapters/http/probe";
-
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { normalizeCredentialValue } = require("../credentials/store");
+import { normalizeCredentialValue } from "../credentials/store";
 
 export interface AnthropicProbeFailureDetail {
   name: string;

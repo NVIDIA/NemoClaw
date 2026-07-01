@@ -6,9 +6,12 @@
 // (probe.ts) consult this so a regression in one place cannot diverge from the
 // other. Covers common credential stem words (key, secret, token, password,
 // auth, credential) appearing as the exact name, joined to another word with
-// `_`/`-`, or in the `api`/`apikey` no-separator form.
+// `_`/`-`, or in the `api`/`apikey` and other common no-separator compound
+// forms (accesskey, secretkey, authtoken, refreshtoken, accesstoken,
+// clientsecret) so a camelCase or run-together provider parameter cannot slip
+// a secret past the validator.
 export const CREDENTIAL_SHAPED_NAME_PATTERN =
-  /(?:^|[_-])(?:api[_-]?key|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
+  /(?:^|[_-])(?:api[_-]?key|accesskey|secretkey|authtoken|refreshtoken|accesstoken|clientsecret|key|secret|token|password|passwd|auth|credential|credentials)(?:$|[_-])/i;
 
 export function isCredentialShapedName(name: string): boolean {
   return CREDENTIAL_SHAPED_NAME_PATTERN.test(name);
