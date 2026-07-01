@@ -92,6 +92,13 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
+// Heuristic scheme classifier: a major component >= 1000 is treated as a
+// calendar year (`YYYY.M.D`), anything smaller as semver (`X.Y.Z`). This
+// assumes no supported agent ever ships a semver major above 999, which is
+// vastly beyond any real-world runtime version; the guard is a safety net for
+// legacy Hermes calendar pins that predate the semver manifest, not a
+// permanent contract. If an agent ever needs a fourth scheme, add an explicit
+// `version_scheme` field to the manifest instead of raising this threshold.
 const CALENDAR_VERSION_MIN_MAJOR = 1000;
 
 function versionsComparable(left: string, right: string): boolean {
@@ -102,6 +109,12 @@ function versionsComparable(left: string, right: string): boolean {
   return leftIsCalendar === rightIsCalendar;
 }
 
+// Cross-scheme staleness is silenced deliberately: comparing a semver runtime
+// (e.g. `0.17.0`) against a calendar manifest pin (e.g. `2026.6.19`) with
+// `versionGte` would let the calendar year dominate and every sandbox would
+// look stale (see #6049). Silencing here means a genuine update is missed
+// only until both sides align on the same scheme again, which the Hermes
+// updater now enforces via `HERMES_SEMVER`.
 function isAgentStale(sandboxVersion: string, expectedVersion: string): boolean {
   if (!versionsComparable(sandboxVersion, expectedVersion)) return false;
   return !versionGte(sandboxVersion, expectedVersion);
