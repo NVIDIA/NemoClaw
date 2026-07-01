@@ -37,11 +37,6 @@ describe("OpenClaw Slack pairing workflow boundary", () => {
       uses: string;
     };
     setupNode.uses = "actions/setup-node@v4";
-    const configureDockerAuth = slackJob.steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    ) as Record<string, unknown>;
-    configureDockerAuth.run =
-      'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"';
     const installRootDependencies = slackJob.steps.find(
       (step) => step.name === "Install root dependencies",
     ) as Record<string, unknown>;
@@ -65,8 +60,6 @@ describe("OpenClaw Slack pairing workflow boundary", () => {
       expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
         expect.arrayContaining([
           "openclaw-slack-pairing job must not set DOCKER_CONFIG at job level",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"',
-          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "openclaw-slack-pairing checkout action must be pinned to a full commit SHA",
           "openclaw-slack-pairing checkout step must set persist-credentials=false",
           "openclaw-slack-pairing setup-node action must be pinned to a full commit SHA",

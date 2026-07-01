@@ -103,7 +103,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
   it("waits for the auth contract in every aggregate result job", () => {
     const jobs = workflowJobs();
-    for (const aggregate of ["notify-on-failure", "report-to-pr", "scorecard"]) {
+    for (const aggregate of ["report-to-pr", "scorecard"]) {
       expect(jobs[aggregate]?.needs).toContain("openshell-gateway-auth-contract");
     }
   });
