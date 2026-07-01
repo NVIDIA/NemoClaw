@@ -55,10 +55,10 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
 const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
-const installerHashBootstrapCommit = "6571063796e1f31648dfd63c7aee91d22612020d";
-const installerHashBootstrapTree = "4594dfb2d7bd451e36a3d42b3e5403ae448bf94b";
-const installerHashBootstrapCreatedAt = "2026-06-30T23:26:13Z";
-const installerHashBootstrapExpiresAt = "2026-12-27T23:26:13Z";
+const installerHashBootstrapCommit = "ea9dc63bb1f68347967130fb9bff40c71ddc4848";
+const installerHashBootstrapTree = "5a3cafa3d36b6a4c2d7332604b3c474c32d703f5";
+const installerHashBootstrapCreatedAt = "2026-07-01T07:42:43Z";
+const installerHashBootstrapExpiresAt = "2026-12-28T07:42:43Z";
 
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
@@ -300,6 +300,16 @@ describe("pull request and main workflow contracts", () => {
     expect(bootstrapCheckout.with?.ref).toBe(installerHashBootstrapCommit);
     expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
     expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-installer-hash-check",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/check-installer-hash.sh",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout"]).toContain(
+      "scripts/checks/extract-installer-pins.mts",
+    );
+    expect(bootstrapCheckout.with?.["sparse-checkout-cone-mode"]).toBe(false);
     expect((bootstrapExpiry as WorkflowStep & { shell?: string }).shell).toBe("bash");
     expect(bootstrapExpiry.env).toBeUndefined();
     expect(bootstrapExpiry.run).toContain(installerHashBootstrapCommit);
