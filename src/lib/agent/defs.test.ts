@@ -113,7 +113,7 @@ describe("agent definitions", () => {
     });
     expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
     expect(deepAgentsCode.versionCommand).toBe("dcode --version");
-    expect(deepAgentsCode.expectedVersion).toBe("0.1.12");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.30");
     expect(deepAgentsCode.healthProbe).toBeNull();
     expect(deepAgentsCode.forwardPort).toBe(0);
     expect(deepAgentsCode.configPaths).toEqual({

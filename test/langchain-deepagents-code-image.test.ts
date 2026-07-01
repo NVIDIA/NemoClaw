@@ -807,7 +807,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(baseDockerfile).not.toContain("deepagents-code[nvidia]==${DEEPAGENTS_CODE_VERSION}");
     expect(requirementsLock).toContain("uv==0.11.15 \\");
-    expect(requirementsLock).toContain("deepagents-code==0.1.12 \\");
+    expect(requirementsLock).toContain("deepagents-code==0.1.30 \\");
+    expect(requirementsLock).toContain("langchain-nvidia-ai-endpoints==1.4.3 \\");
+    expect(requirementsLock).toContain("aiohttp==3.14.1 \\");
     expect(requirementsLock).toContain("langchain-nvidia-ai-endpoints==");
     expect(requirementsLock).toMatch(/--hash=sha256:[a-f0-9]{64}/);
   });
@@ -816,9 +818,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const review = readAgentFile("dependency-review.md");
 
     expect(review).toContain("requirements.lock");
-    expect(review).toContain("a0b986369ff564ed9105c4e95915541ccc161d6f1e8032cc496127ea3e7d2e45");
+    expect(review).toContain("47ebb552378f5071db027659d39c3de94785bd52a75a77b59fd63f844aa44794");
     expect(review).toContain(
-      "pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off",
+      "uvx --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off",
     );
     expect(review).toContain("No known vulnerabilities found");
   });

@@ -7,9 +7,9 @@ This file records the reviewed dependency baseline for the Deep Agents Code sand
 Update it whenever `requirements.lock` changes.
 
 - Lockfile: `agents/langchain-deepagents-code/requirements.lock`
-- Lockfile SHA-256: `a0b986369ff564ed9105c4e95915541ccc161d6f1e8032cc496127ea3e7d2e45`
-- Audit command: `pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off`
-- Audit date: 2026-06-22
+- Lockfile SHA-256: `47ebb552378f5071db027659d39c3de94785bd52a75a77b59fd63f844aa44794`
+- Audit command: `uvx --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off`
+- Audit date: 2026-07-02
 - Audit result: `No known vulnerabilities found`
 
 The Dockerfile installs this lockfile with `pip3 install --require-hashes`, so this review covers the exact package versions selected for the managed image install.

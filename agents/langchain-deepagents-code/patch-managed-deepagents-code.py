@@ -40,7 +40,7 @@ PATCH = '''    # NemoClaw-managed sandbox image hardening.
     os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)
 '''
 
-# Source boundary: Deep Agents Code 0.1.12 parses direct `python3 -m
+# Source boundary: Deep Agents Code 0.1.30 parses direct `python3 -m
 # deepagents_code` flags inside upstream `deepagents_code.main`; NemoClaw only
 # owns the managed image after installation. Invalid state: direct module
 # execution can re-enable nested sandbox, MCP, or shell delegation inside an
