@@ -13,12 +13,12 @@ import {
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
-import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
-export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -259,8 +259,8 @@ function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
   });
 }
 
-function isValidPort(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+function isValidPort(value: unknown, min = 1): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= 65535;
 }
 
 function readPortArray(record: ManifestRecord, key: string): number[] | undefined {
@@ -271,9 +271,9 @@ function readPortArray(record: ManifestRecord, key: string): number[] | undefine
   }
 
   const ports = value.map((entry, index) => {
-    if (!isValidPort(entry)) {
+    if (!isValidPort(entry, 1024)) {
       throw new Error(
-        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1 and 65535`,
+        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1024 and 65535`,
       );
     }
     return entry;

@@ -50,4 +50,15 @@ describe("root help", () => {
       );
     }
   });
+
+  it("lists --destroy-user-data under uninstall flags without unsupported --keep flags", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    expect(output).toMatch(/Uninstall flags:[\s\S]*--destroy-user-data/);
+    expect(output).not.toMatch(/--keep-user-data/);
+    expect(output).not.toMatch(/--keep-backups/);
+  });
 });

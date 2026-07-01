@@ -7,12 +7,19 @@ const mocks = vi.hoisted(() => ({
   prompt: vi.fn().mockResolvedValue("yes"),
   recoverNamedGatewayRuntime: vi.fn().mockResolvedValue({ recovered: true }),
   runOpenshellProviderCommand: vi.fn(),
+  recordExtraProvider: vi.fn(),
+  forgetExtraProvider: vi.fn(),
 }));
 
-vi.mock("../lib/credentials/store", () => ({ prompt: mocks.prompt }));
+vi.mock("../lib/credentials/store", () => ({
+  KNOWN_CREDENTIAL_ENV_KEYS: ["NVIDIA_INFERENCE_API_KEY"],
+  prompt: mocks.prompt,
+}));
 vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,
+  recordExtraProvider: mocks.recordExtraProvider,
+  forgetExtraProvider: mocks.forgetExtraProvider,
 }));
 
 import CredentialsCommand from "./credentials";

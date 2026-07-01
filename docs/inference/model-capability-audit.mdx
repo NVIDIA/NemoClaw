@@ -1,0 +1,126 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Model Capability Audit Matrix"
+sidebar-title: "Model Capability Audit"
+description: "Maintained matrix template for auditing NemoClaw model and provider behavior across supported agent surfaces."
+description-agent: "Defines the maintained model capability audit matrix schema, states, evidence requirements, and seed rows. Use when adding or reviewing model/provider compatibility audit evidence."
+keywords: ["nemoclaw model audit", "model capability matrix", "provider compatibility audit", "agent model validation"]
+topics: ["inference", "model validation", "provider compatibility"]
+tags: ["model audit", "agent validation", "inference providers"]
+content:
+  type: "reference"
+difficulty: "intermediate"
+audience: ["maintainers", "contributors"]
+status: "maintained"
+exclude-from-skills-gen: true
+---
+Use this matrix to maintain model and provider audit evidence for NemoClaw agent behavior.
+The matrix tracks whether a supported model works as an agent model, not only whether it can answer a one-shot chat prompt.
+
+Do not mark a row as completed without committed evidence or a stable CI link.
+Rows seeded from source inventory start as `not-yet-run` until a maintainer imports or records evidence.
+
+## Result States
+
+Every audit row must use one of these states.
+
+| State | Use when |
+|---|---|
+| `pass` | The row completes required scenarios without model-specific changes. |
+| `pass-with-affordance` | The row completes required scenarios with a documented model or provider affordance. |
+| `degraded` | The row is usable but has documented limits, retries, latency risk, or partial surface coverage. |
+| `blocked` | The row cannot complete required scenarios and needs a linked follow-up issue or PR. |
+| `unsupported` | The model, provider, or surface is intentionally unsupported. |
+| `not-yet-run` | The row is in scope but has no completed evidence yet. |
+
+## Required Row Schema
+
+Use these fields for every completed row.
+If a field is not applicable, write `n/a` and explain why in the evidence notes.
+
+| Field | Required content |
+|---|---|
+| Model ID | Exact model identifier used by onboarding or runtime config. |
+| Provider path | Provider class and route, such as NVIDIA Endpoints, OpenAI, Anthropic, Gemini, Local Ollama, Local vLLM, or another compatible endpoint. |
+| Agent surface | Exact agent path, such as OpenClaw primary agent, OpenClaw CLI prompt path, OpenClaw browser or gateway path, OpenClaw sub-agent delegation, Hermes sandbox API, or auxiliary model path. |
+| NemoClaw commit SHA | Full commit SHA for the repo state used during validation. |
+| Runtime versions | OpenShell, OpenClaw, Hermes, provider server, and local serving versions when available. |
+| Endpoint/API path selected | Concrete API path, base URL class, and provider key selected by NemoClaw. |
+| Workflow used | Exact command sequence or CI workflow used to run the scenario. |
+| State | One result state from this page. |
+| Evidence | Trajectory file path, session log path, request dump path, or CI artifact link. |
+| Observed tool-call count | Count and names of structured tool calls observed in the scenario. |
+| Final-response behavior | Whether the assistant produced a final response after tool results, stopped empty, stopped reasoning-only, or emitted raw tool text. |
+| Multi-turn behavior | Whether turn 2 used turn 1 tool results without re-running unrelated tools. |
+| Latency and timeout notes | Validation time, first token or first event time when available, total duration, retries, and timeout budget used. |
+| Required affordance | Model-specific setup, provider-class transport behavior, request mutation, API path forcing, streaming requirement, or `none`. |
+| Follow-up | Linked issue, PR, or registry decision when remediation or setup work is needed. |
+
+## Required Scenario Coverage
+
+Completed rows should state which required scenarios were exercised.
+Rows can remain `degraded`, `blocked`, or `not-yet-run` when a scenario cannot be exercised yet.
+
+| Scenario | Required checks |
+|---|---|
+| Baseline chat | Deterministic response works, provider validation is actionable, and credentials do not leak into sandbox-visible files, logs, or prompts. |
+| Shell tool loop | Separate structured `hostname`, `date`, and `uptime` tool calls are emitted, persisted, correlated with tool results, and followed by a final assistant response. |
+| Multi-turn continuation | Turn 2 uses a tool result from turn 1 and does not ask the user to continue after a complete tool result. |
+| Sub-agent delegation | The primary agent emits a structured `sessions_spawn` request, the sub-agent receives the intended task and workspace, and the primary agent consumes the result. |
+| Hermes path | Hermes starts with the selected provider/model, returns the expected OpenAI-compatible response shape, and separates Hermes failures from OpenClaw-only request-shape issues. |
+| Performance and operability | The row records validation duration, first event timing when available, retry behavior, timeout budget, streaming requirement, request mutation requirement, API path forcing, and cold-start differences. |
+
+## Audit Matrix
+
+These seed rows come from current repo source files, not from live benchmark claims.
+Keep them as `not-yet-run` until the row has evidence that satisfies the schema above.
+When importing a completed row from an issue comment, preserve the exact commit SHA, workflow, evidence paths, and observed behavior.
+
+| Agent surface | Provider class | Model or route | API path | State | Evidence | Required affordance | Follow-up | Source |
+|---|---|---|---|---|---|---|---|---|
+| OpenClaw primary agent | NVIDIA Endpoints | `nvidia/nemotron-3-super-120b-a12b` | Managed `inference.local` OpenAI-compatible completions | `not-yet-run` | Add trajectory and session evidence before changing state. | Existing OpenClaw setup manifest disables `tool_search` for this route. | Verify evidence before changing state. | `src/lib/inference/config.ts`, `nemoclaw-blueprint/model-specific-setup/openclaw/nemotron-3-super-120b-managed-inference.json`. |
+| OpenClaw primary agent | NVIDIA Endpoints | `moonshotai/kimi-k2.6` | Managed `inference.local` OpenAI-compatible completions | `not-yet-run` | Add trajectory and session evidence before changing state. | Existing OpenClaw setup manifest applies Kimi compatibility and plugin loading. | Verify Kimi regression evidence before changing state. | `src/lib/inference/config.ts`, `nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json`. |
+| OpenClaw primary agent | NVIDIA Endpoints | Any model from `CLOUD_MODEL_OPTIONS` | Managed `inference.local` OpenAI-compatible completions unless config selects another API. | `not-yet-run` | Add one evidence row per model before changing state. | Record `none`, model-specific setup, or provider-class transport behavior. | Expand into per-model rows as evidence lands. | `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | OpenAI | Any model from `REMOTE_MODEL_OPTIONS.openai` | `openai` provider through `https://inference.local/v1`. | `not-yet-run` | Add one evidence row per model before changing state. | Record Responses or Chat Completions behavior explicitly. | Expand into per-model rows as evidence lands. | `src/lib/inference/model-prompts.ts`, `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Anthropic | Any model from `REMOTE_MODEL_OPTIONS.anthropic` | `anthropic` provider through `https://inference.local` with `anthropic-messages`. | `not-yet-run` | Add one evidence row per model before changing state. | Record native Anthropic Messages behavior explicitly. | Expand into per-model rows as evidence lands. | `src/lib/inference/model-prompts.ts`, `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Gemini | Any model from `REMOTE_MODEL_OPTIONS.gemini` | Managed `inference.local` OpenAI-compatible route. | `not-yet-run` | Add one evidence row per model before changing state. | Record provider state and tool-result continuation behavior. | Expand into per-model rows as evidence lands. | `src/lib/inference/model-prompts.ts`, `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Local Ollama | Default `nemotron-3-nano:30b` or any installed model selected by onboarding. | Managed `inference.local` route to the host Ollama proxy. | `not-yet-run` | Add local daemon, model tag, and trajectory evidence before changing state. | Record tool capability, streaming usage, and local proxy behavior. | Add one row per audited local model tag. | `src/lib/inference/local.ts`, `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Local vLLM | Any model from `VLLM_MODELS`. | Managed `inference.local` route to the host vLLM server. | `not-yet-run` | Add vLLM serve flags, model id, and trajectory evidence before changing state. | Record parser flags, reasoning parser, and tool-call parser behavior. | Add one row per audited vLLM model id. | `src/lib/inference/vllm-models.ts`, `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Other OpenAI-compatible endpoint | User-selected `custom-model` or another configured model id. | Managed `inference.local` route to the compatible endpoint. | `not-yet-run` | Add endpoint class and trajectory evidence before changing state. | Record endpoint API path forcing and store/streaming assumptions. | Add one row per endpoint class that is validated. | `src/lib/inference/config.ts`. |
+| OpenClaw primary agent | Other Anthropic-compatible endpoint | User-selected `custom-anthropic-model` or another configured model id. | `anthropic` route when supported, otherwise managed compatible route. | `not-yet-run` | Add endpoint class and trajectory evidence before changing state. | Record native Anthropic Messages or compatible-route transport behavior. | Add one row per endpoint class that is validated. | `src/lib/inference/config.ts`. |
+| Hermes sandbox API | Hermes Provider | Default `moonshotai/kimi-k2.6` or any model from `HERMES_PROVIDER_MODEL_OPTIONS`. | Hermes Provider route through NemoClaw managed inference. | `not-yet-run` | Add Hermes session, request dump, logs, and local API evidence before changing state. | Record Hermes-specific config, transport, and response-shape behavior. | Keep Hermes rows separate from OpenClaw rows. | `src/lib/inference/config.ts`, `src/lib/inference/model-prompts.ts`. |
+
+## Completed Row Template
+
+Copy this template when adding evidence for a specific model/provider/agent combination.
+Do not leave placeholder text in a completed row.
+
+| Field | Value |
+|---|---|
+| Model ID | `<provider/model-id>`. |
+| Provider path | `<provider class and route>`. |
+| Agent surface | `<OpenClaw primary agent, OpenClaw CLI prompt path, OpenClaw browser or gateway path, OpenClaw sub-agent delegation, Hermes sandbox API, or auxiliary model path>`. |
+| NemoClaw commit SHA | `<full SHA>`. |
+| Runtime versions | `<OpenShell version, OpenClaw version, Hermes version, local server version, or n/a>`. |
+| Endpoint/API path selected | `<provider key, base URL class, API mode, and endpoint path>`. |
+| Workflow used | `<exact commands or CI workflow>`. |
+| State | `<pass, pass-with-affordance, degraded, blocked, unsupported, or not-yet-run>`. |
+| Evidence | `<trajectory, session log, request dump, CI artifact, or n/a>`. |
+| Observed tool-call count | `<count, names, and shape>`. |
+| Final-response behavior | `<final answer, empty stop, reasoning-only stop, raw tool text, or other behavior>`. |
+| Multi-turn behavior | `<turn 1 and turn 2 behavior>`. |
+| Latency and timeout notes | `<validation time, first event timing, total duration, retry behavior, timeout budget, and streaming notes>`. |
+| Required affordance | `<none, setup manifest, request mutation, parser flag, API path forcing, streaming requirement, or transport policy>`. |
+| Follow-up | `<issue, PR, registry decision, or n/a>`. |
+
+## Related Artifacts
+
+- `nemoclaw-blueprint/model-specific-setup/README.md` documents where model-specific setup belongs once an intervention is justified.
+- `docs/inference/tool-calling-reliability` explains the local inference tool-call failure mode that audit rows should classify separately from provider connectivity.
+
+## Next Steps
+
+- [Inference Options](inference-options) for choosing a provider path before adding audit evidence.
+- [Tool-Calling Reliability](tool-calling-reliability) for separating provider connectivity from model tool-use behavior.
+- [Architecture](../reference/architecture) for the model-specific setup registry location.

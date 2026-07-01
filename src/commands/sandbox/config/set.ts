@@ -32,7 +32,7 @@ export default class SandboxConfigSetCommand extends NemoClawCommand {
       required: true,
     }),
     restart: Flags.boolean({
-      description: "Signal the sandbox agent process to reload after writing",
+      description: "Restart a supported OpenClaw or Hermes gateway after writing",
     }),
     "config-accept-new-path": Flags.boolean({
       description: "Allow creating a config key that does not already exist",

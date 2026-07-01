@@ -209,6 +209,7 @@ export function createPhases(
         policyPresets: ["balanced"],
         recordedPolicyPresetsNeedReconcile: false,
         disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
       }),
       arePolicyPresetsApplied: () => false,
       skippedStepMessage: vi.fn(),
