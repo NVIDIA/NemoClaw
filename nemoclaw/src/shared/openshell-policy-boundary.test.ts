@@ -8,7 +8,7 @@ import {
   parseOpenShellPolicy,
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
-} from "../../shared/openshell-policy-boundary.cjs";
+} from "./openshell-policy-boundary.cjs";
 
 describe("canonical OpenShell policy boundary", () => {
   it("parses metadata output and supports the CLI's versionless compatibility mode", () => {

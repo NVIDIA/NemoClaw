@@ -40,19 +40,8 @@ describe("sandbox build context staging", () => {
       writeFixture(path.join("nemoclaw", fileName), "{}\n", 0o600);
     }
     writeFixture(path.join("nemoclaw", "src", "index.ts"), "fixture\n", 0o600);
-    writeFixture(
-      path.join("nemoclaw", "shared", "openshell-policy-boundary.cjs"),
-      "module.exports = {};\n",
-      0o600,
-    );
-    writeFixture(
-      path.join("nemoclaw", "shared", "openshell-policy-boundary.d.cts"),
-      "export {};\n",
-      0o600,
-    );
     fs.chmodSync(path.join(sourceRoot, "nemoclaw"), 0o700);
     fs.chmodSync(path.join(sourceRoot, "nemoclaw", "src"), 0o700);
-    fs.chmodSync(path.join(sourceRoot, "nemoclaw", "shared"), 0o700);
     writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
@@ -119,10 +108,8 @@ describe("sandbox build context staging", () => {
   function expectStagedNemoclawModes(buildCtx: string) {
     const stagedNemoclaw = path.join(buildCtx, "nemoclaw");
     const stagedSrc = path.join(stagedNemoclaw, "src");
-    const stagedShared = path.join(stagedNemoclaw, "shared");
     const stagedPackageJson = path.join(stagedNemoclaw, "package.json");
     const stagedIndexTs = path.join(stagedSrc, "index.ts");
-    const stagedPolicyBoundary = path.join(stagedShared, "openshell-policy-boundary.cjs");
 
     const stagedNemoclawMode = fs.statSync(stagedNemoclaw).mode & 0o777;
     expect(stagedNemoclawMode & 0o555).toBe(0o555);
@@ -130,12 +117,8 @@ describe("sandbox build context staging", () => {
     const stagedSrcMode = fs.statSync(stagedSrc).mode & 0o777;
     expect(stagedSrcMode & 0o555).toBe(0o555);
     expect(stagedSrcMode & 0o002).toBe(0);
-    const stagedSharedMode = fs.statSync(stagedShared).mode & 0o777;
-    expect(stagedSharedMode & 0o555).toBe(0o555);
-    expect(stagedSharedMode & 0o002).toBe(0);
     expect((fs.statSync(stagedPackageJson).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedIndexTs).mode & 0o777).toString(8)).toBe("644");
-    expect((fs.statSync(stagedPolicyBoundary).mode & 0o777).toString(8)).toBe("644");
   }
 
   function expectStagedBlueprintModes(buildCtx: string) {
@@ -255,12 +238,6 @@ describe("sandbox build context staging", () => {
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
       expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
-      expect(
-        fs.existsSync(path.join(buildCtx, "nemoclaw", "shared", "openshell-policy-boundary.cjs")),
-      ).toBe(true);
-      expect(
-        fs.existsSync(path.join(buildCtx, "nemoclaw", "shared", "openshell-policy-boundary.d.cts")),
-      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
         fs.existsSync(

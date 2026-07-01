@@ -1,11 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "allowJs": true,
-    "checkJs": true,
-    "noEmit": true,
-    "rootDir": "."
+    "outDir": "dist",
+    "rootDir": "src"
   },
-  "include": ["shared/**/*.cjs"],
+  "include": ["src/shared/openshell-policy-boundary.cts"],
   "exclude": ["node_modules", "dist"]
 }

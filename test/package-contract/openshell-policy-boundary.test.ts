@@ -36,7 +36,9 @@ describe("OpenShell policy boundary package contract", () => {
     ).toEqual({ safe: {} });
 
     const pluginBoundary = (await import(
-      pathToFileURL(path.join(repoRoot, "nemoclaw", "shared", "openshell-policy-boundary.cjs")).href
+      pathToFileURL(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+      ).href
     )) as {
       parseOpenShellPolicy: (raw: string) => {
         yamlBody: string;
@@ -47,10 +49,11 @@ describe("OpenShell policy boundary package contract", () => {
       ) => Record<string, unknown>;
       stripProviderComposedPolicies: (policy: string) => string;
     };
-    const canonicalBoundary = require("../../nemoclaw/shared/openshell-policy-boundary.cjs") as {
-      parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
-      stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
-    };
+    const canonicalBoundary =
+      require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+        parseOpenShellPolicy: typeof cliPolicy.parseOpenShellPolicy;
+        stripProviderComposedPolicies: typeof cliPolicy.stripProviderComposedPolicies;
+      };
     expect(
       pluginBoundary.withoutProviderComposedPolicies({ safe: {}, _provider_generated: {} }),
     ).toEqual({ safe: {} });
@@ -85,7 +88,7 @@ describe("OpenShell policy boundary package contract", () => {
     const cliPolicy = require("../../dist/lib/policy/index.js") as {
       parseCurrentPolicy: (raw: string | null | undefined) => string;
     };
-    const canonical = require("../../nemoclaw/shared/openshell-policy-boundary.cjs") as {
+    const canonical = require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
       parseOpenShellPolicy: (
         raw: string,
         options?: { allowUnmarkedPolicyBody?: boolean },
@@ -112,21 +115,28 @@ describe("OpenShell policy boundary package contract", () => {
     expect(cliPolicy.parseCurrentPolicy("version: [unterminated")).toBe("");
   });
 
-  it("ships the canonical package-root CJS boundary through both package manifests", () => {
+  it("ships the generated canonical CJS boundary through both package manifests", () => {
     expect(packageFiles(repoRoot)).toContain("nemoclaw/dist/");
-    expect(packageFiles(repoRoot)).toContain("nemoclaw/shared/");
     expect(packageFiles(path.join(repoRoot, "nemoclaw"))).toContain("dist/");
-    expect(packageFiles(path.join(repoRoot, "nemoclaw"))).toContain("shared/");
 
     expect(
-      fs.existsSync(path.join(repoRoot, "nemoclaw", "shared", "openshell-policy-boundary.cjs")),
-    ).toBe(true);
-    expect(
-      fs.existsSync(path.join(repoRoot, "nemoclaw", "shared", "openshell-policy-boundary.d.cts")),
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.cts"),
+      ),
     ).toBe(true);
     expect(
       fs.existsSync(
-        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.ts"),
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.d.cts"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.js"),
       ),
     ).toBe(false);
   });

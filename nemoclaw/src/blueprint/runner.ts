@@ -25,7 +25,7 @@ import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import {
   parseOpenShellPolicy,
   withoutProviderComposedPolicies,
-} from "../../shared/openshell-policy-boundary.cjs";
+} from "../shared/openshell-policy-boundary.cjs";
 import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
@@ -329,7 +329,7 @@ interface RouterConfig {
 const DEFAULT_ROUTER_PORT = 4000;
 
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
-  // sourceOfTruth: nemoclaw/shared/openshell-policy-boundary.cjs
+  // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
   const current = parseOpenShellPolicy(currentPolicyRaw).policy;
   if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
     throw new Error("Current policy network_policies must be a YAML mapping");

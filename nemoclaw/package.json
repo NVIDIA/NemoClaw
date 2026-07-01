@@ -26,7 +26,7 @@
     "lint:fix": "biome lint --write src",
     "format": "biome format --write src",
     "format:check": "biome format src",
-    "check": "npm run lint && npm run format:check && tsc --noEmit && tsc -p tsconfig.shared.json",
+    "check": "npm run lint && npm run format:check && tsc --noEmit",
     "clean": "rm -rf dist/"
   },
   "dependencies": {
@@ -46,7 +46,6 @@
   },
   "files": [
     "dist/",
-    "shared/",
     "openclaw.plugin.json"
   ]
 }
