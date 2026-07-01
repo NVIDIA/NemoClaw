@@ -250,7 +250,7 @@ async function waitForSandboxReady(host: HostCliClient, apiKey: string): Promise
   throw new Error(`sandbox ${SANDBOX_NAME} did not become Ready`);
 }
 
-function seedRegistryAndSession(): SessionArtifactSummary {
+function seedRegistryAndSession(dashboardPort: number): SessionArtifactSummary {
   const registry = readJsonFile<RegistryData>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
 
@@ -306,6 +306,7 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     policyTier: null,
     agent: "hermes",
     agentVersion: OLD_HERMES_REGISTRY_VERSION,
+    dashboardPort,
     // This curated old-version fixture is still a NemoClaw-managed image.
     // Preserve that provenance explicitly; an absent value must remain
     // fail-closed because it could represent a custom `--from` image.
@@ -356,7 +357,13 @@ function seedRegistryAndSession(): SessionArtifactSummary {
 }
 
 function registryVersion(): unknown {
-  return readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]?.agentVersion;
+  return registrySandbox().agentVersion;
+}
+
+function registrySandbox(): Record<string, unknown> {
+  const sandbox = readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME];
+  if (!sandbox) throw new Error(`registry entry missing for ${SANDBOX_NAME}`);
+  return sandbox;
 }
 
 test.skipIf(!shouldRunLiveE2E())(
@@ -449,6 +456,15 @@ test.skipIf(!shouldRunLiveE2E())(
       timeoutMs: 30_000,
     });
     expectExitZero(gatewayProbe, "NemoClaw install must leave a reusable 'nemoclaw' gateway");
+
+    const phase1DashboardPort = registrySandbox().dashboardPort;
+    expect(
+      typeof phase1DashboardPort === "number" &&
+        Number.isInteger(phase1DashboardPort) &&
+        phase1DashboardPort > 0 &&
+        phase1DashboardPort <= 65535,
+      "initial Hermes onboard must persist the dashboard port used by authoritative rebuild",
+    ).toBe(true);
 
     const deleteCurrentSandbox = await host.command(
       "openshell",
@@ -621,18 +637,16 @@ test.skipIf(!shouldRunLiveE2E())(
     expectExitZero(preConfig, "read pre-rebuild Hermes config.yaml");
     expect(preConfig.stdout).toContain("discord:");
 
-    const sessionSummary = seedRegistryAndSession();
+    const sessionSummary = seedRegistryAndSession(phase1DashboardPort as number);
+    const seededRegistry = registrySandbox();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
-      registryVersion: registryVersion(),
+      registryVersion: seededRegistry.agentVersion,
+      dashboardPort: seededRegistry.dashboardPort,
       registryInference: {
-        provider: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]?.provider,
-        endpointUrl: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
-          ?.endpointUrl,
-        credentialEnv: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
-          ?.credentialEnv,
-        preferredInferenceApi: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[
-          SANDBOX_NAME
-        ]?.preferredInferenceApi,
+        provider: seededRegistry.provider,
+        endpointUrl: seededRegistry.endpointUrl,
+        credentialEnv: seededRegistry.credentialEnv,
+        preferredInferenceApi: seededRegistry.preferredInferenceApi,
       },
       session: sessionSummary,
     });
