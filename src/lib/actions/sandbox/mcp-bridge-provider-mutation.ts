@@ -1,6 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * OpenShell v0.0.72 provider mutations have no compare-and-swap operation, so
+ * another client can race between NemoClaw's preinspection and mutation. A
+ * nonzero mutation result is therefore ambiguous and always fails closed;
+ * NemoClaw never infers success from a later resource-version increase.
+ * Randomized provider names, the MCP lifecycle lock, and mandatory
+ * postinspection of immutable identity, credential shape, and resource version
+ * constrain this TOCTOU boundary. Remove the compensation when OpenShell
+ * exposes provider CAS or immutable provider IDs as mutation targets.
+ */
+
 import { runOpenshellProviderCommand } from "../../actions/global";
 import { stripAnsi } from "../../adapters/openshell/client";
 import type { McpBridgeEntry } from "../../state/registry";

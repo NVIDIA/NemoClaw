@@ -101,6 +101,9 @@ function preflightHermesProviderCredentials(
     );
     if (envKey) {
       try {
+        console.log(
+          `  Hermes Provider is not registered in OpenShell; registering it from exported ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} before rebuild.`,
+        );
         hermesProviderAuth.registerHermesInferenceProvider(
           envKey,
           runOpenshell,

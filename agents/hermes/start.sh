@@ -2753,6 +2753,16 @@ fi
 # Same-uid MCP transaction commands are valid only in OpenShell's non-root
 # workload topology. Stamp the legacy root-separated path before its gateway
 # can start so ordinary sandbox exec fails closed there.
+# invalidState: an ordinary sandbox process claims same-UID mutation authority
+# while Hermes actually runs in the legacy root-separated topology.
+# sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
+# root-lifecycle marker and stamps it before starting the root-separated gateway.
+# whyNotSourceFix: OpenShell 0.0.72 supports both topologies but exposes no
+# attested same-UID capability that this packaged entrypoint can query.
+# regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
+# add when the root-lifecycle marker identifies the legacy topology.
+# removalCondition: remove this marker stamp when OpenShell unifies the topology
+# or exposes an attested execution-identity capability.
 install -d -m 0755 -o root -g root /run/nemoclaw
 printf '%s\n' 'root-separated' >/run/nemoclaw/hermes-root-lifecycle
 chown root:root /run/nemoclaw/hermes-root-lifecycle
