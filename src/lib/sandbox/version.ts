@@ -125,13 +125,15 @@ export function probeAgentVersion(sandboxName: string): string | null {
   }
 }
 
-// Classify versions by their surface shape: `20YY.M.D` is treated as a
-// calendar tag, everything else as semver. The major is required to start
-// with `20` so the pattern only matches plausible release years and cannot
-// misclassify a semver whose major happens to be a four-digit number. If an
-// agent ever needs a third scheme, add an explicit `version_scheme` field to
-// the manifest rather than teaching this regex a new shape.
-const CALENDAR_VERSION_PATTERN = /^20\d{2}\.\d+\.\d+/;
+// Classify versions by their surface shape: a `YYYY.M.D` tag with a
+// four-digit year in 2000–9999 is treated as calendar, everything else as
+// semver. The lower bound of 2000 keeps semvers with a large four-digit
+// major (e.g. `1000.0.0`) from being misclassified as calendar; the upper
+// bound is only limited by the regex character class, giving future or
+// intentionally-future test fixtures (`9999.12.31`) the same calendar shape.
+// If an agent ever needs a third scheme, add an explicit `version_scheme`
+// field to the manifest rather than teaching this regex a new shape.
+const CALENDAR_VERSION_PATTERN = /^[2-9]\d{3}\.\d+\.\d+/;
 
 function isCalendarVersion(value: string): boolean {
   return CALENDAR_VERSION_PATTERN.test(String(value));
