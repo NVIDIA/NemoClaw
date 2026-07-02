@@ -251,6 +251,26 @@ setup_requirement() {
   return 1
 }
 
+setup_minimum_version() {
+  local label="$1"
+  local command_name="$2"
+  local minimum="$3"
+  local remediation="$4"
+  local output version
+
+  if ! output="$("${command_name}" --version 2>/dev/null)"; then
+    printf '%s version check failed.\n' "${label}" >&2
+    printf 'Next: %s\n' "${remediation}" >&2
+    return 1
+  fi
+  version="$(extract_version "$(first_line "${output}")")"
+  if ! [[ "${version}" =~ ^[0-9]+([.][0-9]+){0,2}$ ]] || ! version_at_least "${version}" "${minimum}"; then
+    printf '%s %s is below %s.\n' "${label}" "${version:-unknown}" "${minimum}" >&2
+    printf 'Next: %s\n' "${remediation}" >&2
+    return 1
+  fi
+}
+
 is_supported_host() {
   case "${HOST_OS}:${HOST_ARCH}" in
     Darwin:arm64 | Darwin:x86_64 | Linux:aarch64 | Linux:x86_64) return 0 ;;
@@ -290,6 +310,13 @@ repair_repository() {
   if ((setup_failed > 0)); then
     return 1
   fi
+  setup_minimum_version "Node.js" node "22.16.0" \
+    "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
+  setup_minimum_version "npm" npm "10.0.0" \
+    "Install npm 10 or newer, then rerun this command." || setup_failed=1
+  if ((setup_failed > 0)); then
+    return 1
+  fi
 
   cd -- "${REPO_ROOT}" || return 1
 
@@ -302,6 +329,7 @@ repair_repository() {
   run_setup_step "Synchronize the repository Python environment" uv sync --python 3.11 || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1
   run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
+  # Keep the explicit checks aligned with the broader pre-push and CI contracts.
   run_setup_step "Type-check the CLI" npm run typecheck:cli || return 1
   run_setup_step "Type-check the plugin without emitting files" \
     npm --prefix nemoclaw exec -- tsc --noEmit || return 1

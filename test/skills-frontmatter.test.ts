@@ -125,6 +125,10 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Signed-off-by:");
     expect(skill).toContain("Verified");
     expect(skill).toContain("Trigger keywords - contributor setup");
+    expect(skill).toContain("trusted `origin/main`");
+    expect(skill.indexOf("trusted `origin/main`")).toBeLessThan(
+      skill.indexOf("Run `./scripts/dev-setup.sh`"),
+    );
   });
 
   it("preserves the single NVSkills catalog skill copy", () => {

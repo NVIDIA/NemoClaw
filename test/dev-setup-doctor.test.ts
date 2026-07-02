@@ -97,7 +97,9 @@ fi
     "npm",
     `if [ "\${1:-}" = "root" ] && [ "\${2:-}" = "-g" ]; then
   echo "${globalRoot}"
-elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "$*" = "--prefix nemoclaw install --ignore-scripts" ]; then
+elif [ "\${FAKE_NPM_ROOT_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "install" ]; then
+  exit 1
+elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "\${1:-}" = "--prefix" ] && [ "\${2:-}" = "nemoclaw" ] && [ "\${3:-}" = "install" ]; then
   exit 1
 else
   echo "10.9.0"
@@ -462,6 +464,18 @@ describe("contributor repository setup", () => {
     expect(commands).not.toContain("npm install");
   });
 
+  it("rejects unsupported Node.js before repository changes", () => {
+    const fixture = createFixture();
+    writeTool(fixture.fakeBin, "node", 'echo "v20.15.0"');
+
+    const result = runSetup(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Node.js 20.15.0 is below 22.16.0");
+    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
+    expect(commands).not.toContain("npm install");
+  });
+
   it("stops before repository changes on an unsupported host", () => {
     const fixture = createFixture();
 
@@ -486,6 +500,18 @@ describe("contributor repository setup", () => {
     const commands = fs.readFileSync(fixture.commandLog, "utf-8");
     expect(commands).toContain("npm --prefix nemoclaw install --ignore-scripts");
     expect(commands).not.toContain("uv sync --python 3.11");
+  });
+
+  it("stops immediately when the root dependency install fails", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], { FAKE_NPM_ROOT_INSTALL_FAIL: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Setup stopped while attempting: Install root dependencies");
+    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
+    expect(commands).toContain("npm install --ignore-scripts");
+    expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 
   it("delegates runtime creation to interactive onboard only when requested", () => {

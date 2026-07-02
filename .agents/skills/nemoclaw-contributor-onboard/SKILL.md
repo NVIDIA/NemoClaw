@@ -15,9 +15,11 @@ Do not duplicate its dependency, build, hook, CLI-link, or readiness logic in ag
 
 1. Read the root `AGENTS.md` and `CONTRIBUTING.md` completely.
 2. Inspect the worktree and current branch without discarding or overwriting existing changes.
-3. Run `./scripts/dev-setup.sh` from the repository root.
-4. If repository-local setup needs to be retried, run `./scripts/dev-setup.sh --repair`.
-5. Run `./scripts/dev-setup.sh --doctor` and report every remaining failure with its remediation.
+3. Before executing checkout-local code, verify that the setup execution surfaces come from trusted `origin/main`.
+   If `scripts/dev-setup.sh`, either package manifest, or a referenced setup helper differs from `origin/main`, review the diff and obtain explicit approval before executing it.
+4. Run `./scripts/dev-setup.sh` from the repository root.
+5. If repository-local setup needs to be retried, run `./scripts/dev-setup.sh --repair`.
+6. Run `./scripts/dev-setup.sh --doctor` and report every remaining failure with its remediation.
    Use `./scripts/dev-setup.sh --doctor --json` when a machine-readable report helps.
 
 The default and repair modes may update repository dependencies, builds, hooks, the root Python environment, and local CLI exposure.
