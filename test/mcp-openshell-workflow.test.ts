@@ -23,7 +23,7 @@ describe("MCP OpenShell workflow boundary", () => {
     const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
 
     expect(setupDocs).toContain(
-      `NemoClaw v0.0.73 defaults to the pinned stable OpenShell \`${credentialBoundaryManifest.openshellVersion}\` release`,
+      `NemoClaw v0.0.74 defaults to the pinned stable OpenShell \`${credentialBoundaryManifest.openshellVersion}\` release`,
     );
     expect(setupDocs).toContain(
       "The optional OpenShell development channel is compatibility evidence only and is not a shipping target.",

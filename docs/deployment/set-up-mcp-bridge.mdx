@@ -21,7 +21,7 @@ The integration has three parts:
 - An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from [NVIDIA/OpenShell#1865](https://github.com/NVIDIA/OpenShell/pull/1865).
-NemoClaw v0.0.73 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
+NemoClaw v0.0.74 defaults to the pinned stable OpenShell `0.0.72` release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement.
 The optional OpenShell development channel is compatibility evidence only and is not a shipping target.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
@@ -31,7 +31,7 @@ No NemoClaw host process remains running after an `mcp` lifecycle command return
 
 ## Architecture Decision
 
-**Status:** [Accepted on June 30, 2026](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784) as the normative design for NemoClaw v0.0.73 and the implementation that supersedes the original acceptance text in NVIDIA/NemoClaw#566.
+**Status:** [Accepted on June 30, 2026](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784) as the normative design for NemoClaw v0.0.74 and the implementation that supersedes the original acceptance text in NVIDIA/NemoClaw#566.
 
 This native OpenShell design supersedes the original host-side stdio-to-HTTP proxy proposed in NVIDIA/NemoClaw#566.
 NemoClaw does not accept an inline secret-and-command tuple, persist the raw bearer value supplied through `--env`, or operate a host-side MCP data-plane process.
