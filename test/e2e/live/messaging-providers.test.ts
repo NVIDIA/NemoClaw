@@ -593,7 +593,7 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
       redactionValues,
     );
     if (/HTTP_/.test(telegramReach)) {
-      check(true, `M12: Node.js reached the Telegram bot API through the proxy (${telegramReach})`);
+      check(true, `M12: Node.js reached the Telegram bot API (${telegramReach})`);
     } else if (
       /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up/i.test(telegramReach)
     ) {
