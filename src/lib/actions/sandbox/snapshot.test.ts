@@ -33,11 +33,10 @@ function framedDcodeProbeOutput(state: DcodeProbeState, framePrefix = "stdout: "
   return `${framePrefix}${SANDBOX_EXEC_STARTED_MARKER}\n${framePrefix}NEMOCLAW_DCODE_PROBE=${state}\n`;
 }
 
-function captureExecStreams(
+function captureOpenshellStreams(
   args: string[],
   result: OpenshellCaptureResult,
 ): OpenshellCaptureResult {
-  if (args[0] !== "sandbox" || args[1] !== "exec") return result;
   const command = String(args.at(-1) ?? "");
   const marker = command.match(/printf '%s\\n' '([^']+)'/)?.[1] ?? SANDBOX_EXEC_STARTED_MARKER;
   const replaceMarker = (value: string) => value.replaceAll(SANDBOX_EXEC_STARTED_MARKER, marker);
@@ -54,7 +53,7 @@ function openshellResponses(
     status: 0,
     output: "",
   };
-  return captureExecStreams(args, result);
+  return captureOpenshellStreams(args, result);
 }
 
 function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
