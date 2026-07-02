@@ -24,7 +24,11 @@ import type {
 } from "../../messaging/manifest";
 import type { DiagnosticSignal } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
-import { configInputDetail, configValuesEqual } from "./channel-status-config-values";
+import {
+  booleanConfigValue,
+  configInputDetail,
+  configValuesEqual,
+} from "./channel-status-config-values";
 
 const CONFIG_STATUS_TIMEOUT_MS = 5_000;
 const CONFIG_STATUS_MAX_SOURCE_BYTES = 64 * 1024;
@@ -44,12 +48,17 @@ export type ChannelStatusConfigDeps = {
   execSandbox: ExecRunner;
 };
 
+export type ChannelStatusConfigOptions = {
+  inputIds?: readonly string[];
+};
+
 export function buildConfigStatusSignals(
   sandboxName: string,
   channelName: string,
   entry: ReturnType<typeof registry.getSandbox>,
   agent: AgentDefinition,
   deps: ChannelStatusConfigDeps,
+  options: ChannelStatusConfigOptions = {},
 ): DiagnosticSignal[] {
   const plan = registry.getMessagingPlanFromEntry(entry);
   const channelPlan = plan?.channels.find((channel) => channel.channelId === channelName);
@@ -61,8 +70,10 @@ export function buildConfigStatusSignals(
     channelManifestRegistry.list(),
   );
   const parser = manifest ? getBuiltInRenderedConfigParser(manifest.id) : null;
+  const requestedInputIds = options.inputIds ? new Set(options.inputIds) : null;
   const manifestConfigInputs = (manifest?.inputs ?? []).filter(
-    (input): input is ChannelConfigInputSpec => input.kind === "config",
+    (input): input is ChannelConfigInputSpec =>
+      input.kind === "config" && (!requestedInputIds || requestedInputIds.has(input.id)),
   );
   const manifestConfigInputIds = new Set(manifestConfigInputs.map((input) => input.id));
   const renderSources =
@@ -107,7 +118,7 @@ function configInputSignal(
   }
 
   const comparisons = sources.map((source) =>
-    compareConfigSource(expected, source, sourceReads.sourceValues),
+    compareConfigSource(input, expected, source, sourceReads.sourceValues),
   );
   const checkedComparisons = comparisons.filter((comparison) => comparison.checked);
   const hasMismatch = checkedComparisons.some((comparison) => !comparison.matches);
@@ -159,7 +170,7 @@ function expectedConfigValue(
   if (planInputHasValue(planInput)) {
     return {
       value: planInput.value,
-      detail: configInputDetail(planInput.value),
+      detail: configInputValueDetail(input, planInput.value),
       hasValue: true,
     };
   }
@@ -168,7 +179,7 @@ function expectedConfigValue(
   if (defaultValue) {
     return {
       value: defaultValue,
-      detail: `${configInputDetail(defaultValue)} (default)`,
+      detail: configInputValueDetail(input, defaultValue, { isDefault: true }),
       hasValue: true,
     };
   }
@@ -178,6 +189,20 @@ function expectedConfigValue(
     detail: configInputDetail(undefined),
     hasValue: false,
   };
+}
+
+function configInputValueDetail(
+  input: ChannelConfigInputSpec,
+  value: MessagingSerializableValue | undefined,
+  options: { readonly isDefault?: boolean } = {},
+): string {
+  const booleanValue = value === undefined ? null : booleanConfigValue(value);
+  const labelKey =
+    booleanValue === null ? configInputDetail(value) : booleanValue === true ? "1" : "0";
+  const label = input.diagnostics?.valueLabels?.[labelKey];
+  const renderedValue = label ? `${label} (${labelKey}` : configInputDetail(value);
+  if (label) return `${renderedValue}${options.isDefault ? ", default" : ""})`;
+  return `${renderedValue}${options.isDefault ? " (default)" : ""}`;
 }
 
 interface ConfigRenderSource extends RenderedConfigVisibilityKey {
@@ -372,6 +397,7 @@ function parseRenderedConfigSource(
 }
 
 function compareConfigSource(
+  input: ChannelConfigInputSpec,
   expected: ExpectedConfigValue,
   source: ConfigRenderSource,
   sourceValues: ReadonlyMap<string, ConfigSourceRead>,
@@ -397,7 +423,7 @@ function compareConfigSource(
     matches,
     detail: matches
       ? expected.detail
-      : `expected ${expected.detail}; rendered ${configInputDetail(actual.value)}`,
+      : `expected ${expected.detail}; rendered ${configInputValueDetail(input, actual.value)}`,
   };
 }
 

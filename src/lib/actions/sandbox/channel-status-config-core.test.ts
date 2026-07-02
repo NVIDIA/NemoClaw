@@ -81,16 +81,18 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1",
+      detail: "mention-only (1)",
     });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open/);
-    expect(dump).toMatch(/Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+1/);
+    expect(dump).toMatch(
+      /Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+mention-only \(1\)/,
+    );
     expect(dump).not.toMatch(/Telegram Bot Token/);
     expect(dump).not.toMatch(/TELEGRAM_BOT_TOKEN/);
   });
 
-  it("marks Telegram all-message mode ok when OpenClaw omits the groups stanza (#5691)", async () => {
+  it("marks Telegram all-message mode ok when OpenClaw renders the explicit override (#5691)", async () => {
     const { deps } = makeDeps({
       exec: () => ({
         status: 0,
@@ -100,6 +102,11 @@ describe("showSandboxChannelStatus config comparison", () => {
               accounts: {
                 default: {
                   groupPolicy: "open",
+                },
+              },
+              groups: {
+                "*": {
+                  requireMention: false,
                 },
               },
             },
@@ -143,7 +150,61 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "0",
+      detail: "all-messages (0)",
+    });
+  });
+
+  it("warns when all-messages intent falls back to OpenClaw's mention-only default (#5691)", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          channels: {
+            telegram: {
+              accounts: { default: { groupPolicy: "open" } },
+            },
+          },
+        }),
+        stderr: "",
+      }),
+      sandbox: entry(["telegram"], [], {
+        telegram: [
+          {
+            channelId: "telegram",
+            inputId: "requireMention",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+            statePath: "telegramConfig.requireMention",
+            value: "0",
+          },
+          {
+            channelId: "telegram",
+            inputId: "groupPolicy",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_GROUP_POLICY",
+            statePath: "telegramConfig.groupPolicy",
+            value: "open",
+          },
+        ],
+      }),
+      appliedPresets: ["telegram"],
+    });
+
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "telegram",
+    });
+    const signals = result && "signals" in result ? result.signals : [];
+
+    expect(
+      signals.find(
+        (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
+      ),
+    ).toMatchObject({
+      severity: "warn",
+      detail: "expected all-messages (0); rendered mention-only (1)",
     });
   });
 
@@ -226,7 +287,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1",
+      detail: "mention-only (1)",
     });
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),

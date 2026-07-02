@@ -77,6 +77,10 @@ Set `TELEGRAM_GROUP_POLICY=allowlist` to block OpenClaw group chats until explic
 Hermes does not have an equivalent disable-groups policy; `TELEGRAM_ALLOWED_IDS` maps to Hermes `TELEGRAM_ALLOWED_USERS`, which authorizes those users across DMs, groups, and forums.
 NemoClaw defaults `TELEGRAM_REQUIRE_MENTION` to `1`, so the bot replies in Telegram groups only when users mention it.
 Set `TELEGRAM_REQUIRE_MENTION=0` when you want the bot to reply to all group messages.
+<AgentOnly variant="openclaw">
+When `TELEGRAM_GROUP_POLICY=open`, NemoClaw writes the selected mention mode explicitly so `TELEGRAM_REQUIRE_MENTION=0` does not fall back to OpenClaw's mention-only runtime default.
+NemoClaw does not summarize one global mention mode when `TELEGRAM_GROUP_POLICY` is `allowlist` or `disabled` because group access is blocked or controlled per group before mention handling.
+</AgentOnly>
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 Discord uses a bot token from the Discord Developer Portal.
@@ -384,6 +388,17 @@ Stopping the in-sandbox gateway stops Telegram, Discord, Slack, WeChat, WhatsApp
 After the sandbox is running, send a message to the configured bot or app.
 If delivery fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the channel API.
 Use the matching policy preset (`telegram`, `discord`, `slack`, `wechat`, `whatsapp`, or `teams`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples).
+
+For Telegram, use the channel status and doctor commands to verify the group mention mode against the rendered agent configuration:
+
+```bash
+$$nemoclaw my-assistant channels status --channel telegram
+$$nemoclaw my-assistant doctor
+```
+
+When NemoClaw can reach the sandbox and read its rendered configuration, both commands report `Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)` as `mention-only (1)` or `all-messages (0)`.
+If the stored setting and rendered configuration differ, the check reports a warning with the expected and rendered modes.
+Rebuild the sandbox with `$$nemoclaw my-assistant rebuild` to regenerate the channel configuration after you correct the setting.
 
 ## Tunnel Command
 

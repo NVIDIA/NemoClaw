@@ -4,6 +4,7 @@
 import { loadAgent } from "../../agent/defs";
 import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
 import { CLI_NAME } from "../../cli/branding";
+import { createBuiltInChannelManifestRegistry } from "../../messaging";
 import {
   collectBuiltInMessagingChannelDiagnostics,
   type MessagingChannelDiagnosticSpec,
@@ -13,9 +14,11 @@ import { ROOT } from "../../runner";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
+import { buildConfigStatusSignals } from "./channel-status-config";
 import type { DoctorCheck } from "./doctor-report";
 
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
+const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
 function runtimeProbeUnavailableCheck(sandboxName: string, detail: string): DoctorCheck {
   return {
@@ -261,6 +264,58 @@ function configuredChannelsCheck(sandboxName: string, sb: SandboxEntry): DoctorC
   };
 }
 
+function configuredChannelDiagnosticChecks(
+  sandboxName: string,
+  enabledChannels: string[],
+  sb: SandboxEntry,
+  sandboxReachable: boolean,
+): DoctorCheck[] {
+  if (!sandboxReachable || enabledChannels.length === 0) return [];
+
+  let agent: ReturnType<typeof loadAgent>;
+  try {
+    agent = loadAgent(sb.agent || "openclaw");
+  } catch {
+    // channelRuntimeDoctorCheck reports the agent-definition failure with a
+    // remediation hint; avoid duplicating that warning here.
+    return [];
+  }
+
+  const checks: DoctorCheck[] = [];
+  for (const channelName of enabledChannels) {
+    const manifest = channelManifestRegistry.get(channelName);
+    if (!manifest) continue;
+    const doctorInputIds = manifest.inputs
+      .filter((input) => input.kind === "config" && input.diagnostics?.doctor)
+      .map((input) => input.id);
+    if (doctorInputIds.length === 0) continue;
+
+    const signals = buildConfigStatusSignals(
+      sandboxName,
+      channelName,
+      sb,
+      agent,
+      {
+        execSandbox: (name, command) => executeSandboxCommandForVerification(name, command),
+      },
+      { inputIds: doctorInputIds },
+    );
+    checks.push(
+      ...signals.map((signal) => ({
+        group: "Messaging" as const,
+        label:
+          signal.label === "Rendered config source"
+            ? `${manifest.displayName} rendered config`
+            : signal.label,
+        status: signal.severity,
+        detail: signal.detail,
+        hint: signal.hint,
+      })),
+    );
+  }
+  return checks;
+}
+
 export function collectMessagingDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry,
@@ -270,6 +325,7 @@ export function collectMessagingDoctorChecks(
   const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
   const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
   const enabled = registered.filter((channel: string) => !disabled.has(channel));
+  checks.push(...configuredChannelDiagnosticChecks(sandboxName, enabled, sb, sandboxReachable));
   const runtimeCheck = sandboxReachable
     ? channelRuntimeDoctorCheck(sandboxName, enabled, sb)
     : enabled.length > 0

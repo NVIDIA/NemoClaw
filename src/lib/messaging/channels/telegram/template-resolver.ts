@@ -67,5 +67,8 @@ function telegramOpenClawGroups(
 ): Record<string, MessagingSerializableValue> | undefined {
   if (telegramGroupPolicy(context) !== "open") return undefined;
   const requireMention = parseBoolean(stateValue(context, "telegramConfig.requireMention"));
-  return requireMention === true ? { "*": { requireMention: true } } : undefined;
+  // OpenClaw defaults Telegram groups to mention-only when this stanza is
+  // absent. Render both modes explicitly so TELEGRAM_REQUIRE_MENTION=0 does
+  // not silently fall back to the runtime's mention-only default.
+  return { "*": { requireMention: requireMention !== false } };
 }

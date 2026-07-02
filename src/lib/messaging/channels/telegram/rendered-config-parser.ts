@@ -6,16 +6,17 @@ import {
   getEnvConfigValue,
   getStructuredConfigValue,
   getStructuredPath,
+  type RenderedChannelConfigParser,
   type RenderedChannelConfigParserContext,
   type RenderedConfigSource,
   type RenderedConfigVisibilityKey,
-  type RenderedChannelConfigParser,
   structuredConfigKey,
 } from "../rendered-config-parser-utils";
 
 const OPENCLAW_ACCOUNT_PATH = ["channels", "telegram", "accounts", "default"] as const;
 const OPENCLAW_GROUPS_PATH = ["channels", "telegram", "groups"] as const;
 const DEFAULT_OPENCLAW_GROUP_POLICY = "open";
+const OPENCLAW_GROUP_POLICIES = new Set(["open", "allowlist", "disabled"]);
 
 export const telegramRenderedConfigParser: RenderedChannelConfigParser = {
   listConfigVisibilityKeys(context) {
@@ -72,7 +73,8 @@ export const telegramRenderedConfigParser: RenderedChannelConfigParser = {
 
 function openClawGroupPolicyFromInputs(context: RenderedChannelConfigParserContext): string {
   const inputValue = context.inputs.find((input) => input.inputId === "groupPolicy")?.value;
-  if (typeof inputValue === "string" && inputValue.trim()) return inputValue.trim();
+  const normalizedInput = typeof inputValue === "string" ? inputValue.trim() : "";
+  if (OPENCLAW_GROUP_POLICIES.has(normalizedInput)) return normalizedInput;
   const defaultValue = context.manifest.inputs.find((input) => input.id === "groupPolicy");
   return defaultValue?.kind === "config" && defaultValue.defaultValue
     ? defaultValue.defaultValue
@@ -92,15 +94,21 @@ function getOpenClawGroupRequireMention(
   }
 
   const groups = getStructuredConfigValue(source, key.path);
-  if (!groups || typeof groups !== "object" || Array.isArray(groups)) return false;
+  // OpenClaw requires mentions by default. Missing or empty group overrides
+  // therefore mean mention-only, not all-messages.
+  if (!groups || typeof groups !== "object" || Array.isArray(groups)) return true;
 
-  const values = Object.values(groups)
-    .map((group) =>
-      group && typeof group === "object" && !Array.isArray(group)
-        ? getStructuredPath(group, ["requireMention"])
-        : undefined,
-    )
-    .filter((value): value is boolean => typeof value === "boolean");
-  if (values.length === 0) return false;
+  const values: boolean[] = [];
+  for (const group of Object.values(groups)) {
+    if (!group || typeof group !== "object" || Array.isArray(group)) return undefined;
+    const value = getStructuredPath(group, ["requireMention"]);
+    if (value === undefined || value === null) {
+      values.push(true);
+      continue;
+    }
+    if (typeof value !== "boolean") return undefined;
+    values.push(value);
+  }
+  if (values.length === 0) return true;
   return [...new Set(values)].sort().length === 1 ? values[0] : [...new Set(values)].sort();
 }
