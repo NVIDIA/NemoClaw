@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { isSshTransportFailure } from "./sandbox";
+import { isSshTransportFailure } from "./ssh-transport";
 
 describe("isSshTransportFailure", () => {
   it("treats an ssh transport failure exit code (255) as unreachable", () => {

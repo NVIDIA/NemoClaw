@@ -1034,20 +1034,11 @@ function restoreStateFile(
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
-export function isSshTransportFailure(result: {
-  status: number | null;
-  error?: Error;
-  signal?: NodeJS.Signals | null;
-}): boolean {
-  if (result.error) return true;
-  // Signal termination (e.g. SIGHUP/SIGPIPE from a dying gateway) reports
-  // status=null; match connect.ts and treat these as transport-level
-  // failures explicitly so the diagnostic path is unambiguous. Any other
-  // null-status result (timeout, killed) is also transport-level.
-  if (result.signal === "SIGHUP" || result.signal === "SIGPIPE") return true;
-  if (result.status === null) return true;
-  return result.status === 255;
-}
+
+// isSshTransportFailure is re-exported here for backwards compatibility with
+// callers that imported it from this module before it moved to ./ssh-transport.
+// Prefer importing directly from ./ssh-transport in new code.
+export { isSshTransportFailure } from "./ssh-transport";
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
