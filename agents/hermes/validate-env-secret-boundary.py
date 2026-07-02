@@ -52,6 +52,13 @@ RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
     }
 )
 RUNTIME_ALLOWED_RAW_SECRET_KEYS = frozenset({"OPENCLAW_GATEWAY_TOKEN"})
+# OpenShell's Docker/Podman supervisor owns this variable and injects a mounted
+# file path, not private-key material. Keep the allowance exact and runtime-only
+# so a caller cannot use the secret-shaped name to smuggle an arbitrary value or
+# persist it in Hermes' mutable .env file.
+RUNTIME_ALLOWED_PLATFORM_PATH_VALUES = frozenset(
+    {("OPENSHELL_TLS_KEY", "/etc/openshell/tls/client/tls.key")}
+)
 ALLOWED_LITERALS = frozenset({"", "[STRIPPED_BY_MIGRATION]"})
 MAX_ENV_BYTES = 4 * 1024 * 1024
 MAX_ENV_LINE_BYTES = 256 * 1024
@@ -479,6 +486,8 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
         if key in RUNTIME_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(
             key, value
         ):
+            continue
+        if (key, value) in RUNTIME_ALLOWED_PLATFORM_PATH_VALUES:
             continue
         if not KEY_NAME_RE.fullmatch(key):
             continue

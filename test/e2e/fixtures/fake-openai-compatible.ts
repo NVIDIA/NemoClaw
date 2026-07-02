@@ -17,6 +17,7 @@ export interface FakeOpenAiCompatibleRequest {
   readonly auth?: string;
   readonly model?: string;
   readonly stream?: boolean;
+  readonly forbiddenMarkerMatches?: number;
 }
 
 export interface FakeOpenAiCompatibleServer {
@@ -30,6 +31,7 @@ export interface FakeOpenAiCompatibleServer {
 export interface FakeOpenAiCompatibleServerOptions {
   readonly apiKey?: string;
   readonly chatContent?: string;
+  readonly forbiddenMarkers?: readonly string[];
   readonly host?: string;
   readonly model?: string;
   readonly port?: number;
@@ -124,6 +126,7 @@ export async function startFakeOpenAiCompatibleServer(
       ...process.env,
       NEMOCLAW_FAKE_OPENAI_API_KEY: options.apiKey ?? "",
       NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT: options.chatContent ?? "ok",
+      NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
       NEMOCLAW_FAKE_OPENAI_HOST: host,
       NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
       NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
