@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, jetson-nvmap-gpu, and sandbox-rlimits-connect are skipped unless selected."
+        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs hermes-gpu-startup, openshell-gateway-auth-contract, jetson-nvmap-gpu, and sandbox-rlimits-connect are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -1570,6 +1570,51 @@ jobs:
             --silent=false --reporter=default
 
       - name: Upload Hermes live Vitest artifacts
+        if: always()
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  hermes-gpu-startup:
+    needs: generate-matrix
+    if: ${{ contains(format(',{0},', inputs.jobs), ',hermes-gpu-startup,') || contains(format(',{0},', inputs.targets), ',hermes-gpu-startup,') }}
+    runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    timeout-minutes: 75
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "hermes-gpu-startup"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_GPU: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-gpu-startup
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Run Hermes GPU startup live Vitest test
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-live \
+            test/e2e/live/hermes-gpu-startup.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes GPU startup artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
 
@@ -4426,6 +4471,7 @@ jobs:
         sessions-agents-cli,
         runtime-overrides,
         hermes-e2e,
+        hermes-gpu-startup,
         hermes-dashboard,
         hermes-slack,
         hermes-discord,
@@ -4639,7 +4685,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `jetson-nvmap-gpu`, and `sandbox-rlimits-connect` are skipped unless selected)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `hermes-gpu-startup`, `openshell-gateway-auth-contract`, `jetson-nvmap-gpu`, and `sandbox-rlimits-connect` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',

@@ -16,6 +16,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -508,8 +509,7 @@ export async function rawTokenSurfaceProbe(
       ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
       : surface === "process"
-        ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
-if cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
+        ? buildProcessTokenProbe(token)
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
 if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;

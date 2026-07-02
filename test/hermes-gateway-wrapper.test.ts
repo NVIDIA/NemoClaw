@@ -182,12 +182,26 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
       OPENCLAW_GATEWAY_TOKEN: "raw-gateway-token",
+      OPENSHELL_TLS_CA: "/etc/openshell/tls/client/ca.crt",
+      OPENSHELL_TLS_CERT: "/etc/openshell/tls/client/tls.crt",
+      OPENSHELL_TLS_KEY: "/etc/openshell/tls/client/tls.key",
     });
 
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("gateway run");
+  });
+
+  it("refuses `gateway` with a noncanonical OpenShell TLS key path", () => {
+    const value = "/tmp/not-openshell/tls.key";
+    const run = runWrapper(["gateway", "run"], { OPENSHELL_TLS_KEY: value });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("process environment");
+    expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+    expect(run.stderr).not.toContain(value);
+    expect(run.realInvoked).toBe(false);
   });
 
   it("passes non-gateway subcommands straight through, even with raw secrets present", () => {
