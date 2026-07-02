@@ -251,7 +251,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
 
 function createSedWrapper(tmp: string): string {
   const fakeBin = path.join(tmp, "bin");
-  fs.mkdirSync(fakeBin);
+  fs.mkdirSync(fakeBin, { recursive: true });
   const sedWrapper = path.join(fakeBin, "sed");
   fs.writeFileSync(
     sedWrapper,
@@ -1369,7 +1369,7 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     );
   }
 
-  it("applies Patch 6 to a reviewed single-callsite cron preflight fixture", () => {
+  it("applies Patch 6 to reviewed and formatting-variant cron preflight fixtures", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-patch6-happy-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
@@ -1388,6 +1388,18 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
           ?.length,
       ).toBe(1);
       expect(patched).not.toMatch(/(?<!_proxy", )auditContext: "cron-model-provider-preflight"/);
+      fs.writeFileSync(
+        preflightPath,
+        reviewedCronPreflightFixture().replace(
+          'auditContext: "cron-model-provider-preflight"',
+          "auditContext  :  'cron-model-provider-preflight'",
+        ),
+      );
+      const variantPatch = runFetchGuardPatchBlock(dist, tmp);
+      expect(variantPatch.status, `${variantPatch.stdout}${variantPatch.stderr}`).toBe(0);
+      expect(fs.readFileSync(preflightPath, "utf-8")).toContain(
+        `mode: "trusted_env_proxy", auditContext  :  'cron-model-provider-preflight'`,
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -439,6 +439,8 @@ RUN set -eu; \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
     # hostname pattern matching and does not bypass .internal/private blocking. \
+    # Executable fixture proof lives in test/fetch-guard-patch-regression.test.ts; \
+    # the live network-policy E2E exercises this path in the assembled image. \
     web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$web_guard_files" ]; then \
         patched_host_gateway=0; \
@@ -517,7 +519,8 @@ RUN set -eu; \
     # The patch keys on the co-located shape of the reviewed preflight call: in \
     # any file that mentions the audit context literal, both the \
     # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
-    # builder must appear; the audit literal itself must appear exactly once; and \
+    # builder must appear. The audit-property matcher tolerates quote and same-line \
+    # whitespace changes; the audit literal itself must appear exactly once; and \
     # after patching exactly one patched literal must remain. Any ambiguous \
     # multi-callsite or mixed patched/unpatched layout fails the image build \
     # rather than silently widening the rewrite. \
@@ -530,8 +533,10 @@ RUN set -eu; \
     preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
     if [ -n "$preflight_files" ]; then \
         patched_preflight=0; \
+        audit_pattern="auditContext[[:space:]]*:[[:space:]]*(\"cron-model-provider-preflight\"|'cron-model-provider-preflight')"; \
+        patched_pattern="mode[[:space:]]*:[[:space:]]*(\"trusted_env_proxy\"|'trusted_env_proxy')[[:space:]]*,[[:space:]]*${audit_pattern}"; \
         for f in $preflight_files; do \
-            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            audit_count="$(grep -Eo "$audit_pattern" "$f" | awk 'END { print NR }')"; \
             [ "${audit_count:-0}" -ge 1 ] \
                 || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
             [ "${audit_count:-0}" -eq 1 ] \
@@ -540,12 +545,12 @@ RUN set -eu; \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
             grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
-            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            patched_count="$(grep -Eo "$patched_pattern" "$f" | awk 'END { print NR }')"; \
             if [ "${patched_count:-0}" -eq 1 ]; then \
                 echo "INFO: Patch 6 already present in $f"; \
             elif [ "${patched_count:-0}" -eq 0 ]; then \
-                sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
-                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                sed -i -E "s#${audit_pattern}#mode: \"trusted_env_proxy\", &#g" "$f"; \
+                new_patched_count="$(grep -Eo "$patched_pattern" "$f" | awk 'END { print NR }')"; \
                 [ "${new_patched_count:-0}" -eq 1 ] \
                     || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
                 patched_preflight=1; \

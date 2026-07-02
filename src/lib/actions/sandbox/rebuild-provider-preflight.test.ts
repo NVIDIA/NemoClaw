@@ -3,7 +3,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GatewayProviderMetadata } from "../../onboard/gateway-provider-metadata";
-import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
+import {
+  checkRebuildGatewayCredentialReuseOrBail,
+  checkRebuildGatewayProviderOrBail,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 const exactGatewayProvider: GatewayProviderMetadata = {
@@ -42,6 +46,22 @@ const throwingBail = (message: string): never => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("shouldVerifyRebuildGatewayProvider", () => {
+  it("requires remote registrations while allowing reconstructible local registrations", () => {
+    expect(shouldVerifyRebuildGatewayProvider("nvidia-prod")).toBe(true);
+    expect(shouldVerifyRebuildGatewayProvider("ollama-local")).toBe(false);
+    expect(shouldVerifyRebuildGatewayProvider("vllm-local")).toBe(false);
+
+    const log = vi.fn();
+    const bail = vi.fn(() => {
+      throw new Error("local provider must not require an existing gateway registration");
+    });
+    expect(checkRebuildGatewayProviderOrBail("ollama-local", null, log, bail)).toBe(true);
+    expect(log).not.toHaveBeenCalled();
+    expect(bail).not.toHaveBeenCalled();
+  });
 });
 
 describe("checkRebuildGatewayCredentialReuseOrBail", () => {

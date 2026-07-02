@@ -60,6 +60,10 @@ function printMissingRebuildGatewayProvider(provider: string, credentialEnv: str
 export function shouldVerifyRebuildGatewayProvider(
   provider: string | null | undefined,
 ): provider is string {
+  // Remote registrations can hold the only copy of a provider credential, so
+  // their absence is unrecoverable. Local registrations are reconstructible:
+  // rebuild resume rewinds provider selection/inference and those setup paths
+  // upsert the local provider with locally available credentials.
   return Boolean(
     provider &&
       !isLocalInferenceProvider(provider) &&
