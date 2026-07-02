@@ -3080,7 +3080,9 @@ async function createSandbox(
     sandboxCreateFailureDiagnostics.handleSandboxCreateResultFailure(createResult, {
       classifyFailure: classifySandboxCreateFailure,
       printRecoveryHints: printSandboxCreateRecoveryHints,
-      createArgs,
+      // Recovery hints must reflect the args actually used to create (which the
+      // BuildKit prebuild may have rewritten to `--from <image-ref>`).
+      createArgs: launchCreateArgs,
       exit: (code) => process.exit(code),
     });
   }

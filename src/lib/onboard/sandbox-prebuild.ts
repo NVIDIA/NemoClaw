@@ -27,6 +27,7 @@
  */
 
 import { streamSandboxCreate } from "../sandbox/create-stream";
+import { buildSubprocessEnv } from "../subprocess-env";
 import { addTraceEvent } from "./tracing";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -60,7 +61,11 @@ export interface SandboxPrebuildInput {
 }
 
 function defaultStreamBuild(command: string): Promise<StreamBuildResult> {
-  return streamSandboxCreate(command, process.env, {
+  // Run the build under the sanitized subprocess allowlist (PATH/HOME/DOCKER_HOST
+  // etc.) — the same env the openshell create uses — rather than raw process.env,
+  // so host secrets (e.g. NVIDIA_API_KEY) never enter the build subprocess.
+  // DOCKER_BUILDKIT is set inline in the command, so BuildKit is still used.
+  return streamSandboxCreate(command, buildSubprocessEnv(), {
     initialPhase: "build",
     traceEvent: addTraceEvent,
   });
@@ -102,6 +107,11 @@ export function sandboxLocalImageRef(sandboxName: string): string {
   return `${LOCAL_IMAGE_REPO}:${tag}`;
 }
 
+// Single-quote a value for safe interpolation into the `bash -lc` build command.
+// The interpolated values here (the mkdtemp build-context dir and the
+// name-derived image tag) are internal, not user-controlled, but they are
+// quoted defensively so a path containing shell metacharacters can never break
+// out of the command.
 function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
