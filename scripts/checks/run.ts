@@ -32,6 +32,11 @@ const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-coverage-ignore.ts"],
   },
   {
+    name: "docs-publish-workflows",
+    command: TSX,
+    args: ["scripts/checks/docs-publish-workflows.ts"],
+  },
+  {
     name: "layer-import-boundaries",
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.ts"],

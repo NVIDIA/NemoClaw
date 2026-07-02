@@ -22,9 +22,12 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    environment: docs-public
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -38,6 +41,14 @@ jobs:
         run: |
           npm run docs:sync-agent-variants
           npm run docs
+
+      - name: Verify release tag commit is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Public docs publishing only runs for release tags whose commits are reachable from origin/main."
+            exit 1
+          fi
 
       - name: Publish public docs
         env:
