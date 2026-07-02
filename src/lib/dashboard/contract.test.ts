@@ -54,6 +54,16 @@ describe("buildChain", () => {
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
   });
 
+  it("prefers an explicit non-loopback chatUiUrl over the WSL fallback", () => {
+    const c = buildChain({
+      isWsl: true,
+      wslHostAddress: "172.24.240.1",
+      chatUiUrl: "https://example.com:18789",
+    });
+    expect(c.accessUrl).toBe("https://example.com:18789");
+    expect(c.fallbackUrls).toEqual([]);
+  });
+
   it("respects explicit port override", () => {
     expect(buildChain({ port: 19000 }).port).toBe(19000);
   });
