@@ -929,7 +929,7 @@ finally:
     }
   });
 
-  it("requires the public Hermes API relay before acknowledging reload health", () => {
+  it("requires the public relay and stable identity before acknowledging reload health", () => {
     const result = runPython(`
 import importlib.util, json, signal, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
@@ -970,8 +970,8 @@ health_ports = list(ports)
 
 ports.clear()
 statuses[module.GATEWAY_INTERNAL_PORT] = 200
-statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401]
-identities = iter(((1, 10), (2, 20), (2, 20), (2, 20)))
+statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401, 401]
+identities = iter(((1, 10), (2, 20), (2, 20), (3, 30), (3, 30), (3, 30)))
 module._gateway_identity = lambda: next(identities)
 signals = []
 module.os.kill = lambda pid, sent_signal: signals.append((pid, signal.Signals(sent_signal).name))
@@ -998,9 +998,9 @@ print(json.dumps({
       internal_down: false,
       health_ports: [18642, 8642, 18642, 8642, 18642],
       reloaded: true,
-      reload_ports: [18642, 8642, 18642, 8642],
+      reload_ports: [18642, 8642, 18642, 8642, 18642, 8642],
       signals: [[1, "SIGUSR1"]],
-      sleeps: [1],
+      sleeps: [1, 1],
     });
   });
 
