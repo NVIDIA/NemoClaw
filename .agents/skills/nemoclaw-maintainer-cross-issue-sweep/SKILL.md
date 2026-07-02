@@ -109,7 +109,7 @@ See `templates/report.md` for the format.
 
 ## Composition with other skills
 
-The pr-comparator (`nemoclaw-maintainer-pr-comparator`) calls this skill as a sub-step when comparing competing PRs. Adjacent-fix counts feed Tier 3 tiebreakers; contradicting hits factor into Tier 2 quality scoring.
+This skill is a separate, optional follow-up to `nemoclaw-maintainer-pr-comparator`. The comparator does not call it or include its findings in the deterministic score. Run the sweep explicitly when a maintainer wants adjacent-fix or contradiction evidence alongside the comparator verdict, and report that evidence separately.
 
 ## What this skill does NOT do (deferred)
 

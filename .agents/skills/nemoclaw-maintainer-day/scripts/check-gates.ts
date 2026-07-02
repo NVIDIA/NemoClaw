@@ -4,30 +4,30 @@
 /**
  * Deterministic merge-gate checker for a single NemoClaw PR.
  *
- * Checks all 5 required gates and outputs structured JSON.
+ * Checks all required gates and outputs structured JSON.
  * Claude uses the output to decide: approve, route to salvage, or report blockers.
  *
  * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
  */
 
 import {
-  isRiskyFile,
-  isTestFile,
-  run,
-  ghJson,
-  parseStringArg,
-  REQUIRED_CHECK_NAMES,
-  type StatusCheck,
-} from "./shared.ts";
-import {
+  evalPraComment,
+  type PrAdvisorGateResult,
+  type PraRun,
   parsePraCommentNdjson,
   parsePraMeta,
   selectLatestTrustedPraComment,
-  evalPraComment,
   validateAdvisorRun,
-  type PraRun,
-  type PrAdvisorGateResult,
 } from "./pra-gate.ts";
+import {
+  ghJson,
+  isRiskyFile,
+  isTestFile,
+  parseStringArg,
+  REQUIRED_CHECK_NAMES,
+  run,
+  type StatusCheck,
+} from "./shared.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,6 +60,10 @@ interface GateOutput {
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
     prAdvisor: PrAdvisorGateResult;
+    contributorCompliance: GateResult & {
+      dcoDeclarationPresent?: boolean;
+      unverifiedCommits?: Array<{ sha: string; reason: string }>;
+    };
   };
 }
 
@@ -352,6 +356,112 @@ function checkRiskyCodeTested(
 }
 
 // ---------------------------------------------------------------------------
+// Gate 6: Contributor compliance
+// ---------------------------------------------------------------------------
+
+const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/mu;
+
+interface CommitVerificationRecord {
+  sha: string;
+  verified: boolean;
+  reason: string;
+}
+
+function normalizeCommitVerification(value: unknown): CommitVerificationRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { sha: "(unknown)", verified: false, reason: "malformed_commit_verification_data" };
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.sha !== "string" ||
+    typeof record.verified !== "boolean" ||
+    typeof record.reason !== "string"
+  ) {
+    return {
+      sha: typeof record.sha === "string" ? record.sha : "(unknown)",
+      verified: false,
+      reason: "malformed_commit_verification_data",
+    };
+  }
+
+  return { sha: record.sha, verified: record.verified, reason: record.reason };
+}
+
+function checkContributorCompliance(
+  repo: string,
+  number: number,
+  body: string,
+): GateResult & {
+  dcoDeclarationPresent?: boolean;
+  unverifiedCommits?: Array<{ sha: string; reason: string }>;
+} {
+  const dcoDeclarationPresent = DCO_DECLARATION.test(body ?? "");
+  const raw = run("gh", [
+    "api",
+    `repos/${repo}/pulls/${number}/commits`,
+    "--paginate",
+    "--jq",
+    '.[] | {sha, verified: (.commit.verification.verified // false), reason: (.commit.verification.reason // "unknown")}',
+  ]);
+
+  if (!raw) {
+    return {
+      pass: false,
+      details: "Could not verify PR commit signatures (API error — fail-closed)",
+      dcoDeclarationPresent,
+    };
+  }
+
+  const commits: CommitVerificationRecord[] = [];
+  try {
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) commits.push(normalizeCommitVerification(JSON.parse(trimmed) as unknown));
+    }
+  } catch {
+    return {
+      pass: false,
+      details: "Could not parse PR commit signature data — fail-closed",
+      dcoDeclarationPresent,
+    };
+  }
+
+  if (commits.length === 0) {
+    return {
+      pass: false,
+      details: "No PR commits returned while checking contributor compliance — fail-closed",
+      dcoDeclarationPresent,
+    };
+  }
+
+  const unverifiedCommits = commits
+    .filter((commit) => commit.verified !== true)
+    .map(({ sha, reason }) => ({ sha, reason }));
+  if (!dcoDeclarationPresent || unverifiedCommits.length > 0) {
+    const failures = [
+      ...(dcoDeclarationPresent ? [] : ["PR body lacks a valid Signed-off-by declaration"]),
+      ...(unverifiedCommits.length > 0
+        ? [`${unverifiedCommits.length} commit(s) are not GitHub Verified`]
+        : []),
+    ];
+    return {
+      pass: false,
+      details: failures.join("; "),
+      dcoDeclarationPresent,
+      unverifiedCommits,
+    };
+  }
+
+  return {
+    pass: true,
+    details: `DCO declaration present; all ${commits.length} commit(s) are GitHub Verified`,
+    dcoDeclarationPresent,
+    unverifiedCommits: [],
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -372,11 +482,12 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,files,statusCheckRollup,mergeStateStatus,headRefOid",
+    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid",
   ]) as {
     number: number;
     title: string;
     url: string;
+    body: string;
     files: Array<{ path: string; status: string }>;
     statusCheckRollup: StatusCheck[];
     mergeStateStatus: string;
@@ -393,13 +504,20 @@ function main(): void {
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const prAdvisor = checkPrAdvisor(repo, prNumber, prData.headRefOid ?? "");
+  const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
 
   const output: GateOutput = {
     pr: prNumber,
     url: prData.url,
     title: prData.title,
-    allPass: ci.pass && conflicts.pass && coderabbit.pass && riskyCodeTested.pass && prAdvisor.pass,
-    gates: { ci, conflicts, coderabbit, riskyCodeTested, prAdvisor },
+    allPass:
+      ci.pass &&
+      conflicts.pass &&
+      coderabbit.pass &&
+      riskyCodeTested.pass &&
+      prAdvisor.pass &&
+      contributorCompliance.pass,
+    gates: { ci, conflicts, coderabbit, riskyCodeTested, prAdvisor, contributorCompliance },
   };
 
   console.log(JSON.stringify(output, null, 2));

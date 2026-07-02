@@ -240,7 +240,6 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       "npm",
       "openclaw-pricing",
       "pypi",
-      "weather",
     ]);
   });
 
@@ -291,7 +290,6 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
       "npm",
       "openclaw-pricing",
       "pypi",
-      "weather",
     ]);
   });
 

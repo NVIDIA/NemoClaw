@@ -11,8 +11,8 @@
  * suite against the live environment. Tears down the instance when done.
  *
  * NOTE: This does NOT test the community Launchable install path
- * (launch-plugin.sh). For that, see test-launchable-smoke.sh wired into
- * nightly-e2e.yaml.
+ * (launch-plugin.sh). For that, run e2e-launchable-smoke in
+ * e2e.yaml.
  *
  * Intended to be run from CI via:
  *   npx vitest run --project e2e-branch-validation
@@ -53,6 +53,7 @@
 import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child_process";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../../src/lib/core/shell-quote";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -99,7 +100,7 @@ function requireInstanceName(): string {
 }
 
 // Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
+// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
 // Default: use the repo-local script (hermetic — always matches the checked-out branch).
 // Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
@@ -400,14 +401,17 @@ function runRemoteCommand(
   command: string,
   timeoutMs = GPU_TEST_SUITE ? 1_800_000 : 900_000,
 ): string {
+  const dockerGroupCommand = shellQuote(`${command} 2>&1 | tee /tmp/test-output.log`);
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    // Docker socket is chmod 666 by setup script, no sg docker needed.
-    `${command} 2>&1 | tee /tmp/test-output.log`,
+    // The setup adds this user to the docker group without weakening the
+    // host-root-equivalent socket. `sg` also handles a session created before
+    // that group membership became visible.
+    `sg docker -c ${dockerGroupCommand}`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
@@ -421,8 +425,16 @@ function runRemoteCommand(
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runRemoteTest(scriptPath: string): string {
-  return runRemoteCommand(`bash ${scriptPath}`);
+function runRemoteVitest(project: "cli" | "e2e-live", target: string): string {
+  return runRemoteCommand(
+    `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project ${project} ${target} --silent=false --reporter=default`,
+  );
+}
+
+function expectVitestPassed(output: string): void {
+  expect(output).toContain("Test Files");
+  expect(output).toMatch(/\bpassed\b/);
+  expect(output).not.toMatch(/\bfailed\b/i);
 }
 
 function printRemoteFailureDiagnostics(): void {
@@ -434,7 +446,7 @@ function printRemoteFailureDiagnostics(): void {
         `echo "--- openshell sandbox list ---"`,
         `PATH=$HOME/.local/bin:$PATH openshell sandbox list 2>&1 || true`,
         `echo "--- docker ps ---"`,
-        `docker ps -a --filter label=openshell.ai/managed-by=openshell 2>&1 || true`,
+        `sg docker -c 'docker ps -a --filter label=openshell.ai/managed-by=openshell' 2>&1 || true`,
         `echo "--- openshell gateway log ---"`,
         `tail -200 "$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log" 2>&1 || true`,
         `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
@@ -741,7 +753,6 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
     `sudo nvidia-ctk runtime configure --runtime=docker`,
     `sudo systemctl restart docker`,
-    `sudo chmod 666 /var/run/docker.sock`,
     // Brev GPU branch-validation VMs are single-use CI hosts. The
     // openshell-docker network is created later by gateway startup, so this
     // setup cannot know the exact future bridge subnet. Allow Docker's default
@@ -750,7 +761,7 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     // route is actually broken (#3959).
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
-    `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
+    `sg docker -c 'docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi'`,
   ];
 }
 
@@ -876,12 +887,10 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
  * hand off to writeManualRegistry() to kill the hung process.
  */
 function pollForSandboxReady(elapsed: () => string): void {
-  // Launch onboard fully detached. We chmod the docker socket so we don't
-  // need sg docker (which complicates backgrounding). nohup + </dev/null +
-  // disown ensures the SSH session can exit cleanly without waiting for
-  // the background process.
+  // Launch onboard fully detached inside a docker-group shell. nohup plus
+  // redirected descriptors lets the SSH session exit cleanly while retaining
+  // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-  ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -891,7 +900,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `sg docker -c ${shellQuote("nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &")}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -1100,9 +1109,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     } else {
       // ── Launchable path: pre-baked CI environment ──────────────────
       // Uses brev create with --startup-script.
-      // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
-      // and pre-pulls Docker images. We just need to rsync branch code and
-      // run onboard.
+      // The script pre-installs Docker, Node.js, OpenShell CLI, and npm deps.
+      // We just need to rsync branch code and run onboard.
       createBrevInstanceAndWaitForSsh(elapsed);
 
       // Wait for launchable setup to finish (sentinel file)
@@ -1158,9 +1166,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-full-e2e.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/full-e2e.test.ts");
+      expectVitestPassed(output);
     },
     900_000,
   );
@@ -1168,9 +1175,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(GPU_TEST_SUITE)(
     "GPU E2E suite passes on Brev GPU VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
-      expect(output).toContain("GPU E2E PASSED");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/gpu-e2e.test.ts");
+      expectVitestPassed(output);
     },
     1_800_000,
   );
@@ -1178,9 +1184,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-credential-sanitization.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/credential-sanitization.test.ts");
+      expectVitestPassed(output);
     },
     600_000,
   );
@@ -1188,9 +1193,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-telegram-injection.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/telegram-injection.test.ts");
+      expectVitestPassed(output);
     },
     600_000,
   );
@@ -1218,9 +1222,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/messaging-providers.test.ts");
+      expectVitestPassed(output);
     },
     900_000, // 15 min — creates a new sandbox with messaging providers
   );
@@ -1231,9 +1234,11 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-compatible-endpoint.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+      );
+      expectVitestPassed(output);
     },
     900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
   );
@@ -1243,11 +1248,11 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     () => {
       const output = runRemoteCommand(
         [
-          `NEMOCLAW_RUN_E2E_SCENARIOS=1`,
+          `NEMOCLAW_RUN_LIVE_E2E=1`,
           `NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1`,
           `NEMOCLAW_SANDBOX_NAME=e2e-test`,
-          `npx vitest run --project e2e-scenarios-live`,
-          `test/e2e-scenario/live/dashboard-remote-bind.test.ts`,
+          `npx vitest run --project e2e-live`,
+          `test/e2e/live/dashboard-remote-bind.test.ts`,
           `--silent=false --reporter=default`,
         ].join(" "),
         300_000,

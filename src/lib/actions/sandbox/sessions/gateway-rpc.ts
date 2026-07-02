@@ -35,7 +35,7 @@ const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device
 // - Source owner: OpenClaw owns the gateway SDK/runtime, pairing model,
 //   `sessions.reset/delete` handlers, package layout, and proxy-env contract.
 // - Source-fix constraint: this hotfix must stabilize NemoClaw main without
-//   merging all OpenShell/OpenClaw 0.0.67 work, so NemoClaw uses the shipped
+//   merging all OpenShell/OpenClaw dependency-upgrade work, so NemoClaw uses the shipped
 //   SDK backend client over loopback instead of mutating sandbox session files
 //   or broadening pairing approval behavior.
 // - Runtime validation anchor: `sessions-agents-cli-e2e` exercises reset/delete

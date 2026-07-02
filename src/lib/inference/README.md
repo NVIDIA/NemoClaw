@@ -12,6 +12,7 @@ config.ts                 inference config parsing and normalization
 health.ts                 inference endpoint health checks
 local.ts                  local inference orchestration helpers
 provider-models.ts        provider model catalog support
+nvidia-featured-models.ts NVIDIA featured catalog parsing and fallback
 model-prompts.ts          prompt/model display helpers
 nim.ts                    NIM catalog and lifecycle support
 ollama/model-size.ts      Ollama model size parsing

@@ -5,10 +5,9 @@
 // startGatewayWithOptions() takes when `openshell gateway start` reports
 // the Docker daemon is not reachable. See src/lib/onboard.ts:2233.
 //
-// This helper-level suite preserves coverage from the former
-// test/e2e/test-docker-unreachable-gateway-start.sh, which was structurally
-// a Node-process unit test of startGateway() with a PATH-shimmed openshell
-// binary, not a sandbox-lifecycle e2e.
+// This helper-level suite preserves the former shell regression, which was
+// structurally a Node-process unit test of startGateway() with a PATH-shimmed
+// openshell binary, not a sandbox-lifecycle E2E.
 //
 // Original regression: NemoClaw #2347.
 // Owning migration issue: NemoClaw #4355.

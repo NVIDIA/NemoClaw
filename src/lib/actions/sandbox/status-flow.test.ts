@@ -194,6 +194,7 @@ describe("showSandboxStatus flow", () => {
     await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
 
     const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Sandbox-scoped status for 'alpha'");
     expect(output).toContain("Sandbox: alpha");
     expect(output).toContain("Model:    nvidia/nemotron-live");
     expect(output).toContain("Inference: healthy");

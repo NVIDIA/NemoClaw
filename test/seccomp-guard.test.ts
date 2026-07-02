@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const SECCOMP_GUARD_SOURCE = path.join(
@@ -31,6 +31,16 @@ function extractRuntimeShellEnvSnippet(src: string): string {
     throw new Error("Expected write_runtime_shell_env in scripts/nemoclaw-start.sh");
   }
   return `${src.slice(start, end).trimEnd()}\nwrite_runtime_shell_env`;
+}
+
+function extractShellFunction(source: string, name: string): string {
+  const header = `${name}() {`;
+  const start = source.indexOf(header);
+  expect(start, `expected ${name} in nemoclaw-start.sh`).not.toBe(-1);
+  const body = source.slice(start + header.length);
+  const closing = body.match(/^}$/m);
+  expect(closing, `expected closing brace for ${name}`).not.toBeNull();
+  return `${name}() {${body.slice(0, closing?.index ?? 0)}\n}`;
 }
 
 describe("Seccomp guard preload", () => {
@@ -62,14 +72,25 @@ describe("Seccomp guard preload", () => {
       `source ${JSON.stringify(path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh"))}`,
       'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
       "NODE_OPTIONS='--require /already-loaded.js'",
+      "NODE_USE_ENV_PROXY=0",
+      extractShellFunction(src, "node_options_has_require"),
+      extractShellFunction(src, "append_node_require_once"),
+      `_SANDBOX_SAFETY_NET=${JSON.stringify(path.join(tempDir, "safety-net.js"))}`,
+      `_SANDBOX_SAFETY_NET_SOURCE=${JSON.stringify(SECCOMP_GUARD_SOURCE)}`,
+      `_PROXY_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "proxy-fix.js"))}`,
+      `_PROXY_FIX_SOURCE=${JSON.stringify(SECCOMP_GUARD_SOURCE)}`,
+      `_NEMOTRON_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "nemotron-fix.js"))}`,
+      `_NEMOTRON_FIX_SOURCE=${JSON.stringify(SECCOMP_GUARD_SOURCE)}`,
+      `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tempDir, "ciao-guard.js"))}`,
+      `_CIAO_GUARD_SOURCE=${JSON.stringify(SECCOMP_GUARD_SOURCE)}`,
+      `_WS_FIX_SCRIPT=${JSON.stringify(path.join(tempDir, "ws-fix.js"))}`,
+      `_WS_FIX_SOURCE=${JSON.stringify(path.join(tempDir, "missing-ws-source.js"))}`,
       block,
       'PROXY_HOST="10.200.0.1"',
       'PROXY_PORT="3128"',
       '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
       '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
       "_TOOL_REDIRECTS=()",
-      '_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"',
-      '_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"',
       "set +u",
       persistBlock,
       "printf 'NODE_OPTIONS=%s\\n' \"$NODE_OPTIONS\"",
