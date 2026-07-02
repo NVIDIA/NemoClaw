@@ -544,10 +544,24 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 
 | Aspect | Detail |
 |---|---|
-| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat` or `cli`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. All other clients or scopes are rejected and logged. |
+| Default | Startup auto-pairing and general `connect`-time approval share one policy. NemoClaw approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat` or `cli`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. Agent message recovery uses the narrower policy described below. All other clients or scopes are rejected and logged. |
 | What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
 | Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
+
+Connect-shell OpenClaw agent turns and direct `$$nemoclaw <sandbox> exec -- openclaw agent -m ...` commands use a narrower recovery path.
+It runs only for message-bearing agent commands.
+It approves only CLI operator pending requests with a safe `requestId`, non-empty scopes limited to `operator.pairing`, `operator.read`, and `operator.write`, and no paired-device identity mismatch.
+It leaves webchat, Control UI, `operator.admin`, empty or missing scope, malformed request ID, and identity-mismatch requests unapproved for manual review.
+
+Cron and exec commands can request `operator.admin`.
+NemoClaw does not auto-approve `operator.admin`, so expected admin-scope requests must be approved manually from a connect shell.
+Use the plural `devices` command:
+
+```bash
+openclaw devices list --json
+openclaw devices approve <requestId>
+```
 
 </AgentOnly>
 <AgentOnly variant="hermes">

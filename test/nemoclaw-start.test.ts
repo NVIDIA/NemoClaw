@@ -471,6 +471,7 @@ describe("nemoclaw-start non-root fallback", () => {
       'install_messaging_runtime_preloads() { echo "ORDER:install"; }',
       'verify_messaging_runtime_secret_scans() { echo "ORDER:verify"; }',
       "seed_default_workspace_templates() { :; }",
+      "prepare_oneshot_openclaw_agent_guard() { :; }",
       extractShellFunctionFromSource(src, "run_oneshot_command"),
       "_SANDBOX_HOME=/sandbox",
       "NEMOCLAW_CMD=(bash -c 'echo EXPLICIT_COMMAND; exit 23')",
@@ -1042,6 +1043,83 @@ exit 1
           shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
         ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
       }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+  it("recovers initial CLI pairing from a safe same-device request (#5324)", () => {
+    const setup = writeProxyEnvWithGuard();
+    const stateDir = path.join(setup.tmpDir, "openclaw-state");
+    const devicesDir = path.join(stateDir, "devices");
+    const identityDir = path.join(stateDir, "identity");
+    const pendingFile = path.join(devicesDir, "pending.json");
+    const pairedFile = path.join(devicesDir, "paired.json");
+    const authFile = path.join(identityDir, "device-auth.json");
+    const deviceId = "45ca1f45e4a98f7f43cf36bb6bfb3542992eb98a9a5f2a527af767f62192b4b8";
+    const publicKey = "GBEmagaIvyPrVvist7yrKlIMpdTDxbwXaUPFJtp-AwQ";
+    const publicKeyPem =
+      "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGBEmagaIvyPrVvist7yrKlIMpdTDxbwXaUPFJtp+AwQ=\n-----END PUBLIC KEY-----\n";
+    fs.mkdirSync(devicesDir, { recursive: true });
+    fs.mkdirSync(identityDir, { recursive: true });
+    fs.writeFileSync(
+      pendingFile,
+      JSON.stringify({
+        "request-1": {
+          requestId: "request-1",
+          deviceId,
+          publicKey,
+          platform: "linux",
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.pairing", "operator.write"],
+        },
+      }),
+    );
+    fs.writeFileSync(pairedFile, "{}");
+    fs.writeFileSync(
+      path.join(identityDir, "device.json"),
+      JSON.stringify({ version: 1, deviceId, publicKeyPem }),
+    );
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
+{"request-2":{"requestId":"request-2","deviceId":${JSON.stringify(deviceId)},"publicKey":${JSON.stringify(publicKey)},"platform":"linux","clientId":"cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.pairing","operator.write"]}}
+JSON
+echo "gateway connect failed: GatewayClientRequestError: device pairing required (requestId: request-2)" >&2
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runGuardedShell(setup, [
+        `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
+        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+      ]);
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
+        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
+      );
+      expect(JSON.parse(result.stdout).compatibility).toBe(
+        "openclaw-approve-recovered-initial-cli",
+      );
+      expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toEqual({});
+      const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
+      const auth = JSON.parse(fs.readFileSync(authFile, "utf-8"));
+      const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
+      expect(paired[deviceId].publicKey).toBe(publicKey);
+      expect(paired[deviceId].clientId).toBe("cli");
+      expect(paired[deviceId].approvedScopes).toEqual(expectedScopes);
+      expect(paired[deviceId].tokens.operator.scopes).toEqual(expectedScopes);
+      expect(auth.deviceId).toBe(deviceId);
+      expect(auth.tokens.operator.scopes).toEqual(expectedScopes);
+      expect(auth.tokens.operator.token).toBe(paired[deviceId].tokens.operator.token);
+      expect(JSON.stringify(paired)).not.toContain("operator.admin");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
