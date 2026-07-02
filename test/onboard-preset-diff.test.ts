@@ -26,7 +26,12 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
       key.startsWith("DISCORD_") ||
       key.startsWith("SLACK_") ||
       key.startsWith("TELEGRAM_") ||
+      // Teams credentials span both prefixes: the core bot credentials use
+      // `MSTEAMS_*` (MSTEAMS_APP_ID/APP_PASSWORD/TENANT_ID/PORT) while a couple
+      // of config keys use `TEAMS_*` (TEAMS_ALLOWED_USERS/REQUIRE_MENTION).
+      // Scrub both so a real `MSTEAMS_*` token can't activate Teams in the child.
       key.startsWith("TEAMS_") ||
+      key.startsWith("MSTEAMS_") ||
       key.startsWith("WECHAT_") ||
       key.startsWith("WHATSAPP_")
     ) {
