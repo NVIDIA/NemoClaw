@@ -55,7 +55,11 @@ describe("listSandboxPolicies rendering (#5967)", () => {
     vi.clearAllMocks();
   });
 
-  const lineFor = (preset: string) => lines.find((line) => line.includes(`${preset} —`)) ?? "";
+  // Match the rendered marker + preset name directly. The row may carry a
+  // provenance tag (e.g. `● discord [user-added] — …`) between the name and the
+  // description, so keying off the marker+name is robust to that suffix.
+  const lineFor = (preset: string) =>
+    lines.find((line) => new RegExp(`[●○] ${preset}\\b`).test(line)) ?? "";
 
   it("marks an enabled Discord preset applied (●) when it is in both registry and gateway", () => {
     // The #5967 fix persists `discord` to registry.policies AND applies it to the
