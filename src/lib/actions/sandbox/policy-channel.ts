@@ -379,6 +379,7 @@ function unsupportedMessagingChannelForPresetContent(
   content: string,
   agent: AgentDefinition,
 ): ChannelManifest | null {
+  if (typeof content !== "string") return null;
   const policyKeys = new Set(policies.parsePresetPolicyKeys(content));
   if (policyKeys.size === 0) return null;
   for (const preset of listMessagingPolicyPresetMetadata()) {
