@@ -41,7 +41,13 @@ Keep the loaded skip list in memory for use throughout the skill execution and t
 ## Step 0.5: Find Release Announcement Notes
 
 When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether the release has shipped. If neither the release tag nor announcement exists, use pre-tag release prep. If either one exists, use post-release recovery.
-For pre-tag release prep, use the draft release plan, maintainer context, PR list, and commit scan as source context because the announcement may not exist yet.
+For pre-tag release prep, use the user's maintainer context, the live PR and issue lists carrying the target `v<n>` label, and the commit scan as source context because the announcement may not exist yet. If `../nemoclaw-release-v<n>/plan.json` already exists from `npm run release:plan`, read it as supplemental context. Do not generate a release plan solely for docs, and do not treat an existing plan as current after `origin/main` moves.
+
+```bash
+gh pr list --repo NVIDIA/NemoClaw --state all --label "v<n>" --limit 100 --json number,title,state,mergedAt,url
+gh issue list --repo NVIDIA/NemoClaw --state all --label "v<n>" --limit 100 --json number,title,state,url
+```
+
 For post-release recovery, find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
 Use any available announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
 
@@ -210,7 +216,7 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Determine the documented release version `n` from the user's request. If the user did not provide a release version, ask for it before opening the release-prep PR.
+1. Read the documented release version `n` from the user's natural-language request. If the user did not provide it, ask interactively before opening the release-prep PR. Do not infer the version from the latest tag or available release labels.
 2. For the default pre-tag path, label the PR with the release being prepared. Release labels use `vX.Y.Z` format. For example, release-note docs for release `0.0.63` use label `v0.0.63`.
 3. Use the next patch release label only as a post-release recovery fallback when the release tag or announcement already exists and maintainers missed the pre-tag docs step. For example, a catch-up docs PR after release `0.0.63` uses label `v0.0.64`. Increment only the patch component; if the version is nonstandard or pre-release, ask before choosing a label.
 4. Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the release changes the AI-agent documentation entry points or routing guidance.
@@ -241,7 +247,7 @@ Commit changes and open a pull request with a concise summary of the doc updates
 Apply the `area: docs` label and the correct release label so reviewers can identify doc-only changes for the intended release train.
 Add `area: skills` only if the PR changes a file under `.agents/skills/`.
 When creating the PR with `gh pr create`, pass the labels. For example, a pre-tag release-note docs PR for `0.0.63` uses `--label "area: docs" --label v0.0.63`. A post-release recovery docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
-If the release label does not exist, stop before `gh pr create` and report it. Do not substitute another label or open the PR without the release label.
+If the release label does not exist, stop before `gh pr create` and ask a maintainer to create the canonical `vX.Y.Z` release-target label. Retry after it exists. Do not auto-create or substitute a label in this contributor workflow, and do not open the PR without the release label.
 Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
 
 ## Tips
@@ -260,7 +266,7 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 2. Filter to `feat`, `fix`, `refactor`, `perf` commits touching user-facing code.
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
-5. For release-specific docs, use the draft release plan, maintainer context, PR list, commit scan, and any available announcement as source context.
+5. For release-specific docs, use the user's maintainer context, live release-labeled PR and issue lists, commit scan, any existing generated release plan, and any available announcement as source context.
 6. Draft doc updates reflecting the source code changes in the commits following the style guide.
 7. **Release prep only:** Determine the release label from the user-requested documented release version. For the default pre-tag path, use the release being prepared, such as `v0.0.63` for release `0.0.63`.
 8. **Post-release recovery only:** If maintainers missed the pre-tag docs step and the release already shipped, use the next patch release label. For a post-release docs refresh for `0.0.63`, use label `v0.0.64`.
@@ -273,5 +279,5 @@ User says: "Catch up the docs for everything merged since v0.1.0."
    - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-   If the selected release label does not exist, stop before PR creation and report it. Do not substitute another label or open the PR without the release label.
+   If the selected release label does not exist, stop before PR creation and ask a maintainer to create it. Retry after it exists; do not auto-create or substitute a label in this contributor workflow, and do not open the PR without the release label.
    Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.
