@@ -33,12 +33,14 @@ const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_E2E_PROGRESS_SANDBOX ?? "e2e-progress-budget";
 const ONBOARD_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_200) * 1_000;
 const HEARTBEAT_MS = Number(process.env.NEMOCLAW_E2E_ONBOARD_HEARTBEAT_MS ?? 3_000);
-// Wall-clock budget for the whole onboard. Generous default so arbitrary CI
-// hardware / cold caches don't flake; the canonical Docker-driver/Brev runner
-// sets NEMOCLAW_E2E_ONBOARD_BUDGET_SECS=180 to enforce the ≤3-minute goal.
-const BUDGET_SECS = Number(process.env.NEMOCLAW_E2E_ONBOARD_BUDGET_SECS ?? 600);
+// Wall-clock budget for the whole onboard. Defaults to the issue's ≤3-minute
+// acceptance goal (180s) so the test enforces it by default; constrained
+// hardware / cold-cache runners can raise NEMOCLAW_E2E_ONBOARD_BUDGET_SECS.
+const BUDGET_SECS = Number(process.env.NEMOCLAW_E2E_ONBOARD_BUDGET_SECS ?? 180);
 const TEST_TIMEOUT_MS = 45 * 60_000;
-const liveTest = shouldRunLiveE2E() ? test : test.skip;
+// Gated at declaration (no in-body `if`): live E2E opt-in AND the built CLI is
+// present (repo CLI targets need `npm run build:cli`).
+const liveTest = shouldRunLiveE2E() && fs.existsSync(CLI_DIST_ENTRYPOINT) ? test : test.skip;
 
 validateSandboxName(SANDBOX_NAME);
 
@@ -108,21 +110,13 @@ async function cleanupProgressState(host: HostCliClient, sandbox: SandboxClient)
 liveTest(
   "onboard emits heartbeats + a phase-timings summary and completes within budget (#6002)",
   { timeout: TEST_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    if (!fs.existsSync(CLI_DIST_ENTRYPOINT)) {
-      skip("run `npm run build:cli` before live repo CLI targets");
-      return;
-    }
-
+  async ({ artifacts, cleanup, host, sandbox }) => {
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    if (docker.exitCode !== 0) {
-      skip("docker is required for the onboard progress/budget acceptance test");
-      return;
-    }
+    expect(docker.exitCode, resultText(docker)).toBe(0);
 
     const fake = await startFakeOpenAiCompatibleServer({
       port: Number(process.env.NEMOCLAW_FAKE_PORT ?? 0),
@@ -176,8 +170,8 @@ liveTest(
     expect(heartbeatCount, "expected at least one progress heartbeat").toBeGreaterThan(0);
     // (3) The end-of-onboard timing summary was printed.
     expect(printedTimings, "expected the 'Phase timings' summary").toBe(true);
-    // (4) Wall-clock budget (enforced when NEMOCLAW_E2E_ONBOARD_BUDGET_SECS is set;
-    // generous default guards against gross regressions without flaking).
+    // (4) Wall-clock budget: enforced by default at the issue's ≤3-minute goal
+    // (180s); constrained runners raise NEMOCLAW_E2E_ONBOARD_BUDGET_SECS.
     expect(
       elapsedSecs,
       `onboard took ${elapsedSecs}s, over the ${BUDGET_SECS}s budget`,
