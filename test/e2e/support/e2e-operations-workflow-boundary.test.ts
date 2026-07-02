@@ -221,6 +221,90 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it("executes the scorecard workflow body and emits advisory budget warnings", async () => {
+    const script = workflowScript("scorecard", "Generate E2E scorecard").replace(
+      "${{ toJSON(needs) }}",
+      JSON.stringify({ "generate-matrix": { result: "success" } }),
+    );
+    const warning = vi.fn();
+    const setOutput = vi.fn();
+    const summary = {
+      addRaw: vi.fn(),
+      write: vi.fn().mockResolvedValue(undefined),
+    };
+    summary.addRaw.mockReturnValue(summary);
+    const traceTiming = {
+      buildTraceTimingResult: vi.fn().mockResolvedValue({
+        budgetWarningMessage: "Cloud onboard advisory performance budget exceeded",
+        traceSummaryLines: [
+          "",
+          "### Onboard Performance Budget",
+          "",
+          "Status: **Advisory warning**",
+        ],
+        traceTimingLine: "Trace: cloud-onboard total 7m 0.0s",
+      }),
+    };
+    const scorecardJobs = {
+      isSelectiveDispatch: vi.fn().mockReturnValue(false),
+      loadWorkflowRunJobs: vi.fn().mockResolvedValue([]),
+      summarizeJobs: vi.fn().mockReturnValue({
+        cancelled: 0,
+        failedJobs: [],
+        failure: 0,
+        ran: 1,
+        skipped: 0,
+        success: 1,
+        total: 1,
+      }),
+    };
+    const slackBlocks = {
+      buildBlocks: vi.fn().mockReturnValue([]),
+      buildFallbackText: vi.fn().mockReturnValue("scorecard fallback"),
+      getSlackChannel: vi.fn().mockReturnValue("daily"),
+      getStatusColor: vi.fn().mockReturnValue("good"),
+    };
+    const runtimeRequire = (specifier: string) => {
+      if (specifier === "path") return { join: (...parts: string[]) => parts.join("/") };
+      if (specifier.endsWith("analyze-trace-timing.ts")) return traceTiming;
+      if (specifier.endsWith("summarize-jobs.ts")) return scorecardJobs;
+      if (specifier.endsWith("build-slack-blocks.ts")) return slackBlocks;
+      throw new Error(`Unexpected scorecard require: ${specifier}`);
+    };
+    const processMock = {
+      env: {
+        EXPLICIT_ONLY_JOBS: "",
+        GITHUB_WORKSPACE: "/workspace",
+        JOBS: "",
+        TARGETS: "",
+      },
+    };
+    const context = {
+      actor: "scorecard-test",
+      eventName: "schedule",
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 123,
+      serverUrl: "https://github.com",
+    };
+    const core = { setOutput, summary, warning };
+
+    await new AsyncFunction("require", "process", "github", "context", "core", script)(
+      runtimeRequire,
+      processMock,
+      {},
+      context,
+      core,
+    );
+
+    expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
+    expect(summary.addRaw).toHaveBeenCalledWith(
+      expect.stringContaining("### Onboard Performance Budget"),
+    );
+    expect(summary.write).toHaveBeenCalledOnce();
+    expect(setOutput).toHaveBeenCalledWith("scorecardData", expect.any(String));
+    expect(setOutput).toHaveBeenCalledWith("slackData", expect.any(String));
+  });
+
   it("keeps selective scorecards silent unless Slack posting is explicitly enabled", async () => {
     const script = workflowScript("scorecard", "Post scorecard to Slack");
     const info = vi.fn();

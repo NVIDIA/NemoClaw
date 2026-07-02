@@ -54,7 +54,7 @@ function zippedTimingSummary(text: string): Buffer {
       "python3",
       [
         "-c",
-        "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w'); z.write(sys.argv[2], sys.argv[3]); z.close()",
+        "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w', compression=zipfile.ZIP_DEFLATED); z.write(sys.argv[2], sys.argv[3]); z.close()",
         path.join(tempDir, "artifact.zip"),
         path.join(tempDir, TRACE_SUMMARY_FILE),
         TRACE_SUMMARY_FILE,
@@ -75,9 +75,26 @@ function zipEntries(entries: Record<string, string>): string {
     "python3",
     [
       "-c",
-      "import json, sys, zipfile; entries=json.loads(sys.argv[2]); z=zipfile.ZipFile(sys.argv[1], 'w'); [z.writestr(name, text) for name, text in entries.items()]; z.close()",
+      "import json, sys, zipfile; entries=json.loads(sys.argv[2]); z=zipfile.ZipFile(sys.argv[1], 'w', compression=zipfile.ZIP_DEFLATED); [z.writestr(name, text) for name, text in entries.items()]; z.close()",
       zipPath,
       payload,
+    ],
+    { encoding: "utf8" },
+  );
+  return zipPath;
+}
+
+function zipSymlink(entryName: string, target: string): string {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-symlink-"));
+  const zipPath = path.join(tempDir, "artifact.zip");
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      "import sys, zipfile; z=zipfile.ZipFile(sys.argv[1], 'w'); i=zipfile.ZipInfo(sys.argv[2]); i.create_system=3; i.external_attr=(0o120777 << 16); z.writestr(i, sys.argv[3]); z.close()",
+      zipPath,
+      entryName,
+      target,
     ],
     { encoding: "utf8" },
   );
@@ -240,6 +257,7 @@ describe("cloud onboard scorecard trace timing", () => {
     const summary = result.traceSummaryLines.join("\n");
     expect(result.budgetExceeded).toBe(true);
     expect(result.budgetWarningMessage).toContain("performance budget exceeded");
+    expect(result.traceTimingLine).toContain("no prior release tag found");
     expect(result.traceTimingLine).toContain("Budget: advisory warning");
     expect(summary).toContain("Current slowest phases:");
     expect(summary).toContain("- sandbox: 11m 40.0s");
@@ -421,16 +439,27 @@ describe("cloud onboard scorecard trace timing", () => {
     const validZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
     const extraEntryZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary(), "extra.txt": "x" });
     const traversalZip = zipEntries({ [`../${TRACE_SUMMARY_FILE}`]: timingSummary() });
+    const symlinkZip = zipSymlink(TRACE_SUMMARY_FILE, "/etc/passwd");
+    const corruptCrcZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
+    const corruptCrcArchive = readFileSync(corruptCrcZip);
+    const centralDirectoryOffset = corruptCrcArchive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    expect(centralDirectoryOffset).toBeGreaterThanOrEqual(0);
+    corruptCrcArchive[centralDirectoryOffset + 16] ^= 0xff;
+    writeFileSync(corruptCrcZip, corruptCrcArchive);
     try {
       expect(traceTiming.readValidatedTraceSummaryZip(validZip)).toContain(
         "nemoclaw.trace_timing.v1",
       );
       expect(traceTiming.readValidatedTraceSummaryZip(extraEntryZip)).toBeNull();
       expect(traceTiming.readValidatedTraceSummaryZip(traversalZip)).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(symlinkZip)).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(corruptCrcZip)).toBeNull();
     } finally {
       rmSync(path.dirname(validZip), { recursive: true, force: true });
       rmSync(path.dirname(extraEntryZip), { recursive: true, force: true });
       rmSync(path.dirname(traversalZip), { recursive: true, force: true });
+      rmSync(path.dirname(symlinkZip), { recursive: true, force: true });
+      rmSync(path.dirname(corruptCrcZip), { recursive: true, force: true });
     }
   });
 

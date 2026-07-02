@@ -4,7 +4,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const zlib = require("node:zlib");
 
 type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
 type Threshold = { minDeltaMs: number; minPercent: number };
@@ -48,10 +48,7 @@ type TraceTimingResult = {
 };
 type GitHubDeps = { github: any; context: any; core?: { warning?: (message: string) => void } };
 type TraceTimingServices = {
-  findLatestCompletedE2eRunForReleaseTag: (
-    deps: GitHubDeps,
-    tag: SemverTag,
-  ) => Promise<any | null>;
+  findLatestCompletedE2eRunForReleaseTag: (deps: GitHubDeps, tag: SemverTag) => Promise<any | null>;
   readTraceSummaryFromRun: (deps: GitHubDeps, runId: number) => Promise<OnboardTrace | null>;
   resolvePriorReleaseTag: (deps: GitHubDeps) => Promise<SemverTag | null>;
 };
@@ -59,6 +56,10 @@ type TraceTimingServices = {
 const WORKFLOW_FILE = "e2e.yaml";
 const TRACE_ARTIFACT_NAME = "e2e-cloud-onboard";
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
+const MAX_TRACE_SUMMARY_BYTES = 1024 * 1024;
+const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
+const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
+const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
 const ONBOARD_PERFORMANCE_BUDGET_FILE = "ci/onboard-performance-budget.json";
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase.";
@@ -119,24 +120,6 @@ function formatPhaseDelta(currentMs: number, priorMs: number): string {
   if (Math.abs(deltaMs) < 1) return "±0ms";
   const sign = deltaMs > 0 ? "+" : "-";
   return `${sign}${formatDuration(Math.abs(deltaMs))}`;
-}
-
-function extractPhaseDurations(spans: unknown[]): PhaseDurations {
-  const phases: PhaseDurations = {};
-  for (const span of spans) {
-    const record = span as Record<string, unknown> | null | undefined;
-    const name = record?.name;
-    const durationMs = Number(record?.duration_ms);
-    if (
-      typeof name !== "string" ||
-      !name.startsWith(ONBOARD_PHASE_PREFIX) ||
-      !Number.isFinite(durationMs)
-    ) {
-      continue;
-    }
-    phases[name] = (phases[name] ?? 0) + durationMs;
-  }
-  return phases;
 }
 
 function traceTimingResult(
@@ -531,27 +514,126 @@ async function findLatestCompletedE2eRunForReleaseTag(
   return null;
 }
 
-function listZipEntries(zipPath: string): string[] {
-  return execFileSync("unzip", ["-Z1", zipPath], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-  })
-    .split(/\r?\n/)
-    .map((entry: string) => entry.trim())
-    .filter(Boolean);
+function findZipEndOfCentralDirectory(archive: Buffer): number {
+  const minimumOffset = Math.max(0, archive.length - 22 - 0xffff);
+  for (let offset = archive.length - 22; offset >= minimumOffset; offset -= 1) {
+    if (
+      archive.readUInt32LE(offset) === ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE &&
+      offset + 22 + archive.readUInt16LE(offset + 20) === archive.length
+    ) {
+      return offset;
+    }
+  }
+  return -1;
 }
 
-function isExpectedTraceZipEntry(entry: string): boolean {
-  return entry === TRACE_SUMMARY_FILE && !entry.includes("\\") && !path.isAbsolute(entry);
+function crc32(data: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+// GitHub returns workflow artifacts as ZIP archives. Parse the one-file timing
+// artifact in-process so scorecard trust does not depend on a runner binary.
+function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
+  const endOffset = findZipEndOfCentralDirectory(archive);
+  if (endOffset < 0) return null;
+
+  const diskNumber = archive.readUInt16LE(endOffset + 4);
+  const centralDirectoryDisk = archive.readUInt16LE(endOffset + 6);
+  const entriesOnDisk = archive.readUInt16LE(endOffset + 8);
+  const totalEntries = archive.readUInt16LE(endOffset + 10);
+  const centralDirectorySize = archive.readUInt32LE(endOffset + 12);
+  const centralDirectoryOffset = archive.readUInt32LE(endOffset + 16);
+  if (
+    diskNumber !== 0 ||
+    centralDirectoryDisk !== 0 ||
+    entriesOnDisk !== 1 ||
+    totalEntries !== 1 ||
+    centralDirectoryOffset + centralDirectorySize !== endOffset ||
+    centralDirectoryOffset + 46 > endOffset ||
+    archive.readUInt32LE(centralDirectoryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
+  ) {
+    return null;
+  }
+
+  const creatorSystem = archive.readUInt8(centralDirectoryOffset + 5);
+  const flags = archive.readUInt16LE(centralDirectoryOffset + 8);
+  const compressionMethod = archive.readUInt16LE(centralDirectoryOffset + 10);
+  const expectedCrc = archive.readUInt32LE(centralDirectoryOffset + 16);
+  const compressedSize = archive.readUInt32LE(centralDirectoryOffset + 20);
+  const uncompressedSize = archive.readUInt32LE(centralDirectoryOffset + 24);
+  const fileNameLength = archive.readUInt16LE(centralDirectoryOffset + 28);
+  const extraLength = archive.readUInt16LE(centralDirectoryOffset + 30);
+  const commentLength = archive.readUInt16LE(centralDirectoryOffset + 32);
+  const diskStart = archive.readUInt16LE(centralDirectoryOffset + 34);
+  const externalAttributes = archive.readUInt32LE(centralDirectoryOffset + 38);
+  const localHeaderOffset = archive.readUInt32LE(centralDirectoryOffset + 42);
+  const centralEntryEnd =
+    centralDirectoryOffset + 46 + fileNameLength + extraLength + commentLength;
+  const fileName = archive.subarray(
+    centralDirectoryOffset + 46,
+    centralDirectoryOffset + 46 + fileNameLength,
+  );
+  const expectedFileName = Buffer.from(TRACE_SUMMARY_FILE, "utf8");
+  const unixFileType = (externalAttributes >>> 16) & 0xf000;
+  if (
+    centralEntryEnd !== endOffset ||
+    !fileName.equals(expectedFileName) ||
+    fileName.includes(0x2f) ||
+    fileName.includes(0x5c) ||
+    fileName.toString("utf8").includes("..") ||
+    diskStart !== 0 ||
+    (flags & 0x1) !== 0 ||
+    (compressionMethod !== 0 && compressionMethod !== 8) ||
+    compressedSize > MAX_TRACE_SUMMARY_BYTES ||
+    uncompressedSize > MAX_TRACE_SUMMARY_BYTES ||
+    (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
+    localHeaderOffset + 30 > centralDirectoryOffset ||
+    archive.readUInt32LE(localHeaderOffset) !== ZIP_LOCAL_FILE_SIGNATURE
+  ) {
+    return null;
+  }
+
+  const localFlags = archive.readUInt16LE(localHeaderOffset + 6);
+  const localCompressionMethod = archive.readUInt16LE(localHeaderOffset + 8);
+  const localFileNameLength = archive.readUInt16LE(localHeaderOffset + 26);
+  const localExtraLength = archive.readUInt16LE(localHeaderOffset + 28);
+  const localFileName = archive.subarray(
+    localHeaderOffset + 30,
+    localHeaderOffset + 30 + localFileNameLength,
+  );
+  const compressedDataOffset = localHeaderOffset + 30 + localFileNameLength + localExtraLength;
+  const compressedDataEnd = compressedDataOffset + compressedSize;
+  if (
+    localFlags !== flags ||
+    localCompressionMethod !== compressionMethod ||
+    !localFileName.equals(expectedFileName) ||
+    compressedDataEnd > centralDirectoryOffset
+  ) {
+    return null;
+  }
+
+  const compressedData = archive.subarray(compressedDataOffset, compressedDataEnd);
+  const summary =
+    compressionMethod === 0
+      ? Buffer.from(compressedData)
+      : zlib.inflateRawSync(compressedData, { maxOutputLength: MAX_TRACE_SUMMARY_BYTES });
+  if (summary.length !== uncompressedSize || crc32(summary) !== expectedCrc) return null;
+  return summary.toString("utf8");
 }
 
 function readValidatedTraceSummaryZip(zipPath: string): string | null {
-  const entries = listZipEntries(zipPath);
-  if (entries.length !== 1 || !isExpectedTraceZipEntry(entries[0])) return null;
-  return execFileSync("unzip", ["-p", zipPath, TRACE_SUMMARY_FILE], {
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-  });
+  try {
+    return readValidatedTraceSummaryArchive(fs.readFileSync(zipPath));
+  } catch {
+    return null;
+  }
 }
 
 async function readTraceSummaryFromRun(
@@ -709,7 +791,6 @@ module.exports = {
   buildTraceSummaryLines,
   evaluateOnboardPerformanceBudget,
   exceedsThreshold,
-  extractPhaseDurations,
   findLatestCompletedE2eRunForReleaseTag,
   formatTraceDelta,
   formatTopPhaseChanges,
