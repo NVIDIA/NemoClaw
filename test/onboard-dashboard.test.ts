@@ -13,6 +13,20 @@ const { createOnboardDashboardHelpers } = require("../src/lib/onboard/dashboard"
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
 
+function createTokenDownloadRunOpenshell() {
+  return vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+    if (args.join(" ").startsWith("sandbox download ")) {
+      const destDir = args[4];
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(destDir, "openclaw.json"),
+        JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+      );
+    }
+    return { status: 0 };
+  });
+}
+
 describe("onboard dashboard helpers", () => {
   it("prints platform-appropriate service hints for port conflicts", () => {
     expect(getPortConflictServiceHints("darwin").join("\n")).toMatch(/launchctl unload/);
@@ -173,17 +187,7 @@ describe("onboard dashboard helpers", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));
     const shouldShowNimLine = vi.fn(() => false);
-    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-      if (args.join(" ").startsWith("sandbox download ")) {
-        const destDir = args[4];
-        fs.mkdirSync(destDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(destDir, "openclaw.json"),
-          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-        );
-      }
-      return { status: 0 };
-    });
+    const runOpenshell = createTokenDownloadRunOpenshell();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
@@ -224,17 +228,7 @@ describe("onboard dashboard helpers", () => {
 
   it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
-      if (args.join(" ").startsWith("sandbox download ")) {
-        const destDir = args[4];
-        fs.mkdirSync(destDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(destDir, "openclaw.json"),
-          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
-        );
-      }
-      return { status: 0 };
-    });
+    const runOpenshell = createTokenDownloadRunOpenshell();
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell: vi.fn(() => ""),
