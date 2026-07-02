@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { type AgentDefinition, loadAgent } from "../../agent/defs";
+import type { AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
@@ -29,6 +29,7 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { resolveAgentForSandbox } from "../../sandbox/version";
 import { hashCredential } from "../../security/credential-hash";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 
@@ -345,12 +346,6 @@ export function listSandboxPolicies(sandboxName: string) {
 }
 
 // ── Messaging channels ───────────────────────────────────────────
-
-function resolveAgentForSandbox(sandboxName: string): AgentDefinition {
-  const entry = registry.getSandbox(sandboxName);
-  const agentName = entry?.agent || "openclaw";
-  return loadAgent(agentName);
-}
 
 function knownManifestChannelNames(): string[] {
   return messagingManifestRegistry.list().map((manifest) => manifest.id);
