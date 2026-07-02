@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { resetPhaseTimings } from "../phase-timings";
+import { formatPhaseTimingsSummary, resetPhaseTimings } from "../phase-timings";
 import type { OnboardFlowContext } from "./flow-context";
 import { onboardFlowPhaseResult } from "./flow-context";
 import { advanceTo } from "./result";
@@ -69,9 +69,22 @@ export async function runFinalOnboardFlowSequence<Context extends OnboardFlowCon
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
+  emitSummary?: (summary: string) => void;
 }) {
-  return runOnboardSequenceWithRunner({
-    ...options,
+  const { emitSummary = (line: string) => console.log(line), ...runnerOptions } = options;
+  const result = await runOnboardSequenceWithRunner({
+    ...runnerOptions,
     phases: finalOnboardFlowPhases(options.phases),
   });
+  // Emit the accumulated per-phase timing summary from the terminal seam —
+  // after every wrapped phase in the final slice (finalization, and any
+  // post_verify) has recorded — then clear the registry. This is the true
+  // "all phases complete" boundary, so the summary can't miss the last phase
+  // or leave a stray entry behind, regardless of which phase runs last (#6002).
+  const summary = formatPhaseTimingsSummary();
+  if (summary) {
+    emitSummary(summary);
+    resetPhaseTimings();
+  }
+  return result;
 }

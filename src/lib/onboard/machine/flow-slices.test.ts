@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   createSession,
@@ -11,6 +11,7 @@ import {
   type Session,
   type SessionUpdates,
 } from "../../state/onboard-session";
+import { getPhaseTimings, recordPhaseTiming, resetPhaseTimings } from "../phase-timings";
 import type { OnboardFlowContext } from "./flow-context";
 import {
   coreOnboardFlowPhases,
@@ -267,5 +268,76 @@ describe("onboard flow slices", () => {
       sandboxName: "my-assistant",
       machine: { state: "complete" },
     });
+  });
+});
+
+describe("onboard flow slices phase-timing summary (#6002)", () => {
+  beforeEach(() => {
+    resetPhaseTimings();
+  });
+
+  it("emits the accumulated timing summary and clears the registry after the final slice", async () => {
+    // Timings recorded by earlier slices are still in the shared registry.
+    recordPhaseTiming({
+      phase: "sandbox",
+      label: "Sandbox creation",
+      durationMs: 250_000,
+      status: "completed",
+    });
+    const summaries: string[] = [];
+
+    await runFinalOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(
+        createSession({
+          machine: {
+            version: MACHINE_SNAPSHOT_VERSION,
+            state: "finalizing",
+            stateEnteredAt: "2026-05-29T00:00:00.000Z",
+            revision: 0,
+          },
+        }),
+      ),
+      phases: [
+        phase("finalizing", "post_verify"),
+        {
+          state: "post_verify",
+          run: (ctx) => ({ context: ctx, result: completeOnboardMachine({}) }),
+        },
+      ],
+      emitSummary: (summary) => summaries.push(summary),
+    });
+
+    // Summary emitted once at the terminal seam (after finalizing AND
+    // post_verify complete), then the registry is cleared so nothing leaks into
+    // a later run in the same process.
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]).toContain("Sandbox creation");
+    expect(getPhaseTimings()).toHaveLength(0);
+  });
+
+  it("resets stale timings at the start of a new onboard run", async () => {
+    // A prior run that failed before finalization can leave timings behind.
+    recordPhaseTiming({
+      phase: "gateway",
+      label: "Gateway startup",
+      durationMs: 4_000,
+      status: "completed",
+    });
+    expect(getPhaseTimings()).toHaveLength(1);
+
+    await runInitialOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(),
+      phases: [
+        phase("preflight", "gateway"),
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "inference"),
+      ],
+    });
+
+    // The start-of-run reset cleared the stale entry; the fresh run records
+    // nothing here (the reporter is inert under Vitest), so the registry is empty.
+    expect(getPhaseTimings()).toHaveLength(0);
   });
 });

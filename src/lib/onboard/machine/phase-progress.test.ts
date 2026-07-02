@@ -16,8 +16,6 @@ interface Harness {
   lines: string[];
   records: PhaseProgressRecord[];
   events: Array<{ name: string; attributes?: Record<string, unknown> }>;
-  summaries: string[];
-  resets: number;
   clockMs: number;
   timerCallback: (() => void) | null;
   timerIntervalMs: number | null;
@@ -30,8 +28,6 @@ function makeHarness(overrides: Partial<PhaseProgressOptions> = {}): Harness {
     lines: [],
     records: [],
     events: [],
-    summaries: [],
-    resets: 0,
     clockMs: 0,
     timerCallback: null,
     timerIntervalMs: null,
@@ -52,14 +48,6 @@ function makeHarness(overrides: Partial<PhaseProgressOptions> = {}): Harness {
     },
     traceEvent: (name, attributes) => state.events.push({ name, attributes }),
     record: (record) => state.records.push(record),
-    // Render the summary from the same records the reporter fed us, so the test
-    // observes exactly which phases were written before the reset.
-    formatSummary: () =>
-      state.records.length > 0 ? `SUMMARY:${state.records.map((r) => r.phase).join(",")}` : "",
-    emitSummary: (summary) => state.summaries.push(summary),
-    resetTimings: () => {
-      state.resets += 1;
-    },
     heartbeatIntervalMs: 30_000,
     completionThresholdMs: 5_000,
     ...overrides,
@@ -267,61 +255,48 @@ describe("createPhaseProgressReporter", () => {
     expect(ONBOARD_PHASE_LABELS.sandbox).toBe("Sandbox creation");
   });
 
-  it("emits the timing summary once after the finalizing phase, including its own timing", async () => {
-    const harness = makeHarness();
-    const reporter = createPhaseProgressReporter(harness.options);
-
-    // Record an earlier phase so the summary spans more than finalization.
-    harness.clockMs = 0;
-    await reporter
-      .wrap(
-        fakePhase("gateway", async () => {
-          harness.clockMs = 4_000;
-          return { context: "ctx", result: "ok" };
-        }),
-      )
-      .run("ctx");
-
-    harness.clockMs = 4_000;
-    await reporter
-      .wrap(
-        fakePhase("finalizing", async () => {
-          harness.clockMs = 5_000;
-          return { context: "ctx", result: "ok" };
-        }),
-      )
-      .run("ctx");
-
-    // The summary is emitted exactly once, and it includes the finalizing phase
-    // (recorded before the summary is formatted) — not just the earlier phases.
-    expect(harness.summaries).toHaveLength(1);
-    expect(harness.summaries[0]).toBe("SUMMARY:gateway,finalizing");
-    // Registry is reset only after the summary is written (no stray-entry leak).
-    expect(harness.resets).toBe(1);
-    // Summary phase does not also print a standalone completion line on success.
-    expect(harness.lines.some((line) => line.includes("Finalization completed in"))).toBe(false);
-  });
-
-  it("does not emit a summary when the finalizing phase fails", async () => {
-    const harness = makeHarness();
+  it("does not reclassify a successful phase when telemetry throws", async () => {
+    // A throwing recorder must not turn a successful phase into a failure, and
+    // must not mask the phase's real return value (best-effort telemetry).
+    const harness = makeHarness({
+      record: () => {
+        throw new Error("recorder blew up");
+      },
+    });
     const reporter = createPhaseProgressReporter(harness.options);
     const wrapped = reporter.wrap(
-      fakePhase("finalizing", async () => {
-        harness.clockMs = 6_000;
-        throw new Error("finalization failed");
+      fakePhase("gateway", async () => ({ context: "ctx", result: "ok" })),
+    );
+
+    await expect(wrapped.run("ctx")).resolves.toEqual({ context: "ctx", result: "ok" });
+  });
+
+  it("preserves a real phase failure even if telemetry also throws", async () => {
+    const harness = makeHarness({
+      record: () => {
+        throw new Error("recorder blew up");
+      },
+    });
+    const reporter = createPhaseProgressReporter(harness.options);
+    const wrapped = reporter.wrap(
+      fakePhase("gateway", async () => {
+        throw new Error("real phase failure");
       }),
     );
 
-    await expect(wrapped.run("ctx")).rejects.toThrow("finalization failed");
-    expect(harness.summaries).toHaveLength(0);
-    expect(harness.resets).toBe(0);
-    // A failed summary phase still surfaces its own failure line.
-    expect(harness.lines.some((line) => line.includes("✗ Finalization failed after"))).toBe(true);
+    // The phase's own error wins over the telemetry error.
+    await expect(wrapped.run("ctx")).rejects.toThrow("real phase failure");
   });
 
-  it("resolves the heartbeat interval from the injected env", async () => {
+  it.each([
+    ["", 30_000],
+    ["0", 30_000],
+    ["500", 30_000], // below the 1s minimum
+    ["not-a-number", 30_000],
+    ["12000", 12_000],
+  ])("resolves heartbeat interval %s from env to %d ms", async (raw, expected) => {
     const harness = makeHarness({
-      env: { NEMOCLAW_ONBOARD_HEARTBEAT_MS: "12000" },
+      env: { NEMOCLAW_ONBOARD_HEARTBEAT_MS: raw },
       heartbeatIntervalMs: undefined,
     });
     const reporter = createPhaseProgressReporter(harness.options);
@@ -333,7 +308,7 @@ describe("createPhaseProgressReporter", () => {
         }),
       )
       .run("ctx");
-    expect(harness.timerIntervalMs).toBe(12_000);
+    expect(harness.timerIntervalMs).toBe(expected);
   });
 });
 

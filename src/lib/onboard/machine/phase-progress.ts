@@ -15,7 +15,10 @@
  *     silence (gateway health poll, in-sandbox smoke test, OpenClaw setup).
  *   - Every phase records its wall-clock duration (into `phase-timings`) and
  *     emits an `onboard.phase.timing` trace event, so timings are collectable
- *     in E2E trace artifacts and summarised for the user at the end.
+ *     in E2E trace artifacts. The end-of-onboard "Phase timings" summary is
+ *     emitted separately from the final flow slice (see `flow-slices.ts`), once
+ *     every wrapped phase has recorded — this reporter only records, it does
+ *     not print the aggregate summary itself.
  *
  * Interactive phases (`provider_selection`, `policies`) are intentionally left
  * out of the heartbeat set so their prompts are not interrupted by "still
@@ -28,13 +31,7 @@
  * `NEMOCLAW_ONBOARD_PROGRESS=1|0`.
  */
 
-import {
-  formatPhaseDuration,
-  formatPhaseTimingsSummary,
-  type PhaseTimingStatus,
-  recordPhaseTiming,
-  resetPhaseTimings,
-} from "../phase-timings";
+import { formatPhaseDuration, type PhaseTimingStatus, recordPhaseTiming } from "../phase-timings";
 import { addTraceEvent } from "../tracing";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import type { OnboardNonTerminalMachineState } from "./types";
@@ -68,13 +65,6 @@ const HEARTBEAT_PHASE_STATES: ReadonlySet<string> = new Set([
   "finalizing",
   "post_verify",
 ]);
-
-// Terminal phase(s) after which the accumulated per-phase timing summary is
-// emitted. Emitting from this seam — after the wrapped phase's own duration is
-// recorded — means the summary includes the finalization phase itself and the
-// registry is reset only once every phase has been written, so no stray entry
-// leaks into a later onboard in the same process (#6002 review PRA-2/PRA-8).
-const SUMMARY_PHASE_STATES: ReadonlySet<string> = new Set(["finalizing"]);
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -113,14 +103,6 @@ export interface PhaseProgressOptions {
   completionThresholdMs?: number;
   labels?: Readonly<Record<string, string>>;
   heartbeatPhaseStates?: ReadonlySet<string>;
-  /** Phase states after which to emit the accumulated timing summary. */
-  summaryPhaseStates?: ReadonlySet<string>;
-  /** Emit the rendered summary block. Defaults to `logLine`. */
-  emitSummary?: (summary: string) => void;
-  /** Render the accumulated summary. Defaults to `formatPhaseTimingsSummary`. */
-  formatSummary?: () => string;
-  /** Clear the timing registry after the summary is emitted. */
-  resetTimings?: () => void;
 }
 
 export interface PhaseProgressReporter {
@@ -140,7 +122,10 @@ export function resolvePhaseProgressEnabled(env: NodeJS.ProcessEnv = process.env
   return !isVitestEnv(env);
 }
 
-function resolveHeartbeatIntervalMs(env: NodeJS.ProcessEnv, fallback: number): number {
+function resolveHeartbeatIntervalMs(
+  env: NodeJS.ProcessEnv = process.env,
+  fallback: number = DEFAULT_HEARTBEAT_INTERVAL_MS,
+): number {
   const raw = Number(env.NEMOCLAW_ONBOARD_HEARTBEAT_MS);
   if (Number.isFinite(raw) && raw >= MIN_HEARTBEAT_INTERVAL_MS) return Math.floor(raw);
   return fallback;
@@ -165,10 +150,6 @@ export function createPhaseProgressReporter(
     options.heartbeatIntervalMs ?? resolveHeartbeatIntervalMs(env, DEFAULT_HEARTBEAT_INTERVAL_MS);
   const completionThresholdMs = options.completionThresholdMs ?? DEFAULT_COMPLETION_THRESHOLD_MS;
   const heartbeatPhaseStates = options.heartbeatPhaseStates ?? HEARTBEAT_PHASE_STATES;
-  const summaryPhaseStates = options.summaryPhaseStates ?? SUMMARY_PHASE_STATES;
-  const emitSummary = options.emitSummary ?? logLine;
-  const formatSummary = options.formatSummary ?? formatPhaseTimingsSummary;
-  const resetTimings = options.resetTimings ?? resetPhaseTimings;
 
   function wrap<Context>(phase: OnboardSequencePhase<Context>): OnboardSequencePhase<Context> {
     if (!enabled) return phase;
@@ -187,40 +168,47 @@ export function createPhaseProgressReporter(
           : null;
         timer?.unref?.();
 
+        // finish() only performs timing telemetry + logging. It runs in a
+        // `finally` block, so every side effect is best-effort: a throwing
+        // recorder/tracer/logger must never reclassify a successful phase as
+        // failed, double-record, or mask the phase's real result/error.
         const finish = (status: PhaseTimingStatus): void => {
-          if (timer) clearTimer(timer);
-          const durationMs = Math.max(0, now() - startedAt);
-          record({ phase: phase.state, label, durationMs, status });
-          traceEvent("onboard.phase.timing", {
-            phase: phase.state,
-            duration_ms: durationMs,
-            status,
-            heartbeats,
-          });
-          const isSummaryPhase = summaryPhaseStates.has(phase.state);
-          // Summary phases fold their own timing into the summary block below,
-          // so skip the redundant standalone completion line on success.
-          if (durationMs >= completionThresholdMs && (!isSummaryPhase || status === "failed")) {
-            const marker = status === "failed" ? "✗" : "✓";
-            const verb = status === "failed" ? "failed after" : "completed in";
-            logLine(`  ${marker} ${label} ${verb} ${formatPhaseDuration(durationMs)}`);
-          }
-          if (status === "completed" && isSummaryPhase) {
-            const summary = formatSummary();
-            if (summary) {
-              emitSummary(summary);
-              resetTimings();
+          if (timer) {
+            try {
+              clearTimer(timer);
+            } catch {
+              // Best-effort: the timer may already be cleared.
             }
+          }
+          const durationMs = Math.max(0, now() - startedAt);
+          try {
+            record({ phase: phase.state, label, durationMs, status });
+            traceEvent("onboard.phase.timing", {
+              phase: phase.state,
+              duration_ms: durationMs,
+              status,
+              heartbeats,
+            });
+            if (durationMs >= completionThresholdMs) {
+              const marker = status === "failed" ? "✗" : "✓";
+              const verb = status === "failed" ? "failed after" : "completed in";
+              logLine(`  ${marker} ${label} ${verb} ${formatPhaseDuration(durationMs)}`);
+            }
+          } catch {
+            // Progress telemetry is best-effort; never let it affect the phase.
           }
         };
 
+        let status: PhaseTimingStatus = "completed";
         try {
-          const result = await phase.run(context);
-          finish("completed");
-          return result;
+          return await phase.run(context);
         } catch (error) {
-          finish("failed");
+          status = "failed";
           throw error;
+        } finally {
+          // Exactly one finish() call, with the real outcome, regardless of
+          // whether phase.run resolved or threw.
+          finish(status);
         }
       },
     };
