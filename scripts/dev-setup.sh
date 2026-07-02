@@ -175,12 +175,20 @@ check_git_configuration() {
   sign_enabled="$(git_config commit.gpgsign)"
   sign_format="$(git_config gpg.format)"
   signing_key="$(git_config user.signingkey)"
-  if [ "${sign_enabled}" = "true" ] && [ -n "${signing_key}" ]; then
-    pass "Git commit signing configured (${sign_format:-openpgp})"
-  else
-    fail "Git commit signing is incomplete" \
-      "Configure user.signingkey and set commit.gpgsign=true before committing."
-  fi
+  case "${sign_format}" in
+    "" | openpgp | ssh | x509)
+      if [ "${sign_enabled}" = "true" ] && [ -n "${signing_key}" ]; then
+        pass "Git commit signing configured (${sign_format:-openpgp})"
+      else
+        fail "Git commit signing is incomplete" \
+          "Configure user.signingkey and set commit.gpgsign=true before committing."
+      fi
+      ;;
+    *)
+      fail "Git commit signing format is unsupported (${sign_format})" \
+        "Set gpg.format to openpgp, ssh, or x509, or run: git config --unset gpg.format"
+      ;;
+  esac
 
   hooks_path="$(git_config core.hooksPath)"
   if [ -n "${hooks_path}" ]; then
