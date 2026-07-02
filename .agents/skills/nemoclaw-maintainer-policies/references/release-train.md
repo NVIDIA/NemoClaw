@@ -17,6 +17,22 @@ Daily release labels coordinate release work. They do not classify issues and th
 - A PR or issue leaves the daily release cycle only when its version label is removed without a replacement.
 - Version labels are pruned after seven days only after durable release history is preserved and no open PR still carries or depends on the old label.
 
+## Release Lifecycle
+
+NemoClaw uses this release sequence:
+
+```text
+prepare -> declare ready -> freeze/plan -> tag candidate -> validate -> promote lkg
+```
+
+The semver tag publishes the release candidate, including public docs and release artifacts.
+Release-prep docs therefore gate the semver tag.
+Exact-tag E2E and QA validation gate `lkg` promotion unless maintainers explicitly choose a different release model.
+
+The release plan is the commit-freeze boundary.
+All mutable release readiness work must finish before `release:plan` captures the final `origin/main` SHA.
+Any merge after plan generation invalidates the plan and requires maintainers to re-check readiness against the new candidate SHA before generating a fresh plan.
+
 ## Cutoff
 
 The daily cutoff is the maintainer-defined point where the release tag is prepared.
@@ -26,9 +42,23 @@ At cutoff:
 1. List merged PRs carrying the target version label.
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
-4. Generate QA handoff from merged PRs.
-5. Cut the release tag only with explicit maintainer confirmation.
-6. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+4. Merge release-prep docs, or record a maintainer waiver with the reason.
+5. Record the SHA through which docs were scanned and review any `docs_scan_sha..candidate_sha` delta for additional docs impact.
+6. Finish or explicitly waive every pre-tag check required for the release.
+7. Confirm that no further intended merge remains.
+8. Generate the final release plan for the current `origin/main` SHA.
+9. Cut the release tag only with explicit maintainer confirmation from the final plan.
+10. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+
+Release readiness is complete only when the maintainer can report:
+
+- the cutoff inventory and post-tag straggler plan;
+- release-prep docs status, either merged with PR and merge SHA or waived with reason;
+- docs scan SHA and candidate SHA delta review;
+- pre-tag check status, including waivers and reasons;
+- confirmation that no further intended merge remains before plan generation.
+
+If release-prep docs are still pending, stop before generating the release plan.
 
 ## Carry Forward
 

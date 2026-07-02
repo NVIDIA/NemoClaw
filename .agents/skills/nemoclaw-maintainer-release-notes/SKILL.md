@@ -148,7 +148,7 @@ Keep the prose warm and polished, but concrete. Tie the narrative to actual PRs 
 Create a Markdown draft outside the checkout root so the repo stays clean, for example:
 
 ```bash
-../nemoclaw-<current-version>-release-note-draft.md
+../nemoclaw-<current-version>-announcement-notes-draft.md
 ```
 
 The Markdown body is the source the maintainer can paste into GitHub Discussions.

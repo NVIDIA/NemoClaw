@@ -75,7 +75,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(evening).toContain("automatically bump stragglers to the next patch");
     expect(release).toContain("scripts/bump-stragglers.ts");
-    expect(release).toContain("Do not run it before Step 4");
+    expect(release).toContain("Do not run it before Step 5");
     expect(morning).toContain("post-tag housekeeping was interrupted");
     expect(priorities).toContain("automatically bump stragglers to the next patch");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
@@ -84,6 +84,32 @@ describe("maintainer skills follow canonical workflow policy", () => {
         path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts"),
       ),
     ).toBe(true);
+  });
+
+  it("freezes the release plan only after mutable readiness is complete", () => {
+    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+
+    expect(policy).toContain(
+      "prepare -> declare ready -> freeze/plan -> tag candidate -> validate -> promote lkg",
+    );
+    expect(policy).toContain("The release plan is the commit-freeze boundary.");
+    expect(policy).toContain(
+      "If release-prep docs are still pending, stop before generating the release plan.",
+    );
+    expect(evening.indexOf("Load `nemoclaw-contributor-update-docs`")).toBeLessThan(
+      evening.indexOf("Load `cut-release-tag`"),
+    );
+    expect(evening).toContain("Stop on `pending`.");
+    expect(release).toContain(
+      "Do not generate the release plan until release readiness is complete",
+    );
+    expect(release).toContain("Any merge after plan generation invalidates the plan");
+    expect(release).toContain(
+      "If release-prep docs are `pending`, stop before generating the release plan.",
+    );
+    expect(release).not.toContain("/nemoclaw-contributor-update-docs");
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
