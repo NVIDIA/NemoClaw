@@ -62,8 +62,12 @@ describe("Brave key prompt empty-input escape (#6025)", () => {
 
     expect(isBackToSelection(result)).toBe(true);
     expect(call).toBe(2);
-    expect(errors.join("\n")).toContain("Brave Search API key is required.");
-    expect(errors.join("\n")).toMatch(/back to choose a different option|exit to quit/);
+    const errorText = errors.join("\n");
+    expect(errorText).toContain("Brave Search API key is required.");
+    // Assert both escape routes independently so the test fails if either the
+    // "back" or the "exit" hint regresses, not just when both disappear (#6025).
+    expect(errorText).toContain("back to choose a different option");
+    expect(errorText).toContain("exit to quit");
   });
 });
 
