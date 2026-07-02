@@ -40,7 +40,7 @@ Keep the loaded skip list in memory for use throughout the skill execution and t
 
 ## Step 0.5: Find Release Announcement Notes
 
-When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether the release has shipped. If neither the release tag nor announcement exists, use pre-tag release prep. If either one exists, use post-release recovery.
+When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether this is pre-tag release prep or post-release recovery.
 For pre-tag release prep, use the draft release plan, maintainer context, PR list, and commit scan as source context because the announcement may not exist yet.
 For post-release recovery, find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
 Use any available announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
@@ -193,9 +193,6 @@ After drafting all updates, present a summary to the user:
 ### New pages needed
 - None (or list any new pages created).
 
-### Release announcement source (release prep only)
-- `<discussion URL>`, `None (pre-tag release prep)`, or `Not found (post-release recovery)`.
-
 ### Skipped (docs-skip)
 - `feat(sandbox): add experimental-flag` (abc1234) — matched skip-features: "experimental-flag".
 
@@ -241,7 +238,7 @@ Commit changes and open a pull request with a concise summary of the doc updates
 Apply the `area: docs` label and the correct release label so reviewers can identify doc-only changes for the intended release train.
 Add `area: skills` only if the PR changes a file under `.agents/skills/`.
 When creating the PR with `gh pr create`, pass the labels. For example, a pre-tag release-note docs PR for `0.0.63` uses `--label "area: docs" --label v0.0.63`. A post-release recovery docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
-If the release label does not exist, stop before `gh pr create` and report it. Do not substitute another label or open the PR without the release label.
+If the release label does not exist, report that instead of substituting another label.
 Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
 
 ## Tips
@@ -273,5 +270,5 @@ User says: "Catch up the docs for everything merged since v0.1.0."
    - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-   If the selected release label does not exist, stop before PR creation and report it. Do not substitute another label or open the PR without the release label.
+   If the selected release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
    Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.
