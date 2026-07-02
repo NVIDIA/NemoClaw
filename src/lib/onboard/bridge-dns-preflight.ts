@@ -206,7 +206,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
   if (!dnsIsFatal) {
     if (dns.reason === "image_pull_failed") {
       console.warn(
-        "  ⚠ Container DNS probe inconclusive: docker couldn't pull the busybox test image.",
+        warnLine("Container DNS probe inconclusive: docker couldn't pull the busybox test image."),
       );
       console.warn("    This usually means the docker daemon itself can't reach Docker Hub,");
       console.warn(
