@@ -590,25 +590,17 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
     if (/HTTP_/.test(telegramReach)) {
       check(true, `M12: Node.js reached api.telegram.org (${telegramReach})`);
     } else if (
-      /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up/i.test(telegramReach)
-    ) {
-      await skipNote(
-        artifacts,
-        skips,
-        `M12: api.telegram.org unreachable from this network (${telegramReach.slice(0, 160)})`,
-      );
-    } else if (
-      /ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
+      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL / HTTP 403 or 407 from the
+      // OpenShell gateway) means the proxy wiring is correct, not that the host is
+      // unreachable, so it is treated as a skip rather than a failure (issue #3836).
+      /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up|ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
         telegramReach,
       )
     ) {
-      // Proxy wiring is correct; the upstream OpenShell gateway denied the CONNECT
-      // by policy (HTTP 403/407). That is not a reachability failure, so skip
-      // rather than fail (see issue #3836).
       await skipNote(
         artifacts,
         skips,
-        `M12: proxy wiring is correct; upstream proxy policy blocked the CONNECT to api.telegram.org (${telegramReach.slice(0, 200)})`,
+        `M12: api.telegram.org not reachable from this network, or the upstream proxy policy blocked the CONNECT (${telegramReach.slice(0, 200)})`,
       );
     } else {
       check(
@@ -686,27 +678,17 @@ NODE`,
     if (discordReach.includes("api:HTTP_") && discordReach.includes("cdn:HTTP_")) {
       check(true, "M13: Node.js reached Discord API and CDN through proxy");
     } else if (
-      /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network/i.test(
+      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL / HTTP 403 or 407 from the
+      // OpenShell gateway) means the proxy wiring is correct, not that Discord is
+      // unreachable, so it is treated as a skip rather than a failure (issue #3836).
+      /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network|ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
         discordReach,
       )
     ) {
       await skipNote(
         artifacts,
         skips,
-        `M13: live Discord unreachable from this network (${discordReach.slice(0, 200)})`,
-      );
-    } else if (
-      /ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
-        discordReach,
-      )
-    ) {
-      // Proxy wiring is correct; the upstream OpenShell gateway denied the CONNECT
-      // by policy (HTTP 403/407). That is not a reachability failure, so skip
-      // rather than fail (see issue #3836).
-      await skipNote(
-        artifacts,
-        skips,
-        `M13: proxy wiring is correct; upstream proxy policy blocked the CONNECT to Discord API/CDN (${discordReach.slice(0, 200)})`,
+        `M13: Discord API/CDN not reachable from this network, or the upstream proxy policy blocked the CONNECT (${discordReach.slice(0, 200)})`,
       );
     } else {
       check(false, `M13: Node.js could not reach Discord API/CDN (${discordReach.slice(0, 200)})`);
