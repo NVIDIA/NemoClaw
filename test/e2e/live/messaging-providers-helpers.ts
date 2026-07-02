@@ -16,6 +16,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -495,62 +496,6 @@ export async function sandboxOutput(
   return result.stdout.trim();
 }
 
-export function buildRawTokenProcessProbe(
-  token: string,
-  procRoot = "/proc",
-  nodePath = "node",
-): string {
-  const tokenBytes = Buffer.from(token, "utf8");
-  if (tokenBytes.length === 0) throw new Error("raw token process probe requires a token");
-
-  // Put only a one-way digest and byte length in the command/artifact. The
-  // scanner reads each NUL-delimited argv entry and hashes same-length byte
-  // windows in-process, so no raw or reversibly encoded credential appears in
-  // this process's argv or in a child process. Vanished PIDs are skipped.
-  const expectedDigest = crypto.createHash("sha256").update(tokenBytes).digest("hex");
-  const source = String.raw`
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const path = require("node:path");
-const [expectedDigest, byteLengthText, procRoot] = process.argv.slice(1);
-const byteLength = Number(byteLengthText);
-if (!/^[0-9a-f]{64}$/.test(expectedDigest) || !Number.isSafeInteger(byteLength) || byteLength < 1) {
-  process.exit(2);
-}
-let found = false;
-for (const pid of fs.readdirSync(procRoot)) {
-  if (!/^\d+$/.test(pid)) continue;
-  let cmdline;
-  try {
-    cmdline = fs.readFileSync(path.join(procRoot, pid, "cmdline"));
-  } catch {
-    continue;
-  }
-  let argumentStart = 0;
-  for (let index = 0; index <= cmdline.length && !found; index += 1) {
-    if (index < cmdline.length && cmdline[index] !== 0) continue;
-    const argument = cmdline.subarray(argumentStart, index);
-    for (let offset = 0; offset + byteLength <= argument.length; offset += 1) {
-      const digest = crypto
-        .createHash("sha256")
-        .update(argument.subarray(offset, offset + byteLength))
-        .digest("hex");
-      if (digest === expectedDigest) {
-        found = true;
-        break;
-      }
-    }
-    argumentStart = index + 1;
-  }
-  if (found) break;
-}
-process.stdout.write(found ? "FOUND\n" : "ABSENT\n");
-`.trim();
-  return [nodePath, "-e", source, expectedDigest, String(tokenBytes.length), procRoot]
-    .map(shellQuote)
-    .join(" ");
-}
-
 export async function rawTokenSurfaceProbe(
   sandbox: SandboxClient,
   token: string,
@@ -564,7 +509,7 @@ export async function rawTokenSurfaceProbe(
       ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
       : surface === "process"
-        ? buildRawTokenProcessProbe(token)
+        ? buildProcessTokenProbe(token)
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
 if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;

@@ -10,6 +10,7 @@ import type { HostCliClient, SandboxClient } from "../fixtures/clients/index.ts"
 import { sandboxAccessEnv, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
 import {
@@ -345,7 +346,7 @@ async function rawTokenSurfaceProbe(
     surface === "env"
       ? `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif env 2>/dev/null | grep -Fq "$token"; then echo FOUND_TOKEN; elif env 2>/dev/null | grep -q '^DISCORD_PROXY='; then echo FOUND_DISCORD_PROXY; else echo ABSENT; fi`
       : surface === "process"
-        ? `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nif cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -Fq "$token"; then echo FOUND_TOKEN; else echo ABSENT; fi`
+        ? buildProcessTokenProbe(token)
         : `token="$(printf %s ${shellQuote(tokenB64)} | base64 -d)"\nhit="$(grep -rFlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"\nif [ -n "$hit" ]; then printf 'FOUND_TOKEN %s\\n' "$hit"; else echo ABSENT; fi`;
   return sandboxEncodedSh(sandbox, SANDBOX_NAME, script, [], {
     artifactName,
