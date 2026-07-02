@@ -384,7 +384,7 @@ terminal_safe_identity_value() {
   local value="$1"
   local fallback="${2:-}"
   local LC_ALL=C
-  if [ ${#value} -gt 256 ] || [[ "$value" =~ [[:cntrl:]] ]]; then
+  if [ ${#value} -gt 256 ] || [[ "$value" =~ [[:cntrl:]] ]] || is_secret_shaped_value "$value"; then
     printf '%s' "$fallback"
   else
     printf '%s' "$value"
@@ -395,9 +395,6 @@ safe_endpoint_identity_value() {
   local value scheme authority
   value="$(terminal_safe_identity_value "$1")"
   [ -n "$value" ] || return 0
-  if is_secret_shaped_value "$value"; then
-    return 0
-  fi
   case "$value" in
     *\\* | *\?* | *\#*) return 0 ;;
   esac

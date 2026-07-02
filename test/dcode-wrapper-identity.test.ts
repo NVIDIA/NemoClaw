@@ -231,6 +231,27 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("does not write secret-shaped mutable identity metadata", () => {
+      withTempDir((dir) => {
+        const secret = `tvly-${OPAQUE}`;
+        const config = SAMPLE_CONFIG.replace("route: inference", `route: ${secret}`)
+          .replace("upstream provider: nvidia-prod", `upstream provider: ${secret}`)
+          .replace('default = "backend-dev"', `default = "${secret}"`)
+          .replace('default = "openai:demo-model"', `default = "openai:${secret}"`);
+        const fixture = buildFixture(dir, config);
+        addAgentDir(fixture, secret);
+        const run = runBashWrapper(fixture, ["status"], {});
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).not.toContain(secret);
+        expect(run.stdout).toContain("Sandbox:  unknown");
+        expect(run.stdout).toContain("Agent:    agent (default)");
+        expect(run.stdout).not.toContain("Route:");
+        expect(run.stdout).not.toContain("Provider:");
+        expect(run.stdout).not.toContain("Model:");
+      });
+    });
+
     it("does not write unsafe endpoint values from mutable sources", () => {
       withTempDir((dir) => {
         const unsafeEndpoints = [
