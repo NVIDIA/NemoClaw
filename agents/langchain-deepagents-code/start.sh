@@ -135,9 +135,11 @@ prepare_runtime_env() {
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
   } >"$tmp"
   # Dcode intentionally runs as the non-root sandbox user, unlike the
-  # root-supervised OpenClaw/Hermes startup path. Keep the atomic local write
-  # and make the credential-free export file read-only for every login/exec
-  # shell without changing the image's final USER boundary.
+  # root-supervised OpenClaw/Hermes startup path. Accepted model: the atomic,
+  # sandbox-user-owned file contains only credential-free configuration, is
+  # regression-scanned against canonical token shapes, and must be readable by
+  # independent non-root login/exec shells. Mode 0444 prevents later writes
+  # without changing the image's final USER boundary.
   chmod 444 "$tmp"
   mv -f "$tmp" "$target"
 }

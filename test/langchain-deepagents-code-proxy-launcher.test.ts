@@ -215,8 +215,9 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );
-    // Both standalone shell boundaries construct the same exclusion list. The
-    // TypeScript connect probe deliberately sources this persisted value.
+    // The two standalone shell boundaries construct the same exclusion list.
+    // TypeScript does not reconstruct NO_PROXY; its connect probe deliberately
+    // sources this persisted value from /tmp/nemoclaw-proxy-env.sh.
     expect(launcherNoProxy).toBe("localhost,127.0.0.1,::1,trusted-proxy.internal");
     expect(startNoProxy).toBe(launcherNoProxy);
     const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}\n${envFileText}`;

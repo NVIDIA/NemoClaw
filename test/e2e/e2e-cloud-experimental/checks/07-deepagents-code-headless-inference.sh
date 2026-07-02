@@ -114,7 +114,7 @@ is_local_execution_failure() {
 }
 
 is_dcode_wrapper_failure() {
-  grep -Eiq "(dcode|dcode-launcher\\.sh|dcode-wrapper\\.sh).*(command not found|No such file or directory|Permission denied)|No module named ['\\\"]?deepagents_code"
+  grep -Eiq "(^|[[:space:]/])(dcode|dcode-launcher\\.sh|dcode-wrapper\\.sh):[[:space:]]*(command not found|No such file or directory|Permission denied)|No module named ['\\\"]?deepagents_code"
 }
 
 is_inference_connection_failure() {

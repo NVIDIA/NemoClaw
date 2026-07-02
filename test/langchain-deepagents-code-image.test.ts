@@ -697,6 +697,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(classify("0", "OpenAI provider unavailable\nDCODE_EXIT:0")).toBe(
       "fail:actionable-inference-error",
     );
+    expect(classify("0", "dcode version 0.1.12\nOpenAI provider unavailable\nDCODE_EXIT:0")).toBe(
+      "fail:actionable-inference-error",
+    );
     expect(classify("124", "still waiting\nDCODE_EXIT:124")).toBe("fail:timeout");
     expect(classify("1", "usage: dcode [-h]\nDCODE_EXIT:1")).toBe("fail:local-execution-failure");
     expect(classify("1", "Traceback (most recent call last):\nDCODE_EXIT:1")).toBe(
