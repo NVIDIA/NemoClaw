@@ -67,7 +67,17 @@ read_managed_proxy_value() {
 PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
+# Generic proxy fallbacks are outside the managed dcode contract and may carry
+# host credentials even after the scheme-specific proxy values are normalized.
+unset ALL_PROXY all_proxy
 
+# Keep this validator behavior identical to the host-side TypeScript boundary.
+# It is applied only to image-baked values that onboard writes into root-owned
+# files at build time; runtime env is explicitly unset above and never reaches
+# this check. Underscores remain accepted for controlled internal/container
+# aliases such as proxy_name; public DNS hostnames should remain RFC 1123
+# names without them. Schemes, credentials, separators, and whitespace are
+# still rejected.
 is_valid_proxy_host() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]
@@ -117,6 +127,7 @@ prepare_runtime_env() {
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'
+    printf '%s\n' 'unset ALL_PROXY all_proxy'
     write_export_if_set HTTP_PROXY
     write_export_if_set HTTPS_PROXY
     write_export_if_set NO_PROXY
@@ -130,7 +141,13 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
   } >"$tmp"
-  chmod 400 "$tmp"
+  # Dcode intentionally runs as the non-root sandbox user, unlike the
+  # root-supervised OpenClaw/Hermes startup path. This atomic, sandbox-user-owned
+  # file is credential-free convenience state for independent login/exec shells,
+  # not an integrity boundary: the dcode launcher re-derives trusted proxy values
+  # from the root-owned image files. Secret scans guard its contents; mode 0444
+  # removes write bits so ordinary accidental writes fail.
+  chmod 444 "$tmp"
   mv -f "$tmp" "$target"
 }
 
