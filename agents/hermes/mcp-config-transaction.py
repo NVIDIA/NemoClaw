@@ -78,6 +78,8 @@ SENSITIVE_PAYLOAD_KEY_RE = re.compile(
 )
 MAX_ERROR_MESSAGE_LENGTH = 512
 MAX_GATEWAY_PID_RECORD_BYTES = 4096
+GATEWAY_INTERNAL_PORT = 18642
+GATEWAY_PUBLIC_PORT = 8642
 BLOCKED_IPV4_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -767,8 +769,8 @@ def _gateway_identity() -> tuple[int, object] | None:
     return numeric_pid, start_time
 
 
-def _gateway_healthy() -> bool:
-    connection = http.client.HTTPConnection("127.0.0.1", 18642, timeout=2)
+def _gateway_health_endpoint_ready(port: int) -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
     try:
         connection.request("GET", "/health")
         response = connection.getresponse()
@@ -778,6 +780,15 @@ def _gateway_healthy() -> bool:
         return False
     finally:
         connection.close()
+
+
+def _gateway_healthy() -> bool:
+    # Hermes can bind its internal API before the managed service loop repairs
+    # the public socat relay after a SIGUSR1 reload.  A successful MCP command
+    # must not return during that gap: callers use the documented public port.
+    if not _gateway_health_endpoint_ready(GATEWAY_INTERNAL_PORT):
+        return False
+    return _gateway_health_endpoint_ready(GATEWAY_PUBLIC_PORT)
 
 
 def reload_gateway() -> bool:
@@ -794,7 +805,12 @@ def reload_gateway() -> bool:
     deadline = time.monotonic() + RELOAD_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         current = _gateway_identity()
-        if current is not None and current != previous and _gateway_healthy():
+        if (
+            current is not None
+            and current != previous
+            and _gateway_healthy()
+            and _gateway_identity() == current
+        ):
             return True
         time.sleep(1)
     raise TimeoutError("Hermes gateway did not complete its managed MCP reload")

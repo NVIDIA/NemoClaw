@@ -929,6 +929,81 @@ finally:
     }
   });
 
+  it("requires the public Hermes API relay before acknowledging reload health", () => {
+    const result = runPython(`
+import importlib.util, json, signal, sys, types
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+statuses = {
+    module.GATEWAY_INTERNAL_PORT: 200,
+    module.GATEWAY_PUBLIC_PORT: 401,
+}
+ports = []
+class Connection:
+    def __init__(self, host, port, timeout):
+        if host != "127.0.0.1" or timeout != 2:
+            raise AssertionError("unexpected Hermes health endpoint")
+        self.port = port
+        ports.append(port)
+    def request(self, method, path):
+        if method != "GET" or path != "/health":
+            raise AssertionError("unexpected Hermes health request")
+    def getresponse(self):
+        status = statuses[self.port]
+        if isinstance(status, list):
+            status = status.pop(0)
+        return types.SimpleNamespace(status=status, read=lambda: b"")
+    def close(self):
+        pass
+
+module.http.client.HTTPConnection = Connection
+ready = module._gateway_healthy()
+statuses[module.GATEWAY_PUBLIC_PORT] = 503
+public_down = module._gateway_healthy()
+statuses[module.GATEWAY_INTERNAL_PORT] = 503
+statuses[module.GATEWAY_PUBLIC_PORT] = 401
+internal_down = module._gateway_healthy()
+health_ports = list(ports)
+
+ports.clear()
+statuses[module.GATEWAY_INTERNAL_PORT] = 200
+statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401]
+identities = iter(((1, 10), (2, 20), (2, 20), (2, 20)))
+module._gateway_identity = lambda: next(identities)
+signals = []
+module.os.kill = lambda pid, sent_signal: signals.append((pid, signal.Signals(sent_signal).name))
+module.time.monotonic = lambda: 0
+sleeps = []
+module.time.sleep = sleeps.append
+reloaded = module.reload_gateway()
+print(json.dumps({
+    "ready": ready,
+    "public_down": public_down,
+    "internal_down": internal_down,
+    "health_ports": health_ports,
+    "reloaded": reloaded,
+    "reload_ports": ports,
+    "signals": signals,
+    "sleeps": sleeps,
+}))
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ready: true,
+      public_down: false,
+      internal_down: false,
+      health_ports: [18642, 8642, 18642, 8642, 18642],
+      reloaded: true,
+      reload_ports: [18642, 8642, 18642, 8642],
+      signals: [[1, "SIGUSR1"]],
+      sleeps: [1],
+    });
+  });
+
   it("trusts the current real Hermes launcher and retained compatibility paths", () => {
     const result = runPython(`
 import importlib.util, json, sys
@@ -1047,7 +1122,7 @@ print(json.dumps(observed, sort_keys=True))
       signal_name: "SIGUSR1",
       signal_pid: 4242,
       signal_uid: 1000,
-      trusted_pids: [4242, 4242, 4242, 4242],
+      trusted_pids: [4242, 4242, 4242, 4242, 4242],
     });
   });
 
