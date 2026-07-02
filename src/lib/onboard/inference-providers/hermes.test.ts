@@ -210,22 +210,30 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("accepts a public HTTPS endpoint (#6072)", async () => {
+  it("rejects a DNS-backed public HTTPS endpoint until runtime-aware pinning exists (#4684)", async () => {
     const deps = makeDeps({ lookup: publicLookup() });
     await expect(
       setupHermesProviderInference(makeArgs("https://integrate.api.nvidia.com/v1"), deps as never),
+    ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("accepts a public HTTPS IP-literal endpoint (#6072)", async () => {
+    const deps = makeDeps();
+    await expect(
+      setupHermesProviderInference(makeArgs("https://8.8.8.8/v1"), deps as never),
     ).resolves.toEqual({ ok: true });
     expect(deps.runOpenshell).toHaveBeenCalled();
   });
 
-  it("accepts a public hostname that resolves to a public IP (#6073)", async () => {
+  it("rejects a public HTTPS hostname that resolves to a public IP until runtime-aware pinning exists (#4684)", async () => {
     const deps = makeDeps({
       lookup: vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
     });
     await expect(
       setupHermesProviderInference(makeArgs("https://api.public.example.test/v1"), deps as never),
-    ).resolves.toEqual({ ok: true });
-    expect(deps.runOpenshell).toHaveBeenCalled();
+    ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
   it("rejects a public hostname that resolves to a private IP (DNS rebinding) (#6073)", async () => {

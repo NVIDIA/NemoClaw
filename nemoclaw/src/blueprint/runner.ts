@@ -20,7 +20,7 @@ import { join, sep } from "node:path";
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
+import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
 
@@ -432,18 +432,13 @@ async function resolveRunConfig(
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
     const validated = await validateEndpointUrl(endpointUrl);
-    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
-    // keep the original hostname — TLS certificate validation prevents rebinding
-    // since the attacker cannot present a valid cert for the target.
-    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
     const validated = await validateEndpointUrl(inferenceCfg.endpoint);
-    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};

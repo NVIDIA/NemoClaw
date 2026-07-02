@@ -112,6 +112,21 @@ function clearOnboardState(): void {
   fs.rmSync(ONBOARD_SESSION_FILE, { force: true });
 }
 
+function writeFakeOpenShellForBlueprintFailClosed(binDir: string): string {
+  const commandLogPath = path.join(binDir, "openshell-commands.jsonl");
+  const scriptPath = path.join(binDir, "openshell");
+  fs.writeFileSync(
+    scriptPath,
+    `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ args: process.argv.slice(2) }) + "\\n");
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+  return commandLogPath;
+}
+
 function redactedCommand(command: readonly string[], values: readonly string[]): string[] {
   return command.map((part) => redactString(part, values));
 }
@@ -621,6 +636,95 @@ liveTest(
     expect(TRANSPORT_CLASSIFICATION_PATTERN.test(raw), redacted).toBe(true);
     expect(hasRawNodeStackTrace(raw), redacted).toBe(false);
     await expectNoActiveSandbox(host, sandboxName);
+  },
+);
+
+liveTest(
+  "TC-INF-10 DNS-backed HTTPS blueprint endpoint fails closed before OpenShell runtime handoff",
+  { timeout: 5 * 60_000 },
+  async ({ artifacts, cleanup }) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-https-dns-fail-closed-"));
+    const workdir = path.join(root, "blueprint");
+    const fakeBinDir = path.join(root, "bin");
+    const home = path.join(root, "home");
+    fs.mkdirSync(workdir, { recursive: true });
+    fs.mkdirSync(fakeBinDir, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    cleanup.add(`remove HTTPS DNS fail-closed temp root ${root}`, () => {
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    const commandLogPath = writeFakeOpenShellForBlueprintFailClosed(fakeBinDir);
+    fs.writeFileSync(
+      path.join(workdir, "blueprint.yaml"),
+      [
+        'version: "1.0"',
+        "components:",
+        "  sandbox:",
+        "    image: openclaw",
+        "    name: e2e-https-dns-fail-closed",
+        "  inference:",
+        "    profiles:",
+        "      default:",
+        "        provider_type: openai",
+        "        provider_name: default",
+        "        endpoint: https://rebinding.example.test/v1",
+        "        model: e2e-model",
+        "        credential_env: E2E_API_KEY",
+        "",
+      ].join("\n"),
+    );
+    await artifacts.writeJson("target.json", {
+      id: "https-dns-backed-endpoint-fail-closed",
+      runner: "vitest",
+      issue: 4684,
+      contract: [
+        "DNS-backed HTTPS endpoint validation fails closed before handing config to OpenShell",
+        "OpenShell sandbox/provider commands are not invoked for unsupported DNS-backed HTTPS endpoints",
+        "The real runtime namespace is not given a host-loopback pin proxy URL as a partial fix",
+      ],
+    });
+
+    const runnerScript = `
+import dns from "node:dns";
+const originalLookup = dns.promises.lookup;
+dns.promises.lookup = ((hostname, options) => hostname === "rebinding.example.test"
+  ? Promise.resolve([{ address: "93.184.216.34", family: 4 }])
+  : originalLookup.call(dns.promises, hostname, options));
+const { main } = await import(${JSON.stringify(path.join(REPO_ROOT, "nemoclaw/src/blueprint/runner.ts"))});
+await main(["apply"]);
+`;
+
+    const result = await runRawCommand(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs"),
+        "--input-type=module",
+        "--eval",
+        runnerScript,
+      ],
+      {
+        artifactName: "tc-inf-10-blueprint-https-dns-fail-closed",
+        artifacts,
+        cwd: workdir,
+        env: {
+          HOME: home,
+          PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+          E2E_API_KEY: "e2e-fake-key",
+        },
+        redactionValues: ["e2e-fake-key"],
+        timeoutMs: 60_000,
+      },
+    );
+    const raw = resultText(result);
+    const openshellLog = fs.existsSync(commandLogPath)
+      ? fs.readFileSync(commandLogPath, "utf8")
+      : "";
+    await artifacts.writeText("tc-inf-10-openshell-commands.jsonl", openshellLog);
+
+    expectOnboardFailure(result, "TC-INF-10 DNS-backed HTTPS fail-closed blueprint apply");
+    expect(raw).toMatch(/DNS-backed HTTPS endpoint/);
+    expect(openshellLog).toBe("");
   },
 );
 
