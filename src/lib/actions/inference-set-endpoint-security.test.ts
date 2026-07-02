@@ -48,13 +48,13 @@ describe("custom inference endpoint DNS pinning", () => {
     expect(lookup).toHaveBeenCalledWith("public-endpoint.example", { all: true });
   });
 
-  it("preserves a validated HTTPS hostname for certificate verification", async () => {
+  it("fails closed for DNS-backed HTTPS endpoints until runtime-aware pinning exists", async () => {
     const lookup = vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]);
 
     await expect(
       normalizeCustomEndpointUrl("https://public-endpoint.example/v1/", (value) =>
         rewriteConfigUrlsWithDnsPinning(value, lookup),
       ),
-    ).resolves.toBe("https://public-endpoint.example/v1");
+    ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
   });
 });

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential, normalizeCredentialValue } from "../credentials/store";
-import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 import * as webSearch from "../inference/web-search";
+import { getChannelTokenKeys, listChannels } from "../sandbox/channels";
 
 interface MessagingTokenDefShape {
   name: string;
@@ -122,5 +122,9 @@ export function appendExtraPlaceholderKeysEnvArg(
   formatEnvAssignment: (key: string, value: string) => string,
 ): void {
   if (extraKeys.length === 0) return;
-  envArgs.push(formatEnvAssignment(EXTRA_PLACEHOLDER_KEYS_ENV, extraKeys.join(" ")));
+  // OpenShell's Docker supervisor deserializes OPENSHELL_SANDBOX_COMMAND with
+  // split_whitespace(). Commas preserve this list as one env assignment when
+  // the Docker GPU compatibility path transports the command through that
+  // variable; both host and sandbox parsers accept comma separators.
+  envArgs.push(formatEnvAssignment(EXTRA_PLACEHOLDER_KEYS_ENV, extraKeys.join(",")));
 }
