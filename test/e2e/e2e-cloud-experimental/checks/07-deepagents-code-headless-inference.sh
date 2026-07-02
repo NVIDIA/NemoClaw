@@ -12,6 +12,10 @@
 # appear in config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
 # Direct DNS/hosts resolution is intentionally not required: OpenShell's managed
 # proxy routes inference.local when the request follows the normalized path.
+# Keep these phases in one ordered acceptance check: the absent-DNS observation
+# must describe the same sandbox used by login, direct-exec, and connect, and the
+# final credential scan must cover every captured output. Per-phase diagnostics
+# retain failure attribution without splitting that shared evidence boundary.
 
 set -euo pipefail
 
@@ -60,7 +64,7 @@ sandbox_login_proxy_contract() {
   # inference.local here would bypass that proxy and force a direct DNS lookup.
   local contract_command
   # shellcheck disable=SC2016
-  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; proxy_host="${proxy_url#http://}"; proxy_host="${proxy_host%:*}"; expected_no_proxy="localhost,127.0.0.1,::1,${proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
+  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "$(id -u):444" ] || contract_fail proxy-env-file-trust; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; proxy_host="${proxy_url#http://}"; proxy_host="${proxy_host%:*}"; expected_no_proxy="localhost,127.0.0.1,::1,${proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
   sandbox_login_exec "$contract_command"
 }
 
@@ -111,6 +115,10 @@ is_actionable_inference_error() {
   grep -Eiq 'API key|authentication|authorization|unauthorized|forbidden|rate[ -]?limit|quota|HTTP[[:space:]]*(401|403|404|429|5[0-9]{2})|status[[:space:]]*(401|403|404|429|5[0-9]{2})|(inference\.local|provider|model|NVIDIA|OpenAI).*(error|failed|failure|invalid|unavailable)|(error|failed|failure|invalid|unavailable).*(inference\.local|provider|model|NVIDIA|OpenAI)'
 }
 
+# Route reachability is proved separately with /v1/models. This classifier has
+# the stronger #6191 acceptance contract: dcode itself must be usable and return
+# exit-zero PONG, so authentication, quota, provider, and model errors are
+# intentionally failures rather than route-only success signals.
 classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
@@ -119,24 +127,6 @@ classify_headless_output() {
 
   if [ "$dcode_exit" = "124" ]; then
     printf '%s\n' "timeout"
-    return 1
-  fi
-
-  if [ "$dcode_exit" != "0" ]; then
-    if printf '%s' "$payload" | is_local_execution_failure; then
-      printf '%s\n' "local-execution-failure"
-    elif printf '%s' "$payload" | is_inference_connection_failure; then
-      printf '%s\n' "inference-connection-failure"
-    elif printf '%s' "$payload" | is_actionable_inference_error; then
-      printf '%s\n' "actionable-inference-error"
-    else
-      printf '%s\n' "nonzero-exit"
-    fi
-    return 1
-  fi
-
-  if [ -z "$(printf '%s' "$payload" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "empty-output"
     return 1
   fi
 
@@ -152,6 +142,16 @@ classify_headless_output() {
 
   if printf '%s' "$payload" | is_actionable_inference_error; then
     printf '%s\n' "actionable-inference-error"
+    return 1
+  fi
+
+  if [ "$dcode_exit" != "0" ]; then
+    printf '%s\n' "nonzero-exit"
+    return 1
+  fi
+
+  if [ -z "$(printf '%s' "$payload" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "empty-output"
     return 1
   fi
 

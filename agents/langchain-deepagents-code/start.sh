@@ -68,6 +68,9 @@ PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
+# Keep this validator behavior identical to the host-side TypeScript boundary.
+# Underscores remain accepted for existing internal/container proxy aliases;
+# schemes, credentials, separators, and whitespace are still rejected.
 is_valid_proxy_host() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]
@@ -130,7 +133,11 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
   } >"$tmp"
-  chmod 400 "$tmp"
+  # Dcode intentionally runs as the non-root sandbox user, unlike the
+  # root-supervised OpenClaw/Hermes startup path. Keep the atomic local write
+  # and make the credential-free export file read-only for every login/exec
+  # shell without changing the image's final USER boundary.
+  chmod 444 "$tmp"
   mv -f "$tmp" "$target"
 }
 

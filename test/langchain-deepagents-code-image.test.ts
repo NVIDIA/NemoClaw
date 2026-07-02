@@ -236,7 +236,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("does not serialize provider or optional service secrets into the shell env file", () => {
     const startScript = readAgentFile("start.sh");
 
-    expect(startScript).toContain('chmod 400 "$tmp"');
+    expect(startScript).toContain('chmod 444 "$tmp"');
     expect(startScript).toContain("write_export_if_set HTTPS_PROXY");
     expect(startScript).not.toContain("write_proxy_export_pair");
     expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
@@ -272,6 +272,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
     const outputLines = output.trimEnd().split("\n");
     const envFileLines = envFileText.trimEnd().split("\n");
+    expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(envFileText).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
     for (const name of PROXY_URL_ENV_NAMES) {
       expect(outputLines).toContain(`RUNTIME_${name}=${managedProxy}`);
@@ -688,17 +689,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
       const loginHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-"));
       const hostFile = path.join(loginHome, "trusted-proxy-host");
       const portFile = path.join(loginHome, "trusted-proxy-port");
+      const runtimeEnvFile = path.join(loginHome, "proxy-env.sh");
       const checkFixture = path.join(loginHome, "headless-check.sh");
       fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
       fs.writeFileSync(portFile, "3128\n", "utf8");
       fs.chmodSync(hostFile, 0o444);
       fs.chmodSync(portFile, 0o444);
+      fs.writeFileSync(runtimeEnvFile, "export HOME=/sandbox\n", "utf8");
+      fs.chmodSync(runtimeEnvFile, 0o444);
       fs.writeFileSync(
         checkFixture,
         fs
           .readFileSync(headlessCheckPath, "utf8")
           .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-host", hostFile)
           .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-port", portFile)
+          .replaceAll("/tmp/nemoclaw-proxy-env.sh", runtimeEnvFile)
           .replace('= "0:444"', `= "${process.getuid?.() ?? 0}:444"`),
         "utf8",
       );

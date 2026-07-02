@@ -13,14 +13,25 @@ const dcodeAgent = {
     headless_command: "dcode -n",
     interactive_command: "dcode",
   },
-} as AgentDefinition;
+} as unknown as AgentDefinition;
+
+const otherTerminalAgent = {
+  name: "other-terminal-agent",
+  runtime: {
+    kind: "terminal",
+    interactive_command: "other-agent",
+    smoke_commands: [],
+  },
+} as unknown as AgentDefinition;
 
 describe("terminal-agent connect inference route", () => {
   let errorSpy: MockInstance;
   let exitSpy: MockInstance;
+  let logSpy: MockInstance;
 
   beforeEach(() => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -50,5 +61,27 @@ describe("terminal-agent connect inference route", () => {
       "  Probe failed: LangChain Deep Agents Code could not reach the managed inference.local route in 'deep-code'.",
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("preserves smoke-only probing for non-dcode terminal agents with no route (#6191)", () => {
+    const capture = vi.fn();
+    const ensureInferenceRoute = vi.fn(() => ({ routeHealthy: null }));
+
+    expect(() =>
+      runTerminalAgentConnectProbe({
+        agent: otherTerminalAgent,
+        agentName: "Other Terminal Agent",
+        capture: capture as never,
+        ensureInferenceRoute,
+        sandboxName: "other-box",
+      }),
+    ).not.toThrow();
+
+    expect(ensureInferenceRoute).toHaveBeenCalledWith("other-box", { quiet: true });
+    expect(capture).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(
+      "  Probe complete: Other Terminal Agent terminal smoke checks passed (other-agent).",
+    );
   });
 });

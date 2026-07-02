@@ -41,14 +41,28 @@ function writeManagedProxyFiles(
   fs.chmodSync(portFile, 0o444);
 }
 
+function replaceManagedProxyFileConstants(source: string, tempDir: string): string {
+  return source
+    .replace(
+      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
+      `readonly MANAGED_PROXY_HOST_FILE="${path.join(tempDir, "trusted-proxy-host")}"`,
+    )
+    .replace(
+      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
+      `readonly MANAGED_PROXY_PORT_FILE="${path.join(tempDir, "trusted-proxy-port")}"`,
+    )
+    .replace(
+      "readonly MANAGED_PROXY_OWNER_UID=0",
+      `readonly MANAGED_PROXY_OWNER_UID=${TEST_OWNER_UID}`,
+    );
+}
+
 function makeLauncherProxyProbeFixture(
   tempDir: string,
   managedProxy: { host: string; port: string } = DEFAULT_MANAGED_PROXY,
 ): string {
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
   const probe = [
     "#!/usr/bin/env bash",
     "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
@@ -56,23 +70,13 @@ function makeLauncherProxyProbeFixture(
     "done",
     "",
   ].join("\n");
-  const fixture = readAgentFile("dcode-launcher.sh")
-    .replace(
+  const fixture = replaceManagedProxyFileConstants(
+    readAgentFile("dcode-launcher.sh").replace(
       'readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"',
       `readonly MANAGED_DCODE_WRAPPER="${probePath}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${TEST_OWNER_UID}`,
-    );
+    ),
+    tempDir,
+  );
   fs.writeFileSync(probePath, probe, "utf8");
   fs.writeFileSync(launcherPath, fixture, "utf8");
   writeManagedProxyFiles(tempDir, managedProxy);
@@ -87,21 +91,7 @@ function makeStartProxyProbeFixture(
 ): { envFile: string; scriptPath: string } {
   const envFile = path.join(tempDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const fixture = readAgentFile("start.sh")
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${TEST_OWNER_UID}`,
-    )
+  const fixture = replaceManagedProxyFileConstants(readAgentFile("start.sh"), tempDir)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
@@ -215,6 +205,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(launcherResult.status, launcherResult.stderr).toBe(0);
     expect(startResult.status, startResult.stderr).toBe(0);
     const envFileText = fs.readFileSync(envFile, "utf8");
+    expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(startResult.stdout).toContain(
       "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__",
     );
