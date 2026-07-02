@@ -56,3 +56,17 @@ While NVIDIA does not currently have a public bug bounty program, we do offer ac
 
 For security bulletins, PSIRT policies, and all security-related concerns, visit the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) portal.
 Subscribe to notifications on that page to receive alerts when new bulletins are published.
+
+## Documented Risk Acceptances
+
+The following security-relevant defaults are intentional. Each item names the code path that carries the constraint and the compensating controls that make the trade-off acceptable.
+
+### Deep Agents Code proxy env file is world-readable (mode `0444`)
+
+- **Location:** [`agents/langchain-deepagents-code/start.sh`](agents/langchain-deepagents-code/start.sh) (`prepare_runtime_env` around lines 132-141)
+- **Constraint:** `/tmp/nemoclaw-proxy-env.sh` is created with mode `0444` so the non-root sandbox user can source it from independent login and exec shells. The Deep Agents Code runtime deliberately runs as the non-root sandbox user, unlike the root-supervised OpenClaw and Hermes startup paths.
+- **Compensating controls:**
+  1. The file is credential-free by construction. `prepare_runtime_env` only writes proxy config (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`, and related transport variables). Adding credentials here is not a supported operation.
+  2. A regression test in [`test/langchain-deepagents-code-image.test.ts`](test/langchain-deepagents-code-image.test.ts) scans the emitted env file against canonical token shapes and fails CI if any secret-shaped value is present.
+  3. The file is owned by the sandbox user (not root), atomically replaced, and validated at read time against the trusted `sandbox-uid:444` metadata contract at [`agents/langchain-deepagents-code/dcode-launcher.sh`](agents/langchain-deepagents-code/dcode-launcher.sh).
+- **When to revisit:** If a future change adds credential-shaped values to the env-file writer, or if the Deep Agents Code runtime moves back to the root-supervised startup model, revisit the mode and the compensating controls together.

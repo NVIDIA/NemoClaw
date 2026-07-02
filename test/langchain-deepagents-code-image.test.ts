@@ -711,6 +711,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(classify("1", "No module named deepagents_code\nDCODE_EXIT:1")).toBe(
       "fail:wrapper-missing",
     );
+    // The word 'dcode' appearing in a non-error context (e.g. a version
+    // banner) must not be misclassified as a wrapper-missing failure. The
+    // is_dcode_wrapper_failure regex requires a specific error indicator
+    // ("command not found", "No such file or directory", "Permission denied",
+    // or "No module named deepagents_code") after the dcode path segment.
+    // See PR #6206 / advisor PRA-2.
+    expect(classify("0", "  PONG  \nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(classify("0", "dcode version 0.1.12\nPONG\nDCODE_EXIT:0")).toBe("pass:pong");
     expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:ambiguous-output");
     expect(classify("0", "Reply with exactly one word: PONG\nDCODE_EXIT:0")).toBe(
       "fail:ambiguous-output",

@@ -30,6 +30,13 @@ export function runTerminalAgentConnectProbe({
   // itself part of readiness. Keep this fail-fast agent-scoped so terminal
   // runtimes without the dcode managed-proxy contract retain legacy smoke-only
   // behavior when their route result is absent or inconclusive.
+  //
+  // routeHealthy tri-state: `true` = route probe ran and succeeded,
+  // `false` = route probe ran and explicitly failed (broken managed proxy),
+  // `null` = probe was not run or was indeterminate. Only an explicit `false`
+  // from the dcode probe short-circuits the connect flow — `null` falls
+  // through to the smoke command so non-dcode agents (and dcode runs where
+  // the probe genuinely could not be executed) are not spuriously blocked.
   if (agent.name === "langchain-deepagents-code" && routeResult.routeHealthy === false) {
     console.error(
       `  Probe failed: ${agentName} could not reach the managed inference.local route in '${sandboxName}'.`,
