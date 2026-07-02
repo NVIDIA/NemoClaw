@@ -760,9 +760,18 @@ async function rewriteConfigUrlsWithDnsPinning(
       const validated = await validateUrlValueWithDnsResult(trimmed, lookup);
       if (!validated) return value;
       // HTTP has no TLS hostname binding, so persist the DNS-pinned URL to avoid
-      // a config-time/public → runtime/private DNS-rebinding window. For HTTPS,
-      // preserve the original hostname so normal certificate validation still
-      // protects the connection.
+      // a config-time/public → runtime/private DNS-rebinding window. DNS-backed
+      // HTTPS endpoints fail closed for generic persisted config because the
+      // downstream consumer would otherwise perform a second DNS lookup while
+      // NemoClaw cannot pin the peer IP and preserve TLS SNI/Host across the
+      // OpenShell runtime boundary.
+      if (validated.protocol === "https:" && validated.pinnedUrl !== validated.originalUrl) {
+        throw new Error(
+          "DNS-backed HTTPS URLs are not supported for persisted sandbox config yet. " +
+            "Use an HTTPS IP-literal endpoint, an HTTP endpoint that can be DNS-pinned, " +
+            "or wait for the runtime-aware HTTPS pinning transport.",
+        );
+      }
       return validated.protocol === "http:" ? validated.pinnedUrl : validated.originalUrl;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);

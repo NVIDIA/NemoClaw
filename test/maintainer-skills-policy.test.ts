@@ -86,6 +86,23 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(true);
   });
 
+  it("runs release-prep docs before generating the final release plan", () => {
+    const updateDocs = read(".agents/skills/nemoclaw-contributor-update-docs/SKILL.md");
+    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+
+    expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
+    expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
+      evening.indexOf("Load `cut-release-tag`"),
+    );
+    expect(release).toContain(
+      "Do not generate the release plan until release-prep docs are merged or explicitly waived.",
+    );
+    expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
+    expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
+  });
+
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
     const sweep = read(".agents/skills/nemoclaw-maintainer-cross-issue-sweep/SKILL.md");
     const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");

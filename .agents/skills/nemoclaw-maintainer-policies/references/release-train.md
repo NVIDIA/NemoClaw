@@ -17,6 +17,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 - A PR or issue leaves the daily release cycle only when its version label is removed without a replacement.
 - Version labels are pruned after seven days only after durable release history is preserved and no open PR still carries or depends on the old label.
 
+## Release-Prep Docs
+
+Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
+Release-prep docs must be merged or explicitly waived before `release:plan` captures the release commit.
+If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
+
 ## Cutoff
 
 The daily cutoff is the maintainer-defined point where the release tag is prepared.

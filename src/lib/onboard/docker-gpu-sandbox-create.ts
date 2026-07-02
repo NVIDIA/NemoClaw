@@ -11,7 +11,6 @@ import type {
   DockerGpuPatchResult,
 } from "./docker-gpu-patch";
 import {
-  applyDockerGpuPatchOrExit,
   findOpenShellDockerSandboxContainerIds,
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -22,6 +21,7 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
+import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
 import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
 
 let cachedDockerDesktopWslRuntime: boolean | null = null;
@@ -46,6 +46,7 @@ type RecreatePatchFn = typeof recreateOpenShellDockerSandboxWithGpu;
 type WaitSupervisorFn = typeof waitForOpenShellSupervisorReconnect;
 type FindContainerIdsFn = typeof findOpenShellDockerSandboxContainerIds;
 type FinalizeBackupFn = typeof finalizeDockerGpuPatchBackup;
+type CapturePreRollbackDiagnosticsFn = typeof captureDockerGpuPreRollbackDiagnostics;
 // Loosen the override return type from `never` to `void` so tests can pass a
 // plain `vi.fn()` mock. Production wires `printDockerGpuPatchFailureAndExit`
 // which has return type `never`; that is assignable to `void`.
@@ -80,6 +81,7 @@ type DockerGpuSandboxCreatePatchOptions = {
     recreatePatch?: RecreatePatchFn;
     waitForSupervisor?: WaitSupervisorFn;
     finalizeBackup?: FinalizeBackupFn;
+    capturePreRollbackDiagnostics?: CapturePreRollbackDiagnosticsFn;
     onPatchFailureExit?: PatchFailureExitFn;
   };
 };
@@ -133,6 +135,8 @@ export function createDockerGpuSandboxCreatePatch(
   const waitForSupervisor =
     options.overrides?.waitForSupervisor ?? waitForOpenShellSupervisorReconnect;
   const finalizeBackup = options.overrides?.finalizeBackup ?? finalizeDockerGpuPatchBackup;
+  const captureFailedClone =
+    options.overrides?.capturePreRollbackDiagnostics ?? captureDockerGpuPreRollbackDiagnostics;
   const onPatchFailureExit =
     options.overrides?.onPatchFailureExit ?? printDockerGpuPatchFailureAndExit;
 
@@ -180,7 +184,17 @@ export function createDockerGpuSandboxCreatePatch(
 
     ensureApplied() {
       if (!options.enabled || result) return;
-      result = applyDockerGpuPatchOrExit(applyOptions, options.deps);
+      console.log("  Recreating OpenShell Docker sandbox container with NVIDIA GPU access...");
+      try {
+        result = recreatePatch({ ...applyOptions, waitForSupervisor: false }, options.deps);
+        needsSupervisorWait = true;
+        console.log(`  ✓ Docker GPU mode selected: ${result.mode.label}`);
+      } catch (error) {
+        onPatchFailureExit(options.sandboxName, error, {
+          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          dockerCapture: options.deps.dockerCapture,
+        });
+      }
     },
 
     waitForSupervisorReconnectIfNeeded() {
@@ -204,6 +218,15 @@ export function createDockerGpuSandboxCreatePatch(
           sleep: options.deps.sleep,
         },
       );
+      if (!supervisorReady && result) {
+        try {
+          captureFailedClone(options.sandboxName, result, options.deps);
+        } catch (error) {
+          console.warn(
+            `  ⚠ Could not capture the failed GPU container before rollback: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
       const finalizeOutcome = result
         ? finalizeBackup({ result, supervisorReady }, options.deps)
         : null;
@@ -312,12 +335,14 @@ export function shouldUseDockerGpuPatchForCreate(
   options: {
     dockerDriverGateway: boolean;
     dockerDesktopWsl?: boolean;
+    platform?: NodeJS.Platform;
     log?: (message: string) => void;
   },
 ): boolean {
   const enabled = shouldApplyDockerGpuPatch(config, {
     dockerDriverGateway: options.dockerDriverGateway,
     dockerDesktopWsl: options.dockerDesktopWsl,
+    platform: options.platform,
     log: options.log,
   });
   if (enabled) {
@@ -336,6 +361,7 @@ export function resolveDockerGpuSandboxCreatePlan(
     dockerDriverGateway: boolean;
     dockerDesktopWsl?: boolean;
     detectDockerDesktopWsl?: () => boolean;
+    platform?: NodeJS.Platform;
   },
 ): DockerGpuSandboxCreatePlan {
   const dockerDesktopWsl =
@@ -343,6 +369,7 @@ export function resolveDockerGpuSandboxCreatePlan(
   const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, {
     dockerDriverGateway: options.dockerDriverGateway,
     dockerDesktopWsl,
+    platform: options.platform,
   });
   const logMessage = config.sandboxGpuEnabled
     ? useDockerGpuPatch
