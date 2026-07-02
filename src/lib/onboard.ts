@@ -2784,18 +2784,12 @@ async function createSandbox(
           }
         } else {
           notReadyRecreateInProgress = true;
-          try {
-            pendingStateRestoreBackupPath = notReadyRecreate.applyNonInteractiveNotReadyDecision(
-              sandboxName,
-              note,
-            );
-          } catch (error) {
-            if (error instanceof notReadyRecreate.NotReadySandboxError) {
-              for (const hint of error.hints) console.error(hint);
-              process.exit(1);
-            }
-            throw error;
+          const outcome = notReadyRecreate.resolveNotReadyOutcome(sandboxName, note);
+          if (outcome.kind === "blocked") {
+            for (const hint of outcome.hints) console.error(hint);
+            process.exit(1);
           }
+          pendingStateRestoreBackupPath = outcome.restoreBackupPath;
         }
       } else if (existingSandboxState === "ready") {
         if (confirmedSelectionDrift) {

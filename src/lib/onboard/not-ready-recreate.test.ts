@@ -9,6 +9,7 @@ import {
   decideNonInteractiveNotReadyAction,
   installerRestoreOnRecreateFromEnv,
   NotReadySandboxError,
+  resolveNotReadyOutcome,
   selectPreUpgradeBackupForCreate,
 } from "./not-ready-recreate";
 
@@ -221,10 +222,47 @@ describe("applyNonInteractiveNotReadyDecision", () => {
   });
 });
 
+describe("resolveNotReadyOutcome", () => {
+  const note = vi.fn();
+  let getLatestBackupSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    note.mockReset();
+    getLatestBackupSpy = vi.spyOn(sandboxState, "getLatestBackup");
+    delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+  });
+
+  afterEach(() => {
+    getLatestBackupSpy.mockRestore();
+    delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
+  });
+
+  it("returns a blocked outcome with hints instead of throwing when installer restore intent is unset", () => {
+    const outcome = resolveNotReadyOutcome("my-assistant", note);
+    expect(outcome.kind).toBe("blocked");
+    const hints = (outcome as { kind: "blocked"; hints: readonly string[] }).hints.join("\n");
+    expect(hints).toMatch(/Sandbox 'my-assistant' already exists but is not ready/);
+    expect(hints).toMatch(/Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1/);
+  });
+
+  it("returns a proceed outcome with the restore path when installer intent finds a backup", () => {
+    process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+    getLatestBackupSpy.mockReturnValue({
+      backupPath: BACKUP_PATH,
+    } as ReturnType<typeof sandboxState.getLatestBackup>);
+    expect(resolveNotReadyOutcome("my-assistant", note)).toEqual({
+      kind: "proceed",
+      restoreBackupPath: BACKUP_PATH,
+    });
+  });
+});
+
 describe("installerRestoreOnRecreateFromEnv", () => {
   it("returns true when the installer restore sentinel is set to '1'", () => {
     expect(
-      installerRestoreOnRecreateFromEnv({ NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" }),
+      installerRestoreOnRecreateFromEnv({
+        NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1",
+      }),
     ).toBe(true);
   });
 
@@ -235,7 +273,9 @@ describe("installerRestoreOnRecreateFromEnv", () => {
   it("returns false when the sentinel is set to any value other than '1'", () => {
     for (const value of ["", "0", "true", "yes"]) {
       expect(
-        installerRestoreOnRecreateFromEnv({ NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: value }),
+        installerRestoreOnRecreateFromEnv({
+          NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: value,
+        }),
       ).toBe(false);
     }
   });

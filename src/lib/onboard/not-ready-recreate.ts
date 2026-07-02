@@ -145,3 +145,25 @@ export function applyNonInteractiveNotReadyDecision(
   note(decision.note);
   return decision.restoreBackupPath;
 }
+
+export type NonInteractiveNotReadyOutcome =
+  | { kind: "proceed"; restoreBackupPath: string | null }
+  | { kind: "blocked"; hints: readonly string[] };
+
+// CLI entry points own process.exit; this keeps applyNonInteractiveNotReadyDecision
+// throw-based (and unit-testable without mocking process.exit) while giving
+// onboard.ts a plain value to branch on for the exit itself.
+export function resolveNotReadyOutcome(
+  sandboxName: string,
+  note: (message: string) => void,
+): NonInteractiveNotReadyOutcome {
+  try {
+    return {
+      kind: "proceed",
+      restoreBackupPath: applyNonInteractiveNotReadyDecision(sandboxName, note),
+    };
+  } catch (error) {
+    if (!(error instanceof NotReadySandboxError)) throw error;
+    return { kind: "blocked", hints: error.hints };
+  }
+}
