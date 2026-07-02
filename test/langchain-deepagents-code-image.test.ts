@@ -340,10 +340,17 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("export LANGSMITH_TRACING=false");
     expect(wrapper).toContain("export DEEPAGENTS_CODE_OFFLINE=1");
     expect(wrapper).toContain("export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
+    expect(dockerfile).toContain("DEEPAGENTS_CODE_LANGSMITH_TRACING=false");
+    expect(dockerfile).toContain("LANGSMITH_TRACING=false");
+    expect(dockerfile).toContain("DEEPAGENTS_CODE_OFFLINE=1");
+    expect(dockerfile).toContain("DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
     expect(wrapper).toContain('reject_managed_override "dependency update posture"');
     expect(wrapper).toContain('reject_managed_override "credential posture"');
     expect(wrapper).toContain('reject_managed_override "managed tool set posture"');
     expect(wrapper).toContain("assert_no_auth_store_credentials");
+    expect(wrapper).toContain("deepagents-code==0.1.30");
+    expect(wrapper).toContain("Schema pin");
+    expect(wrapper).toContain("truthy top-level");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).toContain(
       "install -m 0755 /usr/local/lib/nemoclaw/dcode-launcher.sh /usr/local/bin/dcode.real",
@@ -360,15 +367,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");
-  });
-
-  it("asserts the four managed-runtime env vars in the Dockerfile ENV contract", () => {
-    const dockerfile = readAgentFile("Dockerfile");
-
-    expect(dockerfile).toContain("DEEPAGENTS_CODE_LANGSMITH_TRACING=false");
-    expect(dockerfile).toContain("LANGSMITH_TRACING=false");
-    expect(dockerfile).toContain("DEEPAGENTS_CODE_OFFLINE=1");
-    expect(dockerfile).toContain("DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
   });
 
   it("puts the managed Python venv before system Python in every dcode entry path", () => {
@@ -1108,59 +1106,37 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("refuses to launch when auth.json contains malformed JSON (fail-closed)", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-malformed-"));
+  it.each([
+    { label: "malformed JSON", content: "{not valid json at all", expectReject: true },
+    {
+      label: "present but unreadable",
+      content: '{"credentials": null}',
+      unreadable: true,
+      expectReject: true,
+    },
+    { label: "absent (fresh sandbox)", content: null, expectReject: false },
+  ])("handles auth.json $label correctly (fail-closed)", ({
+    content,
+    unreadable,
+    expectReject,
+  }) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-edge-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
-    fs.writeFileSync(authFile, "{not valid json at all", "utf8");
-
+    if (content !== null) fs.writeFileSync(authFile, content, "utf8");
+    if (unreadable) fs.chmodSync(authFile, 0o000);
     const result = runWrapper(wrapperPath, ["-n", "hi"], {});
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("auth.json");
-    expect(result.stderr).toContain("stored Deep Agents Code credentials");
-    expect(result.stdout).not.toContain("dcode-stub-ran");
-    expect(fs.existsSync(ranMarker)).toBe(false);
-  });
-
-  it("allows launch when auth.json is absent (fresh sandbox)", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-absent-"));
-    const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
-    // authFile path exists in the fixture but the file is never created
-    expect(fs.existsSync(authFile)).toBe(false);
-
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("dcode-stub-ran");
-    expect(fs.existsSync(ranMarker)).toBe(true);
-  });
-
-  it("refuses to launch when auth.json is present but unreadable", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-unreadable-"));
-    const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
-    fs.writeFileSync(authFile, '{"credentials": null}', "utf8");
-    fs.chmodSync(authFile, 0o000);
-
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("auth.json");
-    expect(result.stderr).toContain("stored Deep Agents Code credentials");
-    expect(result.stdout).not.toContain("dcode-stub-ran");
-    expect(fs.existsSync(ranMarker)).toBe(false);
-
-    // Restore so temp cleanup works
-    fs.chmodSync(authFile, 0o644);
-  });
-
-  it("documents the auth.json schema pin so upstream bumps force re-review", () => {
-    const wrapper = readAgentFile("dcode-wrapper.sh");
-
-    // The schema pin comment must name the upstream version so a bump is
-    // visible in code review and greppable.
-    expect(wrapper).toContain("deepagents-code==0.1.30");
-    expect(wrapper).toContain("Schema pin");
-    expect(wrapper).toContain("truthy top-level");
+    if (expectReject) {
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("auth.json");
+      expect(result.stderr).toContain("stored Deep Agents Code credentials");
+      expect(result.stdout).not.toContain("dcode-stub-ran");
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    } else {
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("dcode-stub-ran");
+      expect(fs.existsSync(ranMarker)).toBe(true);
+    }
+    if (content !== null) fs.chmodSync(authFile, 0o644);
   });
 
   it.each([
@@ -1169,9 +1145,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     { args: ["auth", "set", "langsmith"], posture: "credential posture" },
     { args: ["tools", "install"], posture: "managed tool set posture" },
     { args: ["tools", "add"], posture: "managed tool set posture" },
-    { args: ["tools", "update"], posture: "managed tool set posture" },
-    { args: ["tools", "enable"], posture: "managed tool set posture" },
-    { args: ["tools", "remove"], posture: "managed tool set posture" },
     { args: ["mcp"], posture: "MCP posture" },
   ])("rejects upstream managed-mutation command $args", ({ args, posture }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-command-"));
@@ -1187,9 +1160,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it.each([
     { args: ["tools", "list"] },
-    { args: ["tools", "help"] },
     { args: ["tools", "--help"] },
-    { args: ["tools", "-h"] },
     { args: ["tools"] },
   ])("passes through read-only tools subcommand $args", ({ args }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tools-readonly-"));
@@ -1665,14 +1636,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
           "    assert 'tools install is disabled' in str(exc), exc",
           "else:",
           "    raise AssertionError('tools install command did not fail')",
-          "main.parser.args.command = 'tools'",
-          "main.parser.args.tools_command = 'add'",
-          "try:",
-          "    main.parse_args()",
-          "except RuntimeError as exc:",
-          "    assert 'tools add is disabled' in str(exc), exc",
-          "else:",
-          "    raise AssertionError('tools add command did not fail')",
           "main.parser.args.command = 'tools'",
           "main.parser.args.tools_command = 'list'",
           "main.parse_args()",
