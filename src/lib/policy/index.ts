@@ -7,6 +7,7 @@ import type { JsonObject, JsonValue } from "../core/json-types";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
+  isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
   listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
@@ -52,6 +53,10 @@ type PresetLoadOptions = {
   agent?: string | null;
 };
 
+type PresetListOptions = {
+  agent?: string | null;
+};
+
 type MergePresetNamesOptions = {
   agent?: string | null;
 };
@@ -70,12 +75,14 @@ function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
  * under `nemoclaw-blueprint/policies/presets/`; messaging channel presets live
  * beside their channel manifests under `src/lib/messaging/channels/<channel>/policy/`.
  */
-function listPresets(): PresetInfo[] {
-  const channelPresets = listMessagingChannelPolicyPresets().map(({ file, name, description }) => ({
-    file,
-    name,
-    description,
-  }));
+function listPresets(options: PresetListOptions = {}): PresetInfo[] {
+  const channelPresets = listMessagingChannelPolicyPresets({ agent: options.agent }).map(
+    ({ file, name, description }) => ({
+      file,
+      name,
+      description,
+    }),
+  );
   const channelPresetNames = new Set(channelPresets.map((preset) => preset.name));
   if (!fs.existsSync(PRESETS_DIR)) return channelPresets;
   const centralPresets = fs
@@ -116,6 +123,7 @@ function loadCentralPreset(name: string, options: { reportMissing?: boolean } = 
 function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
   const channelPreset = loadMessagingChannelPolicyPreset(name, { agent: options.agent });
   if (channelPreset) return channelPreset;
+  if (isMessagingChannelPolicyPreset(name)) return null;
   return loadCentralPreset(name);
 }
 
@@ -255,6 +263,7 @@ function loadPresetForSandbox(sandboxName: string, presetName: string): string |
     agent: sandboxAgent,
   });
   if (channelPresetContent) return channelPresetContent;
+  if (isMessagingChannelPolicyPreset(presetName)) return null;
 
   const builtinPresetContent = loadCentralPreset(presetName);
   if (!builtinPresetContent) return null;
@@ -1268,8 +1277,14 @@ function getGatewayPresets(sandboxName: string): string[] | null {
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
   const matched: string[] = [];
+  let sandboxAgent: string | null = null;
+  try {
+    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  } catch {
+    sandboxAgent = null;
+  }
 
-  for (const preset of listPresets()) {
+  for (const preset of listPresets({ agent: sandboxAgent })) {
     if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
       matched.push(preset.name);
     }
@@ -1407,6 +1422,7 @@ export {
   getGatewayPresets,
   getPresetEndpoints,
   getPresetValidationWarning,
+  isMessagingChannelPolicyPreset,
   listCustomPresets,
   listPresets,
   listSetupPolicyPresets,

@@ -137,8 +137,12 @@ export async function addSandboxPolicy(
     return;
   }
 
-  const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
-  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent);
+  const sandboxEntry = registry.getSandbox(sandboxName);
+  const sandboxAgent = sandboxEntry?.agent ?? null;
+  const allPresets = filterSetupPolicyPresetsForAgent(
+    policies.listPresets({ agent: sandboxAgent }),
+    sandboxAgent,
+  );
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
@@ -261,7 +265,8 @@ async function applyExternalPreset(
 }
 
 export function listSandboxPolicies(sandboxName: string) {
-  const builtin = policies.listPresets();
+  const sandboxEntry = registry.getSandbox(sandboxName);
+  const builtin = policies.listPresets({ agent: sandboxEntry?.agent ?? null });
   const custom = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtin, ...custom];
   const registryPresets = policies.getAppliedPresets(sandboxName);
@@ -270,7 +275,6 @@ export function listSandboxPolicies(sandboxName: string) {
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
-  const sandboxEntry = registry.getSandbox(sandboxName);
   const provenanceContext = {
     tierName: sandboxEntry?.policyTier ?? null,
     agentName: sandboxEntry?.agent ?? null,

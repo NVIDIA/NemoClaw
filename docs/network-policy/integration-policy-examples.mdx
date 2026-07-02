@@ -47,6 +47,7 @@ An approval updates the running policy, but it does not create a reviewable Nemo
 ## Supported Integration Presets
 
 NemoClaw ships maintained policy presets for common services in `nemoclaw-blueprint/policies/presets/`.
+Messaging channel presets are scoped to the sandbox's active agent; if an agent does not have a matching channel policy, that channel preset is omitted from `policy-list` and `policy-add <preset>` reports it as unknown.
 
 | Workflow | Preset |
 |----------|--------|
