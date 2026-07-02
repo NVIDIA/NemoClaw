@@ -6,6 +6,11 @@
 # The request directory is root-only. Requests are written by the host through
 # the registry-scoped privileged Docker exec path; sandbox processes cannot
 # submit or alter them.
+# Nonce validation below uses an explicit locale-independent character class
+# ([!0123456789abcdef]) rather than the range [a-f], whose case-sensitivity
+# varies by locale (macOS UTF-8 folds [a-f] case-insensitively). This keeps the
+# lowercase-only hex nonce check byte-exact without exporting LC_ALL from a
+# sourced library into the Hermes runtime.
 
 NEMOCLAW_GATEWAY_CONTROL_DIR="${NEMOCLAW_GATEWAY_CONTROL_DIR:-/run/nemoclaw/gateway-control}"
 NEMOCLAW_GATEWAY_CONTROL_REQUEST="${NEMOCLAW_GATEWAY_CONTROL_DIR}/request"
@@ -56,7 +61,7 @@ gateway_control_take_request() {
   fi
   [ "$version" = "v1" ] || return 1
   case "$nonce" in
-    *[!0-9a-f]* | '') return 1 ;;
+    *[!0123456789abcdef]* | '') return 1 ;;
   esac
   [ "${#nonce}" -eq 64 ] || return 1
   case "$action" in

@@ -142,6 +142,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       managedGatewayControlPath,
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
+      path.join(localLib, "normalize_mutable_config_perms.py"),
       generatorPath,
       applierPath,
       messagingHookPath,
@@ -183,6 +184,11 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
           fs.statSync(path.join(localLib, "openclaw_device_approval_policy.py")).mode & 0o777
         ).toString(8),
       ).toBe("644");
+      expect(
+        (
+          fs.statSync(path.join(localLib, "normalize_mutable_config_perms.py")).mode & 0o777
+        ).toString(8),
+      ).toBe("555");
       expect((fs.statSync(pluginDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(pluginFile).mode & 0o777).toString(8)).toBe("644");
       expect((fs.statSync(nestedPluginDir).mode & 0o777).toString(8)).toBe("755");

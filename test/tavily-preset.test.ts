@@ -45,6 +45,7 @@ describe("tavily opt-in preset", () => {
       },
     ]);
     expect(policy?.binaries).toEqual([
+      { path: "/opt/venv/bin/python3*" },
       { path: "/usr/local/bin/node" },
       { path: "/usr/bin/node" },
       { path: "/usr/local/bin/curl" },

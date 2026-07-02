@@ -160,6 +160,21 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
+# Cryptographic integrity gate for the two security-critical Python entrypoints
+# — the wrapper that enforces the runtime env secret boundary and the validator
+# it delegates to. Any content change to either file MUST be accompanied by an
+# updated hash below; otherwise the build fails. This blocks silent supply-
+# chain tampering of the build context (an attacker rewriting the file has to
+# also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
+# with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=03e0afbe00e352d0dfcf14b99ea1821f9fd29f87dad49ce19add2ec96d1941cc
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=d8ebac7143ce79061a86fefb79f2be9fb1d73f41229dc7144a1c157384947fd1
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
+    | sha256sum -c - \
+    || { echo "ERROR: validate-hermes-env-secret-boundary.py hash mismatch (update NEMOCLAW_HERMES_VALIDATOR_SHA256)" >&2; exit 1; }
+
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
 # a direct `docker exec ... hermes gateway run` able to start the gateway with
@@ -167,9 +182,20 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # wrapper in its place; the wrapper reuses the same validator and execs the real
 # binary for every non-gateway subcommand. Re-assert --version through the
 # wrapper so a broken relocation fails the build.
-COPY agents/hermes/hermes-wrapper.sh /usr/local/lib/nemoclaw/hermes-wrapper.sh
+#
+# The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
+# build if that absolute path is missing or non-executable so a base-image
+# upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
+COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
+RUN test -x /usr/bin/python3 \
+    || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
+    | sha256sum -c - \
+    || { echo "ERROR: hermes-wrapper.py hash mismatch (update NEMOCLAW_HERMES_WRAPPER_SHA256)" >&2; exit 1; }
 RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
-    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.sh /usr/local/bin/hermes \
+    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.py /usr/local/bin/hermes \
     && chmod 755 /usr/local/bin/hermes.real \
     && /usr/local/bin/hermes --version
 

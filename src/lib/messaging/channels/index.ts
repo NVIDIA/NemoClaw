@@ -4,4 +4,5 @@
 export * from "./built-ins";
 export * from "./metadata";
 export * from "./policy";
+export * from "./rendered-config-parser";
 export { createBuiltInRenderTemplateResolver } from "./template-resolver";

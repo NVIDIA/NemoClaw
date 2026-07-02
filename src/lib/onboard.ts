@@ -26,6 +26,7 @@ const {
 const {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
+  createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
   requireProviderChoice,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
@@ -3367,7 +3368,6 @@ async function selectAndValidateOllamaModel(
 
 type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
-
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 type RemoteProviderSelectionArgs = {
@@ -3774,14 +3774,12 @@ async function handleRemoteProviderSelection(
     } else {
       await ensureApiKey();
     }
-    const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
-    state.model =
-      requestedModel ||
-      (recoveredFromSandbox && recoveredModel) ||
-      (isNonInteractive()
-        ? DEFAULT_CLOUD_MODEL
-        : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
-      DEFAULT_CLOUD_MODEL;
+    state.model = await state.nvidiaFeaturedModels!.select(
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+      isNonInteractive(),
+      process.env.NEMOCLAW_MODEL,
+    );
     if (isBackToSelection(state.model)) {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -3941,6 +3939,7 @@ async function setupNim(
   let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
+  const nvidiaFeaturedModels = createNvidiaFeaturedModelSession();
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4074,6 +4073,7 @@ async function setupNim(
           compatibleEndpointReasoning,
           nimContainer,
           allowToolsIncompatible,
+          nvidiaFeaturedModels,
         };
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
