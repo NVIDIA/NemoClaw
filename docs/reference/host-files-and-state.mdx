@@ -1,0 +1,50 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Host Files and State"
+sidebar-title: "Host Files and State"
+description: "Reference for NemoClaw host-side files and directories under ~/.nemoclaw."
+description-agent: "Lists host-side NemoClaw config and state files under ~/.nemoclaw. Use when identifying config.json, credentials.json, sandboxes.json, onboard-session.json, backup directories, mounts, or local inference adapter files."
+keywords: ["nemoclaw host files", "nemoclaw state directory", "nemoclaw sandboxes json", "nemoclaw credentials json"]
+content:
+  type: "reference"
+---
+
+NemoClaw stores host-side configuration, credentials, registry metadata, transient install state, and local backups under `~/.nemoclaw/`.
+Use this page when you need to identify what a file does before deleting, backing up, or sharing diagnostics.
+
+<Warning>
+Do not paste `credentials.json`, provider tokens, bot tokens, proxy tokens, or debug archives containing them into chat or issue comments.
+Share redacted diagnostics only.
+</Warning>
+
+## Files
+
+| Path | Purpose | Safe to delete |
+|---|---|---|
+| `~/.nemoclaw/config.json` | Host-level CLI configuration and defaults created by onboarding or config commands. | Only if you want NemoClaw to forget host defaults and rebuild them on the next setup. |
+| `~/.nemoclaw/credentials.json` | Host-side provider and integration credential registry. | Only when you intentionally want to re-enter credentials. |
+| `~/.nemoclaw/sandboxes.json` | Current sandbox registry used by `$$nemoclaw list`, default sandbox selection, rebuild, and recovery commands. | No. Deleting it makes the host forget existing sandboxes and can block state-preserving recovery. |
+| `~/.nemoclaw/onboard-session.json` | Resume marker for an onboarding attempt that failed before completion. | Yes, when you intentionally want to discard the failed session and start over. Prefer `$$nemoclaw onboard --fresh` when available. |
+| `~/.nemoclaw/ollama-proxy-token` | Local auth token used by the host-side Ollama auth proxy. | Yes, but re-run onboarding afterward so NemoClaw recreates and registers the proxy token. |
+
+`sandboxes.json` is the current registry file name.
+If you see `registry.json` in older tests, notes, or discussions, treat it as legacy wording for the sandbox registry unless a specific release note says otherwise.
+
+## Directories
+
+| Path | Purpose | Safe to delete |
+|---|---|---|
+| `~/.nemoclaw/rebuild-backups/` | Host-side snapshots written by `backup-all`, `snapshot create`, and rebuild flows. | Only after you no longer need rollback or restore points. |
+| `~/.nemoclaw/backups/` | Workspace backups written by legacy backup helpers and some recovery flows. | Only after confirming you no longer need those workspace archives. |
+| `~/.nemoclaw/mounts/` | Default local mount points created by share or mount commands. | Unmount first, then remove unused directories. |
+| `~/.nemoclaw/blueprints/` | Cached blueprint inputs used by onboarding and sandbox recreation. | Avoid manual deletion unless you plan to rerun onboarding from fresh inputs. |
+
+## Uninstall Behavior
+
+`$$nemoclaw uninstall --yes` removes active NemoClaw runtime resources but preserves the user data needed for recovery by default.
+Preserved entries include `rebuild-backups/`, `backups/`, and `sandboxes.json`.
+Interactive uninstall prompts before removing preserved state.
+For non-interactive runs, pass `--destroy-user-data` only when you accept losing local registry metadata and backups.
+
+For operational uninstall steps, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle#uninstall).

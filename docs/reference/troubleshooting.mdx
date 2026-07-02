@@ -130,6 +130,19 @@ To avoid these issues, install the prerequisites in the following order before r
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
 
+### `docker` is missing after installing Colima
+
+Homebrew Colima does not install the Docker CLI binary.
+If you install only Colima, `colima start` can succeed while later `docker` commands fail with `command not found`.
+
+Install both packages, start Colima with enough resources for the sandbox image build, and verify Docker before onboarding:
+
+```bash
+brew install colima docker
+colima start --cpu 4 --memory 8
+docker info
+```
+
 ### Permission errors during installation
 
 The NemoClaw installer does not require `sudo` or root.
@@ -604,7 +617,56 @@ As a last resort, you can also delete the session file directly and re-run the i
 rm ~/.nemoclaw/onboard-session.json
 ```
 
+### Kubernetes namespace not ready
+
+If onboarding fails with `Kubernetes namespace not ready`, a previous failed or interrupted setup may have left stale OpenShell or NemoClaw state behind.
+Clean up the failed installation before re-running the installer:
+
+```bash
+$$nemoclaw uninstall --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The normal uninstall path keeps user data under `~/.nemoclaw/`, including sandbox registry metadata, backups, and saved credentials unless you explicitly remove them.
+If `$$nemoclaw uninstall` reports that the local uninstall script is missing, follow the CLI's security boundary: download the versioned NVIDIA/NemoClaw tag URL that it prints, inspect the script locally, run that local copy, and then retry the installer.
+
+```bash
+curl -fsSLo uninstall.sh <versioned-uninstall-url>
+less uninstall.sh
+bash uninstall.sh --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
 ## Runtime
+
+<AgentOnly variant="openclaw">
+
+### OpenShell gateway and OpenClaw gateway startup order
+
+NemoClaw uses two gateway layers for OpenClaw sandboxes:
+
+- The OpenShell gateway runs on the host side and owns sandbox lifecycle, provider routes, port forwards, and `openshell sandbox list` / `status` queries.
+- The OpenClaw gateway runs inside the sandbox container and serves the OpenClaw dashboard, agent API, and sub-agent WebSocket traffic.
+
+Start and recover them in this order: container runtime, OpenShell gateway, sandbox container, then the in-sandbox OpenClaw gateway.
+
+<Warning>
+Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy.
+NemoClaw cannot select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+</Warning>
+
+If the host rebooted or the OpenShell gateway is down, first run:
+
+```bash
+$$nemoclaw <name> status
+```
+
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox.
+If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell.
+After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards.
+Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+
+</AgentOnly>
 
 ### Reconnect after a host reboot
 
@@ -778,8 +840,44 @@ $$nemoclaw <name> rebuild
 
 ### Sandbox shows as stopped
 
-The sandbox may have been stopped or deleted.
-Run `$$nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
+When status reports `sandbox_container_stopped`, Docker still has a container for the sandbox, but the container is not running.
+Use the lightest recovery path first instead of rebuilding immediately.
+
+1. Confirm Docker can still see the labeled container.
+
+   ```bash
+   docker ps -a --filter "label=openshell.ai/sandbox-name=<name>"
+   ```
+
+   If a container is listed, start it:
+
+   ```bash
+   docker start <container-name>
+   ```
+
+1. Run status recovery from the host.
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
+   A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
+
+1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
+
+   ```bash
+   $$nemoclaw <name> recover
+   ```
+
+1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
+
+   ```bash
+   $$nemoclaw <name> rebuild --yes
+   ```
+
+   Rebuild recreates the sandbox from recorded metadata and preserves supported workspace and agent state.
+   If the sandbox was intentionally deleted and you want a clean setup, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
 
 ### Sandbox is registered locally but missing from the gateway
 
