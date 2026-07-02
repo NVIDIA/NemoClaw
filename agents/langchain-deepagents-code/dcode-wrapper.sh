@@ -376,8 +376,15 @@ assert_no_secret_env_file() {
 
 assert_no_auth_store_credentials() {
   local auth_file="$DEEPAGENTS_AUTH_FILE"
-  [ -r "$auth_file" ] || return 0
+  # Absent auth.json is normal in a fresh sandbox — allow launch.
+  [ -e "$auth_file" ] || return 0
+  # Present-but-unreadable is suspicious (e.g. permissions manipulated to
+  # hide credentials from this scan). Refuse rather than treat as clean.
+  [ -r "$auth_file" ] || refuse_auth_store_credentials "$auth_file"
   set +e
+  # Exit 0 = confirmed clean (no truthy credentials); any nonzero = refuse.
+  # This closes the malformed-JSON bypass: a file dcode's own loader might
+  # still parse should not pass this gate unexamined.
   python3 - "$auth_file" <<'PY'
 import json
 import sys
@@ -387,13 +394,18 @@ path = Path(sys.argv[1])
 try:
     data = json.loads(path.read_text(encoding="utf-8"))
 except Exception:
-    sys.exit(0)
+    sys.exit(1)
+# Schema pin: detection assumes a truthy top-level "credentials" key,
+# matching the auth.json shape in deepagents-code==0.1.30. Nested or
+# renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
+# list) are not detected. When bumping the upstream pin, re-review this
+# assumption against the new auth.json schema.
 credentials = data.get("credentials") if isinstance(data, dict) else None
 sys.exit(1 if credentials else 0)
 PY
   local status=$?
   set -e
-  if [ "$status" -eq 1 ]; then
+  if [ "$status" -ne 0 ]; then
     refuse_auth_store_credentials "$auth_file"
   fi
 }
@@ -611,9 +623,14 @@ case "${1:-}" in
     reject_managed_override "credential posture" "auth"
     ;;
   tools)
-    if [ "${2:-}" = "install" ]; then
-      reject_managed_override "managed tool installation posture" "tools install"
-    fi
+    case "${2:-}" in
+      list | help | "" | -h | --help)
+        : # read-only inspection subcommands pass through
+        ;;
+      *)
+        reject_managed_override "managed tool set posture" "tools ${2:-}"
+        ;;
+    esac
     ;;
 esac
 

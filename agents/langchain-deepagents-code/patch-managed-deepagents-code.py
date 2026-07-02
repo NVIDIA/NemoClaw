@@ -19,8 +19,8 @@ PATCH = '''    # NemoClaw-managed sandbox image hardening.
         parser.error("MCP commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if blocked_command in {"auth", "install", "update"}:
         parser.error(f"{blocked_command} commands are disabled in NemoClaw-managed Deep Agents Code sandboxes")
-    if blocked_command == "tools" and getattr(args, "tools_command", None) == "install":
-        parser.error("tools install is disabled in NemoClaw-managed Deep Agents Code sandboxes")
+    if blocked_command == "tools" and getattr(args, "tools_command", None) not in (None, "list", "help"):
+        parser.error(f"tools {getattr(args, 'tools_command', '?')} is disabled in NemoClaw-managed Deep Agents Code sandboxes")
     if hasattr(args, "sandbox"):
         args.sandbox = "none"
     if hasattr(args, "sandbox_id"):
