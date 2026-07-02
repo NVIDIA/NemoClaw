@@ -55,15 +55,21 @@ describe("decideNonInteractiveNotReadyAction", () => {
 describe("selectPreUpgradeBackupForCreate", () => {
   const note = vi.fn();
   let getLatestBackupSpy: ReturnType<typeof vi.spyOn>;
+  let debugSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     note.mockReset();
     getLatestBackupSpy = vi.spyOn(sandboxState, "getLatestBackup");
+    debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
   afterEach(() => {
     getLatestBackupSpy.mockRestore();
+    debugSpy.mockRestore();
+    warnSpy.mockRestore();
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
@@ -79,6 +85,8 @@ describe("selectPreUpgradeBackupForCreate", () => {
     ).toBeNull();
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringMatching(/gateway reports sandbox live/));
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("returns null when there is no pre-existing registry entry", () => {
@@ -92,6 +100,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
       }),
     ).toBeNull();
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringMatching(/No registry entry/));
   });
 
   it("returns null and does not look up backups when installer restore intent is unset", () => {
@@ -105,6 +114,7 @@ describe("selectPreUpgradeBackupForCreate", () => {
     ).toBeNull();
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/installer restore flag not set/));
   });
 
   it("returns the latest backup path and notes it when installer restore intent finds a backup", () => {
@@ -137,6 +147,9 @@ describe("selectPreUpgradeBackupForCreate", () => {
       }),
     ).toBeNull();
     expect(note).toHaveBeenCalledWith(expect.stringMatching(/No pre-upgrade backup found/));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/installer requested restore but no pre-upgrade backup found/i),
+    );
   });
 });
 
@@ -145,6 +158,7 @@ describe("applyNonInteractiveNotReadyDecision", () => {
   let getLatestBackupSpy: ReturnType<typeof vi.spyOn>;
   let exitSpy: ReturnType<typeof vi.spyOn>;
   let errorSpy: ReturnType<typeof vi.spyOn>;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     note.mockReset();
@@ -153,6 +167,7 @@ describe("applyNonInteractiveNotReadyDecision", () => {
       throw new Error(`process.exit called with ${code}`);
     }) as never);
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
@@ -160,6 +175,7 @@ describe("applyNonInteractiveNotReadyDecision", () => {
     getLatestBackupSpy.mockRestore();
     exitSpy.mockRestore();
     errorSpy.mockRestore();
+    warnSpy.mockRestore();
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
@@ -194,6 +210,9 @@ describe("applyNonInteractiveNotReadyDecision", () => {
     getLatestBackupSpy.mockReturnValue(null);
     expect(applyNonInteractiveNotReadyDecision("preserve-oc", note)).toBeNull();
     expect(note).toHaveBeenCalledWith(expect.stringMatching(/no pre-upgrade backup found/));
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/installer requested restore but no pre-upgrade backup found/i),
+    );
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });

@@ -49,8 +49,43 @@ export interface PreUpgradeBackupSelectInput {
 }
 
 export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInput): string | null {
-  if (input.liveExists || !input.hasExistingRegistryEntry) return null;
-  if (!installerRestoreOnRecreateFromEnv()) return null;
+  // Source-of-truth review for the two drift returns below:
+  //   invalid state         = registry/gateway inconsistency (a registry entry
+  //                           exists while the gateway still reports the sandbox
+  //                           live, or the registry has no entry at all).
+  //   source boundary       = pruneStaleSandboxEntry is best-effort and the
+  //                           gateway may be mid-recreate, so the two stores can
+  //                           disagree at this point.
+  //   source-fix constraint = a real fix needs atomic registry/gateway sync,
+  //                           which is out of scope for this PR.
+  //   regression test       = selectPreUpgradeBackupForCreate returns null when
+  //                           liveExists=true and when hasExistingRegistryEntry=false
+  //                           (see not-ready-recreate.test.ts).
+  //   removal condition     = drop these guards once registry/gateway sync is atomic.
+  if (input.liveExists) {
+    console.debug(
+      `  Registry entry exists for '${input.sandboxName}' but gateway reports sandbox live — skipping pre-upgrade backup select.`,
+    );
+    return null;
+  }
+  if (!input.hasExistingRegistryEntry) {
+    console.debug(
+      `  No registry entry for '${input.sandboxName}' — skipping pre-upgrade backup select.`,
+    );
+    return null;
+  }
+  // Installer contract: the installer MUST set
+  // NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1 after a successful pre-upgrade
+  // backup. A missing flag alongside an existing registry entry means the
+  // expected installer signal never arrived (installer bug, partial upgrade, or
+  // manual intervention); making the installer always set the flag is a
+  // separate PR.
+  if (!installerRestoreOnRecreateFromEnv()) {
+    console.warn(
+      `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
+    );
+    return null;
+  }
   const latest = sandboxState.getLatestBackup(input.sandboxName);
   if (latest?.backupPath) {
     input.note(
@@ -58,6 +93,12 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
     );
     return latest.backupPath;
   }
+  // A guaranteed pre-upgrade backup is out of scope: the backup may have been
+  // manually deleted, the disk may be full, or a prior upgrade attempt may have
+  // removed it. Warn about the hidden data-loss risk and continue with fresh state.
+  console.warn(
+    `  Installer requested restore but no pre-upgrade backup found for '${input.sandboxName}' — recreated sandbox will start fresh.`,
+  );
   input.note(
     `  No pre-upgrade backup found for '${input.sandboxName}'. Recreated sandbox will start with fresh state.`,
   );
@@ -79,6 +120,14 @@ export function applyNonInteractiveNotReadyDecision(
     console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
     console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
     process.exit(1);
+  }
+  // Same out-of-scope rationale as selectPreUpgradeBackupForCreate: when the
+  // installer requested a restore but no backup exists, the recreate proceeds
+  // without one. Surface the hidden data-loss risk instead of failing silently.
+  if (installerRestoreOnRecreate && decision.restoreBackupPath === null) {
+    console.warn(
+      `  Installer requested restore but no pre-upgrade backup found for '${sandboxName}' — recreated sandbox will start fresh.`,
+    );
   }
   note(decision.note);
   return decision.restoreBackupPath;
