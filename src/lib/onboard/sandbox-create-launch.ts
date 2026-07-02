@@ -23,6 +23,7 @@ export interface SandboxCreateLaunchInput {
   hermesDashboardState: HermesDashboardOnboardState;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
+  sandboxName?: string;
   buildEnv?(): Record<string, string>;
 }
 
@@ -75,6 +76,10 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   const sandboxProxyPort = env.NEMOCLAW_PROXY_PORT;
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
+  }
+
+  if (input.agent?.name === "langchain-deepagents-code" && input.sandboxName) {
+    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", input.sandboxName));
   }
 
   appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);

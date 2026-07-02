@@ -14,6 +14,7 @@ export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemocla
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
+readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 
 run_dcode() {
   exec python3 -m deepagents_code "$@"
@@ -194,6 +195,22 @@ has_credential_name_context() {
   return 1
 }
 
+# SECURITY: OpenShell injects transport-layer infrastructure variables (such as
+# the sandbox's local TLS listener key) into the runtime environment. Their names
+# end in a credential keyword, so the name-context heuristic above would refuse to
+# start on them even though they are not user provider secrets. Exempt these exact
+# names from the name-context rejection ONLY; is_secret_shaped_value still runs on
+# every value, so a real provider token carried under one of these names is still
+# rejected. Keep this list narrow and exact — never a prefix wildcard.
+is_openshell_infra_key_name() {
+  case "$1" in
+    OPENSHELL_TLS_KEY)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 is_dynamic_dotenv_value() {
   local value="$1"
   case "$value" in
@@ -232,7 +249,7 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
-    if has_credential_name_context "$name" && [ ${#value} -ge 10 ]; then
+    if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_openshell_infra_key_name "$name"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
   done < <(env -0)
@@ -282,7 +299,7 @@ assert_no_secret_env_file() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
     fi
-    if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
+    if has_credential_name_context "$key" && [ ${#value} -ge 10 ] && ! is_openshell_infra_key_name "$key"; then
       refuse_secret_env "$env_file" "$key"
     fi
   done
@@ -291,7 +308,43 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
+toml_scalar() {
+  local key="$1" line
+  [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key = \""*)
+        line="${line#"$key = \""}"
+        printf '%s' "${line%\"}"
+        return 0
+        ;;
+    esac
+  done <"$DEEPAGENTS_CONFIG_FILE"
+  return 0
+}
+
+print_identity() {
+  local sandbox_name model endpoint
+  sandbox_name="${NEMOCLAW_SANDBOX_NAME:-unknown}"
+  model="$(toml_scalar default)"
+  endpoint="$(toml_scalar base_url)"
+  [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
+  printf 'Sandbox:  %s\n' "$sandbox_name"
+  printf 'Agent:    %s\n' 'langchain-deepagents-code'
+  if [ -n "$model" ]; then
+    printf 'Model:    %s\n' "$model"
+  fi
+  if [ -n "$endpoint" ]; then
+    printf 'Endpoint: %s\n' "$endpoint"
+  fi
+  printf 'Runtime:  %s\n' 'Deep Agents Code (terminal)'
+}
+
 case "${1:-}" in
+  status | whoami | identity)
+    print_identity
+    exit 0
+    ;;
   --version | -v | -V | --help | -h)
     run_dcode "$@"
     ;;

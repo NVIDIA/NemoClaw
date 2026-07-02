@@ -211,6 +211,25 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(envFileText).toContain("export https_proxy=https://safe-proxy.example:8443");
   });
 
+  it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
+    try {
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+
+      execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          NEMOCLAW_SANDBOX_NAME: "dcode-demo",
+        },
+        encoding: "utf8",
+      });
+
+      expect(fs.readFileSync(envFile, "utf8")).toContain("export NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("omits and unsets credential-bearing proxy URLs", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir);

@@ -74,6 +74,7 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_TRACING
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
+    write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"
   chmod 400 "$tmp"
   mv -f "$tmp" "$target"

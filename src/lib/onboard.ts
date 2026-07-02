@@ -3031,6 +3031,7 @@ async function createSandbox(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
+      sandboxName,
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
