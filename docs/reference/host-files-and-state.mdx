@@ -1,0 +1,72 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Host Files and State"
+sidebar-title: "Host Files and State"
+description: "Reference for host-side files and directories under ~/.nemoclaw, including the sandbox registry, backups, onboarding state, local inference adapter state, and uninstall preservation rules."
+description-agent: "Lists the host-side ~/.nemoclaw files and directories, what creates them, whether uninstall preserves them, and when they are safe to remove. Use when auditing NemoClaw state, troubleshooting stale local state, or deciding what user data survives uninstall."
+keywords: ["nemoclaw host files", "nemoclaw state files", "nemoclaw sandboxes.json", "nemoclaw backups", "nemoclaw uninstall user data"]
+content:
+  type: "reference"
+---
+NemoClaw stores host-side state under `~/.nemoclaw/`.
+This page is the reference for what those files mean, when NemoClaw creates them, and whether they are user data or runtime state.
+
+The path is host-side unless a row explicitly says otherwise.
+Do not confuse host `~/.nemoclaw/` with the sandbox's `/sandbox/.nemoclaw/` directory.
+
+## Naming Notes
+
+- The current sandbox registry file is `~/.nemoclaw/sandboxes.json`.
+- There is no current `~/.nemoclaw/registry.json` file. Some code and tests call the registry concept "registry", but the persisted filename is `sandboxes.json`.
+- The provider selection file is `/sandbox/.nemoclaw/config.json` inside the sandbox. Sandbox code may describe the same file as `~/.nemoclaw/config.json` because `HOME=/sandbox` there, but it is not a host-side `~/.nemoclaw/config.json` file.
+
+## User Data Preserved By Uninstall
+
+`$$nemoclaw uninstall` and `nemohermes uninstall` preserve these entries by default.
+They are removed only when you pass `--destroy-user-data`, set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`, or answer the interactive data-loss prompt with `y`.
+
+| Path | Created by | Purpose | Safe to delete? |
+|------|------------|---------|-----------------|
+| `~/.nemoclaw/sandboxes.json` | `onboard`, sandbox lifecycle commands | Canonical host registry for sandbox names, default sandbox selection, gateway binding, dashboard ports, policy metadata, and agent-specific metadata. | Only when you intentionally want NemoClaw to forget local sandboxes. Prefer lifecycle commands over hand edits. |
+| `~/.nemoclaw/rebuild-backups/<sandbox>/` | `snapshot create`, `rebuild`, `backup-all` | Host-side sandbox state snapshots used for rebuild recovery and restore flows. | Yes, after you no longer need to recover or restore that sandbox state. |
+| `~/.nemoclaw/backups/<timestamp>/` | `scripts/backup-workspace.sh` and workspace backup flows | Manual workspace backups outside the live sandbox registry. | Yes, after you have another backup or accept losing that saved workspace copy. |
+
+## Runtime And Operational State
+
+Uninstall removes these entries unless they are part of a broader preserved directory you keep manually.
+Most are regenerated automatically, but several should not be removed while an onboarding, rebuild, local adapter, or share mount is active.
+
+| Path | Created by | Purpose | Safe to delete? |
+|------|------------|---------|-----------------|
+| `~/.nemoclaw/onboard-session.json` | `onboard`, `onboard --resume`, rebuild flows | Resumable onboarding state, last completed step, selected provider/model, router PID, policy presets, and migration status. | Only to abandon a failed/resumable onboarding session after confirming no onboard or rebuild process is running. |
+| `~/.nemoclaw/onboard.lock` | `onboard` and rebuild flows | File lock that prevents overlapping onboarding or rebuild mutations. | Usually no. Remove only when you have confirmed the owner process is gone and the lock is stale. |
+| `~/.nemoclaw/ollama-proxy-token` | Local Ollama inference setup | Bearer token used by the host Ollama auth proxy; written with owner-only permissions. | Yes, to force token regeneration, but stop/restart the local Ollama proxy flow first. |
+| `~/.nemoclaw/ollama-auth-proxy.pid` | Local Ollama inference setup | PID of the local Ollama auth proxy process so uninstall and recovery can stop matching processes. | Yes, if the referenced process is gone. A stale PID can be removed during proxy recovery or uninstall. |
+| `~/.nemoclaw/bedrock-runtime-adapter-token` | Bedrock Runtime compatible adapter | Bearer token for the local Bedrock Runtime adapter. | Yes, to force adapter token regeneration after stopping the adapter. |
+| `~/.nemoclaw/bedrock-runtime-adapter.pid` | Bedrock Runtime compatible adapter | PID of the local Bedrock Runtime adapter process. | Yes, if the referenced process is gone. |
+| `~/.nemoclaw/bedrock-runtime-adapter.json` | Bedrock Runtime compatible adapter | Adapter state and compatibility metadata. | Yes, when resetting the adapter state after stopping it. |
+| `~/.nemoclaw/bedrock-runtime-adapter.log` | Bedrock Runtime compatible adapter | JSONL diagnostic log for adapter events. | Yes, when logs are no longer needed for troubleshooting. |
+| `~/.nemoclaw/credentials.json` | Earlier NemoClaw releases | Legacy plaintext credential store. Current flows migrate supported values into the OpenShell gateway and then remove this file after verified migration. | Delete only after confirming credentials were migrated or are no longer needed. If it remains unexpectedly, run onboarding to complete migration. |
+| `~/.nemoclaw/source/` | Installer-managed installs and `update` | Managed source clone used by installer-based updates. | Yes, after uninstall or before a clean reinstall. Removing it can break `update` until NemoClaw is reinstalled. |
+| `~/.nemoclaw/model-router-venv/` | Model Router setup | Python virtual environment for the local model router service. | Yes, after stopping the router. It is recreated when the router is prepared again. |
+| `~/.nemoclaw/state/` | Shields, model-router, and local runtime helpers | Internal runtime records such as shields state and local service coordination. | Avoid manual deletion unless a support or recovery flow calls for it. |
+| `~/.nemoclaw/mounts/<sandbox>/` | `share mount` | Default host mount point for SSHFS sandbox file sharing. | Unmount first with `share unmount`; then the empty directory can be removed. |
+| `~/.nemoclaw/usage-notice.json` | First-run usage notice flow | Records the accepted third-party software notice version. | Yes. Deleting it makes NemoClaw ask for consent again. |
+| `~/.nemoclaw/managed_swap` | Linux preflight swap helper | Tracks a NemoClaw-managed swap file path for cleanup. | Do not delete by itself. Use the documented host cleanup path so the swap file and state stay in sync. |
+
+## Related Sandbox-Side State
+
+These entries are under the sandbox root, not the host state directory.
+
+| Path | Created by | Purpose | Safe to delete? |
+|------|------------|---------|-----------------|
+| `/sandbox/.nemoclaw/config.json` | Onboarding and rebuild config sync | Provider and model selection consumed by the in-sandbox NemoClaw/OpenClaw integration. | No during normal use. Re-run onboarding or rebuild to regenerate it. |
+| `/sandbox/.nemoclaw/state/` | In-sandbox runtime guards | Sandbox-side mutable state allowed by the filesystem policy. | No during normal use. Use sandbox lifecycle commands instead. |
+
+## Related References
+
+- [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) covers uninstall and `--destroy-user-data`.
+- [Backup and Restore](../manage-sandboxes/backup-restore) covers `rebuild-backups/` and workspace backups.
+- [Credential Storage](../security/credential-storage) covers legacy `credentials.json` migration.
+- [Local Inference](../inference/use-local-inference) covers the Local Ollama proxy token.
