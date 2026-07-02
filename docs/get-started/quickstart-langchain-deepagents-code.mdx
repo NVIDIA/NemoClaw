@@ -69,8 +69,9 @@ To confirm which sandbox a session is in, run the identity command:
 dcode status
 ```
 
-It prints the sandbox name, agent, configured provider route and model, and inference endpoint, then exits without starting the interactive UI.
+The command prints the sandbox name, NemoClaw harness, active `dcode` agent, configured inference route, upstream provider, model, endpoint, and runtime, then exits without starting the interactive UI.
 `dcode whoami` and `dcode identity` are aliases.
+`dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
 The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
 
 ## Python Environment

@@ -303,10 +303,21 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
-toml_scalar() {
-  local key="$1" line
+toml_section_scalar() {
+  local section="$1"
+  local key="$2"
+  local line current_section=""
   [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim_whitespace "$line")"
+    case "$line" in
+      \[*\])
+        current_section="${line#\[}"
+        current_section="${current_section%\]}"
+        continue
+        ;;
+    esac
+    [ "$current_section" = "$section" ] || continue
     case "$line" in
       "$key = \""*)
         line="${line#"$key = \""}"
@@ -318,14 +329,25 @@ toml_scalar() {
   return 0
 }
 
-toml_provider_route() {
-  local line
+toml_provider_metadata() {
+  local field="$1"
+  local line route provider _api
   [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
   while IFS= read -r line || [ -n "$line" ]; do
     case "$line" in
       "# NemoClaw provider route: "*)
         line="${line#"# NemoClaw provider route: "}"
-        printf '%s' "${line%%;*}"
+        IFS=';' read -r route provider _api <<<"$line"
+        route="$(trim_whitespace "$route")"
+        provider="$(trim_whitespace "$provider")"
+        case "$provider" in
+          "upstream provider: "*) provider="${provider#"upstream provider: "}" ;;
+          *) provider="" ;;
+        esac
+        case "$field" in
+          route) printf '%s' "$route" ;;
+          provider) printf '%s' "$provider" ;;
+        esac
         return 0
         ;;
     esac
@@ -333,15 +355,38 @@ toml_provider_route() {
   return 0
 }
 
+resolve_dcode_agent() {
+  local config_dir candidate
+  config_dir="${DEEPAGENTS_CONFIG_FILE%/*}"
+  candidate="$(toml_section_scalar agents default)"
+  if [ -n "$candidate" ] && [ -d "$config_dir/$candidate" ]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  candidate="$(toml_section_scalar agents recent)"
+  if [ -n "$candidate" ] && [ -d "$config_dir/$candidate" ]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  printf '%s' 'agent (default)'
+}
+
 print_identity() {
-  local sandbox_name model endpoint provider
+  local sandbox_name agent model endpoint route provider
   sandbox_name="${NEMOCLAW_SANDBOX_NAME:-unknown}"
-  model="$(toml_scalar default)"
-  endpoint="$(toml_scalar base_url)"
-  provider="$(toml_provider_route)"
+  agent="$(resolve_dcode_agent)"
+  model="$(toml_section_scalar models default)"
+  [ -n "$model" ] || model="$(toml_section_scalar models recent)"
+  endpoint="$(toml_section_scalar models.providers.openai base_url)"
+  route="$(toml_provider_metadata route)"
+  provider="$(toml_provider_metadata provider)"
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
   printf 'Sandbox:  %s\n' "$sandbox_name"
-  printf 'Agent:    %s\n' 'langchain-deepagents-code'
+  printf 'Harness:  %s\n' 'langchain-deepagents-code'
+  printf 'Agent:    %s\n' "$agent"
+  if [ -n "$route" ]; then
+    printf 'Route:    %s\n' "$route"
+  fi
   if [ -n "$provider" ]; then
     printf 'Provider: %s\n' "$provider"
   fi
@@ -354,12 +399,26 @@ print_identity() {
   printf 'Runtime:  %s\n' 'Deep Agents Code (terminal)'
 }
 
+print_managed_help() {
+  cat <<'EOF'
+NemoClaw-managed commands:
+  dcode status      Show managed sandbox and dcode runtime identity
+  dcode whoami      Alias for dcode status
+  dcode identity    Alias for dcode status
+
+EOF
+}
+
 case "${1:-}" in
   status | whoami | identity)
     print_identity
     exit 0
     ;;
-  --version | -v | -V | --help | -h)
+  --help | -h | help)
+    print_managed_help
+    run_dcode "$@"
+    ;;
+  --version | -v | -V)
     run_dcode "$@"
     ;;
 esac
