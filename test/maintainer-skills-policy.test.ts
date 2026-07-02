@@ -75,7 +75,7 @@ describe("maintainer skills follow canonical workflow policy", () => {
 
     expect(evening).toContain("automatically bump stragglers to the next patch");
     expect(release).toContain("scripts/bump-stragglers.ts");
-    expect(release).toContain("Do not run it before Step 5");
+    expect(release).toContain("Do not run it before Step 4");
     expect(morning).toContain("post-tag housekeeping was interrupted");
     expect(priorities).toContain("automatically bump stragglers to the next patch");
     expect(policy).toContain("automatically move every open straggler to the next patch label");
@@ -86,30 +86,21 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(true);
   });
 
-  it("freezes the release plan only after mutable readiness is complete", () => {
+  it("runs release-prep docs before generating the final release plan", () => {
+    const updateDocs = read(".agents/skills/nemoclaw-contributor-update-docs/SKILL.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(policy).toContain(
-      "prepare -> declare ready -> freeze/plan -> tag candidate -> validate -> promote lkg",
-    );
-    expect(policy).toContain("The release plan is the commit-freeze boundary.");
-    expect(policy).toContain(
-      "If release-prep docs are still pending, stop before generating the release plan.",
-    );
-    expect(evening.indexOf("Load `nemoclaw-contributor-update-docs`")).toBeLessThan(
+    expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
+    expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
       evening.indexOf("Load `cut-release-tag`"),
     );
-    expect(evening).toContain("Stop on `pending`.");
     expect(release).toContain(
-      "Do not generate the release plan until release readiness is complete",
+      "Do not generate the release plan until release-prep docs are merged or explicitly waived.",
     );
-    expect(release).toContain("Any merge after plan generation invalidates the plan");
-    expect(release).toContain(
-      "If release-prep docs are `pending`, stop before generating the release plan.",
-    );
-    expect(release).not.toContain("/nemoclaw-contributor-update-docs");
+    expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
+    expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
