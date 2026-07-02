@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
+import type { MessagingTokenDef } from "./messaging-prep";
 import {
   materializeSandboxCreatePlan,
   prepareSandboxCreatePlan,
@@ -40,6 +40,58 @@ const channels = [
     help: "WhatsApp",
   },
 ];
+
+function expectCredentialBindingFailure({
+  expectedMessage,
+  materializedTokenDefs,
+  plannedTokenDef,
+}: {
+  expectedMessage: string;
+  materializedTokenDefs: MessagingTokenDef[];
+  plannedTokenDef: MessagingTokenDef;
+}): void {
+  const intent = resolveSandboxCreateIntent({
+    basePolicyPath: "/repo/policy.yaml",
+    sandboxName: "sandbox",
+    channels,
+    enabledChannels: ["telegram"],
+    disabledChannelNames: new Set(),
+    messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
+      [plannedTokenDef],
+      () => "telegram",
+    ),
+    primaryMessagingCredentialEnvKeys: [plannedTokenDef.envKey],
+    reusableMessagingChannels: [],
+    reusableMessagingProviders: [],
+    hermesToolGateways: [],
+    sandboxGpuConfig,
+    gpuCreateArgs: [],
+    useDockerGpuPatch: false,
+    sandboxGpuLogMessage: null,
+    policyTier: null,
+  });
+  const preparePolicy = vi.fn(() => ({ policyPath: "/tmp/policy.yaml", appliedPresets: [] }));
+  const appendResources = vi.fn();
+  const cleanupProviders = vi.fn();
+  const upsertProviders = vi.fn(() => []);
+
+  expect(() =>
+    materializeSandboxCreatePlan({
+      intent,
+      buildCtx: "/tmp/nemoclaw-build-1",
+      messagingTokenDefs: materializedTokenDefs,
+      prepareInitialSandboxCreatePolicy: preparePolicy,
+      appendResourceFlags: appendResources,
+      runProviderPreDeleteCleanup: cleanupProviders,
+      upsertMessagingProviders: upsertProviders,
+      getHermesToolGatewayProviderName: vi.fn(),
+    }),
+  ).toThrow(expectedMessage);
+  expect(preparePolicy).not.toHaveBeenCalled();
+  expect(appendResources).not.toHaveBeenCalled();
+  expect(cleanupProviders).not.toHaveBeenCalled();
+  expect(upsertProviders).not.toHaveBeenCalled();
+}
 
 describe("resolveSandboxCreateIntent", () => {
   it("turns credential-bearing inputs into secretless provider requests", () => {
@@ -220,54 +272,56 @@ describe("resolveSandboxCreateIntent", () => {
   });
 
   it("rejects changed credential availability before running effects", () => {
-    const originalTokenDefs = [
-      {
+    expectCredentialBindingFailure({
+      plannedTokenDef: {
         name: "sandbox-telegram-bridge",
         envKey: "TELEGRAM_BOT_TOKEN",
         token: null,
       },
-    ];
-    const intent = resolveSandboxCreateIntent({
-      basePolicyPath: "/repo/policy.yaml",
-      sandboxName: "sandbox",
-      channels,
-      enabledChannels: ["telegram"],
-      disabledChannelNames: new Set(),
-      messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
-        originalTokenDefs,
-        () => "telegram",
-      ),
-      primaryMessagingCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN"],
-      reusableMessagingChannels: [],
-      reusableMessagingProviders: [],
-      hermesToolGateways: [],
-      sandboxGpuConfig,
-      gpuCreateArgs: [],
-      useDockerGpuPatch: false,
-      sandboxGpuLogMessage: null,
-      policyTier: null,
+      materializedTokenDefs: [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "new-secret",
+        },
+      ],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; credential availability changed for provider 'sandbox-telegram-bridge'.",
     });
-    const preparePolicy = vi.fn(() => ({ policyPath: "/tmp/policy.yaml", appliedPresets: [] }));
-    const appendResources = vi.fn();
-    const cleanupProviders = vi.fn();
-    const upsertProviders = vi.fn(() => []);
+  });
 
-    expect(() =>
-      materializeSandboxCreatePlan({
-        intent,
-        buildCtx: "/tmp/nemoclaw-build-1",
-        messagingTokenDefs: [{ ...originalTokenDefs[0], token: "new-secret" }],
-        prepareInitialSandboxCreatePolicy: preparePolicy,
-        appendResourceFlags: appendResources,
-        runProviderPreDeleteCleanup: cleanupProviders,
-        upsertMessagingProviders: upsertProviders,
-        getHermesToolGatewayProviderName: vi.fn(),
-      }),
-    ).toThrow("credential availability changed");
-    expect(preparePolicy).not.toHaveBeenCalled();
-    expect(appendResources).not.toHaveBeenCalled();
-    expect(cleanupProviders).not.toHaveBeenCalled();
-    expect(upsertProviders).not.toHaveBeenCalled();
+  it("rejects a missing credential binding before running effects", () => {
+    expectCredentialBindingFailure({
+      plannedTokenDef: {
+        name: "sandbox-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: "telegram-secret",
+      },
+      materializedTokenDefs: [],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; missing credential binding 'TELEGRAM_BOT_TOKEN' for provider 'sandbox-telegram-bridge'.",
+    });
+  });
+
+  it("rejects a changed provider type before running effects", () => {
+    expectCredentialBindingFailure({
+      plannedTokenDef: {
+        name: "sandbox-brave-search",
+        envKey: "BRAVE_API_KEY",
+        token: "brave-secret",
+        providerType: "brave-search",
+      },
+      materializedTokenDefs: [
+        {
+          name: "sandbox-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brave-secret",
+          providerType: "generic",
+        },
+      ],
+      expectedMessage:
+        "Cannot materialize sandbox create intent; provider type changed for 'sandbox-brave-search'.",
+    });
   });
 });
 
