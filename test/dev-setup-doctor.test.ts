@@ -95,7 +95,7 @@ fi`,
     ;;
   *" config --get gpg.format "*)
     if [ "\${FAKE_GIT_SIGN_FORMAT_UNSET:-}" = "1" ]; then exit 1; fi
-    echo "\${FAKE_GIT_SIGN_FORMAT:-ssh}"
+    echo "\${FAKE_GIT_SIGN_FORMAT-ssh}"
     ;;
   *" config --get user.signingkey "*)
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
@@ -277,6 +277,17 @@ describe("contributor environment doctor", () => {
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Git commit signing configured (openpgp)");
+  });
+
+  it("rejects an explicitly empty git signing format", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: "" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).not.toContain("Ready to create a feature branch.");
+    expect(result.output).toContain("Git commit signing format is unsupported (empty)");
   });
 
   it.each(["openpgp", "x509"])("accepts the %s git signing format", (format) => {
