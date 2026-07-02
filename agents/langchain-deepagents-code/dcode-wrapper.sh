@@ -391,17 +391,41 @@ terminal_safe_identity_value() {
   fi
 }
 
+safe_endpoint_identity_value() {
+  local value scheme authority
+  value="$(terminal_safe_identity_value "$1")"
+  [ -n "$value" ] || return 0
+  if is_secret_shaped_value "$value"; then
+    return 0
+  fi
+  case "$value" in
+    *\\* | *\?* | *\#*) return 0 ;;
+  esac
+  scheme="${value%%://*}"
+  [ "$scheme" != "$value" ] || return 0
+  case "${scheme,,}" in
+    http | https) ;;
+    *) return 0 ;;
+  esac
+  authority="${value#*://}"
+  authority="${authority%%/*}"
+  case "$authority" in
+    "" | *@*) return 0 ;;
+  esac
+  printf '%s' "$value"
+}
+
 print_identity() {
   local sandbox_name agent model endpoint route provider
   sandbox_name="$(terminal_safe_identity_value "${NEMOCLAW_SANDBOX_NAME:-unknown}" unknown)"
   agent="$(terminal_safe_identity_value "$(resolve_dcode_agent)" 'agent (default)')"
   model="$(terminal_safe_identity_value "$(toml_section_scalar models default)")"
   [ -n "$model" ] || model="$(terminal_safe_identity_value "$(toml_section_scalar models recent)")"
-  endpoint="$(terminal_safe_identity_value "$(toml_section_scalar models.providers.openai base_url)")"
+  endpoint="$(toml_section_scalar models.providers.openai base_url)"
   route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
   provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
-  endpoint="$(terminal_safe_identity_value "$endpoint")"
+  endpoint="$(safe_endpoint_identity_value "$endpoint")"
   printf 'Sandbox:  %s\n' "$sandbox_name"
   printf 'Harness:  %s\n' 'langchain-deepagents-code'
   printf 'Agent:    %s\n' "$agent"

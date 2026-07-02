@@ -198,6 +198,20 @@ describe.skipIf(!canRun)(
         expect(run.stdout).not.toContain("Provider:");
         expect(run.stdout).not.toContain("Model:");
         expect(run.stdout).not.toContain("Endpoint:");
+
+        const unsafeConfigEndpoint = SAMPLE_CONFIG.replace(
+          "https://inference.local/v1",
+          `https://inference.local/${escape}`,
+        );
+        const configEndpointRun = runBashWrapper(
+          buildFixture(dir, unsafeConfigEndpoint),
+          ["status"],
+          { OPENAI_BASE_URL: "https://safe-fallback.example.test/v1" },
+        );
+
+        expect(configEndpointRun.status).toBe(0);
+        expect(configEndpointRun.stdout).not.toContain("safe-fallback.example.test");
+        expect(configEndpointRun.stdout).not.toContain("Endpoint:");
       });
     });
 
@@ -214,6 +228,46 @@ describe.skipIf(!canRun)(
         expect(run.stdout).toContain("Sandbox:  unknown");
         expect(run.stdout).not.toContain(oversized);
         expect(run.stdout).not.toContain("Endpoint:");
+      });
+    });
+
+    it("does not write unsafe endpoint values from mutable sources", () => {
+      withTempDir((dir) => {
+        const unsafeEndpoints = [
+          "https://status-user:opaque-password@example.test/v1",
+          "https://example.test/v1?api_key=opaque-secret",
+          "https://example.test/v1#opaque-fragment",
+          "https://status-user:opaque-password\\u0040example.test/v1",
+          "https://example.test/v1\\u003Fapi_key=opaque-secret",
+          "https",
+        ];
+        for (const endpoint of unsafeEndpoints) {
+          for (const source of ["config", "runtime"] as const) {
+            const config =
+              source === "config"
+                ? SAMPLE_CONFIG.replace("https://inference.local/v1", endpoint)
+                : SAMPLE_CONFIG.replace('base_url = "https://inference.local/v1"', "");
+            const env = source === "runtime" ? { OPENAI_BASE_URL: endpoint } : {};
+            const run = runBashWrapper(buildFixture(dir, config), ["status"], env);
+
+            expect(run.status).toBe(0);
+            expect(run.stdout).not.toContain(endpoint);
+            expect(run.stdout).not.toContain("Endpoint:");
+          }
+        }
+      });
+    });
+
+    it("writes safe custom endpoint URLs from the runtime fallback", () => {
+      withTempDir((dir) => {
+        const endpoint = "https://api.example.test:8443/openai/v1";
+        const config = SAMPLE_CONFIG.replace('base_url = "https://inference.local/v1"', "");
+        const run = runBashWrapper(buildFixture(dir, config), ["status"], {
+          OPENAI_BASE_URL: endpoint,
+        });
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain(`Endpoint: ${endpoint}`);
       });
     });
 
