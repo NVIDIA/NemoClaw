@@ -37,8 +37,23 @@ export function decideNonInteractiveNotReadyAction(
   };
 }
 
-function installerRestoreOnRecreateFromEnv(): boolean {
-  return process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+export class NotReadySandboxError extends Error {
+  readonly sandboxName: string;
+  readonly hints: readonly string[];
+
+  constructor(sandboxName: string) {
+    super(`Sandbox '${sandboxName}' already exists but is not ready.`);
+    this.name = "NotReadySandboxError";
+    this.sandboxName = sandboxName;
+    this.hints = [
+      `  Sandbox '${sandboxName}' already exists but is not ready.`,
+      "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.",
+    ];
+  }
+}
+
+export function installerRestoreOnRecreateFromEnv(env: NodeJS.ProcessEnv): boolean {
+  return env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
 }
 
 export interface PreUpgradeBackupSelectInput {
@@ -80,7 +95,7 @@ export function selectPreUpgradeBackupForCreate(input: PreUpgradeBackupSelectInp
   // expected installer signal never arrived (installer bug, partial upgrade, or
   // manual intervention); making the installer always set the flag is a
   // separate PR.
-  if (!installerRestoreOnRecreateFromEnv()) {
+  if (!installerRestoreOnRecreateFromEnv(process.env)) {
     console.warn(
       `  Registry entry exists for '${input.sandboxName}' but installer restore flag not set — skipping pre-upgrade backup select.`,
     );
@@ -109,7 +124,7 @@ export function applyNonInteractiveNotReadyDecision(
   sandboxName: string,
   note: (message: string) => void,
 ): string | null {
-  const installerRestoreOnRecreate = installerRestoreOnRecreateFromEnv();
+  const installerRestoreOnRecreate = installerRestoreOnRecreateFromEnv(process.env);
   const latest = installerRestoreOnRecreate ? sandboxState.getLatestBackup(sandboxName) : null;
   const decision = decideNonInteractiveNotReadyAction({
     sandboxName,
@@ -117,9 +132,7 @@ export function applyNonInteractiveNotReadyDecision(
     latestBackupPath: latest?.backupPath ?? null,
   });
   if (decision.kind === "exit") {
-    console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-    console.error("  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.");
-    process.exit(1);
+    throw new NotReadySandboxError(sandboxName);
   }
   // Same out-of-scope rationale as selectPreUpgradeBackupForCreate: when the
   // installer requested a restore but no backup exists, the recreate proceeds

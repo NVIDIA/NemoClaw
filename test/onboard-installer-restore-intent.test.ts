@@ -22,7 +22,7 @@ function writeOkOpenshell(fakeBin: string) {
 }
 
 describe("createSandbox installer restore intent", () => {
-  it("non-interactive not-ready sandbox with installer restore intent selects the latest backup, skips the fresh backup, recreates, and restores the pre-upgrade backup (#6114)", {
+  it("non-interactive not-ready sandbox with installer restore intent skips the fresh backup, restores the pre-upgrade backup, and stays exec-usable for a workspace marker (#6114)", {
     timeout: 60_000,
   }, async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-installer-restore-"));
@@ -33,6 +33,9 @@ describe("createSandbox installer restore intent", () => {
     const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sandboxStatePath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
+    );
+    const execActionPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "actions", "sandbox", "exec.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -120,13 +123,40 @@ childProcess.spawn = (...args) => {
 };
 
 const { createSandbox } = require(${onboardPath});
+const { runSandboxExecCommand } = require(${execActionPath});
+
+const MARKER_PATH = "/sandbox/workspace/marker.txt";
+const MARKER_SHA = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   delete process.env.NEMOCLAW_RECREATE_SANDBOX;
   process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
-  console.log(JSON.stringify({ sandboxName, events }));
+
+  // Prove the recreated + restored sandbox is reachable through the real
+  // "nemoclaw <name> exec" boundary and can read a preserved workspace marker.
+  const completion = await runSandboxExecCommand(
+    "openshell",
+    sandboxName,
+    ["sha256sum", MARKER_PATH],
+    {},
+    async (binary, args) => {
+      const joined = _n([binary, ...args]);
+      const reads =
+        joined.includes("sandbox exec") &&
+        joined.includes("--name " + sandboxName) &&
+        joined.includes("sha256sum " + MARKER_PATH);
+      events.push({ kind: "exec", cmd: joined, marker: reads ? MARKER_SHA : null });
+      return { status: reads ? 0 : 1 };
+    },
+    {
+      getSandbox: () => ({ agent: "openclaw" }),
+      inspectMutableConfigPerms: () => ({ applies: true, ok: true }),
+      repairMutableConfigPerms: () => ({ applied: false }),
+    },
+  );
+  console.log(JSON.stringify({ sandboxName, events, execCode: completion.code }));
 })().catch((error) => {
   console.error(error);
   process.exit(1);
@@ -168,6 +198,7 @@ const { createSandbox } = require(${onboardPath});
       cmd?: string;
       name?: string;
       backupPath?: string;
+      marker?: string | null;
     }>;
     const getLatestIndex = events.findIndex((e) => e.kind === "getLatestBackup");
     const deleteIndex = events.findIndex(
@@ -187,6 +218,15 @@ const { createSandbox } = require(${onboardPath});
       "/tmp/fake-pre-upgrade-backup",
       "should restore from the selected pre-upgrade backup rather than a fresh backup",
     );
+
+    const execIndex = events.findIndex((e) => e.kind === "exec");
+    assert.ok(execIndex > restoreIndex, "exec marker read must happen after restore");
+    assert.equal(
+      events[execIndex]?.marker,
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "nemoclaw exec should read the preserved workspace marker after restore",
+    );
+    assert.equal(payload.execCode, 0, "nemoclaw exec of the workspace marker should succeed");
   });
 
   it("non-interactive not-ready sandbox without installer restore intent exits before any sandbox delete (#6114)", {

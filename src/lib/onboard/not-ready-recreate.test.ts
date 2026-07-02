@@ -7,6 +7,8 @@ import * as sandboxState from "../state/sandbox";
 import {
   applyNonInteractiveNotReadyDecision,
   decideNonInteractiveNotReadyAction,
+  installerRestoreOnRecreateFromEnv,
+  NotReadySandboxError,
   selectPreUpgradeBackupForCreate,
 } from "./not-ready-recreate";
 
@@ -179,16 +181,18 @@ describe("applyNonInteractiveNotReadyDecision", () => {
     delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
   });
 
-  it("exits with code 1 and prints the recreate-flag hint when installer restore intent is unset", () => {
-    expect(() => applyNonInteractiveNotReadyDecision("my-assistant", note)).toThrow(
-      /process\.exit called with 1/,
-    );
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/Sandbox 'my-assistant' already exists but is not ready/),
-    );
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1/),
-    );
+  it("throws NotReadySandboxError with the recreate-flag hint when installer restore intent is unset", () => {
+    let thrown: unknown;
+    try {
+      applyNonInteractiveNotReadyDecision("my-assistant", note);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(NotReadySandboxError);
+    const hints = (thrown as NotReadySandboxError).hints.join("\n");
+    expect(hints).toMatch(/Sandbox 'my-assistant' already exists but is not ready/);
+    expect(hints).toMatch(/Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1/);
+    expect(exitSpy).not.toHaveBeenCalled();
     expect(getLatestBackupSpy).not.toHaveBeenCalled();
     expect(note).not.toHaveBeenCalled();
   });
@@ -214,5 +218,25 @@ describe("applyNonInteractiveNotReadyDecision", () => {
       expect.stringMatching(/installer requested restore but no pre-upgrade backup found/i),
     );
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("installerRestoreOnRecreateFromEnv", () => {
+  it("returns true when the installer restore sentinel is set to '1'", () => {
+    expect(
+      installerRestoreOnRecreateFromEnv({ NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: "1" }),
+    ).toBe(true);
+  });
+
+  it("returns false for an empty environment", () => {
+    expect(installerRestoreOnRecreateFromEnv({})).toBe(false);
+  });
+
+  it("returns false when the sentinel is set to any value other than '1'", () => {
+    for (const value of ["", "0", "true", "yes"]) {
+      expect(
+        installerRestoreOnRecreateFromEnv({ NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: value }),
+      ).toBe(false);
+    }
   });
 });
