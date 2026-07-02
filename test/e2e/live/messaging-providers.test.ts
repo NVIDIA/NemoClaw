@@ -32,6 +32,7 @@ import {
   expectExitZero,
   INSTALL_TIMEOUT_MS,
   isNvidiaEndpointRateLimitFailure,
+  isProxyPolicyConnectDenial,
   isUnresolvedPlaceholderRejection,
   LIVE_TIMEOUT_MS,
   lastJsonLine,
@@ -590,12 +591,11 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
     if (/HTTP_/.test(telegramReach)) {
       check(true, `M12: Node.js reached api.telegram.org (${telegramReach})`);
     } else if (
-      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL / HTTP 403 or 407 from the
-      // OpenShell gateway) means the proxy wiring is correct, not that the host is
-      // unreachable, so it is treated as a skip rather than a failure (issue #3836).
-      /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up|ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
-        telegramReach,
-      )
+      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL from the OpenShell gateway)
+      // means the proxy wiring is correct, not that the host is unreachable, so it
+      // is treated as a skip rather than a failure (issue #3836).
+      isProxyPolicyConnectDenial(telegramReach) ||
+      /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up/i.test(telegramReach)
     ) {
       await skipNote(
         artifacts,
@@ -678,10 +678,11 @@ NODE`,
     if (discordReach.includes("api:HTTP_") && discordReach.includes("cdn:HTTP_")) {
       check(true, "M13: Node.js reached Discord API and CDN through proxy");
     } else if (
-      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL / HTTP 403 or 407 from the
-      // OpenShell gateway) means the proxy wiring is correct, not that Discord is
-      // unreachable, so it is treated as a skip rather than a failure (issue #3836).
-      /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network|ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
+      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL from the OpenShell gateway)
+      // means the proxy wiring is correct, not that Discord is unreachable, so it
+      // is treated as a skip rather than a failure (issue #3836).
+      isProxyPolicyConnectDenial(discordReach) ||
+      /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network/i.test(
         discordReach,
       )
     ) {
