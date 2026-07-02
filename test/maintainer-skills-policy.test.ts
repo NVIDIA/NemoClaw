@@ -86,6 +86,37 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(true);
   });
 
+  it("requires exact-SHA E2E evidence or itemized maintainer exceptions before tagging", () => {
+    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+
+    expect(policy).toContain("exact full `origin/main` commit SHA");
+    expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
+    expect(policy).toContain("Do not maintain a separate release-gating test list");
+    expect(policy).toContain("at least one completed, successful execution");
+    expect(policy).toContain("multiple workflow runs, selective runs, reruns, and attempts");
+    expect(policy).toContain("explicit selection and every expanded matrix execution");
+    expect(policy).toContain("A later failure does not erase an earlier successful execution");
+    expect(policy).toContain(
+      "Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence",
+    );
+    expect(policy).toContain("itemized maintainer exception");
+    expect(policy).toContain("If the candidate SHA changes");
+    expect(policy).toContain("discard the ledger and its exceptions");
+    expect(release).toContain("the number of tests with green evidence");
+    expect(release).toContain("successful run or job URL and attempt");
+    const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
+    const confirmationPrompt = release.indexOf(
+      "Ask the maintainer to paste the exact phrase",
+      evidenceSummary,
+    );
+    expect(evidenceSummary).toBeGreaterThanOrEqual(0);
+    expect(evidenceSummary).toBeLessThan(confirmationPrompt);
+    expect(evening).toContain("every test has green evidence");
+    expect(evening).toContain("explicit itemized maintainer exception");
+  });
+
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
     const sweep = read(".agents/skills/nemoclaw-maintainer-cross-issue-sweep/SKILL.md");
     const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");
