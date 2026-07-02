@@ -16,7 +16,13 @@ const headlessCheckPath = path.join(
   "07-deepagents-code-headless-inference.sh",
 );
 
-type RuntimeEnvTrustCase = "valid" | "symlink" | "writable" | "wrong-user" | "root-user";
+type RuntimeEnvTrustCase =
+  | "valid"
+  | "symlink"
+  | "writable"
+  | "wrong-user"
+  | "wrong-owner"
+  | "root-user";
 
 function runHeadlessCheckHelper(
   snippet: string,
@@ -67,6 +73,11 @@ function validateLoginProxyContract(
     case "wrong-user":
       checkSource = checkSource.replace('sandbox_uid="$(id -u)"', "sandbox_uid=99999");
       break;
+    case "wrong-owner":
+      checkSource = checkSource
+        .replace('runtime_uid="$(id -u)"', "runtime_uid=99999")
+        .replace('sandbox_uid="$(id -u)"', "sandbox_uid=99999");
+      break;
     case "root-user":
       checkSource = checkSource
         .replace('runtime_uid="$(id -u)"', "runtime_uid=0")
@@ -106,7 +117,13 @@ describe("Deep Agents Code login-shell proxy contract", () => {
     const managedProxy = "http://10.200.0.1:3128";
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
     expect(validateLoginProxyContract(managedProxy, managedNoProxy)).toBe("pass");
-    for (const runtimeEnvTrust of ["symlink", "writable", "wrong-user", "root-user"] as const) {
+    for (const runtimeEnvTrust of [
+      "symlink",
+      "writable",
+      "wrong-user",
+      "wrong-owner",
+      "root-user",
+    ] as const) {
       expect(
         validateLoginProxyContract(managedProxy, managedNoProxy, managedProxy, runtimeEnvTrust),
       ).toBe("fail");

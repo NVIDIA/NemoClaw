@@ -267,6 +267,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+    const inheritedSecrets = {
+      NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
+      OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
+      LANGSMITH_API_KEY: `lsv2_${"C".repeat(30)}`,
+    };
 
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
@@ -275,9 +280,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       http_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       https_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       no_proxy: "corp.internal,inference.local",
-      NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
-      OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
-      LANGSMITH_API_KEY: `lsv2_${"C".repeat(30)}`,
+      ...inheritedSecrets,
     });
 
     const managedProxy = "http://10.200.0.1:3128";
@@ -304,6 +307,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     const combined = `${output}\n${envFileText}`;
     expect(containsTokenShapedSecret(envFileText)).toBe(false);
+    for (const secret of Object.values(inheritedSecrets)) {
+      expect(envFileText).not.toContain(secret);
+    }
     expect(combined).not.toContain("corp-proxy.example");
     expect(combined).not.toContain("lower-proxy.example");
     expect(combined).not.toContain("corp-user");
