@@ -264,12 +264,16 @@ describe("E2E operations workflow boundary", () => {
       getSlackChannel: vi.fn().mockReturnValue("daily"),
       getStatusColor: vi.fn().mockReturnValue("good"),
     };
+    const runtimeModules = new Map<string, unknown>([
+      ["path", { join: (...parts: string[]) => parts.join("/") }],
+      ["/workspace/scripts/scorecard/analyze-trace-timing.ts", traceTiming],
+      ["/workspace/scripts/scorecard/summarize-jobs.ts", scorecardJobs],
+      ["/workspace/scripts/scorecard/build-slack-blocks.ts", slackBlocks],
+    ]);
     const runtimeRequire = (specifier: string) => {
-      if (specifier === "path") return { join: (...parts: string[]) => parts.join("/") };
-      if (specifier.endsWith("analyze-trace-timing.ts")) return traceTiming;
-      if (specifier.endsWith("summarize-jobs.ts")) return scorecardJobs;
-      if (specifier.endsWith("build-slack-blocks.ts")) return slackBlocks;
-      throw new Error(`Unexpected scorecard require: ${specifier}`);
+      const runtimeModule = runtimeModules.get(specifier);
+      expect(runtimeModule, `Unexpected scorecard require: ${specifier}`).toBeDefined();
+      return runtimeModule;
     };
     const processMock = {
       env: {
