@@ -138,12 +138,31 @@ export async function addSandboxPolicy(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
-  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent);
+  const agent = resolveAgentForSandbox(sandboxName);
+  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent).filter(
+    (preset: { name: string }) => {
+      const manifest = resolveChannelManifest(preset.name);
+      return !manifest || channelSupportedByAgent(manifest, agent);
+    },
+  );
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
+    const channelManifest = resolveChannelManifest(normalized);
+    if (channelManifest && !channelSupportedByAgent(channelManifest, agent)) {
+      console.error(
+        `  Channel '${channelManifest.id}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
+      );
+      console.error(
+        `  Channel-supported agents: ${formatSupportedMessagingAgentIds(channelManifest.supportedAgents)}.`,
+      );
+      console.error(
+        `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+      );
+      process.exit(1);
+    }
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
     if (!preset) {
       console.error(`  Unknown preset '${presetArg}'.`);
