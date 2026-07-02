@@ -78,8 +78,15 @@ jobs:
             echo "::error::Failed to generate preview URL. See fern output above."
             exit "$STATUS"
           fi
-          EXPECTED_BASE="https://${FERN_STAGING_INSTANCE}"
-          EXPECTED_PREFIX="https://${FERN_STAGING_INSTANCE}/"
+          FERN_ORG=$(node -p "require('./fern/fern.config.json').organization")
+          INSTANCE_PATH="${FERN_STAGING_INSTANCE#*/}"
+          if [[ "$INSTANCE_PATH" == "$FERN_STAGING_INSTANCE" ]]; then
+            INSTANCE_PATH=""
+          else
+            INSTANCE_PATH="/${INSTANCE_PATH}"
+          fi
+          EXPECTED_BASE="https://${FERN_ORG}-preview-${PREVIEW_ID}.docs.buildwithfern.com${INSTANCE_PATH}"
+          EXPECTED_PREFIX="${EXPECTED_BASE}/"
           if [[ "$URL" != "$EXPECTED_BASE" && "$URL" != "${EXPECTED_PREFIX}"* ]]; then
             echo "::error::Preview URL must match ${EXPECTED_BASE} or start with ${EXPECTED_PREFIX}; got ${URL}."
             exit 1
