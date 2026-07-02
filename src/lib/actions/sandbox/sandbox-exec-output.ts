@@ -2,16 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
 
 export const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
-export function buildSandboxExecMarkedCommand(command: string): string {
+export function createSandboxExecMarker(): string {
+  return `${SANDBOX_EXEC_STARTED_MARKER}_${randomBytes(16).toString("hex")}`;
+}
+
+export function buildSandboxExecMarkedCommand(
+  command: string,
+  marker = SANDBOX_EXEC_STARTED_MARKER,
+): string {
   if (!command.includes("validate-hermes-env-secret-boundary.py")) {
-    return `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+    return `printf '%s\\n' '${marker}'; ${command}`;
   }
   const encodedCommand = Buffer.from(command, "utf8").toString("base64");
   return [
-    `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
+    `printf '%s\\n' '${marker}'`,
     "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
     `printf '%s' '${encodedCommand}' | base64 -d | sh`,
   ].join("; ");
@@ -32,34 +40,47 @@ function parseSandboxExecStdoutFrame(line: string): { text: string; framed: bool
  * stdout frame prefixes at this transport boundary so recovery, status, and
  * Hermes boundary callers keep consuming plain command stdout.
  *
- * Security boundary: `markedCommand` always prints the sentinel as the first
- * thing the marked command does, so the authentic sentinel line is always the
- * last one in the captured output. Take the LAST exact sentinel line rather
- * than the first, so sandbox-controlled output that precedes the marked
- * command (e.g. login-shell profile output) cannot plant a decoy sentinel and
- * have its own forged follow-up lines misread as the real command's stdout.
+ * Security boundary: accept exactly one marker across the captured stdout and
+ * stderr streams. A duplicate before or after the authentic boundary is
+ * ambiguous and must fail closed. A fresh marker for each exec also prevents
+ * fixed preamble text from being mistaken for the current boundary.
+ *
  * Remove this compatibility shim once OpenShell exposes a stable
  * machine-readable exec output mode that preserves child stdout/stderr
  * without human framing.
  */
-export function extractSandboxExecCommandStdout(output: string): string | null {
-  const stdout = output.trim();
-  if (!stdout) return null;
-  const lines = stdout.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
-  let exactMarkerIndex = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].text.trim() === SANDBOX_EXEC_STARTED_MARKER) {
-      exactMarkerIndex = i;
-      break;
+export function extractSandboxExecCommandStdoutFromStreams(
+  streams: { stdout?: string; stderr?: string },
+  marker = SANDBOX_EXEC_STARTED_MARKER,
+): string | null {
+  let markerLocation: { lines: Array<{ text: string; framed: boolean }>; index: number } | null =
+    null;
+
+  for (const output of [streams.stdout ?? "", streams.stderr ?? ""]) {
+    const normalized = output.trim();
+    if (!normalized) continue;
+    const lines = normalized.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
+    for (let index = 0; index < lines.length; index += 1) {
+      if (lines[index].text.trim() !== marker) continue;
+      if (markerLocation !== null) return null;
+      markerLocation = { lines, index };
     }
   }
-  if (exactMarkerIndex >= 0) {
-    return lines
-      .slice(exactMarkerIndex + 1)
+
+  if (markerLocation !== null) {
+    return markerLocation.lines
+      .slice(markerLocation.index + 1)
       .map((line) => line.text)
       .join("\n")
       .trim();
   }
 
   return null;
+}
+
+export function extractSandboxExecCommandStdout(
+  output: string,
+  marker = SANDBOX_EXEC_STARTED_MARKER,
+): string | null {
+  return extractSandboxExecCommandStdoutFromStreams({ stdout: output }, marker);
 }

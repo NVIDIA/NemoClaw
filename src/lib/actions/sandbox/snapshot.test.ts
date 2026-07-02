@@ -11,6 +11,8 @@ import { SANDBOX_EXEC_STARTED_MARKER } from "./sandbox-exec-output";
 type OpenshellCaptureResult = {
   status: number | null;
   output: string;
+  stdout?: string;
+  stderr?: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
 };
@@ -31,11 +33,28 @@ function framedDcodeProbeOutput(state: DcodeProbeState, framePrefix = "stdout: "
   return `${framePrefix}${SANDBOX_EXEC_STARTED_MARKER}\n${framePrefix}NEMOCLAW_DCODE_PROBE=${state}\n`;
 }
 
+function captureExecStreams(
+  args: string[],
+  result: OpenshellCaptureResult,
+): OpenshellCaptureResult {
+  if (args[0] !== "sandbox" || args[1] !== "exec") return result;
+  const command = String(args.at(-1) ?? "");
+  const marker = command.match(/printf '%s\\n' '([^']+)'/)?.[1] ?? SANDBOX_EXEC_STARTED_MARKER;
+  const replaceMarker = (value: string) => value.replaceAll(SANDBOX_EXEC_STARTED_MARKER, marker);
+  const stdout = replaceMarker(result.stdout ?? result.output);
+  const stderr = replaceMarker(result.stderr ?? "");
+  return { ...result, output: stdout, stdout, stderr };
+}
+
 function openshellResponses(
   args: string[],
   responses: Record<string, OpenshellCaptureResult>,
 ): OpenshellCaptureResult {
-  return responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? { status: 0, output: "" };
+  const result = responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? {
+    status: 0,
+    output: "",
+  };
+  return captureExecStreams(args, result);
 }
 
 function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
@@ -437,6 +456,15 @@ describe("runSandboxSnapshot", () => {
     expect(consoleLog.mock.calls.flat().join("\n")).toContain(
       "Snapshot v9 name=framed-idle created",
     );
+    const execCall = captureOpenshellMock.mock.calls.find(
+      ([args]) => args[0] === "sandbox" && args[1] === "exec",
+    );
+    expect(execCall?.[1]).toMatchObject({ ignoreError: true, includeStreams: true });
+    expect(execCall?.[0]).toContain("-c");
+    expect(execCall?.[0]).not.toContain("-lc");
+    expect(String(execCall?.[0].at(-1) ?? "")).toMatch(
+      new RegExp(`${SANDBOX_EXEC_STARTED_MARKER}_[0-9a-f]{32}`),
+    );
   });
 
   it("refuses an active dcode task when OpenShell frames the probe stdout", async () => {
@@ -452,6 +480,74 @@ describe("runSandboxSnapshot", () => {
     expect(backupSandboxStateMock).not.toHaveBeenCalled();
     expect(consoleError.mock.calls.flat().join("\n")).toContain(
       "Sandbox is actively running a dcode task. Please retry after the task completes.",
+    );
+  });
+
+  it("refuses a probe that repeats its marker after an active state", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbeResult({
+      status: 0,
+      output: [
+        SANDBOX_EXEC_STARTED_MARKER,
+        "NEMOCLAW_DCODE_PROBE=active",
+        SANDBOX_EXEC_STARTED_MARKER,
+        "NEMOCLAW_DCODE_PROBE=idle",
+      ].join("\n"),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
+    );
+  });
+
+  it("refuses conflicting probe states after one valid marker", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbeResult({
+      status: 0,
+      output: [
+        SANDBOX_EXEC_STARTED_MARKER,
+        "NEMOCLAW_DCODE_PROBE=idle",
+        "NEMOCLAW_DCODE_PROBE=active",
+      ].join("\n"),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
+    );
+  });
+
+  it("refuses conflicting probe markers split across stdout and stderr", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbeResult({
+      status: 0,
+      output: "",
+      stdout: dcodeProbeOutput("active"),
+      stderr: framedDcodeProbeOutput("idle"),
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task.",
     );
   });
 
@@ -608,7 +704,7 @@ describe("runSandboxSnapshot", () => {
       });
     }
     expect(
-      runProbeScriptWithProcesses(probeScript, `999 sh -lc ${shellCommandLine}\n`),
+      runProbeScriptWithProcesses(probeScript, `999 sh -c ${shellCommandLine}\n`),
     ).toMatchObject({
       status: 0,
       output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),

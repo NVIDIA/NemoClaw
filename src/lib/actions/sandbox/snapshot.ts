@@ -30,7 +30,8 @@ import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 import {
   buildSandboxExecMarkedCommand,
-  extractSandboxExecCommandStdout,
+  createSandboxExecMarker,
+  extractSandboxExecCommandStdoutFromStreams,
 } from "./sandbox-exec-output";
 import {
   probeGatewayRunning,
@@ -406,10 +407,11 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
 
 function parseDcodeProbeState(output: string): DcodeProbeState | null {
   const escapedPrefix = DCODE_PROBE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = output.match(
-    new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "m"),
-  );
-  return (match?.[1] as DcodeProbeState | undefined) ?? null;
+  const matches = [
+    ...output.matchAll(new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "gm")),
+  ];
+  if (matches.length !== 1) return null;
+  return (matches[0][1] as DcodeProbeState | undefined) ?? null;
 }
 
 function shouldCheckDcodeActivity(sandboxName: string): boolean {
@@ -429,6 +431,7 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   // timeouts, and any detected-but-unverifiable runtime. Remove this workaround
   // when dcode exposes a wrapper-owned idle/active lock or equivalent snapshot
   // quiescence signal and the backup path checks that source directly.
+  const execMarker = createSandboxExecMarker();
   const probe = captureOpenshell(
     [
       "sandbox",
@@ -437,17 +440,22 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
       sandboxName,
       "--",
       "sh",
-      "-lc",
-      buildSandboxExecMarkedCommand(DCODE_BUSY_PROBE_SCRIPT),
+      "-c",
+      buildSandboxExecMarkedCommand(DCODE_BUSY_PROBE_SCRIPT, execMarker),
     ],
     {
       ignoreError: true,
-      includeStderr: true,
+      includeStreams: true,
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     },
   );
   const probeCompleted = probe.status === 0 && !probe.error && !probe.signal;
-  const commandStdout = probeCompleted ? extractSandboxExecCommandStdout(probe.output || "") : null;
+  const commandStdout = probeCompleted
+    ? extractSandboxExecCommandStdoutFromStreams(
+        { stdout: probe.stdout, stderr: probe.stderr },
+        execMarker,
+      )
+    : null;
   const probeState = commandStdout === null ? null : parseDcodeProbeState(commandStdout);
   if (
     probeState === DCODE_PROBE_STATE.idleDcodeRuntime ||

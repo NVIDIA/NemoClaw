@@ -5,7 +5,9 @@ import { Buffer } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import {
   buildSandboxExecMarkedCommand,
+  createSandboxExecMarker,
   extractSandboxExecCommandStdout,
+  extractSandboxExecCommandStdoutFromStreams,
   SANDBOX_EXEC_STARTED_MARKER,
 } from "./sandbox-exec-output";
 
@@ -23,6 +25,15 @@ describe("buildSandboxExecMarkedCommand", () => {
     expect(command).not.toContain(script);
     const encoded = Buffer.from(script, "utf8").toString("base64");
     expect(command).toContain(encoded);
+  });
+
+  it("creates a fresh shell-safe marker for each exec", () => {
+    const first = createSandboxExecMarker();
+    const second = createSandboxExecMarker();
+
+    expect(first).toMatch(new RegExp(`^${SANDBOX_EXEC_STARTED_MARKER}_[0-9a-f]{32}$`));
+    expect(second).not.toBe(first);
+    expect(buildSandboxExecMarkedCommand("echo hi", first)).toContain(`'${first}'`);
   });
 });
 
@@ -51,7 +62,7 @@ describe("extractSandboxExecCommandStdout", () => {
     expect(extractSandboxExecCommandStdout(output)).toBe("NEMOCLAW_DCODE_PROBE=active");
   });
 
-  it("uses the last sentinel line so a preamble cannot forge the parser boundary", () => {
+  it("rejects duplicate sentinel lines as an ambiguous parser boundary", () => {
     const output = [
       SANDBOX_EXEC_STARTED_MARKER,
       "NEMOCLAW_DCODE_PROBE=idle",
@@ -59,11 +70,37 @@ describe("extractSandboxExecCommandStdout", () => {
       "NEMOCLAW_DCODE_PROBE=active",
     ].join("\n");
 
-    expect(extractSandboxExecCommandStdout(output)).toBe("NEMOCLAW_DCODE_PROBE=active");
+    expect(extractSandboxExecCommandStdout(output)).toBeNull();
   });
 
   it("does not match a sentinel embedded in a preamble line as a substring", () => {
     const output = `some login banner ${SANDBOX_EXEC_STARTED_MARKER} noise\n${SANDBOX_EXEC_STARTED_MARKER}\nNEMOCLAW_DCODE_PROBE=idle\n`;
     expect(extractSandboxExecCommandStdout(output)).toBe("NEMOCLAW_DCODE_PROBE=idle");
+  });
+
+  it("extracts a framed marker from stderr when stdout does not contain one", () => {
+    const marker = createSandboxExecMarker();
+    expect(
+      extractSandboxExecCommandStdoutFromStreams(
+        {
+          stdout: "OpenShell transport preamble\n",
+          stderr: `stdout: ${marker}\nstdout: NEMOCLAW_DCODE_PROBE=idle\n`,
+        },
+        marker,
+      ),
+    ).toBe("NEMOCLAW_DCODE_PROBE=idle");
+  });
+
+  it("rejects the same marker split across stdout and stderr", () => {
+    const marker = createSandboxExecMarker();
+    expect(
+      extractSandboxExecCommandStdoutFromStreams(
+        {
+          stdout: `${marker}\nNEMOCLAW_DCODE_PROBE=active\n`,
+          stderr: `stdout: ${marker}\nstdout: NEMOCLAW_DCODE_PROBE=idle\n`,
+        },
+        marker,
+      ),
+    ).toBeNull();
   });
 });
