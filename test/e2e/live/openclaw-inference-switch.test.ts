@@ -1022,7 +1022,11 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
     }
     const switchEndpointUrl =
       SWITCH_PROVIDER === "compatible-endpoint"
-        ? baseline.endpointUrl
+        ? // Onboarding already persisted this exact compatible provider's
+          // trusted endpoint metadata. A same-provider model switch must reuse
+          // that durable route instead of resubmitting a DNS-backed HTTPS URL,
+          // which the explicit metadata boundary now rejects fail-closed.
+          null
         : await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
