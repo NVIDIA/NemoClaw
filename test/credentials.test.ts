@@ -86,6 +86,10 @@ describe("messaging legacy bridge credentials", () => {
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_BOT_TOKEN");
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("SLACK_BOT_TOKEN");
   });
+
+  it("registers TAVILY_API_KEY so the Tavily provider can be sanitized and rotated", () => {
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TAVILY_API_KEY");
+  });
 });
 
 describe("host-side credential staging", () => {

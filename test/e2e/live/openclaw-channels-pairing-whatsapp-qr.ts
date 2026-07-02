@@ -159,6 +159,7 @@ export async function runOpenClawWhatsappQrCompact(): Promise<void> {
       "npm",
       [
         "install",
+        "--ignore-scripts",
         "--no-audit",
         "--no-fund",
         `openclaw@${openclawVersion}`,

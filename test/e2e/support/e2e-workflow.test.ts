@@ -602,8 +602,11 @@ describe("e2e workflow boundary", () => {
         "gateway-health-honest",
         "concurrent-gateway-ports",
         "openclaw-channels-conflict-guard",
+        "openclaw-channels-token-rotation",
         "openclaw-channels-add-remove",
         "hermes-channels-add-remove",
+        "openclaw-channels-stop-start",
+        "hermes-channels-stop-start",
       ]) {
         for (const selector of ["targets", "jobs"] as const) {
           expect(evaluateE2eWorkflowDispatchSelectors({ [selector]: job })).toMatchObject({
@@ -616,6 +619,28 @@ describe("e2e workflow boundary", () => {
       }
     },
   );
+
+  it("free-standing E2E workflow jobs reference existing test/e2e/live files", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { env?: Record<string, unknown>; steps?: Array<Record<string, unknown>> }
+      >;
+    };
+
+    const missing = Object.entries(workflow.jobs)
+      .filter(([, job]) => job.env?.E2E_JOB === "1")
+      .flatMap(([jobName, job]) =>
+        (job.steps ?? []).flatMap((step) =>
+          [...String(step.run ?? "").matchAll(/test\/e2e\/live\/[A-Za-z0-9_.\/-]+\.test\.ts/g)]
+            .map((match) => match[0])
+            .filter((testPath) => !fs.existsSync(path.join(process.cwd(), testPath)))
+            .map((testPath) => `${jobName} -> ${testPath}`),
+        ),
+      );
+
+    expect(missing).toEqual([]);
+  });
 
   it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
@@ -1025,20 +1050,6 @@ jobs:
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
-      if (step.name === "Configure isolated Docker auth directory") {
-        step.run =
-          'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
-      }
-      if (step.name === "Set up Node") {
-        step.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
-      }
-      if (step.name === "Install root dependencies") {
-        step.env = {
-          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-          DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-        };
-        step.run = "npm install";
-      }
       if (step.name === "Run snapshot commands live test") {
         step.run = String(step.run).replace(
           "test/e2e/live/snapshot-commands.test.ts",
@@ -1052,9 +1063,6 @@ jobs:
           "include-hidden-files": true,
         };
       }
-      if (step.name === "Clean up Docker auth") {
-        step.run = String(step.run).replace('rm -rf "${DOCKER_CONFIG}"', 'echo "missing cleanup"');
-      }
     }
     fs.writeFileSync(workflowPath, YAML.stringify(parsedWorkflow));
 
@@ -1063,16 +1071,10 @@ jobs:
         expect.arrayContaining([
           "snapshot-commands job must keep a 40 minute timeout",
           "snapshot-commands job must not set DOCKER_CONFIG at job level",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-snapshot-commands" >> "$GITHUB_ENV"',
           "snapshot-commands checkout step must set persist-credentials=false",
           "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands step 'Set up Node' env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
-          "snapshot-commands step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
           "snapshot-commands artifact upload must set include-hidden-files: false",
           "artifact upload path must include e2e-artifacts/live/snapshot-commands/",
-          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",
         ]),
       );
@@ -1151,7 +1153,7 @@ jobs:
     }
   });
 
-  it("rejects GITHUB_TOKEN exposure in channel credential rewrite and injection safety steps", () => {
+  it("rejects GITHUB_TOKEN exposure in channel live-test steps", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -1166,6 +1168,7 @@ jobs:
         "openclaw-channels-telegram-injection-safety",
         "Run OpenClaw channels Telegram injection safety live test",
       ],
+      ["openclaw-channels-token-rotation", "Run OpenClaw channels token rotation live test"],
     ]) {
       const step = workflow.jobs[jobName]?.steps.find((item) => item.name === stepName);
       expect(step, `${jobName} ${stepName}`).toBeDefined();
@@ -1174,6 +1177,7 @@ jobs:
         GITHUB_TOKEN: "${{ github.token }}",
       };
     }
+
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
@@ -1181,6 +1185,7 @@ jobs:
         expect.arrayContaining([
           "openclaw-channels-credential-rewrite step 'Run OpenClaw channels credential rewrite live Vitest test' env must not include GITHUB_TOKEN",
           "openclaw-channels-telegram-injection-safety step 'Run OpenClaw channels Telegram injection safety live test' env must not include GITHUB_TOKEN",
+          "openclaw-channels-token-rotation step env must not include GITHUB_TOKEN",
         ]),
       );
     } finally {
@@ -1217,7 +1222,7 @@ jobs:
     }
   });
 
-  it("rejects Docker Hub auth in the messaging-compatible-endpoint job", () => {
+  it("rejects duplicate unguarded Docker Hub auth in messaging-compatible-endpoint", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -1225,9 +1230,9 @@ jobs:
     };
     const steps = workflow.jobs["messaging-compatible-endpoint"]?.steps;
     expect(steps).toEqual(expect.any(Array));
-    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -1241,10 +1246,10 @@ jobs:
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "messaging-compatible-endpoint must not authenticate to Docker Hub before branch-controlled test code runs",
+          "messaging-compatible-endpoint image-consuming job must have exactly one Docker Hub auth step",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
           "messaging-compatible-endpoint step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "messaging-compatible-endpoint step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+          "messaging-compatible-endpoint step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
         ]),
       );
     } finally {
@@ -1295,9 +1300,9 @@ jobs:
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       GITHUB_TOKEN: "${{ github.token }}",
     };
-    const setupNodeIndex = job.steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    job.steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = job.steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    job.steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -1322,12 +1327,13 @@ jobs:
       expect(errors).toEqual(
         expect.arrayContaining([
           "diagnostics job must not expose Docker auth to branch-controlled steps",
+          "diagnostics job env must not include DOCKER_CONFIG",
           "diagnostics job env must not include NVIDIA_INFERENCE_API_KEY",
           "diagnostics job env must not include GITHUB_TOKEN",
-          "diagnostics job must not authenticate to Docker Hub before branch-controlled test code runs",
+          "diagnostics image-consuming job must have exactly one Docker Hub auth step",
           "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
           "diagnostics step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "diagnostics step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+          "diagnostics step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
           "step 'Run diagnostics live test' run script must not interpolate dispatch inputs directly",
           "diagnostics artifact upload must set include-hidden-files: false",
           "diagnostics artifact upload retention-days must be 14",
@@ -1338,7 +1344,7 @@ jobs:
     }
   });
 
-  it("rejects Docker Hub auth in the Hermes root-entrypoint smoke job", () => {
+  it("rejects duplicate unguarded Docker Hub auth in Hermes root-entrypoint smoke", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -1346,9 +1352,9 @@ jobs:
     };
     const steps = workflow.jobs["hermes-root-entrypoint-smoke"]?.steps;
     expect(steps).toEqual(expect.any(Array));
-    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -1362,10 +1368,10 @@ jobs:
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "hermes-root-entrypoint-smoke must not authenticate to Docker Hub before branch-controlled test code runs",
+          "hermes-root-entrypoint-smoke image-consuming job must have exactly one Docker Hub auth step",
           "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_USERNAME",
           "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' env must not include DOCKERHUB_TOKEN",
-          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' run script must not use docker login or inline secret interpolation",
+          "hermes-root-entrypoint-smoke step 'Authenticate to Docker Hub' must not authenticate or interpolate Docker Hub secrets",
         ]),
       );
     } finally {

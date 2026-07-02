@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { knownChannelNames } from "../../../src/lib/sandbox/channels";
+import { CHANNELS } from "../live/channels-lifecycle-helpers.ts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -17,6 +19,10 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("channels lifecycle workflow boundary", () => {
+  it("keeps lifecycle channel coverage aligned with the channel registry", () => {
+    expect([...CHANNELS]).toEqual(knownChannelNames());
+  });
+
   it("rejects OpenClaw channels stop/start workflow-boundary drift for secret and artifact handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -44,22 +50,6 @@ describe("channels lifecycle workflow boundary", () => {
       ...(checkoutStep!.with as Record<string, unknown>),
       "persist-credentials": true,
     };
-
-    const dockerAuthStep = job.steps.find((step) => step.name === "Authenticate to Docker Hub");
-    expect(dockerAuthStep).toBeDefined();
-    dockerAuthStep!.run =
-      "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
-
-    const configureDockerAuthStep = job.steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    );
-    expect(configureDockerAuthStep).toBeDefined();
-    configureDockerAuthStep!.run =
-      'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
-
-    const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(installRootStep).toBeDefined();
-    installRootStep!.run = "npm install";
 
     const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
     expect(installOpenShellStep).toBeDefined();
@@ -90,10 +80,6 @@ describe("channels lifecycle workflow boundary", () => {
       "retention-days": 1,
     };
 
-    const cleanupStep = job.steps.find((step) => step.name === "Clean up Docker auth");
-    expect(cleanupStep).toBeDefined();
-    delete cleanupStep!.if;
-    cleanupStep!.run = "docker logout docker.io";
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
@@ -105,11 +91,9 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start job must not set DOCKER_CONFIG at job level",
           "openclaw-channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "openclaw-channels-stop-start checkout step must set persist-credentials=false",
-          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-stop-start" >> "$GITHUB_ENV"',
-          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "openclaw-channels-stop-start step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
           "openclaw-channels-stop-start step must set fake TELEGRAM_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake DISCORD_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake MSTEAMS_APP_PASSWORD",
@@ -118,8 +102,6 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start artifact upload name must be stable",
           "openclaw-channels-stop-start artifact upload must set include-hidden-files: false",
           "openclaw-channels-stop-start artifact upload retention-days must be 14",
-          "openclaw-channels-stop-start Docker auth cleanup must always run",
-          "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
         ]),
       );
     } finally {

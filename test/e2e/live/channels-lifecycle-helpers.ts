@@ -1044,4 +1044,16 @@ export async function runChannelsStopStartTarget(
   await expectProviders(host, sandboxName, env, redactions, "present", "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(sandboxName, agent, channel, "active");
   await expectPolicyPresets(host, sandboxName, env, redactions, "active");
+
+  if (agent === "hermes") {
+    await expectHermesProtocolCredentialRewrite({
+      cleanup,
+      host,
+      sandbox,
+      sandboxName,
+      env,
+      tokens,
+      redactions,
+    });
+  }
 }
