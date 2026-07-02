@@ -14,6 +14,7 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
+import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
 import {
   reconcileSupervisorReconnect,
   rollbackDockerGpuPatchOnRecreateFailure,
@@ -412,8 +413,14 @@ function replaceEnvValue(entry: string, key: string, value: string | null | unde
 function openshellSandboxCommandEnvValue(
   command: readonly string[] | null | undefined,
 ): string | null {
-  const parts = (command || []).map((part) => String(part)).filter((part) => part.length > 0);
-  return parts.length > 0 ? parts.join(" ") : null;
+  const parts = (command || []).map((part) => String(part));
+  if (parts.length === 0) return null;
+  if (parts.some((part) => part.length === 0 || /[\s\u0085]/u.test(part))) {
+    throw new Error(
+      "OpenShell sandbox startup command tokens cannot be empty or contain whitespace.",
+    );
+  }
+  return parts.join(" ");
 }
 
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
@@ -532,7 +539,7 @@ export function buildDockerGpuModeCandidates(
 }
 
 export function shouldApplyDockerGpuPatch(
-  config: { sandboxGpuEnabled: boolean },
+  config: { sandboxGpuEnabled: boolean; hostGpuPlatform?: string | null },
   options: {
     env?: NodeJS.ProcessEnv;
     platform?: NodeJS.Platform;
@@ -551,7 +558,10 @@ export function shouldApplyDockerGpuPatch(
   ) {
     return false;
   }
-  const optedOut = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "").trim() === "0";
+  const control = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "")
+    .trim()
+    .toLowerCase();
+  const optedOut = control === "0";
   if (optedOut && dockerDesktopWsl) {
     const log = options.log ?? ((message: string) => console.warn(message));
     log(
@@ -560,7 +570,12 @@ export function shouldApplyDockerGpuPatch(
     log("  Skip GPU passthrough entirely with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.");
     return true;
   }
-  return !optedOut;
+  if (dockerDesktopWsl) return true;
+  if (config.hostGpuPlatform === "jetson") return !optedOut;
+  // OpenShell 0.0.71 natively injects CDI devices for ordinary native Linux.
+  // Keep the container-swap path as an explicit compatibility control while
+  // WSL and Jetson retain the legacy defaults they still require.
+  return control === "1";
 }
 
 export function buildDockerGpuCloneRunOptions(
@@ -772,10 +787,16 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
-  const commandArgs =
-    options.openshellSandboxCommand && options.openshellSandboxCommand.length > 0
-      ? [...options.openshellSandboxCommand]
-      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  // OpenShell 0.0.71's Docker driver deliberately clears Config.Cmd and passes
+  // the workload only through OPENSHELL_SANDBOX_COMMAND. Keep that contract
+  // when recreating the container: appending the same workload after the image
+  // puts `nemoclaw-start` in the supervisor's own argv. The serializer above
+  // rejects whitespace-bearing tokens because OpenShell uses split_whitespace()
+  // when reading this environment value (#6110). Remove this compatibility
+  // rewrite only after the Docker container-swap GPU patch itself is retired.
+  const commandArgs = openshellSandboxCommandEnv
+    ? []
+    : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }
@@ -1081,22 +1102,6 @@ export function recreateOpenShellDockerSandboxWithGpu(
     const backupContainerName = buildBackupContainerName(originalName, d.now());
     context.backupContainerName = backupContainerName;
 
-    d.dockerStop(oldContainerId, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    const renameResult = d.dockerRename(oldContainerId, backupContainerName, {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    if (!isZeroStatus(renameResult)) {
-      throw new Error(
-        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
-      );
-    }
-
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
     cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
@@ -1121,7 +1126,27 @@ export function recreateOpenShellDockerSandboxWithGpu(
         );
       }
     }
+    // Validate and build the replacement command before touching the original
+    // container. A malformed startup envelope must fail without stopping or
+    // renaming the user's working sandbox.
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
+
+    d.dockerStop(oldContainerId, {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    const renameResult = d.dockerRename(oldContainerId, backupContainerName, {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
+    if (!isZeroStatus(renameResult)) {
+      throw new Error(
+        `Could not move original sandbox container aside: ${resultText(renameResult)}`,
+      );
+    }
+
     const runResult = d.dockerRunDetached(cloneArgs, {
       ignoreError: true,
       suppressOutput: true,
@@ -1305,7 +1330,10 @@ export function printDockerGpuPatchFailureAndExit(
   }
   console.error("  Escape hatches:");
   console.error(
-    "    NEMOCLAW_DOCKER_GPU_PATCH=0  skip this Docker GPU patch (Linux native Docker only; ignored on Docker Desktop WSL where the patch is required).",
+    "    NEMOCLAW_DOCKER_GPU_PATCH=1  force the legacy Docker GPU container-swap path.",
+  );
+  console.error(
+    "    NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; Jetson also defaults to the compatibility path).",
   );
   console.error(
     "    NEMOCLAW_SANDBOX_GPU=0      skip GPU passthrough entirely (or rerun with --no-gpu).",
@@ -1679,6 +1707,8 @@ export function collectDockerGpuPatchDiagnostics(
     selectedMode?: DockerGpuPatchMode | null;
     snapshot?: DockerGpuPatchSandboxSnapshot | null;
     classification?: DockerGpuPatchFailureClassification | null;
+    additionalSensitiveValues?: readonly string[];
+    dockerTopOutput?: string | null;
   } = {},
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchDiagnostics | null {
@@ -1697,24 +1727,61 @@ export function collectDockerGpuPatchDiagnostics(
   }
 
   const context = options.context || getDockerGpuPatchFailureContext(options.error) || null;
-  const cleanupCommands = dockerGpuPatchCleanupCommands(sandboxName);
-  const errorText =
+  const redactor = createDockerGpuDiagnosticRedactor(options.additionalSensitiveValues);
+  let discoveredContainerIds: string[] = [];
+  try {
+    discoveredContainerIds = findOpenShellDockerSandboxContainerIds(sandboxName, deps);
+  } catch {
+    discoveredContainerIds = [];
+  }
+  const containerTargets = uniqueStrings([
+    ...(context
+      ? [context.oldContainerId, context.newContainerId, context.backupContainerName]
+      : []),
+    ...discoveredContainerIds,
+  ]);
+  const inspectedTargets: Array<{ target: string; entries: DockerContainerInspect[] }> = [];
+  for (const target of containerTargets) {
+    try {
+      const inspect = d.dockerCapture(["inspect", target], {
+        ignoreError: true,
+        timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+      });
+      if (!inspect.trim()) continue;
+      const parsed = JSON.parse(inspect);
+      const entries = (Array.isArray(parsed) ? parsed : [parsed]) as DockerContainerInspect[];
+      for (const entry of entries) redactor.rememberInspect(entry);
+      inspectedTargets.push({ target, entries });
+    } catch {
+      /* best effort */
+    }
+  }
+  const writeDiagnosticText = (name: string, content: string): void => {
+    writeTextFile(dir, name, redactor.redactText(content));
+  };
+  const writeDiagnosticJson = (name: string, value: unknown): void => {
+    writeTextFile(dir, name, JSON.stringify(redactor.redactValue(value), null, 2));
+  };
+
+  const cleanupCommands = dockerGpuPatchCleanupCommands(sandboxName).map(redactor.redactText);
+  const errorText = redactor.redactText(
     options.error instanceof Error
       ? options.error.message
       : options.error
         ? String(options.error)
-        : "none";
+        : "none",
+  );
   const selectedMode = options.selectedMode || context?.selectedMode || null;
   const snapshot = options.snapshot ?? null;
   const classification = options.classification ?? null;
   const summaryLines = [
     `created_at=${now.toISOString()}`,
-    `sandbox_name=${sandboxName}`,
+    `sandbox_name=${redactor.redactText(sandboxName)}`,
     `error=${errorText}`,
-    `selected_gpu_mode=${selectedMode?.label ?? "none"}`,
-    `old_container_id=${context?.oldContainerId ?? "unknown"}`,
-    `new_container_id=${context?.newContainerId ?? "unknown"}`,
-    `backup_container_name=${context?.backupContainerName ?? "none"}`,
+    `selected_gpu_mode=${redactor.redactText(selectedMode?.label ?? "none")}`,
+    `old_container_id=${redactor.redactText(context?.oldContainerId ?? "unknown")}`,
+    `new_container_id=${redactor.redactText(context?.newContainerId ?? "unknown")}`,
+    `backup_container_name=${redactor.redactText(context?.backupContainerName ?? "none")}`,
     `rolled_back=${context?.rolledBack === true ? "yes" : context?.rolledBack === false ? "failed" : "no"}`,
     "cleanup_commands:",
     ...cleanupCommands.map((command) => `  ${command}`),
@@ -1723,26 +1790,35 @@ export function collectDockerGpuPatchDiagnostics(
     summaryLines.push("gpu_mode_attempts:");
     for (const attempt of context.modeAttempts) {
       summaryLines.push(
-        `  ${attempt.mode.label}: ${attempt.ok ? "ok" : "failed"}${attempt.error ? `: ${attempt.error}` : ""}`,
+        redactor.redactText(
+          `  ${attempt.mode.label}: ${attempt.ok ? "ok" : "failed"}${attempt.error ? `: ${attempt.error}` : ""}`,
+        ),
       );
     }
   }
   if (classification) {
-    summaryLines.push(`failure_kind=${classification.kind}`);
-    if (classification.headline) summaryLines.push(`failure_headline=${classification.headline}`);
+    summaryLines.push(`failure_kind=${redactor.redactText(classification.kind)}`);
+    if (classification.headline) {
+      summaryLines.push(`failure_headline=${redactor.redactText(classification.headline)}`);
+    }
   }
   if (snapshot) {
-    if (snapshot.sandboxPhase) summaryLines.push(`sandbox_phase=${snapshot.sandboxPhase}`);
-    if (snapshot.sandboxListLine) summaryLines.push(`sandbox_list_row=${snapshot.sandboxListLine}`);
-    summaryLines.push(...describePatchedContainerState(snapshot.patchedContainerState));
-  }
-  writeTextFile(dir, "summary.txt", summaryLines.join("\n"));
-  if (snapshot?.patchedContainerState) {
-    writeTextFile(
-      dir,
-      "patched-container-state.json",
-      JSON.stringify(snapshot.patchedContainerState, null, 2),
+    if (snapshot.sandboxPhase) {
+      summaryLines.push(`sandbox_phase=${redactor.redactText(snapshot.sandboxPhase)}`);
+    }
+    if (snapshot.sandboxListLine) {
+      summaryLines.push(`sandbox_list_row=${redactor.redactText(snapshot.sandboxListLine)}`);
+    }
+    summaryLines.push(
+      ...describePatchedContainerState(snapshot.patchedContainerState).map(redactor.redactText),
     );
+  }
+  writeDiagnosticText("summary.txt", summaryLines.join("\n"));
+  if (snapshot?.patchedContainerState) {
+    writeDiagnosticJson("patched-container-state.json", snapshot.patchedContainerState);
+  }
+  if (options.dockerTopOutput?.trim()) {
+    writeDiagnosticText("docker-top.txt", options.dockerTopOutput);
   }
 
   try {
@@ -1757,64 +1833,46 @@ export function collectDockerGpuPatchDiagnostics(
       ],
       { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
     );
-    if (ps.trim()) writeTextFile(dir, "docker-ps.txt", ps);
+    if (ps.trim()) writeDiagnosticText("docker-ps.txt", ps);
   } catch {
     /* best effort */
   }
 
-  let discoveredContainerIds: string[] = [];
-  try {
-    discoveredContainerIds = findOpenShellDockerSandboxContainerIds(sandboxName, deps);
-  } catch {
-    discoveredContainerIds = [];
-  }
-  const containerTargets = uniqueStrings([
-    ...(context
-      ? [context.oldContainerId, context.newContainerId, context.backupContainerName]
-      : []),
-    ...discoveredContainerIds,
-  ]);
   if (containerTargets.length > 0) {
-    const inspectEntries: unknown[] = [];
+    const inspectEntries: DockerContainerInspect[] = [];
     const networkSummaries: string[] = [];
-    for (const target of containerTargets) {
-      try {
-        const inspect = d.dockerCapture(["inspect", target], {
-          ignoreError: true,
-          timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-        });
-        if (!inspect.trim()) continue;
-        const parsed = JSON.parse(inspect);
-        const entries = Array.isArray(parsed) ? parsed : [parsed];
-        inspectEntries.push(...entries);
-        for (const [index, entry] of entries.entries()) {
-          networkSummaries.push(
+    for (const { target, entries } of inspectedTargets) {
+      const sanitizedEntries = entries.map(redactor.sanitizeInspect);
+      inspectEntries.push(...sanitizedEntries);
+      for (const [index, entry] of sanitizedEntries.entries()) {
+        networkSummaries.push(
+          redactor.redactText(
             formatDockerInspectNetworkSummary(
               entries.length === 1 ? target : `${target}[${index}]`,
               entry,
             ),
-          );
-        }
-      } catch {
-        /* best effort */
+          ),
+        );
       }
     }
     if (inspectEntries.length > 0) {
-      writeTextFile(dir, "docker-inspect.json", JSON.stringify(inspectEntries, null, 2));
+      writeDiagnosticJson("docker-inspect.json", inspectEntries);
     }
     if (networkSummaries.length > 0) {
-      writeTextFile(dir, "docker-network-summary.txt", networkSummaries.join("\n\n"));
+      writeDiagnosticText("docker-network-summary.txt", networkSummaries.join("\n\n"));
     }
     const logs = containerTargets
       .map((target) => {
         try {
-          return [`===== ${target} =====`, d.dockerLogs(target, { tail: 120 })].join("\n");
+          return redactor.redactText(
+            [`===== ${target} =====`, d.dockerLogs(target, { tail: 120 })].join("\n"),
+          );
         } catch {
-          return `===== ${target} =====\n(unavailable)`;
+          return redactor.redactText(`===== ${target} =====\n(unavailable)`);
         }
       })
       .join("\n");
-    if (logs.trim()) writeTextFile(dir, "docker-logs.txt", logs);
+    if (logs.trim()) writeDiagnosticText("docker-logs.txt", logs);
   }
 
   if (deps.runCaptureOpenshell) {
@@ -1829,7 +1887,7 @@ export function collectDockerGpuPatchDiagnostics(
           ignoreError: true,
           timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
         });
-        if (output.trim()) writeTextFile(dir, fileName, output);
+        if (output.trim()) writeDiagnosticText(fileName, output);
       } catch {
         /* best effort */
       }

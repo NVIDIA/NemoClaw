@@ -235,7 +235,7 @@ describe("addSandboxPolicy", () => {
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
-  it("treats messaging channel policy presets unavailable to terminal-runtime agents as unknown before preview or prompt", async () => {
+  it("rejects messaging channel policy presets unavailable to terminal-runtime agents before preview or prompt", async () => {
     arrangeSandbox("langchain-deepagents-code");
     vi.spyOn(policies, "listPresets").mockReturnValue([
       { name: "npm", description: "npm and Yarn registry access" },
@@ -248,10 +248,13 @@ describe("addSandboxPolicy", () => {
     ).resolves.toBe(1);
 
     const output = printedText();
-    expect(output).toContain("Unknown preset 'telegram'.");
-    expect(output).toContain("Valid presets: npm, pypi, tavily");
-    expect(output).not.toContain("not supported for agent");
-    expect(output).not.toContain("Channels supported by agent");
+    expect(output).toContain(
+      "Channel 'telegram' does not support agent 'langchain-deepagents-code'",
+    );
+    expect(output).toContain("Channel-supported agents: openclaw, hermes.");
+    expect(output).toContain("Channels supported by agent 'langchain-deepagents-code': (none).");
+    expect(output).not.toContain("Unknown preset");
+    expect(output).not.toContain("Valid presets:");
     expect(output).not.toContain("Preset not found");
     expect(output).not.toContain("Endpoints that would be opened");
     expect(promptMock).not.toHaveBeenCalled();

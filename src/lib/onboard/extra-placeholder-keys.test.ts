@@ -290,7 +290,7 @@ describe("appendExtraPlaceholderKeysEnvArg", () => {
     return `${key}=${value}`;
   }
 
-  it("appends one whitespace-joined env arg containing only the key names, never their token values", () => {
+  it("appends one comma-joined env arg containing only the key names, never their token values", () => {
     const envArgs: string[] = [];
     appendExtraPlaceholderKeysEnvArg(
       envArgs,
@@ -298,7 +298,7 @@ describe("appendExtraPlaceholderKeysEnvArg", () => {
       formatEnvAssignment,
     );
     expect(envArgs).toEqual([
-      `${EXTRA_PLACEHOLDER_KEYS_ENV}=TELEGRAM_BOT_TOKEN_AGENT_A SLACK_BOT_TOKEN_AGENT_B`,
+      `${EXTRA_PLACEHOLDER_KEYS_ENV}=TELEGRAM_BOT_TOKEN_AGENT_A,SLACK_BOT_TOKEN_AGENT_B`,
     ]);
     // The emitted env arg holds only the key list, not the resolved token
     // value. Operators who set the credential see openshell:resolve:env:<KEY>
@@ -307,6 +307,29 @@ describe("appendExtraPlaceholderKeysEnvArg", () => {
     for (const arg of envArgs) {
       expect(arg).not.toContain("token");
     }
+  });
+
+  it("survives the OpenShell split_whitespace command round trip", () => {
+    const envArgs: string[] = [];
+    appendExtraPlaceholderKeysEnvArg(
+      envArgs,
+      ["TELEGRAM_BOT_TOKEN_AGENT_A", "SLACK_BOT_TOKEN_AGENT_B"],
+      formatEnvAssignment,
+    );
+
+    const commandTokens = ["env", ...envArgs, "nemoclaw-start"].join(" ").split(/\s+/u);
+    const assignment = commandTokens.find((token) =>
+      token.startsWith(`${EXTRA_PLACEHOLDER_KEYS_ENV}=`),
+    );
+    expect(assignment).toBe(
+      `${EXTRA_PLACEHOLDER_KEYS_ENV}=TELEGRAM_BOT_TOKEN_AGENT_A,SLACK_BOT_TOKEN_AGENT_B`,
+    );
+
+    const rawValue = assignment?.slice(EXTRA_PLACEHOLDER_KEYS_ENV.length + 1);
+    expect(parseExtraPlaceholderKeys(rawValue, CANONICAL_ENVKEYS_FIXTURE)).toEqual({
+      keys: ["TELEGRAM_BOT_TOKEN_AGENT_A", "SLACK_BOT_TOKEN_AGENT_B"],
+      warnings: [],
+    });
   });
 
   it("emits no env arg when the extras list is empty", () => {
