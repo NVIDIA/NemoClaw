@@ -299,7 +299,7 @@ assert_no_secret_env_file() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
     fi
-    if has_credential_name_context "$key" && [ ${#value} -ge 10 ] && ! is_openshell_infra_key_name "$key"; then
+    if has_credential_name_context "$key" && [ ${#value} -ge 10 ]; then
       refuse_secret_env "$env_file" "$key"
     fi
   done
@@ -323,14 +323,33 @@ toml_scalar() {
   return 0
 }
 
+toml_provider_route() {
+  local line
+  [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "# NemoClaw provider route: "*)
+        line="${line#"# NemoClaw provider route: "}"
+        printf '%s' "${line%%;*}"
+        return 0
+        ;;
+    esac
+  done <"$DEEPAGENTS_CONFIG_FILE"
+  return 0
+}
+
 print_identity() {
-  local sandbox_name model endpoint
+  local sandbox_name model endpoint provider
   sandbox_name="${NEMOCLAW_SANDBOX_NAME:-unknown}"
   model="$(toml_scalar default)"
   endpoint="$(toml_scalar base_url)"
+  provider="$(toml_provider_route)"
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
   printf 'Sandbox:  %s\n' "$sandbox_name"
   printf 'Agent:    %s\n' 'langchain-deepagents-code'
+  if [ -n "$provider" ]; then
+    printf 'Provider: %s\n' "$provider"
+  fi
   if [ -n "$model" ]; then
     printf 'Model:    %s\n' "$model"
   fi
