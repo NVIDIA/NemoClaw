@@ -23,6 +23,14 @@
  *     finalization;
  *   - reset again right after the summary is emitted, once the terminal
  *     (finalization) phase's own timing has been recorded (see `phase-progress`).
+ *
+ * Removal condition: this module-level registry is a deliberate, bounded
+ * stand-in. Remove it once onboarding phase timings are first-class FSM state —
+ * i.e. when a per-run timing collector is threaded through the onboard runtime
+ * (alongside the machine session) instead of accumulated in module scope. That
+ * refactor is out of scope here because the collector would have to be plumbed
+ * through `onboard.ts`, which a codebase-growth guardrail holds net-neutral; the
+ * per-process reset lifecycle above makes the module-level form safe until then.
  */
 
 export type PhaseTimingStatus = "completed" | "failed";

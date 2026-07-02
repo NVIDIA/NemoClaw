@@ -20,9 +20,12 @@
  *     every wrapped phase has recorded — this reporter only records, it does
  *     not print the aggregate summary itself.
  *
- * Interactive phases (`provider_selection`, `policies`) are intentionally left
- * out of the heartbeat set so their prompts are not interrupted by "still
- * working" lines while waiting on human input. They are still timed.
+ * Interactive phases (`provider_selection`, `policies`) are left out of the
+ * heartbeat set *in interactive mode* so their prompts are not interrupted by
+ * "still working" lines while waiting on human input. In non-interactive mode
+ * (installer / Brev / `--yes`) they ARE heartbeated, because their wait-heavy
+ * network/inference work then runs with no prompt to protect. Every phase is
+ * timed regardless.
  *
  * The reporter is a no-op under the Vitest runner unless explicitly enabled, so
  * the many existing sequence/handler unit tests keep their exact output and are
@@ -53,9 +56,8 @@ export const ONBOARD_PHASE_LABELS: Readonly<Record<OnboardNonTerminalMachineStat
   post_verify: "Verification",
 };
 
-// Non-interactive, wait-heavy phases that can run silently for minutes and so
-// need periodic heartbeats. Interactive phases are excluded so prompts aren't
-// interrupted; all phases are still timed regardless of membership here.
+// Wait-heavy phases that can run silently for minutes and so need periodic
+// heartbeats. All phases are still timed regardless of membership here.
 const HEARTBEAT_PHASE_STATES: ReadonlySet<string> = new Set([
   "gateway",
   "sandbox",
@@ -65,6 +67,15 @@ const HEARTBEAT_PHASE_STATES: ReadonlySet<string> = new Set([
   "finalizing",
   "post_verify",
 ]);
+
+// Phases that block on human input in interactive mode, where the wait-heavy
+// non-interactive work (provider validation, first-inference setup, policy
+// application) is interleaved with prompts. They are excluded from heartbeats
+// in interactive mode so prompts aren't interrupted, but INCLUDED in
+// non-interactive mode (installer / Brev / --yes), where the same phases run
+// their network/inference work with no prompt to protect — exactly the silent
+// window the issue reports (#6002).
+const INTERACTIVE_PHASE_STATES: ReadonlySet<string> = new Set(["provider_selection", "policies"]);
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
@@ -103,6 +114,13 @@ export interface PhaseProgressOptions {
   completionThresholdMs?: number;
   labels?: Readonly<Record<string, string>>;
   heartbeatPhaseStates?: ReadonlySet<string>;
+  /**
+   * Whether onboarding is running interactively. In non-interactive runs the
+   * otherwise-interactive phases (provider selection, policies) also get
+   * heartbeats, since their inference/network work has no prompt to protect.
+   * Defaults to `!NEMOCLAW_NON_INTERACTIVE`.
+   */
+  interactive?: boolean;
 }
 
 export interface PhaseProgressReporter {
@@ -111,6 +129,19 @@ export interface PhaseProgressReporter {
 
 function isVitestEnv(env: NodeJS.ProcessEnv): boolean {
   return Boolean(env.VITEST) || env.NODE_ENV === "test";
+}
+
+function isInteractiveEnv(env: NodeJS.ProcessEnv): boolean {
+  return !TRUTHY_FLAG_VALUES.has(
+    String(env.NEMOCLAW_NON_INTERACTIVE ?? "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
+function defaultHeartbeatPhaseStates(interactive: boolean): ReadonlySet<string> {
+  if (interactive) return HEARTBEAT_PHASE_STATES;
+  return new Set([...HEARTBEAT_PHASE_STATES, ...INTERACTIVE_PHASE_STATES]);
 }
 
 export function resolvePhaseProgressEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -149,7 +180,9 @@ export function createPhaseProgressReporter(
   const heartbeatIntervalMs =
     options.heartbeatIntervalMs ?? resolveHeartbeatIntervalMs(env, DEFAULT_HEARTBEAT_INTERVAL_MS);
   const completionThresholdMs = options.completionThresholdMs ?? DEFAULT_COMPLETION_THRESHOLD_MS;
-  const heartbeatPhaseStates = options.heartbeatPhaseStates ?? HEARTBEAT_PHASE_STATES;
+  const interactive = options.interactive ?? isInteractiveEnv(env);
+  const heartbeatPhaseStates =
+    options.heartbeatPhaseStates ?? defaultHeartbeatPhaseStates(interactive);
 
   function wrap<Context>(phase: OnboardSequencePhase<Context>): OnboardSequencePhase<Context> {
     if (!enabled) return phase;

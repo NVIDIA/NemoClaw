@@ -10,7 +10,11 @@ import {
   type PhaseProgressRecord,
   resolvePhaseProgressEnabled,
 } from "./phase-progress";
-import { buildOnboardSequenceHandlers, type OnboardSequencePhase } from "./sequence-runner";
+import {
+  buildOnboardSequenceHandlers,
+  type OnboardSequencePhase,
+  runOnboardSequenceWithRunner,
+} from "./sequence-runner";
 
 interface Harness {
   lines: string[];
@@ -194,8 +198,8 @@ describe("createPhaseProgressReporter", () => {
   it.each([
     "provider_selection",
     "policies",
-  ])("does not schedule heartbeats for the interactive phase %s", async (state) => {
-    const harness = makeHarness();
+  ])("does not schedule heartbeats for the interactive phase %s (interactive mode)", async (state) => {
+    const harness = makeHarness({ interactive: true });
     const reporter = createPhaseProgressReporter(harness.options);
     const wrapped = reporter.wrap(
       fakePhase(state as OnboardSequencePhase<string>["state"], async () => ({
@@ -208,6 +212,39 @@ describe("createPhaseProgressReporter", () => {
 
     expect(harness.timerCallback).toBeNull();
     expect(harness.lines.some((line) => line.includes("Still working on"))).toBe(false);
+  });
+
+  it.each([
+    "provider_selection",
+    "policies",
+  ])("DOES heartbeat the otherwise-interactive phase %s in non-interactive mode", async (state) => {
+    // Non-interactive (installer / Brev / --yes): no prompt to protect, so the
+    // wait-heavy inference/policy work must not be silent (#6002 PRA).
+    const harness = makeHarness({ interactive: false });
+    const reporter = createPhaseProgressReporter(harness.options);
+    await reporter
+      .wrap(
+        fakePhase(state as OnboardSequencePhase<string>["state"], async () => {
+          harness.clockMs = 1;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+    expect(harness.timerCallback, `heartbeat not scheduled for ${state}`).not.toBeNull();
+  });
+
+  it("derives non-interactive mode from NEMOCLAW_NON_INTERACTIVE", async () => {
+    const harness = makeHarness({ env: { NEMOCLAW_NON_INTERACTIVE: "1" }, interactive: undefined });
+    const reporter = createPhaseProgressReporter(harness.options);
+    await reporter
+      .wrap(
+        fakePhase("provider_selection", async () => {
+          harness.clockMs = 1;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+    expect(harness.timerCallback).not.toBeNull();
   });
 
   it("records a failure, clears the timer, and rethrows", async () => {
@@ -345,5 +382,44 @@ describe("buildOnboardSequenceHandlers wiring (seam integration)", () => {
     await handlers.gateway?.("ctx");
     expect(harness.records).toHaveLength(0);
     expect(harness.lines).toHaveLength(0);
+  });
+
+  it("emits a heartbeat when driven through the real sequence runner", async () => {
+    // Exercises the actual onboarding runner path (runOnboardSequenceWithRunner
+    // -> runOnboardMachine -> wrapped phase), not just the reporter in isolation.
+    const harness = makeHarness();
+    const reporter = createPhaseProgressReporter(harness.options);
+    let machineState = "gateway";
+    const runtime = {
+      async session() {
+        return { machine: { state: machineState } } as never;
+      },
+      async applyResult(result: { type?: string; next?: string }) {
+        machineState = result.type === "complete" ? "complete" : (result.next ?? machineState);
+        return { machine: { state: machineState } } as never;
+      },
+    };
+    const gatewayPhase: OnboardSequencePhase<Record<string, unknown>> = {
+      state: "gateway",
+      run: async (context) => {
+        // Simulate a silent gateway wait that outlives one heartbeat interval.
+        harness.clockMs = 30_000;
+        harness.timerCallback?.();
+        harness.clockMs = 31_000;
+        return { context, result: { type: "complete", metadata: { state: "gateway" } } as never };
+      },
+    };
+
+    await runOnboardSequenceWithRunner({
+      context: {},
+      runtime,
+      phases: [gatewayPhase],
+      phaseProgress: reporter,
+    });
+
+    expect(harness.lines.some((line) => line.includes("⏳ Still working on Gateway startup"))).toBe(
+      true,
+    );
+    expect(harness.records[0]).toMatchObject({ phase: "gateway", status: "completed" });
   });
 });
