@@ -35,6 +35,13 @@ function runHeadlessCheckHelper(
   });
 }
 
+function mustReplace(source: string, search: string, replacement: string): string {
+  if (!source.includes(search)) {
+    throw new Error(`headless proxy fixture is missing ${JSON.stringify(search)}`);
+  }
+  return source.replaceAll(search, replacement);
+}
+
 function validateLoginProxyContract(
   proxyUrl: string,
   noProxy: string,
@@ -79,26 +86,27 @@ function validateLoginProxyContract(
       fs.writeFileSync(runtimeEnvFile, runtimeEnvText, "utf8");
       fs.chmodSync(runtimeEnvFile, runtimeEnvMetadata === "writable" ? 0o644 : 0o444);
   }
-  let checkSource = fs
-    .readFileSync(headlessCheckPath, "utf8")
-    .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-host", hostFile)
-    .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-port", portFile)
-    .replaceAll("/tmp/nemoclaw-proxy-env.sh", runtimeEnvFile)
-    .replace('= "0:444"', `= "${process.getuid?.() ?? 0}:444"`)
-    .replace('sandbox_uid="$(id -u sandbox)"', 'sandbox_uid="$(id -u)"');
+  let checkSource = fs.readFileSync(headlessCheckPath, "utf8");
+  checkSource = mustReplace(checkSource, "/usr/local/share/nemoclaw/dcode-proxy-host", hostFile);
+  checkSource = mustReplace(checkSource, "/usr/local/share/nemoclaw/dcode-proxy-port", portFile);
+  checkSource = mustReplace(checkSource, "/tmp/nemoclaw-proxy-env.sh", runtimeEnvFile);
+  checkSource = mustReplace(checkSource, '= "0:444"', `= "${process.getuid?.() ?? 0}:444"`);
+  checkSource = mustReplace(
+    checkSource,
+    'sandbox_uid="$(id -u sandbox)"',
+    'sandbox_uid="$(id -u)"',
+  );
   switch (runtimeEnvMetadata) {
     case "wrong-user":
-      checkSource = checkSource.replace('sandbox_uid="$(id -u)"', "sandbox_uid=99999");
+      checkSource = mustReplace(checkSource, 'sandbox_uid="$(id -u)"', "sandbox_uid=99999");
       break;
     case "wrong-owner":
-      checkSource = checkSource
-        .replace('runtime_uid="$(id -u)"', "runtime_uid=99999")
-        .replace('sandbox_uid="$(id -u)"', "sandbox_uid=99999");
+      checkSource = mustReplace(checkSource, 'runtime_uid="$(id -u)"', "runtime_uid=99999");
+      checkSource = mustReplace(checkSource, 'sandbox_uid="$(id -u)"', "sandbox_uid=99999");
       break;
     case "root-user":
-      checkSource = checkSource
-        .replace('runtime_uid="$(id -u)"', "runtime_uid=0")
-        .replace('sandbox_uid="$(id -u)"', "sandbox_uid=0");
+      checkSource = mustReplace(checkSource, 'runtime_uid="$(id -u)"', "runtime_uid=0");
+      checkSource = mustReplace(checkSource, 'sandbox_uid="$(id -u)"', "sandbox_uid=0");
       break;
   }
   fs.writeFileSync(checkFixture, checkSource, "utf8");
