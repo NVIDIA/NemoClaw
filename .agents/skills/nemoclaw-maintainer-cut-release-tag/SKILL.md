@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-cut-release-tag
-description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, and drafts release notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
+description: Creates deterministic NemoClaw semver release tags on origin/main, handles release housekeeping, gates pre-tag release docs, and drafts announcement notes. Use when cutting a release, tagging a version, shipping a build, creating vX.Y.Z tags, or preparing release announcements.
 user_invocable: true
 ---
 
@@ -11,16 +11,17 @@ user_invocable: true
 
 Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, then draft release notes for the maintainer to post.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. Before the tag, confirm release-prep docs are merged or explicitly waived. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, then draft announcement notes for the maintainer to post.
 
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
 - Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
+- Do not ask for the exact confirmation phrase until release-prep docs are merged or the maintainer explicitly waives them.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
 - Never move, delete, or force-push an existing remote semver tag unless the maintainer explicitly starts protected-tag remediation.
-- Draft release notes locally. Do not create the GitHub Discussion; the maintainer does that.
+- Draft announcement notes locally. Do not create the GitHub Discussion; the maintainer does that.
 - Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) for SSH, authentication, remote access, authorization, or permission failures.
 
 ## Workflow
@@ -30,12 +31,13 @@ Copy this checklist and update it as you proceed:
 ```text
 Release Progress:
 - [ ] Step 1: Generate release plan
-- [ ] Step 2: Show plan and exact confirmation phrase
-- [ ] Step 3: Cut the semver tag from the confirmed plan
-- [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Bump remaining open issues/PRs
-- [ ] Step 6: Generate release-note data and draft Markdown
-- [ ] Step 7: Hand off announcement steps
+- [ ] Step 2: Show plan and pre-tag docs gate
+- [ ] Step 3: Confirm release-prep docs are merged or waived
+- [ ] Step 4: Ask for exact confirmation and cut the semver tag
+- [ ] Step 5: Wait for workflow-managed latest
+- [ ] Step 6: Bump remaining open issues/PRs
+- [ ] Step 7: Generate announcement data and draft Markdown
+- [ ] Step 8: Hand off announcement steps
 ```
 
 ### Step 1: Generate Release Plan
@@ -56,7 +58,7 @@ The script writes a plan outside the checkout root, for example:
 ../nemoclaw-release-v0.0.58/plan.json
 ```
 
-### Step 2: Show Plan and Ask for Exact Confirmation
+### Step 2: Show Plan and Pre-Tag Docs Gate
 
 Read the generated `plan.json` and show the maintainer:
 
@@ -65,8 +67,30 @@ Read the generated `plan.json` and show the maintainer:
 - target `origin/main` commit and headline,
 - plan hash,
 - forbidden operations,
-- exact confirmation phrase,
+- exact confirmation phrase, but do not request it yet,
 - open issue/PR housekeeping plan for the release label.
+
+Start or verify release-prep docs before asking for the exact confirmation phrase:
+
+```text
+/nemoclaw-contributor-update-docs for vX.Y.Z
+```
+
+Use the release version from `plan.json`, not the next patch label.
+The docs PR should land with `area: docs` and the release label being prepared.
+This work can run while final E2E validation finishes.
+
+### Step 3: Confirm Release-Prep Docs Status
+
+Report one of these statuses:
+
+- `merged`: release-prep docs PR from Step 2 landed for `vX.Y.Z`.
+- `pending`: release-prep docs PR is still open. Do not proceed to tag confirmation.
+- `waived`: maintainer explicitly accepted tagging without pre-tag docs and gave the reason.
+
+Proceed only when the status is `merged` or `waived`.
+
+### Step 4: Ask for Exact Confirmation and Cut the Semver Tag
 
 Ask the maintainer to paste the exact phrase:
 
@@ -75,8 +99,6 @@ CONFIRM RELEASE vX.Y.Z <full-origin-main-sha>
 ```
 
 Do not proceed on a generic "yes" at this step.
-
-### Step 3: Cut the Semver Tag
 
 Run the cut script with the plan and the maintainer's exact phrase:
 
@@ -92,7 +114,7 @@ The script verifies a clean worktree, unchanged `origin/main`, tag availability,
 
 If the script fails because of SSH, authentication, remote access, authorization, or permissions, follow [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md). For other precondition failures, report the failed precondition and use the recovery guidance below. Do not improvise git commands.
 
-### Step 4: Wait for Workflow-Managed `latest`
+### Step 5: Wait for Workflow-Managed `latest`
 
 Run:
 
@@ -108,7 +130,7 @@ The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned comm
 
 If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Step 5: Bump Remaining Open Issues/PRs
+### Step 6: Bump Remaining Open Issues/PRs
 
 Move every remaining open issue or PR carrying the released version to the next patch label:
 
@@ -116,7 +138,7 @@ Move every remaining open issue or PR carrying the released version to the next 
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
 ```
 
-This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
+This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 5 verifies both the semver tag and workflow-managed `latest`.
 
 Then verify the released version has no open stragglers:
 
@@ -130,9 +152,9 @@ Summarize:
 - open issues/PRs bumped to `<next-version>`;
 - any items that need manual maintainer attention.
 
-### Step 6: Generate Release-Note Data and Draft Markdown
+### Step 7: Generate Announcement Data and Draft Markdown
 
-Collect deterministic release-note input:
+Collect deterministic announcement input:
 
 ```bash
 npm run release:notes-data -- --plan <plan.json>
@@ -146,7 +168,7 @@ This writes:
 
 If `notes-data.json` has `status: "partial"` or non-empty `pullRequestWarnings`, report the warnings and ask the maintainer whether to fetch/fill the missing PR metadata before drafting.
 
-Draft release notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
+Draft announcement notes from `notes-data.json` using the style from `nemoclaw-maintainer-release-notes`. Save only Markdown, outside the checkout root:
 
 ```text
 <release-dir>/release-note-draft.md
@@ -154,12 +176,13 @@ Draft release notes from `notes-data.json` using the style from `nemoclaw-mainta
 
 Do not create or update a GitHub Discussion.
 
-### Step 7: Hand Off Announcement
+### Step 8: Hand Off Announcement
 
 Return:
 
 - release tag,
 - confirmed release commit,
+- release-prep docs status,
 - plan path and plan hash,
 - `cut-result.json`, `latest-result.json`, and `notes-data.json` paths,
 - Markdown draft path,

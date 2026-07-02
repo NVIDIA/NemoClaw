@@ -1,12 +1,12 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day maintainer handoff for NemoClaw. Checks version target progress, records stragglers for an automatic post-tag bump, generates a QA handoff summary, and cuts the release tag. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day.
+description: Runs the end-of-day maintainer handoff for NemoClaw. Checks version target progress, records stragglers for an automatic post-tag bump, generates a QA handoff summary, starts pre-tag docs, and cuts the release tag. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day.
 user_invocable: true
 ---
 
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
+Wrap up the day: check progress, identify stragglers, summarize for QA, run release-prep docs, cut the tag, automatically bump stragglers to the next patch, and prepare announcement notes for posting.
 
 See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
 
@@ -40,23 +40,36 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 This lists commits since the last tag, identifies risky areas touched, and suggests QA test focus areas. Format the output as a concise summary the user can paste into the tag annotation or a handoff channel.
 
-## Step 4: Cut the Tag and Publish Release Notes
+## Step 4: Start Pre-Tag Docs
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
+Load `nemoclaw-contributor-update-docs` for the release version before asking for the tag confirmation phrase.
+This can run while final E2E validation finishes.
+The release docs PR should use the release label being prepared, such as `v0.0.73`, and should land before the semver tag unless the maintainer explicitly records a docs waiver.
 
-## Step 5: Confirm and Share
+Report one of these docs statuses before continuing:
 
-After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
+- `merged`: release-prep docs landed for `<version>`.
+- `pending`: release-prep docs PR is open and must finish before tag confirmation.
+- `waived`: maintainer explicitly accepted tagging without pre-tag docs and gave the reason.
+
+## Step 5: Cut the Tag and Publish Announcement Notes
+
+Load `cut-release-tag`. The version is already known. Default to patch bump, but still show the commit, changelog, pre-tag docs status, post-tag bump plan, and announcement draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release announcement for the maintainer to post.
+
+## Step 6: Confirm and Share
+
+After the tag is cut and announcement notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
-- **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
+- **Release docs**: merged, pending, or waived with reason
+- **Announcement draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Bumped to v0.0.9**: 1 item (#1238 — still needs CI fix)
 - **QA focus areas**: installer changes, new onboard preset
 
 This summary can be shared in the team's handoff channel.
 
-## Step 6: Update State
+## Step 7: Update State
 
 ```bash
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/state.ts history "tag-cut" "<version>" "shipped N items, bumped M"
@@ -64,7 +77,8 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Notes
 
-- Never cut a tag or hand off release notes without user confirmation.
+- Never cut a tag or hand off announcement notes without user confirmation.
+- Never ask for the exact tag confirmation phrase until release-prep docs are merged or explicitly waived.
 - If nothing was labeled or nothing shipped, ask whether to skip the tag today.
 - A PR version label activates release work; it is not a readiness claim.
 - If an open item misses the tag, post-tag housekeeping moves its target to the next patch version.
