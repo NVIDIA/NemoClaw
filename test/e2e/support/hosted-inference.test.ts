@@ -373,6 +373,7 @@ describe("hosted inference E2E config", () => {
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "fake-compatible-key",
       chatContent: "CHAT_OK",
+      forbiddenMarkers: ["FORBIDDEN_REQUEST_MARKER"],
       model: "nvidia/nvidia/fake-model",
       requireAuth: true,
       responseText: "RESP_OK",
@@ -386,7 +387,10 @@ describe("hosted inference E2E config", () => {
       });
 
       const unauthenticatedChat = await fetch(`${fake.baseUrl}/chat/completions`, {
-        body: JSON.stringify({ messages: [], model: "nvidia/nvidia/fake-model" }),
+        body: JSON.stringify({
+          messages: [{ content: "FORBIDDEN_REQUEST_MARKER", role: "user" }],
+          model: "nvidia/nvidia/fake-model",
+        }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
       });
@@ -421,12 +425,18 @@ describe("hosted inference E2E config", () => {
       expect(responsesText).toContain("event: response.output_text.delta");
       expect(responsesText).toContain('data: {"delta":"RESP_OK"}');
 
-      expect(fake.requests()).toEqual(
+      const requests = fake.requests();
+      expect(requests).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ method: "GET", path: "/v1/models" }),
-          expect.objectContaining({ auth: "missing", path: "/v1/chat/completions" }),
+          expect.objectContaining({
+            auth: "missing",
+            forbiddenMarkerMatches: 1,
+            path: "/v1/chat/completions",
+          }),
           expect.objectContaining({
             auth: "ok",
+            forbiddenMarkerMatches: 0,
             model: "nvidia/nvidia/fake-model",
             path: "/v1/chat/completions",
             stream: false,
@@ -434,6 +444,10 @@ describe("hosted inference E2E config", () => {
           expect.objectContaining({ auth: "ok", path: "/v1/responses", stream: true }),
         ]),
       );
+      expect(
+        requests.reduce((total, request) => total + (request.forbiddenMarkerMatches ?? 0), 0),
+      ).toBe(1);
+      expect(JSON.stringify(requests)).not.toContain("FORBIDDEN_REQUEST_MARKER");
     } finally {
       await fake.close();
     }

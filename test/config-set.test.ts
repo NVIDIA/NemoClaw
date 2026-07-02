@@ -510,11 +510,20 @@ describe("config set helpers", () => {
       );
     });
 
-    it("preserves HTTPS hostnames after DNS validation", async () => {
+    it("fails closed for DNS-backed HTTPS hostname URLs", async () => {
       const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
-      await expect(rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup)).resolves.toBe(
-        "https://example.com/v1",
-      );
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup),
+      ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    });
+
+    it("preserves HTTPS IP-literal URLs without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://93.184.216.34/v1", lookup),
+      ).resolves.toBe("https://93.184.216.34/v1");
     });
 
     it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {
@@ -523,7 +532,6 @@ describe("config set helpers", () => {
         rewriteConfigUrlsWithDnsPinning(
           {
             primary: "http://api.example.com/v1",
-            secure: "https://secure.example.com/v1",
             label: "production",
             fallbacks: ["http://backup.example.com/v2"],
           },
@@ -531,7 +539,6 @@ describe("config set helpers", () => {
         ),
       ).resolves.toEqual({
         primary: "http://93.184.216.34/v1",
-        secure: "https://secure.example.com/v1",
         label: "production",
         fallbacks: ["http://93.184.216.34/v2"],
       });

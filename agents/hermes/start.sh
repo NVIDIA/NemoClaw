@@ -1681,8 +1681,8 @@ ensure_hermes_runtime_api_server_key() {
     rm -f "$result_file"
     return 1
   }
-  # Keep the guard as PID 1's direct child: --startup-owner is authenticated by
-  # exact parent identity. The guard's own alarm bounds this startup-only call;
+  # Keep the guard as the startup owner's direct child: --startup-owner is
+  # authenticated by exact parent identity. Its own alarm bounds this call;
   # wrapping it in `timeout` would interpose a different parent process.
   if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" ensure-api-key \
     --hermes-dir "$HERMES_DIR" \
