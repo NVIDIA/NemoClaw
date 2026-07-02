@@ -35,14 +35,20 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
       agent: null,
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
+      resourceProfile: { cpu: "4", memory: "8Gi" },
       appliedPolicies: ["discord", "slack"],
       plannedMessagingState: plannedMessagingState as any,
+      extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_A"],
+      customPolicies: [
+        { name: "internal-api", content: "network_policies:\n  internal-api: {}\n" },
+      ],
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
         enabled: true,
@@ -61,7 +67,13 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
+      resourceCpu: "4",
+      resourceMemory: "8Gi",
       policies: ["discord", "slack"],
+      extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
+      customPolicies: [
+        { name: "internal-api", content: "network_policies:\n  internal-api: {}\n" },
+      ],
       hermesToolGateways: ["filesystem"],
       hermesDashboardEnabled: true,
       hermesDashboardPort: 18790,
@@ -93,6 +105,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "",
         credentialEnv: "",
         preferredInferenceApi: "",
+        compatibleEndpointReasoning: null,
         nimContainer: "",
       },
       runtimeFields,
@@ -117,6 +130,8 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.credentialEnv).toBeNull();
     expect(entry.preferredInferenceApi).toBeNull();
     expect(entry.nimContainer).toBeNull();
+    expect(entry.resourceCpu).toBeNull();
+    expect(entry.resourceMemory).toBeNull();
     expect(entry.agentVersion).toBeNull();
     expect(entry.nemoclawVersion).toBeNull();
     const rawEntry = entry as unknown as Record<string, unknown>;
@@ -140,6 +155,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -171,6 +187,7 @@ describe("selection", () => {
       model: "llama",
       endpointUrl: "https://wrong.test/v1",
       credentialEnv: "WRONG_KEY",
+      compatibleEndpointReasoning: "true",
       nimContainer: "wrong",
     });
 
@@ -180,17 +197,22 @@ describe("selection", () => {
       endpointUrl: null,
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     });
   });
 
-  it("borrows session-scoped metadata only when sandbox provider and model match", () => {
+  it.each([
+    "true",
+    "false",
+  ] as const)("borrows matching session-scoped metadata including reasoning=%s", (compatibleEndpointReasoning) => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "demo",
       provider: "compatible-endpoint",
       model: "llama",
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
+      compatibleEndpointReasoning,
       nimContainer: "nim-right",
     });
 
@@ -200,6 +222,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning,
       nimContainer: "nim-right",
     });
   });
@@ -217,6 +240,7 @@ describe("registerCreatedSandbox", () => {
         endpointUrl: null,
         credentialEnv: null,
         preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,

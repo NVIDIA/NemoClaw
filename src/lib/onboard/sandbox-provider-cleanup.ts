@@ -15,6 +15,8 @@ export type SandboxProviderRunOpenshell = (
 
 export type DetachSandboxProvidersDeps = {
   runOpenshell?: SandboxProviderRunOpenshell;
+  /** Mutation ledger hook used by rebuild's process-exit rollback. */
+  onDetached?: (providerName: string) => void;
   /**
    * Treat OpenShell `sandbox not found` outputs as success-equivalent. Used
    * by the resume-after-prune call site where the sandbox is expected to be
@@ -26,6 +28,11 @@ export type DetachSandboxProvidersDeps = {
 
 export type DetachSandboxProvidersResult = {
   detached: string[];
+  failures: Array<{ name: string; output: string }>;
+};
+
+export type AttachSandboxProvidersResult = {
+  attached: string[];
   failures: Array<{ name: string; output: string }>;
 };
 
@@ -43,6 +50,12 @@ export type SandboxProviderSuffix = string;
 
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
+
+const STRICT_NOT_ATTACHED_OUTPUT_RE =
+  /\bstatus:\s*NotAttached\b|(?:^|\n)\s*(?:Error:\s*)?provider(?:\s+['"`][^'"`\n]+['"`])?\s+(?:is\s+)?not\s+attached\s+to\s+sandbox\b/i;
+
+const TOLERATED_ATTACH_OUTPUT_RE =
+  /\bstatus:\s*AlreadyAttached\b|(?:^|\n)\s*(?:Error:\s*)?provider(?:\s+['"`][^'"`\n]+['"`])?\s+(?:is\s+)?already\s+attached\s+to\s+sandbox\b/i;
 
 const MISSING_SANDBOX_OUTPUT_RE = /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
@@ -70,6 +83,64 @@ function defaultRunOpenshell(
 
 function identityRedact(input: string): string {
   return input;
+}
+
+function uniqueProviderNames(providerNames: readonly string[]): string[] {
+  return [...new Set(providerNames.map((name) => name.trim()).filter(Boolean))];
+}
+
+/** Detach an exact, already-validated provider set and report what changed. */
+export function detachNamedSandboxProviders(
+  sandboxName: string,
+  providerNames: readonly string[],
+  deps: DetachSandboxProvidersDeps = {},
+): DetachSandboxProvidersResult {
+  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
+  const detached: string[] = [];
+  const failures: Array<{ name: string; output: string }> = [];
+  for (const name of uniqueProviderNames(providerNames)) {
+    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+    });
+    if (result.status === 0) {
+      detached.push(name);
+      deps.onDetached?.(name);
+      continue;
+    }
+    const output = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
+    if (STRICT_NOT_ATTACHED_OUTPUT_RE.test(output)) continue;
+    if (deps.tolerateMissingSandbox && MISSING_SANDBOX_OUTPUT_RE.test(output)) continue;
+    failures.push({ name, output: output.trim() });
+    return { detached, failures };
+  }
+  return { detached, failures };
+}
+
+/** Best-effort rollback for exact provider names detached from a live sandbox. */
+export function attachNamedSandboxProviders(
+  sandboxName: string,
+  providerNames: readonly string[],
+  deps: Pick<DetachSandboxProvidersDeps, "runOpenshell"> = {},
+): AttachSandboxProvidersResult {
+  const runOpenshell = deps.runOpenshell ?? defaultRunOpenshell;
+  const attached: string[] = [];
+  const failures: Array<{ name: string; output: string }> = [];
+  for (const name of uniqueProviderNames(providerNames).reverse()) {
+    const result = runOpenshell(["sandbox", "provider", "attach", sandboxName, name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+    });
+    const output = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
+    if (result.status === 0 || TOLERATED_ATTACH_OUTPUT_RE.test(output)) {
+      attached.push(name);
+      continue;
+    }
+    failures.push({ name, output: output.trim() });
+  }
+  return { attached, failures };
 }
 
 /**
@@ -118,12 +189,8 @@ export function detachSandboxProviders(
       continue;
     }
     const output = `${bufferOrStringToText(result.stdout)}${bufferOrStringToText(result.stderr)}`;
-    if (TOLERATED_DETACH_OUTPUT_RE.test(output)) {
-      continue;
-    }
-    if (deps.tolerateMissingSandbox && MISSING_SANDBOX_OUTPUT_RE.test(output)) {
-      continue;
-    }
+    if (TOLERATED_DETACH_OUTPUT_RE.test(output)) continue;
+    if (deps.tolerateMissingSandbox && MISSING_SANDBOX_OUTPUT_RE.test(output)) continue;
     failures.push({ name, output: output.trim() });
   }
   return { detached, failures };

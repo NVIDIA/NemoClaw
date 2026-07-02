@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { GpuDetection } from "../../../inference/nim";
-import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { createSession, type Session } from "../../../state/onboard-session";
+import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
 type Gpu = GpuDetection | null;
@@ -265,5 +265,42 @@ describe("handlePreflightState", () => {
 
     expect(result.session?.gpuPassthrough).toBe(true);
     expect(harness.deps.updateSession).toHaveBeenCalledOnce();
+  });
+
+  it("uses the prepared rebuild runtime even when the resumed session has no cached preflight", async () => {
+    const runPreflight = vi.fn(async () => ({ type: "should-not-run" }) as Gpu);
+    const detectGpu = vi.fn(() => ({ type: "should-not-run" }) as Gpu);
+    const assessHost = vi.fn(() => ({ cdiNvidiaGpuSpecMissing: false }));
+    const validateSandboxGpuPreflight = vi.fn();
+    const harness = createDeps({
+      runPreflight,
+      detectGpu,
+      assessHost,
+      validateSandboxGpuPreflight,
+    });
+    const preparedGpu = { type: "nvidia" } as Gpu;
+    const preparedConfig = {
+      sandboxGpuEnabled: true,
+      mode: "1",
+      sandboxGpuDevice: "GPU-0",
+    };
+
+    const result = await handlePreflightState({
+      ...baseOptions(harness.deps),
+      resume: true,
+      authoritativePreflight: { gpu: preparedGpu, sandboxGpuConfig: preparedConfig },
+    });
+
+    expect(runPreflight).not.toHaveBeenCalled();
+    expect(detectGpu).not.toHaveBeenCalled();
+    expect(assessHost).not.toHaveBeenCalled();
+    expect(validateSandboxGpuPreflight).not.toHaveBeenCalled();
+    expect(harness.deps.skippedStepMessage).toHaveBeenCalledWith(
+      "preflight",
+      "prevalidated rebuild runtime",
+    );
+    expect(result.gpu).toBe(preparedGpu);
+    expect(result.sandboxGpuConfig).toBe(preparedConfig);
+    expect(result.gpuPassthrough).toBe(true);
   });
 });

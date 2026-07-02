@@ -18,6 +18,8 @@ export interface GatewayStateOptions<Gpu> {
   recordedSandboxName: string | null;
   requestedSandboxName: string | null;
   recreateSandbox: boolean;
+  /** Rebuild already validated exact runtime identity, TLS, and health before delete. */
+  authoritativeGatewayPrevalidated?: boolean;
   deps: {
     refreshDockerDriverGatewayReuseState(state: GatewayReuseState): Promise<GatewayReuseState>;
     gatewayCliSupportsLifecycleCommands(): boolean;
@@ -81,8 +83,29 @@ export async function handleGatewayState<Gpu>({
   recordedSandboxName,
   requestedSandboxName,
   recreateSandbox,
+  authoritativeGatewayPrevalidated = false,
   deps,
 }: GatewayStateOptions<Gpu>): Promise<GatewayStateResult> {
+  if (authoritativeGatewayPrevalidated) {
+    if (initialGatewayReuseState !== "healthy") {
+      deps.note("  [rebuild] Prevalidated target gateway is no longer healthy.");
+      deps.exitProcess(1);
+    }
+    deps.skippedStepMessage("gateway", "prevalidated rebuild target");
+    await deps.recordStateSkipped("gateway", {
+      reason: "resume",
+      reuseState: initialGatewayReuseState,
+    });
+    session = await deps.recordStepComplete("gateway");
+    return {
+      gatewayReuseState: "healthy",
+      session,
+      stateResult: advanceTo("provider_selection", {
+        metadata: { state: "gateway", gatewayReuseState: "healthy" },
+      }),
+    };
+  }
+
   let gatewayReuseState = await deps.refreshDockerDriverGatewayReuseState(initialGatewayReuseState);
   const supportsLifecycleCommands = deps.gatewayCliSupportsLifecycleCommands();
 

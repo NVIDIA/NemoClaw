@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
+import type { GatewayReuseState } from "../../../state/gateway";
 import { createSession, type Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
-import type { GatewayReuseState } from "../../../state/gateway";
-import { handleGatewayState, type GatewayStateOptions } from "./gateway";
+import { type GatewayStateOptions, handleGatewayState } from "./gateway";
 
 type Gpu = { type: string } | null;
 
@@ -334,5 +333,40 @@ describe("handleGatewayState", () => {
     );
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
+  });
+
+  it("does not mutate a gateway whose exact runtime was prepared before rebuild deletion", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleGatewayState({
+      ...baseOptions(deps, "healthy"),
+      resume: true,
+      authoritativeGatewayPrevalidated: true,
+    });
+
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.lifecycle).not.toHaveBeenCalled();
+    expect(calls.verifyContainer).not.toHaveBeenCalled();
+    expect(calls.reconcileGpu).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith("gateway", "prevalidated rebuild target");
+    expect(result.gatewayReuseState).toBe("healthy");
+  });
+
+  it("fails closed if the prepared gateway is no longer healthy", async () => {
+    const { deps, calls } = createDeps();
+
+    await expect(
+      handleGatewayState({
+        ...baseOptions(deps, "stale"),
+        resume: true,
+        authoritativeGatewayPrevalidated: true,
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.refresh).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
   });
 });

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   appendResourceFlags,
+  appendResourceFlagsOrThrow,
   getHardwareResources,
   loadResourceProfiles,
   printHardwareResources,
@@ -47,6 +48,14 @@ describe("resources-cmd", () => {
     expect(() => resolveResourceValue("0%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("101%", 16, "cpu")).toThrow("integer between 1% and 100%");
     expect(() => resolveResourceValue("12.5%", 16, "cpu")).toThrow("integer between 1% and 100%");
+  });
+
+  it("rejects malformed or non-positive absolute Kubernetes quantities", () => {
+    expect(() => resolveResourceValue("bogus", 16, "cpu")).toThrow("Invalid cpu quantity");
+    expect(() => resolveResourceValue("0", 16, "cpu")).toThrow("Invalid cpu quantity");
+    expect(() => resolveResourceValue("-1Gi", 8192, "memory")).toThrow("Invalid memory quantity");
+    expect(resolveResourceValue("750m", 16, "cpu")).toBe("750m");
+    expect(resolveResourceValue("1.5Gi", 8192, "memory")).toBe("1.5Gi");
   });
 
   it("resolves profiles against Kubernetes allocatable capacity when available", () => {
@@ -109,6 +118,14 @@ describe("resources-cmd", () => {
     expect(args).toEqual(["sandbox", "create", "--cpu", "4", "--memory", "2Gi"]);
   });
 
+  it("preserves ordinary onboarding's single-resource override behavior", () => {
+    const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
+    const args = ["sandbox", "create"];
+
+    expect(appendResourceFlags(args, { cpu: "4", memory: "" }, openshell)).toBe(true);
+    expect(args).toEqual(["sandbox", "create", "--cpu", "4"]);
+  });
+
   it("does not use old request/limit resource flags", () => {
     const openshell = makeExecutable(
       "#!/usr/bin/env sh\necho '--cpu-request --cpu-limit --memory-request --memory-limit'\n",
@@ -132,6 +149,26 @@ describe("resources-cmd", () => {
     const args = ["sandbox", "create"];
 
     expect(appendResourceFlags(args, { cpu: "bogus%", memory: "25%" }, openshell)).toBe(false);
+    expect(args).toEqual(["sandbox", "create"]);
+  });
+
+  it("fails closed without mutating args when required resource flags are unsupported", () => {
+    const openshell = makeExecutable("#!/usr/bin/env sh\necho 'usage: openshell sandbox create'\n");
+    const args = ["sandbox", "create"];
+
+    expect(() => appendResourceFlagsOrThrow(args, { cpu: "4", memory: "2Gi" }, openshell)).toThrow(
+      "does not support both required --cpu and --memory flags",
+    );
+    expect(args).toEqual(["sandbox", "create"]);
+  });
+
+  it("fails closed without mutating args when required resource syntax is invalid", () => {
+    const openshell = makeExecutable("#!/usr/bin/env sh\necho '--cpu --memory'\n");
+    const args = ["sandbox", "create"];
+
+    expect(() =>
+      appendResourceFlagsOrThrow(args, { cpu: "bogus", memory: "2Gi" }, openshell),
+    ).toThrow("Invalid cpu quantity");
     expect(args).toEqual(["sandbox", "create"]);
   });
 });

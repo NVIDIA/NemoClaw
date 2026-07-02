@@ -182,4 +182,49 @@ describe("prepareCreateSandboxMessaging", () => {
     expect(result.messagingTokenDefs).toEqual([]);
     expect(result.hasMessagingTokens).toBe(false);
   });
+
+  it("reuses only prevalidated providers during rebuild and ignores ambient token rotation", () => {
+    const registerExtraPlaceholderProviders = vi.fn(() => ["SHOULD_NOT_APPEAR"]);
+    const getValidatedMessagingTokenByEnvKey = vi.fn(() => "hostile-rotated-token");
+
+    const result = prepareCreateSandboxMessaging(
+      createInput({
+        enabledChannels: ["slack"],
+        webSearchConfig: { fetchEnabled: true },
+        env: { [BRAVE_API_KEY_ENV]: "hostile-brave-key" },
+        getValidatedMessagingTokenByEnvKey,
+        registerExtraPlaceholderProviders,
+        authoritativeReuse: {
+          providers: [
+            "demo-slack-bridge",
+            "demo-slack-app",
+            "demo-brave-search",
+            "demo-extra-telegram-bot-token-agent-a",
+          ],
+          channels: ["slack"],
+          extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A"],
+        },
+      }),
+    );
+
+    expect(result.messagingTokenDefs.every(({ token }) => token === null)).toBe(true);
+    expect(result.hasMessagingTokens).toBe(false);
+    expect(result.missingBraveApiKey).toBe(false);
+    expect(result.reusableMessagingProviders).toEqual([
+      "demo-slack-bridge",
+      "demo-slack-app",
+      "demo-brave-search",
+      "demo-extra-telegram-bot-token-agent-a",
+    ]);
+    expect(result.reusableMessagingChannels).toEqual(["slack"]);
+    expect(result.extraPlaceholderKeys).toEqual(["TELEGRAM_BOT_TOKEN_AGENT_A"]);
+    expect(result.messagingTokenDefs).toContainEqual({
+      name: "demo-extra-telegram-bot-token-agent-a",
+      envKey: "TELEGRAM_BOT_TOKEN_AGENT_A",
+      token: null,
+      providerType: "generic",
+    });
+    expect(getValidatedMessagingTokenByEnvKey).not.toHaveBeenCalled();
+    expect(registerExtraPlaceholderProviders).not.toHaveBeenCalled();
+  });
 });

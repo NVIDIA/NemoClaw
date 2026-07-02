@@ -13,8 +13,8 @@ export function registerIncompleteOnboardExitHandlerForSession(
   deps: ExitStepFailureSessionDeps,
   isComplete: () => boolean,
   processLike?: OnboardExitFailureProcessLike,
-): void {
-  registerIncompleteOnboardExitFailureHandler(
+): () => void {
+  return registerIncompleteOnboardExitFailureHandler(
     deps,
     isComplete,
     INCOMPLETE_ONBOARD_EXIT_MESSAGE,

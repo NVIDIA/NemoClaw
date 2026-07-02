@@ -2,13 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // #5735: A rebuild recreates a sandbox from its persisted registry/session
-// config. Ambient onboarding-selection env vars left over from an *unrelated*
+// config. Ambient onboarding/recreate env vars left over from an *unrelated*
 // onboard (e.g. the installer's just-completed Deep Agents onboard right before
 // `upgrade-sandboxes --auto`) must never steer `onboard --resume` away from the
 // target sandbox's recorded agent/provider/model/credential. These are the env
 // vars that onboard's resume path reads to pick the agent, provider, model,
 // endpoint, and credential — isolating them during the recreate forces the
-// pinned session + gateway-registered provider to win.
+// pinned session + gateway-registered provider to win. The scope also removes
+// late-only knobs that can terminate the inner onboarding after deletion
+// (dashboard/GPU, policy tier, resource profile, and vLLM model).
 //
 // SOURCE-OF-TRUTH NOTE (#5735, PRA-4): the real source boundary is
 // `onboard --resume`, which still reads these from the global `process.env`:
@@ -17,6 +19,11 @@
 //   - NEMOCLAW_PROVIDER_KEY → src/lib/onboard/provider-key-bridge.ts / providers.ts
 //   - NEMOCLAW_ENDPOINT_URL → src/lib/onboard.ts (remote endpoint override)
 //   - NEMOCLAW_MODEL        → src/lib/onboard.ts (model override)
+//   - NEMOCLAW_VLLM_MODEL   → src/lib/onboard/resume-config.ts early fatal gate
+//   - NEMOCLAW_SANDBOX_GPU* → src/lib/onboard/machine/handlers/preflight.ts
+//   - NEMOCLAW_POLICY_TIER  → src/lib/onboard/policy-tier-env.ts early fatal gate
+//   - NEMOCLAW_RESOURCE_PROFILE → src/lib/onboard/resource-profile-selection.ts
+//   - NEMOCLAW_DASHBOARD_PORT / CHAT_UI_URL → src/lib/onboard.ts create path
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
 // onboard-selection env var forces a conscious update here.
@@ -30,6 +37,44 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_PROVIDER_KEY",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_COMPAT_MODEL",
+  "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_REASONING",
+  "NEMOCLAW_VLLM_MODEL",
+  "NEMOCLAW_FROM_DOCKERFILE",
+  "NEMOCLAW_SANDBOX_GPU",
+  "NEMOCLAW_SANDBOX_GPU_DEVICE",
+  "NEMOCLAW_DASHBOARD_PORT",
+  "CHAT_UI_URL",
+  "NEMOCLAW_RESOURCE_PROFILE",
+  "NEMOCLAW_CPU",
+  "NEMOCLAW_RAM",
+  "NEMOCLAW_POLICY_TIER",
+  "NEMOCLAW_POLICY_PRESETS",
+  "NEMOCLAW_POLICY_MODE",
+  "NEMOCLAW_HERMES_AUTH_METHOD",
+  "NEMOCLAW_HERMES_AUTH",
+  "NEMOCLAW_NOUS_AUTH_METHOD",
+  "NEMOCLAW_HERMES_DASHBOARD",
+  "NEMOCLAW_HERMES_DASHBOARD_PORT",
+  "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
+  "NEMOCLAW_HERMES_DASHBOARD_TUI",
+  "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
+  "NEMOCLAW_DOCKER_GPU_PATCH",
+  "NEMOCLAW_EXTRA_AGENTS_JSON",
+  "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
+  "NEMOCLAW_CONTEXT_WINDOW",
+  "NEMOCLAW_MAX_TOKENS",
+  "NEMOCLAW_INFERENCE_INPUTS",
+  "NEMOCLAW_AGENT_TIMEOUT",
+  "NEMOCLAW_AGENT_HEARTBEAT_EVERY",
+  "NEMOCLAW_PROXY_HOST",
+  "NEMOCLAW_PROXY_PORT",
+  "NEMOCLAW_OPENCLAW_OTEL",
+  "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
+  "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
+  "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
 ] as const;
 
 /**
@@ -43,7 +88,6 @@ export const AMBIENT_RECREATE_ENV_VARS = [
  */
 export function sanitizeEnvValueForDisplay(value: string, maxLength = 80): string {
   const stripped = value
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately stripping control chars from untrusted env input before display.
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

@@ -73,6 +73,21 @@ describe("docker-driver gateway runtime helpers", () => {
     vi.restoreAllMocks();
   });
 
+  it("resolves the gateway state directory from the latest port getter value", () => {
+    withEnv({ NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR: undefined }, () => {
+      let gatewayPort = 18080;
+      const { helpers } = makeHelpers({ gatewayPort: () => gatewayPort });
+      expect(helpers.getDockerDriverGatewayStateDir()).toBe(
+        path.join(os.homedir(), ".local", "state", "nemoclaw", "openshell-docker-gateway-18080"),
+      );
+
+      gatewayPort = 19080;
+      expect(helpers.getDockerDriverGatewayStateDir()).toBe(
+        path.join(os.homedir(), ".local", "state", "nemoclaw", "openshell-docker-gateway-19080"),
+      );
+    });
+  });
+
   it("uses env-configured state, gateway, sandbox, network, and fallback version values", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
     const stateDir = path.join(tempDir, "state");

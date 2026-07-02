@@ -4,8 +4,9 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type { ResourceProfile } from "../resources-cmd";
 import * as onboardSession from "../state/onboard-session";
-import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
+import type { CustomPolicyEntry, SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
   getHermesDashboardRegistryFields,
@@ -32,8 +33,11 @@ export interface CreatedSandboxRegistryEntryInput {
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
   imageTag: string | null;
+  resourceProfile?: ResourceProfile | null;
   appliedPolicies: string[];
   plannedMessagingState: SandboxMessagingState | undefined;
+  extraPlaceholderKeys?: string[];
+  customPolicies?: CustomPolicyEntry[];
   hermesToolGateways: string[];
   hermesDashboardState: HermesDashboardOnboardState;
   dashboardPort: number;
@@ -62,6 +66,9 @@ export function selection(
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
     preferredInferenceApi,
+    compatibleEndpointReasoning: sessionMatches
+      ? (session.compatibleEndpointReasoning ?? null)
+      : null,
     nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
 }
@@ -80,8 +87,18 @@ export function buildCreatedSandboxRegistryEntry(
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
+    resourceCpu: input.resourceProfile?.cpu ?? null,
+    resourceMemory: input.resourceProfile?.memory ?? null,
     policies: input.appliedPolicies,
     messaging: messagingState,
+    extraPlaceholderKeys:
+      input.extraPlaceholderKeys && input.extraPlaceholderKeys.length > 0
+        ? [...new Set(input.extraPlaceholderKeys)]
+        : undefined,
+    customPolicies:
+      input.customPolicies && input.customPolicies.length > 0
+        ? input.customPolicies.map((policy) => ({ ...policy }))
+        : undefined,
     hermesToolGateways:
       input.hermesToolGateways.length > 0 ? [...input.hermesToolGateways] : undefined,
     ...getHermesDashboardRegistryFields(input.hermesDashboardState),

@@ -44,11 +44,13 @@ export interface InitialOnboardFlowPhaseOptions<
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   recordedGpuPassthroughBeforePreflight: boolean;
+  authoritativePreflight?: { gpu: Gpu; sandboxGpuConfig: Config } | null;
   ensureResumePreflightDashboardPortAvailable(): void;
   preflightDeps: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>["deps"];
   getInitialGatewayReuseState(): GatewayReuseState;
   gatewayName: string;
   recreateSandbox(): boolean;
+  authoritativeGatewayPrevalidated?: boolean;
   gatewayDeps: GatewayStateOptions<Gpu>["deps"];
   note(message: string): void;
   spawnSync?: SpawnSync;
@@ -126,6 +128,7 @@ export function createInitialOnboardFlowPhases<
         gpuRequested: options.gpuRequested,
         noGpu: options.noGpu,
         env: options.env,
+        authoritativePreflight: options.authoritativePreflight,
         deps: options.preflightDeps,
       });
       if (context.resume) options.ensureResumePreflightDashboardPortAvailable();
@@ -171,6 +174,7 @@ export function createInitialOnboardFlowPhases<
         recordedSandboxName: context.recordedSandboxName,
         requestedSandboxName: context.requestedSandboxName,
         recreateSandbox: options.recreateSandbox(),
+        authoritativeGatewayPrevalidated: options.authoritativeGatewayPrevalidated,
         deps: options.gatewayDeps,
       });
       return {

@@ -13,6 +13,7 @@ import {
   dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
   parseDockerRuntimeNames,
+  resolveSandboxGpuFlagFromOptions,
   sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
 } from "./sandbox-gpu-preflight";
@@ -30,6 +31,42 @@ function sandboxGpuConfig(overrides: Partial<SandboxGpuConfig> = {}): SandboxGpu
 }
 
 describe("sandbox GPU preflight", () => {
+  it("uses the injected fatal boundary for conflicting GPU flags", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`gpu flag exit:${code}`);
+    });
+
+    try {
+      expect(() =>
+        resolveSandboxGpuFlagFromOptions({ gpu: true, noGpu: true }, exitProcess),
+      ).toThrow("gpu flag exit:1");
+      expect(exitProcess).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("uses the injected fatal boundary for resolved GPU configuration errors", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`gpu config exit:${code}`);
+    });
+
+    try {
+      expect(() =>
+        validateSandboxGpuPreflight(
+          sandboxGpuConfig({ errors: ["invalid authoritative GPU configuration"] }),
+          {},
+          exitProcess,
+        ),
+      ).toThrow("gpu config exit:1");
+      expect(exitProcess).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("formats Jetson sandbox GPU notes around the NVIDIA runtime backend", () => {
     expect(formatSandboxGpuPassthroughNote({ hostGpuPlatform: "jetson" })).toContain(
       "Docker NVIDIA runtime",

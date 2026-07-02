@@ -1,9 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
-import { assessHost, planHostRemediation, shouldEnforceCdiNvidiaGpuSpec } from "./preflight";
+import {
+  assertCdiNvidiaGpuSpecPresent,
+  assessHost,
+  planHostRemediation,
+  shouldEnforceCdiNvidiaGpuSpec,
+} from "./preflight";
 
 type HostAssessment = Parameters<typeof planHostRemediation>[0];
 
@@ -430,6 +435,27 @@ describe("planHostRemediation — CDI", () => {
 });
 
 describe("shouldEnforceCdiNvidiaGpuSpec enforcement gate (#5489)", () => {
+  it("uses the injected fatal boundary when CDI repair is required", () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`CDI exit:${code}`);
+    });
+
+    try {
+      expect(() =>
+        assertCdiNvidiaGpuSpecPresent(
+          baseAssessment({ cdiNvidiaGpuSpecMissing: true }),
+          false,
+          "linux",
+          exitProcess,
+        ),
+      ).toThrow("CDI exit:1");
+      expect(exitProcess).toHaveBeenCalledWith(1);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
   it("enforces when the spec is missing and the operator did not explicitly opt out", () => {
     // The #5489 scenario: GPU hardware present (so cdiNvidiaGpuSpecMissing is
     // true) with sandbox GPU AUTO-disabled (nvidia-smi unavailable). Auto-disable

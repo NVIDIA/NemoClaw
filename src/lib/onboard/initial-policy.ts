@@ -123,27 +123,41 @@ export function buildDirectSandboxGpuProofCommands(
   ];
 }
 
+function writeSecureTempPolicy(
+  prefix: string,
+  content: string,
+): { policyPath: string; cleanup: () => boolean } {
+  const policyPath = secureTempFile(prefix, ".yaml");
+  const cleanup = () => {
+    try {
+      cleanupTempDir(policyPath, prefix);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  try {
+    fs.writeFileSync(policyPath, content, { encoding: "utf-8", mode: 0o600 });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  return { policyPath, cleanup };
+}
+
 function prepareDirectGpuSandboxPolicy(
   basePolicyPath: string,
   options: DirectGpuPolicyOptions = {},
 ): InitialSandboxPolicy {
   const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
-  const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
-    encoding: "utf-8",
-    mode: 0o600,
-  });
+  const prepared = writeSecureTempPolicy(
+    "nemoclaw-gpu-policy",
+    buildDirectGpuPolicyYaml(basePolicy, options),
+  );
   return {
-    policyPath,
+    policyPath: prepared.policyPath,
     appliedPresets: [],
-    cleanup: () => {
-      try {
-        cleanupTempDir(policyPath, "nemoclaw-gpu-policy");
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    cleanup: prepared.cleanup,
   };
 }
 
@@ -203,6 +217,7 @@ export function prepareInitialSandboxCreatePolicy(
     directGpu?: boolean;
     dockerGpuPatch?: boolean;
     additionalPresets?: string[];
+    additionalPresetContents?: Array<{ name: string; content: string }>;
     agentName?: string | null;
     policyTier?: string | null;
   } = {},
@@ -216,109 +231,134 @@ export function prepareInitialSandboxCreatePolicy(
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const buildCleanup = () =>
     cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
-  // Fail closed: the OpenClaw OTEL preset is added at create time only when the
-  // selected policy tier is known and is not Restricted. When the tier is null
-  // (interactive flow that selects later) the preset is deferred to the
-  // post-boot policy step, so a later Restricted selection cannot leave a
-  // transient host-local OTLP egress allowance during sandbox boot. The same
-  // suppression filter still runs so an explicit `policyTier: "restricted"`
-  // (non-interactive flow) drops openclaw-pricing from `additionalPresets`.
-  const tierKnown = typeof options.policyTier === "string" && options.policyTier.length > 0;
-  const otelCreateTimePresets =
-    tierKnown && options.policyTier !== "restricted"
-      ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
-      : [];
-  const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
-    [
-      ...new Set([
-        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
-        ...otelCreateTimePresets,
-        ...(options.additionalPresets || []),
-      ]),
-    ],
-    options.policyTier ?? null,
-    options.agentName ?? null,
-  );
-  const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
-
-  let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
-  if (options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath)) {
-    const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
-    if (filtered.changed) {
-      const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
-      fs.writeFileSync(policyPath, filtered.content, { encoding: "utf-8", mode: 0o600 });
-      cleanupFns.push(() => {
-        try {
-          cleanupTempDir(policyPath, "nemoclaw-agent-policy");
-          return true;
-        } catch {
-          return false;
-        }
-      });
-      effectiveBasePolicyPath = policyPath;
-      basePolicy = filtered.content;
-    }
-  }
-
-  const basePolicyNames = getNetworkPolicyNames(basePolicy);
-  if (basePolicyNames === null) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: [],
-      cleanup: buildCleanup(),
-    };
-  }
-  const existingChannelPresets = activeMessagingChannels.filter((channel) =>
-    basePolicyNames.has(channel),
-  );
-
-  if (requestedCreateTimePresets.length === 0) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: dedupe(existingChannelPresets),
-      cleanup: buildCleanup(),
-    };
-  }
-
-  const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
-    basePolicyNames.has(preset),
-  );
-  const createTimePresets = requestedCreateTimePresets.filter(
-    (preset) => !basePolicyNames.has(preset),
-  );
-  if (createTimePresets.length === 0) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
-      cleanup: buildCleanup(),
-    };
-  }
-
-  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
-  if (mergedPolicy.missingPresets.length > 0) {
-    throw new Error(
-      `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
+  try {
+    // Fail closed: the OpenClaw OTEL preset is added at create time only when the
+    // selected policy tier is known and is not Restricted. When the tier is null
+    // (interactive flow that selects later) the preset is deferred to the
+    // post-boot policy step, so a later Restricted selection cannot leave a
+    // transient host-local OTLP egress allowance during sandbox boot. The same
+    // suppression filter still runs so an explicit `policyTier: "restricted"`
+    // (non-interactive flow) drops openclaw-pricing from `additionalPresets`.
+    const tierKnown = typeof options.policyTier === "string" && options.policyTier.length > 0;
+    const otelCreateTimePresets =
+      tierKnown && options.policyTier !== "restricted"
+        ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
+        : [];
+    const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
+      [
+        ...new Set([
+          ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+          ...otelCreateTimePresets,
+          ...(options.additionalPresets || []),
+        ]),
+      ],
+      options.policyTier ?? null,
+      options.agentName ?? null,
     );
-  }
+    const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
-  const policyPath = secureTempFile("nemoclaw-initial-policy", ".yaml");
-  fs.writeFileSync(policyPath, mergedPolicy.policy, { encoding: "utf-8", mode: 0o600 });
-  cleanupFns.push(() => {
-    try {
-      cleanupTempDir(policyPath, "nemoclaw-initial-policy");
-      return true;
-    } catch {
-      return false;
+    let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
+    if (options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath)) {
+      const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
+      if (filtered.changed) {
+        const prepared = writeSecureTempPolicy("nemoclaw-agent-policy", filtered.content);
+        cleanupFns.push(prepared.cleanup);
+        effectiveBasePolicyPath = prepared.policyPath;
+        basePolicy = filtered.content;
+      }
     }
-  });
 
-  return {
-    policyPath,
-    appliedPresets: dedupe([
-      ...existingChannelPresets,
-      ...existingCreateTimePresets,
-      ...mergedPolicy.appliedPresets,
-    ]),
-    cleanup: buildCleanup(),
-  };
+    const customPresetContents = options.additionalPresetContents ?? [];
+    if (customPresetContents.length > 0) {
+      for (const preset of customPresetContents) {
+        let parsed: unknown;
+        try {
+          parsed = YAML.parse(preset.content);
+        } catch {
+          throw new Error(
+            `Cannot prepare sandbox create policy; custom preset '${preset.name}' is invalid YAML.`,
+          );
+        }
+        const networkPolicies = isYamlObject(parsed)
+          ? (parsed.network_policies as Record<string, unknown> | undefined)
+          : undefined;
+        const presetEntries = policies.extractPresetEntries(preset.content);
+        if (!isYamlObject(networkPolicies) || !presetEntries) {
+          throw new Error(
+            `Cannot prepare sandbox create policy; custom preset '${preset.name}' has no valid network_policies mapping.`,
+          );
+        }
+        if (
+          policies.networkPoliciesHasAllowedIps(
+            networkPolicies as Parameters<typeof policies.networkPoliciesHasAllowedIps>[0],
+          )
+        ) {
+          throw new Error(
+            `Cannot prepare sandbox create policy; custom preset '${preset.name}' contains disallowed allowed_ips.`,
+          );
+        }
+        basePolicy = policies.mergePresetIntoPolicy(basePolicy, presetEntries);
+      }
+      const prepared = writeSecureTempPolicy("nemoclaw-custom-policy", basePolicy);
+      cleanupFns.push(prepared.cleanup);
+      effectiveBasePolicyPath = prepared.policyPath;
+    }
+
+    const basePolicyNames = getNetworkPolicyNames(basePolicy);
+    if (basePolicyNames === null) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: [],
+        cleanup: buildCleanup(),
+      };
+    }
+    const existingChannelPresets = activeMessagingChannels.filter((channel) =>
+      basePolicyNames.has(channel),
+    );
+
+    if (requestedCreateTimePresets.length === 0) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: dedupe(existingChannelPresets),
+        cleanup: buildCleanup(),
+      };
+    }
+
+    const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
+      basePolicyNames.has(preset),
+    );
+    const createTimePresets = requestedCreateTimePresets.filter(
+      (preset) => !basePolicyNames.has(preset),
+    );
+    if (createTimePresets.length === 0) {
+      return {
+        policyPath: effectiveBasePolicyPath,
+        appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
+        cleanup: buildCleanup(),
+      };
+    }
+
+    const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+    if (mergedPolicy.missingPresets.length > 0) {
+      throw new Error(
+        `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,
+      );
+    }
+
+    const prepared = writeSecureTempPolicy("nemoclaw-initial-policy", mergedPolicy.policy);
+    cleanupFns.push(prepared.cleanup);
+
+    return {
+      policyPath: prepared.policyPath,
+      appliedPresets: dedupe([
+        ...existingChannelPresets,
+        ...existingCreateTimePresets,
+        ...mergedPolicy.appliedPresets,
+      ]),
+      cleanup: buildCleanup(),
+    };
+  } catch (error) {
+    for (const cleanup of [...cleanupFns].reverse()) cleanup();
+    throw error;
+  }
 }

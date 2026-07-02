@@ -89,6 +89,29 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
+  it("stores durable CPU and memory intent at registration time", () => {
+    registry.registerSandbox({
+      name: "resource-profile",
+      resourceCpu: "4",
+      resourceMemory: "8Gi",
+    });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes["resource-profile"].resourceCpu).toBe("4");
+    expect(data.sandboxes["resource-profile"].resourceMemory).toBe("8Gi");
+  });
+
+  it("stores deduplicated per-sandbox extra placeholder keys", () => {
+    registry.registerSandbox({
+      name: "placeholder-sandbox",
+      extraPlaceholderKeys: ["TELEGRAM_BOT_TOKEN_AGENT_A", "TELEGRAM_BOT_TOKEN_AGENT_A"],
+    });
+
+    expect(registry.getSandbox("placeholder-sandbox").extraPlaceholderKeys).toEqual([
+      "TELEGRAM_BOT_TOKEN_AGENT_A",
+    ]);
+  });
+
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
     registry.registerSandbox({
       name: "first",

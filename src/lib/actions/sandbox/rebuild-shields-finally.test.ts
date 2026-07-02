@@ -10,6 +10,30 @@ type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "./rebuild.js";
 
+function healthyGatewayRecovery(gatewayName: string) {
+  const state = {
+    state: "healthy_named" as const,
+    status: `Gateway: ${gatewayName}\nStatus: Connected`,
+    gatewayInfo: `Gateway: ${gatewayName}`,
+    activeGateway: gatewayName,
+  };
+  return { recovered: true, before: state, after: state, attempted: false };
+}
+
+const sandboxGpuConfig = {
+  mode: "0" as const,
+  hostGpuDetected: false,
+  hostGpuPlatform: null,
+  sandboxGpuEnabled: false,
+  sandboxGpuDevice: null,
+  errors: [],
+};
+const runtimePreflightResult = {
+  gpu: null,
+  host: { dockerReachable: true, runtime: "docker", notes: [] },
+  sandboxGpuConfig,
+};
+
 describe("rebuild shields relock guard", () => {
   let rebuildSandbox: RebuildSandbox;
   let spies: MockInstance[];
@@ -17,6 +41,12 @@ describe("rebuild shields relock guard", () => {
   let logSpy: MockInstance;
   let relockSpy: MockInstance;
   let sandboxListRecoverySpy: MockInstance;
+  let targetGatewayRecoverySpy: MockInstance;
+  let acquireOnboardLockSpy: MockInstance;
+  let releaseOnboardLockSpy: MockInstance;
+  let authoritativePreflightSpy: MockInstance;
+  let inferenceRouteReadySpy: MockInstance;
+  let imagePreflightSpy: MockInstance;
   const rebuildWindow = { relocked: false, wasLocked: true };
 
   beforeEach(() => {
@@ -38,6 +68,9 @@ describe("rebuild shields relock guard", () => {
     const sandboxSession = requireDist("../../state/sandbox-session.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const rebuildShields = requireDist("./rebuild-shields.js");
+    const onboardMod = requireDist("../../onboard.js");
+    const imagePreflight = requireDist("./rebuild-custom-image-preflight.js");
+    const inferencePreflight = requireDist("./rebuild-inference-preflight.js");
 
     relockSpy = vi
       .spyOn(rebuildShields, "relockRebuildShieldsWindow")
@@ -48,13 +81,43 @@ describe("rebuild shields relock guard", () => {
       });
 
     sandboxListRecoverySpy = vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery");
+    targetGatewayRecoverySpy = vi
+      .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+      .mockImplementation((...args: unknown[]) => {
+        const options = args[0] as { gatewayName?: string } | undefined;
+        return Promise.resolve(healthyGatewayRecovery(options?.gatewayName ?? "nemoclaw"));
+      });
+    acquireOnboardLockSpy = vi
+      .spyOn(onboardSession, "acquireOnboardLock")
+      .mockReturnValue({ acquired: true, lockFile: "/tmp/onboard.lock", stale: false });
+    releaseOnboardLockSpy = vi
+      .spyOn(onboardSession, "releaseOnboardLock")
+      .mockImplementation(() => undefined);
+    authoritativePreflightSpy = vi
+      .spyOn(onboardMod, "preflightAuthoritativeRebuildTarget")
+      .mockResolvedValue(runtimePreflightResult);
+    inferenceRouteReadySpy = vi.spyOn(onboardMod, "isInferenceRouteReady").mockReturnValue(true);
+    imagePreflightSpy = vi.spyOn(imagePreflight, "preflightRebuildImage").mockResolvedValue({
+      ok: true,
+      preparedBuildContext: {
+        buildCtx: "/tmp/rebuild-shields-preflight",
+        stagedDockerfile: "/tmp/rebuild-shields-preflight/Dockerfile",
+        buildId: "shields-build",
+        dockerGpuPatchNetwork: null,
+        cleanupBuildCtx: vi.fn(() => true),
+      },
+    });
 
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
-      vi
-        .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-        .mockResolvedValue({ recovered: false }),
+      targetGatewayRecoverySpy,
+      acquireOnboardLockSpy,
+      releaseOnboardLockSpy,
+      authoritativePreflightSpy,
+      inferenceRouteReadySpy,
+      imagePreflightSpy,
+      vi.spyOn(inferencePreflight, "preflightRebuildInferenceRoute").mockReturnValue({ ok: true }),
       sandboxListRecoverySpy.mockResolvedValue({
         result: { status: 0, output: "alpha Ready" },
       }),
@@ -69,9 +132,12 @@ describe("rebuild shields relock guard", () => {
         policies: [],
         agent: null,
         nimContainer: null,
+        nemoclawVersion: "0.0.72",
+        dashboardPort: 18789,
         gatewayName: "nemoclaw-8090",
         gatewayPort: 8090,
       } as never),
+      vi.spyOn(registry, "listExtraProviders").mockReturnValue([]),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
         sessions: [],
@@ -104,6 +170,25 @@ describe("rebuild shields relock guard", () => {
 
     expect(relockSpy).toHaveBeenCalledWith("alpha", rebuildWindow, true, expect.any(String));
     expect(sandboxListRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
+    expect(targetGatewayRecoverySpy).toHaveBeenCalledOnce();
+    expect(targetGatewayRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
+    expect(authoritativePreflightSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authoritativeResumeConfig: true,
+        controlUiPort: 18789,
+        model: "nvidia/nemotron",
+        provider: "ollama-local",
+        sandboxName: "alpha",
+        targetGatewayName: "nemoclaw-8090",
+        targetGatewayPort: 8090,
+      }),
+    );
+    expect(imagePreflightSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayPort: 8090, model: "nvidia/nemotron" }),
+    );
+    expect(inferenceRouteReadySpy).toHaveBeenCalledWith("ollama-local", "nvidia/nemotron");
+    expect(acquireOnboardLockSpy).toHaveBeenCalledWith("nemoclaw alpha rebuild");
+    expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
     expect(rebuildWindow.relocked).toBe(true);
   });
 });

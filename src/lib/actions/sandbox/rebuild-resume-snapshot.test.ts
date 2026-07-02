@@ -12,6 +12,30 @@ type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "./rebuild.js";
 
+function healthyGatewayRecovery(gatewayName: string) {
+  const state = {
+    state: "healthy_named" as const,
+    status: `Gateway: ${gatewayName}\nStatus: Connected`,
+    gatewayInfo: `Gateway: ${gatewayName}`,
+    activeGateway: gatewayName,
+  };
+  return { recovered: true, before: state, after: state, attempted: false };
+}
+
+const sandboxGpuConfig = {
+  mode: "0" as const,
+  hostGpuDetected: false,
+  hostGpuPlatform: null,
+  sandboxGpuEnabled: false,
+  sandboxGpuDevice: null,
+  errors: [],
+};
+const runtimePreflightResult = {
+  gpu: null,
+  host: { dockerReachable: true, runtime: "docker", notes: [] },
+  sandboxGpuConfig,
+};
+
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
 }
@@ -44,6 +68,7 @@ describe("rebuild resume snapshot repair", () => {
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
     const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
     const sandboxList = requireDist("../../openshell-sandbox-list.js");
     const resolve = requireDist("../../adapters/openshell/resolve.js");
@@ -57,6 +82,8 @@ describe("rebuild resume snapshot repair", () => {
     const sandboxState = requireDist("../../state/sandbox.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const destroy = requireDist("./destroy.js");
+    const imagePreflight = requireDist("./rebuild-custom-image-preflight.js");
+    const inferencePreflight = requireDist("./rebuild-inference-preflight.js");
     const rebuildShields = requireDist("./rebuild-shields.js");
     const nim = requireDist("../../inference/nim.js");
 
@@ -90,6 +117,13 @@ describe("rebuild resume snapshot repair", () => {
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
+      vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({ status: 0, output: "" }),
+      vi
+        .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+        .mockImplementation((...args: unknown[]) => {
+          const options = args[0] as { gatewayName?: string } | undefined;
+          return Promise.resolve(healthyGatewayRecovery(options?.gatewayName ?? "nemoclaw"));
+        }),
       vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
         result: { status: 0, output: "alpha Ready" },
       }),
@@ -101,6 +135,7 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),
       vi.spyOn(onboardSession, "updateSession").mockImplementation(updateSession),
+      vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true }),
       vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(onboardSession, "markStepFailed").mockImplementation(() => loadSession()),
       vi.spyOn(registry, "getSandbox").mockReturnValue({
@@ -110,8 +145,31 @@ describe("rebuild resume snapshot repair", () => {
         policies: [],
         agent: null,
         nimContainer: null,
+        nemoclawVersion: "0.0.72",
+        dashboardPort: 18789,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      } as never),
+      vi.spyOn(registry, "load").mockReturnValue({
+        defaultSandbox: "alpha",
+        sandboxes: {
+          alpha: {
+            name: "alpha",
+            provider: "ollama-local",
+            model: "nvidia/nemotron",
+            policies: [],
+            agent: null,
+            nimContainer: null,
+            nemoclawVersion: "0.0.72",
+            dashboardPort: 18789,
+            gatewayName: "nemoclaw",
+            gatewayPort: 8080,
+          },
+        },
       } as never),
       vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] } as never),
+      vi.spyOn(registry, "listExtraProviders").mockReturnValue([]),
+      vi.spyOn(registry, "restoreSandboxEntry").mockImplementation(() => undefined),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
         sessions: [],
@@ -141,6 +199,21 @@ describe("rebuild resume snapshot repair", () => {
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
+      vi
+        .spyOn(onboardMod, "preflightAuthoritativeRebuildTarget")
+        .mockResolvedValue(runtimePreflightResult),
+      vi.spyOn(inferencePreflight, "preflightRebuildInferenceRoute").mockReturnValue({ ok: true }),
+      vi.spyOn(onboardMod, "isInferenceRouteReady").mockReturnValue(true),
+      vi.spyOn(imagePreflight, "preflightRebuildImage").mockResolvedValue({
+        ok: true,
+        preparedBuildContext: {
+          buildCtx: "/tmp/rebuild-resume-snapshot-preflight",
+          stagedDockerfile: "/tmp/rebuild-resume-snapshot-preflight/Dockerfile",
+          buildId: "resume-snapshot-build",
+          dockerGpuPatchNetwork: null,
+          cleanupBuildCtx: vi.fn(() => true),
+        },
+      }),
       vi.spyOn(onboardMod, "onboard").mockImplementation(async (options: unknown) => {
         observed.handoffOptions = options as Record<string, unknown>;
         const reopened = onboardSession.loadSession();
@@ -183,6 +256,6 @@ describe("rebuild resume snapshot repair", () => {
     expect(observed.preRepairStatus).toBe("in_progress");
     expect(observed.preRepairResumable).toBe(true);
     expect(observed.repairedMachineState).toBe("provider_selection");
-    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
+    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe(originalSandboxName);
   });
 });

@@ -1,453 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-
-type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
-
-const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "./rebuild.js";
-
-// Warm the CommonJS source graph outside the first test's timeout. Each harness
-// still reloads the entry module after installing its dependency spies.
-requireDist(rebuildModulePath);
-delete require.cache[requireDist.resolve(rebuildModulePath)];
-
-type RebuildFlowStep = {
-  status: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  error: string | null;
-};
-
-type RebuildFlowSession = Record<string, unknown> & {
-  lastStepStarted: string | null;
-  status: string;
-  failure: { step: string; message: string | null; recordedAt: string } | null;
-  machine: {
-    version: number;
-    state: string;
-    stateEnteredAt: string;
-    revision: number;
-  };
-  steps: Record<string, RebuildFlowStep>;
-};
-
-type RebuildFlowOverrides = {
-  applyPreset?: (presetName: string) => boolean;
-  executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
-  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
-  repairMutableConfigPerms?: () =>
-    | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
-    | { applied: true; verified: boolean; errors: string[] };
-  restoreSandboxState?: () => {
-    success: boolean;
-    restoredDirs: string[];
-    restoredFiles: string[];
-    failedDirs: string[];
-    failedFiles: string[];
-  };
-  buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
-  sandboxEntry?: Record<string, unknown>;
-  sessionSandboxName?: string;
-  sandboxListOutput?: string;
-  backupPolicyPresets?: string[];
-  preDeleteSandboxEntry?: Record<string, unknown>;
-  preDeleteDefaultSandbox?: string | null;
-  preDeleteLatestManifest?: Record<string, unknown> | null;
-  recoveryManifestValidation?: (
-    manifest: Record<string, unknown>,
-  ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
-};
-
-type RebuildFlowHarness = {
-  rebuildSandbox: RebuildSandbox;
-  applyPresetSpy: MockInstance;
-  backupSandboxStateSpy: MockInstance;
-  errorSpy: MockInstance;
-  executeSandboxCommandSpy: MockInstance;
-  ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
-  logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
-  onboardSpy: MockInstance;
-  registryUpdateSpy: MockInstance;
-  releaseOnboardLockSpy: MockInstance;
-  relockSpy: MockInstance;
-  restoreSandboxEntrySpy: MockInstance;
-  restoreSandboxStateSpy: MockInstance;
-  runOpenshellSpy: MockInstance;
-  messagingRebuildPlanSpy: MockInstance;
-  session: RebuildFlowSession;
-};
-
-const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
-
-// Snapshot the given env vars and return a restore fn that reinstates their
-// prior values exactly — vars that were unset stay unset, set ones are put back.
-// Branchless on purpose (filter, not conditional restore) so it both restores
-// worker state correctly and keeps the changed-test-file guardrail green.
-function snapshotEnv(names: readonly string[]): () => void {
-  const saved = names.map((name) => [name, process.env[name]] as const);
-  return () => {
-    for (const [name] of saved) {
-      delete process.env[name];
-    }
-    Object.assign(
-      process.env,
-      Object.fromEntries(
-        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
-      ),
-    );
-  };
-}
-
-function createStep(status: string): RebuildFlowStep {
-  return { status, startedAt: null, completedAt: null, error: null };
-}
-
-function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
-  return {
-    sandboxName: "alpha",
-    provider: "ollama-local",
-    model: "nvidia/nemotron",
-    credentialEnv: null,
-    metadata: {},
-    hermesToolGateways: [],
-    lastStepStarted: null,
-    status: "in_progress",
-    failure: null,
-    machine: {
-      version: machineSnapshotVersion,
-      state: "gateway",
-      stateEnteredAt: "2026-06-01T00:00:00.000Z",
-      revision: 2,
-    },
-    steps: {
-      preflight: createStep("complete"),
-      gateway: createStep("complete"),
-      provider_selection: createStep("pending"),
-      inference: createStep("pending"),
-      sandbox: createStep("pending"),
-      openclaw: createStep("pending"),
-      agent_setup: createStep("pending"),
-      policies: createStep("pending"),
-    },
-  };
-}
-
-function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
-  session: RebuildFlowSession,
-): MockInstance {
-  return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
-      const stepKey = String(stepName);
-      const step = session.steps[stepKey] ?? createStep("pending");
-      session.steps[stepKey] = step;
-      step.status = "failed";
-      step.error = typeof message === "string" ? message : null;
-      session.status = "failed";
-      session.failure = {
-        step: stepKey,
-        message: typeof message === "string" ? message : null,
-        recordedAt: "2026-06-01T00:02:00.000Z",
-      };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
-      return session;
-    });
-}
-
-function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
-  delete require.cache[requireDist.resolve(rebuildModulePath)];
-
-  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-  const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-  const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-  const sandboxList = requireDist("../../openshell-sandbox-list.js");
-  const resolve = requireDist("../../adapters/openshell/resolve.js");
-  const agentDefs = requireDist("../../agent/defs.js");
-  const agentRuntime = requireDist("../../agent/runtime.js");
-  const onboardMod = requireDist("../../onboard.js");
-  const onboardSession = requireDist("../../state/onboard-session.js");
-  const registry = requireDist("../../state/registry.js");
-  const sandboxState = requireDist("../../state/sandbox.js");
-  const sandboxSession = requireDist("../../state/sandbox-session.js");
-  const sandboxVersion = requireDist("../../sandbox/version.js");
-  const destroy = requireDist("./destroy.js");
-  const rebuildShields = requireDist("./rebuild-shields.js");
-  const nim = requireDist("../../inference/nim.js");
-  const policies = requireDist("../../policy/index.js");
-  const processRecovery = requireDist("./process-recovery.js");
-  const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
-  const messaging = requireDist("../../messaging/index.js");
-  const shields = requireDist("../../shields/index.js");
-
-  const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
-  const rebuildShieldsWindow = { relocked: false, wasLocked: false };
-  const agentDef = {
-    name: "openclaw",
-    expectedVersion: "0.2.0",
-  };
-
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
-  vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
-  });
-  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
-  vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
-  vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
-  vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
-    if (typeof mutator !== "function") {
-      throw new TypeError("updateSession expected a mutator function");
-    }
-    (mutator as (value: typeof session) => typeof session | void)(session);
-    return session;
-  });
-  const releaseOnboardLockSpy = vi
-    .spyOn(onboardSession, "releaseOnboardLock")
-    .mockImplementation(() => undefined);
-  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
-  session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  const sandboxEntry = {
-    name: "alpha",
-    provider: "ollama-local",
-    model: "nvidia/nemotron",
-    policies: ["npm"],
-    agent: null,
-    agentVersion: "0.1.0",
-    nimContainer: null,
-    ...(overrides.sandboxEntry ?? {}),
-  };
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
-  let registryLoadCount = 0;
-  vi.spyOn(registry, "load").mockImplementation(() => {
-    const isPreDeleteRead = registryLoadCount > 0;
-    registryLoadCount++;
-    return {
-      defaultSandbox: isPreDeleteRead ? (overrides.preDeleteDefaultSandbox ?? "alpha") : "alpha",
-      sandboxes: {
-        alpha:
-          isPreDeleteRead && overrides.preDeleteSandboxEntry
-            ? overrides.preDeleteSandboxEntry
-            : sandboxEntry,
-      },
-    };
-  });
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
-  const restoreSandboxEntrySpy = vi
-    .spyOn(registry, "restoreSandboxEntry")
-    .mockImplementation(() => undefined);
-  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
-    detected: false,
-    sessions: [],
-  });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
-    expectedVersion: "0.2.0",
-    sandboxVersion: "0.1.0",
-  });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
-  const relockSpy = vi
-    .spyOn(rebuildShields, "relockRebuildShieldsWindow")
-    .mockImplementation((...args: unknown[]) => {
-      const window = args[1] as typeof rebuildShieldsWindow;
-      window.relocked = true;
-      return true;
-    });
-  const backupSandboxStateSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
-    success: true,
-    backedUpDirs: ["workspace"],
-    backedUpFiles: ["user.md"],
-    failedDirs: [],
-    failedFiles: [],
-    manifest: {
-      backupPath: "/tmp/nemoclaw-rebuild-backup",
-      timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
-    },
-  });
-  vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
-    (...args: unknown[]) => {
-      const manifest = args[2] as Record<string, unknown>;
-      return overrides.recoveryManifestValidation?.(manifest) ?? { ok: true as const, manifest };
-    },
-  );
-  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(
-    () =>
-      (overrides.preDeleteLatestManifest === undefined
-        ? makePreparedRecoveryManifest()
-        : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
-  );
-  vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
-  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
-    overrides.restoreSandboxState ??
-      (() => ({
-        success: true,
-        restoredDirs: ["workspace"],
-        restoredFiles: ["user.md"],
-        failedDirs: [],
-        failedFiles: [],
-      })),
-  );
-  const runOpenshellSpy = vi
-    .spyOn(openshellRuntime, "runOpenshell")
-    .mockReturnValue({ status: 0, output: "" });
-  vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined);
-  vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
-  vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
-    await overrides.onboard?.(session);
-  });
-  const applyPresetSpy = vi
-    .spyOn(policies, "applyPreset")
-    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
-      const normalizedPresetName = String(presetName);
-      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
-      if (normalizedPresetName === "throw") throw new Error("preset boom");
-      return normalizedPresetName === "npm";
-    });
-  const executeSandboxCommandSpy = vi
-    .spyOn(processRecovery, "executeSandboxCommand")
-    .mockImplementation(
-      overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
-    );
-  vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
-    overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
-  );
-  vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
-  vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);
-  const messagingRebuildPlanSpy = vi
-    .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
-    .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
-  const ensureMessagingHostForwardAfterRebuildSpy = vi
-    .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
-    .mockReturnValue(true);
-
-  errorSpy.mockClear();
-  logSpy.mockClear();
-  warnSpy.mockClear();
-
-  return {
-    rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
-    applyPresetSpy,
-    backupSandboxStateSpy,
-    errorSpy,
-    executeSandboxCommandSpy,
-    ensureMessagingHostForwardAfterRebuildSpy,
-    logSpy,
-    markStepFailedSpy,
-    onboardSpy,
-    registryUpdateSpy,
-    releaseOnboardLockSpy,
-    relockSpy,
-    restoreSandboxEntrySpy,
-    restoreSandboxStateSpy,
-    runOpenshellSpy,
-    messagingRebuildPlanSpy,
-    session,
-  };
-}
-
-function makeActiveTeamsMessagingPlan() {
-  return {
-    schemaVersion: 1,
-    sandboxName: "alpha",
-    agent: "openclaw",
-    workflow: "rebuild",
-    channels: [
-      {
-        channelId: "teams",
-        displayName: "Microsoft Teams",
-        authMode: "token-paste",
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: [
-          {
-            channelId: "teams",
-            inputId: "appId",
-            kind: "config",
-            required: true,
-            sourceEnv: "MSTEAMS_APP_ID",
-            statePath: "teamsConfig.appId",
-            value: "teams-app-id",
-          },
-          {
-            channelId: "teams",
-            inputId: "clientSecret",
-            kind: "secret",
-            required: true,
-            sourceEnv: "MSTEAMS_APP_PASSWORD",
-            credentialAvailable: true,
-          },
-          {
-            channelId: "teams",
-            inputId: "tenantId",
-            kind: "config",
-            required: true,
-            sourceEnv: "MSTEAMS_TENANT_ID",
-            statePath: "teamsConfig.tenantId",
-            value: "teams-tenant-id",
-          },
-          {
-            channelId: "teams",
-            inputId: "webhookPort",
-            kind: "config",
-            required: false,
-            sourceEnv: "MSTEAMS_PORT",
-            statePath: "teamsConfig.webhookPort",
-            value: "3978",
-          },
-        ],
-        hostForward: {
-          channelId: "teams",
-          port: 3978,
-          label: "Microsoft Teams webhook",
-        },
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: ["teams"], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
-function makePreparedRecoveryManifest() {
-  return {
-    version: 1,
-    sandboxName: "alpha",
-    timestamp: "2026-07-01T06-50-42-044Z",
-    agentType: "openclaw",
-    agentVersion: "0.1.0",
-    expectedVersion: "0.2.0",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
-    blueprintDigest: null,
-    policyPresets: ["npm"],
-    customPolicies: [],
-  };
-}
+import {
+  createRebuildFlowHarness,
+  makeActiveTeamsMessagingPlan,
+  makePreparedRecoveryManifest,
+  originalSandboxName,
+  rebuildModulePath,
+  requireDist,
+  snapshotEnv,
+} from "./rebuild-flow.test-support";
 
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
@@ -467,6 +31,7 @@ describe("rebuildSandbox flow", () => {
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
+      sandboxEntry: { resourceCpu: "4", resourceMemory: "8Gi" },
     });
 
     await expect(
@@ -484,6 +49,7 @@ describe("rebuildSandbox flow", () => {
         nonInteractive: true,
         recreateSandbox: true,
         autoYes: true,
+        authoritativeResourceProfile: { cpu: "4", memory: "8Gi" },
       }),
     );
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
@@ -499,10 +65,39 @@ describe("rebuildSandbox flow", () => {
     });
     expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
-    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
+    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBeUndefined();
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuilt successfully",
     );
+  });
+
+  it("syncs the recreate session from registry state instead of another sandbox (#2201)", async () => {
+    const harness = createRebuildFlowHarness({ sessionSandboxName: "unrelated-hermes" });
+    harness.session.agent = "hermes";
+    harness.session.messagingPlan = makeActiveTeamsMessagingPlan();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.session.sandboxName).toBe("alpha");
+    expect(harness.session.agent).toBeNull();
+    expect(harness.session.messagingPlan).toBeNull();
+  });
+
+  it("keeps the validated host NIM runtime alive across sandbox replacement", async () => {
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      sandboxEntry: { provider: "vllm-local", nimContainer: "nemoclaw-nim-19080" },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.stopNimContainerByNameSpy).not.toHaveBeenCalled();
+    expect(harness.stopNimContainerSpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).toHaveBeenCalled();
   });
 
   it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
@@ -774,6 +369,193 @@ describe("rebuildSandbox flow", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("aborts before backup/delete when a recorded provider attachment is missing", async () => {
+    const harness = createRebuildFlowHarness({
+      extraProviders: ["stale-extra-provider"],
+      providerPreflightError: new Error(
+        "Recorded sandbox provider 'stale-extra-provider' is not registered.",
+      ),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded sandbox provider 'stale-extra-provider' is not registered");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("rolls back a partial exact-provider detach before aborting", async () => {
+    const harness = createRebuildFlowHarness({
+      extraProviders: ["a-provider", "b-provider"],
+    });
+    harness.runOpenshellSpy.mockImplementation((args: string[]) => {
+      const command = args.join(" ");
+      if (command === "sandbox provider detach alpha b-provider") {
+        return { status: 1, stderr: "status: Internal, gateway timeout", stdout: "" } as never;
+      }
+      return { status: 0, stderr: "", stdout: "" } as never;
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to detach retained provider 'b-provider'");
+
+    const commands = harness.runOpenshellSpy.mock.calls.map((call) => call[0].join(" "));
+    expect(commands).toContain("sandbox provider detach alpha a-provider");
+    expect(commands).toContain("sandbox provider detach alpha b-provider");
+    expect(commands).toContain("sandbox provider attach alpha a-provider");
+    expect(commands).not.toContain("sandbox delete alpha");
+    expect(harness.relockSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.runOpenshellSpy.mock.invocationCallOrder[
+        commands.indexOf("sandbox provider attach alpha a-provider")
+      ],
+    );
+  });
+
+  it("reattaches providers and relocks shields before releasing the lifecycle lock on exit", async () => {
+    let providerExitHandler: (() => void) | null = null;
+    vi.spyOn(process, "prependOnceListener").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (eventName === "exit") providerExitHandler = listener;
+      return process;
+    }) as typeof process.prependOnceListener);
+    const harness = createRebuildFlowHarness({ extraProviders: ["a-provider", "b-provider"] });
+    harness.runOpenshellSpy.mockImplementation((args: string[]) => {
+      const command = args.join(" ");
+      if (command === "sandbox provider detach alpha b-provider") {
+        providerExitHandler?.();
+        return { status: 1, stderr: "status: Internal, gateway timeout", stdout: "" } as never;
+      }
+      return { status: 0, stderr: "", stdout: "" } as never;
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to detach retained provider 'b-provider'");
+
+    const commands = harness.runOpenshellSpy.mock.calls.map((call) => call[0].join(" "));
+    const attachCallOrder =
+      harness.runOpenshellSpy.mock.invocationCallOrder[
+        commands.indexOf("sandbox provider attach alpha a-provider")
+      ];
+    expect(harness.relockSpy.mock.invocationCallOrder[0]).toBeLessThan(attachCallOrder);
+    expect(attachCallOrder).toBeLessThan(harness.releaseOnboardLockSpy.mock.invocationCallOrder[0]);
+  });
+
+  it("relocks zero-provider rebuilds and cleans retained inputs before re-signaling", async () => {
+    let shieldsSigintHandler: (() => void) | null = null;
+    let retainedCleanupSigintHandler: (() => void) | null = null;
+    vi.spyOn(process, "prependOnceListener").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (eventName === "SIGINT" && !shieldsSigintHandler) shieldsSigintHandler = listener;
+      return process;
+    }) as typeof process.prependOnceListener);
+    vi.spyOn(process, "once").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (eventName === "SIGINT") retainedCleanupSigintHandler = listener;
+      return process;
+    }) as typeof process.once);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const harness = createRebuildFlowHarness({
+      onBackup: () => {
+        shieldsSigintHandler?.();
+        retainedCleanupSigintHandler?.();
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.relockSpy).toHaveBeenCalled();
+    expect(harness.preparedBuildContextCleanupSpy).toHaveBeenCalled();
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGINT");
+    expect(harness.relockSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.preparedBuildContextCleanupSpy.mock.invocationCallOrder[0],
+    );
+    expect(harness.preparedBuildContextCleanupSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      killSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("reattaches retained providers when sandbox deletion fails", async () => {
+    const harness = createRebuildFlowHarness({ extraProviders: ["global-provider"] });
+    harness.runOpenshellSpy.mockImplementation((args: string[]) =>
+      args.join(" ") === "sandbox delete alpha"
+        ? ({ status: 1, stderr: "delete failed", stdout: "" } as never)
+        : ({ status: 0, stderr: "", stdout: "" } as never),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Failed to delete sandbox");
+
+    const commands = harness.runOpenshellSpy.mock.calls.map((call) => call[0].join(" "));
+    expect(commands).toContain("sandbox provider detach alpha global-provider");
+    expect(commands).toContain("sandbox delete alpha");
+    expect(commands).toContain("sandbox provider attach alpha global-provider");
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("commits exact-provider detachment after successful deletion", async () => {
+    const harness = createRebuildFlowHarness({ extraProviders: ["global-provider"] });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    const commands = harness.runOpenshellSpy.mock.calls.map((call) => call[0].join(" "));
+    expect(commands).toContain("sandbox provider detach alpha global-provider");
+    expect(commands).not.toContain("sandbox provider attach alpha global-provider");
+  });
+
+  it("skips provider detachment when recovering a sandbox that is already stale", async () => {
+    const harness = createRebuildFlowHarness({
+      extraProviders: ["global-provider"],
+      staleRecovery: true,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "provider", "detach", "alpha", "global-provider"],
+      expect.anything(),
+    );
+  });
+
+  it("aborts before detach/delete when global provider state drifts after backup", async () => {
+    const harness = createRebuildFlowHarness({
+      extraProviders: ["global-provider"],
+      postBackupExtraProviders: ["global-provider", "new-provider"],
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Messaging channels or provider attachments changed");
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "provider", "detach", "alpha", "global-provider"],
+      expect.anything(),
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("starts the active Teams host forward after a successful rebuild", async () => {
     const plan = makeActiveTeamsMessagingPlan();
     const harness = createRebuildFlowHarness({
@@ -861,15 +643,135 @@ describe("rebuildSandbox flow", () => {
       ).resolves.toBeUndefined();
 
       expect(envSeenInsideOnboard).toEqual({ agent: undefined, providerKey: undefined });
-      // The mismatch (env agent != registry agent) is surfaced before delete.
-      const logged = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
-      expect(logged).toContain("Ignoring ambient NEMOCLAW_AGENT='langchain-deepagents-code'");
       // The caller's env is left exactly as it was after the rebuild.
       expect(process.env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
       expect(process.env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus-installer-key");
     } finally {
       restoreEnv();
     }
+  });
+
+  it("isolates unrelated structural build env during image preflight and recreate", async () => {
+    const restoreEnv = snapshotEnv([
+      "NEMOCLAW_EXTRA_AGENTS_JSON",
+      "NEMOCLAW_OPENCLAW_OTEL",
+      "NEMOCLAW_PROXY_HOST",
+    ]);
+    process.env.NEMOCLAW_EXTRA_AGENTS_JSON = '[{"name":"unrelated-agent"}]';
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_PROXY_HOST = "unrelated-proxy";
+    let envSeenDuringImage: Record<string, string | undefined> | null = null;
+    let envSeenDuringOnboard: Record<string, string | undefined> | null = null;
+    try {
+      const harness = createRebuildFlowHarness({
+        onboard: () => {
+          envSeenDuringOnboard = {
+            extraAgents: process.env.NEMOCLAW_EXTRA_AGENTS_JSON,
+            otel: process.env.NEMOCLAW_OPENCLAW_OTEL,
+            proxyHost: process.env.NEMOCLAW_PROXY_HOST,
+          };
+        },
+      });
+      harness.imagePreflightSpy.mockImplementation(async () => {
+        envSeenDuringImage = {
+          extraAgents: process.env.NEMOCLAW_EXTRA_AGENTS_JSON,
+          otel: process.env.NEMOCLAW_OPENCLAW_OTEL,
+          proxyHost: process.env.NEMOCLAW_PROXY_HOST,
+        };
+        return {
+          ok: true,
+          preparedBuildContext: {
+            buildCtx: "/tmp/rebuild-flow-preflight",
+            stagedDockerfile: "/tmp/rebuild-flow-preflight/Dockerfile",
+            buildId: "flow-build",
+            dockerGpuPatchNetwork: null,
+            cleanupBuildCtx: vi.fn(() => true),
+          },
+        };
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(envSeenDuringImage).toEqual({
+        extraAgents: undefined,
+        otel: undefined,
+        proxyHost: undefined,
+      });
+      expect(envSeenDuringOnboard).toEqual(envSeenDuringImage);
+      expect(process.env.NEMOCLAW_EXTRA_AGENTS_JSON).toBe('[{"name":"unrelated-agent"}]');
+      expect(process.env.NEMOCLAW_OPENCLAW_OTEL).toBe("1");
+      expect(process.env.NEMOCLAW_PROXY_HOST).toBe("unrelated-proxy");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("does not inherit messaging config or staged plan env from a prior sandbox", async () => {
+    const restoreEnv = snapshotEnv(["DISCORD_SERVER_ID", "NEMOCLAW_MESSAGING_PLAN_B64"]);
+    process.env.DISCORD_SERVER_ID = "sandbox-a-guild";
+    process.env.NEMOCLAW_MESSAGING_PLAN_B64 = "sandbox-a-plan";
+    let envSeenDuringOnboard: Record<string, string | undefined> | null = null;
+    try {
+      const harness = createRebuildFlowHarness({
+        onboard: () => {
+          envSeenDuringOnboard = {
+            discordGuild: process.env.DISCORD_SERVER_ID,
+            messagingPlan: process.env.NEMOCLAW_MESSAGING_PLAN_B64,
+          };
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(envSeenDuringOnboard).toEqual({
+        discordGuild: undefined,
+        messagingPlan: undefined,
+      });
+      expect(process.env.DISCORD_SERVER_ID).toBe("sandbox-a-guild");
+      expect(process.env.NEMOCLAW_MESSAGING_PLAN_B64).toBe("sandbox-a-plan");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("validates retained Brave egress while ignoring an ambient host key", async () => {
+    const restoreEnv = snapshotEnv(["BRAVE_API_KEY"]);
+    process.env.BRAVE_API_KEY = "hostile-ambient-brave-key";
+    try {
+      const harness = createRebuildFlowHarness({ applyPreset: () => true });
+      harness.session.webSearchConfig = { fetchEnabled: true };
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.braveRouteSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.braveRouteSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(harness.braveCredentialSpy).not.toHaveBeenCalled();
+      expect(process.env.BRAVE_API_KEY).toBe("hostile-ambient-brave-key");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("aborts untouched when the retained Brave route rejects its gateway credential", async () => {
+    const harness = createRebuildFlowHarness();
+    harness.session.webSearchConfig = { fetchEnabled: true };
+    harness.braveRouteSpy.mockReturnValue({ ok: false, detail: "HTTP 401" });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded Brave Search route smoke check failed");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
   });
 
   it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint while ignoring hostile ambient values for PRA-4 (#5735)", async () => {
@@ -903,6 +805,8 @@ describe("rebuildSandbox flow", () => {
       });
       // The custom endpoint lives only in this sandbox's own matching session;
       // it is canonicalized at the pre-delete rebuild boundary before rewrite.
+      harness.session.provider = "compatible-endpoint";
+      harness.session.model = "session-model";
       harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
 
       await expect(
@@ -960,6 +864,143 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("fails closed for a custom-image sandbox whose matching Dockerfile path was lost", async () => {
+    const harness = createRebuildFlowHarness({ managedImageEvidence: false });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Cannot recreate a custom-image sandbox");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("aborts before backup/delete when the exact boot policy cannot be prepared", async () => {
+    const harness = createRebuildFlowHarness({
+      initialPolicyError: new Error("malformed recorded policy YAML"),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("malformed recorded policy YAML");
+
+    expect(harness.imagePreflightSpy).not.toHaveBeenCalled();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("carries custom-only policy content and metadata through authoritative recreation", async () => {
+    const customPolicy = {
+      name: "internal-api",
+      content: "network_policies:\n  internal-api:\n    endpoints: []\n",
+      sourcePath: "/tmp/internal-api.yaml",
+    };
+    let policyPresetsSeenDuringOnboard: unknown = null;
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      sandboxEntry: { policies: [], customPolicies: [customPolicy] },
+      onboard: (session) => {
+        policyPresetsSeenDuringOnboard = session.policyPresets;
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.initialPolicyPreflightSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recordedPolicyPresets: [],
+        customPolicies: [customPolicy],
+      }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ authoritativeCustomPolicies: [customPolicy] }),
+    );
+    expect(policyPresetsSeenDuringOnboard).toEqual(["internal-api"]);
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      customPolicies: [customPolicy],
+    });
+  });
+
+  it("aborts before backup/delete when persisted resource intent is incomplete", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { resourceCpu: "4", resourceMemory: null },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("CPU and memory must both be non-empty");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("aborts before backup/delete when persisted resource flags cannot be replayed", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { resourceCpu: "4", resourceMemory: "8Gi" },
+      targetPreflightError: new Error(
+        "Cannot replay persisted sandbox resources: OpenShell lacks required resource flags",
+      ),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("OpenShell lacks required resource flags");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("ignores a stale session Dockerfile when registry provenance identifies a managed image", async () => {
+    const harness = createRebuildFlowHarness({ applyPreset: () => true });
+    harness.session.metadata = { fromDockerfile: "/tmp/stale-custom/Dockerfile" };
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.imagePreflightSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ fromDockerfile: null }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ fromDockerfile: null }),
+    );
+    expect(harness.session.metadata).toMatchObject({ fromDockerfile: null });
+  });
+
+  it("fails closed instead of disabling recorded Brave search when the session belongs elsewhere", async () => {
+    const harness = createRebuildFlowHarness({
+      sandboxEntry: { policies: ["npm", "brave"] },
+      sessionSandboxName: "some-other-sandbox",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Cannot safely recreate a Brave-enabled sandbox");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
   it("rebuilds a known-remote target even when the session belongs to another sandbox (#5735)", async () => {
     // The same non-matching-session scenario but with a provider that has a
     // canonical endpoint (NVIDIA Endpoints): the endpoint is re-derivable from
@@ -976,6 +1017,7 @@ describe("rebuildSandbox flow", () => {
       // repinned from the nvidia-prod canonical config, not reused as-is.
       const staleEndpoint = "https://stale.example.test/v1";
       harness.session.endpointUrl = staleEndpoint;
+      harness.session.metadata = { fromDockerfile: "/tmp/unrelated/Dockerfile" };
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -983,6 +1025,7 @@ describe("rebuildSandbox flow", () => {
 
       expect(harness.onboardSpy).toHaveBeenCalled();
       expect(harness.session.endpointUrl).not.toBe(staleEndpoint);
+      expect(harness.session.metadata).toMatchObject({ fromDockerfile: null });
       expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
         ["sandbox", "delete", "alpha"],
         expect.objectContaining({ ignoreError: true }),
@@ -1037,7 +1080,7 @@ describe("rebuildSandbox flow", () => {
       steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
     });
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
-    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
+    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBeUndefined();
 
     // #5735 (PRA-T2): preconditions (credential/endpoint) passed, so the
     // delete proceeded; when onboard() then fails for a residual runtime reason,
@@ -1048,5 +1091,67 @@ describe("rebuildSandbox flow", () => {
     expect(errors).toContain("Recreate failed after sandbox was destroyed");
     expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
     expect(errors).toContain("onboard --resume");
+  });
+
+  it("restores registry and relocks when post-delete session preparation fails", async () => {
+    const harness = createRebuildFlowHarness({
+      sessionUpdateError: new Error("session storage unavailable"),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("session storage unavailable");
+
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha" }),
+      { reclaimDefault: "alpha" },
+    );
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("Rebuild failed after the old sandbox was deleted");
+    expect(errors).toContain("original registry entry was restored");
+  });
+
+  it("relocks a replacement sandbox when onboarding fails after create", async () => {
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        throw new Error("post-create finalization failed");
+      },
+    });
+    harness.captureOpenshellSpy.mockImplementation((args: string[]) =>
+      args[0] === "sandbox" && args[1] === "list"
+        ? ({ status: 0, output: "alpha Ready" } as never)
+        : ({ status: 0, output: "" } as never),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate incomplete (replacement sandbox exists)");
+
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("replacement sandbox exists");
+    expect(errors).not.toContain("Recreate failed after sandbox was destroyed");
+  });
+
+  it("assumes a replacement exists and relocks when the liveness probe cannot spawn", async () => {
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        throw new Error("post-create finalization failed");
+      },
+    });
+    harness.captureOpenshellSpy.mockImplementation((args: string[]) => {
+      if (args[0] === "sandbox" && args[1] === "list") process.exit(1);
+      return { status: 0, output: "" } as never;
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate incomplete (replacement sandbox exists)");
+
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
   });
 });

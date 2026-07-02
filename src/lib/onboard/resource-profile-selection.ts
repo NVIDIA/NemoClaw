@@ -3,11 +3,16 @@
 
 import {
   appendResourceFlags,
+  appendResourceFlagsOrThrow,
   getHardwareResources,
   loadResourceProfiles,
-  resolveResourceValue,
   type ResourceProfile,
+  resolveResourceValue,
 } from "../resources-cmd";
+
+export type ResourceFlagAppendOptions = {
+  required?: boolean;
+};
 
 export type ResourceProfileSelectionDeps = {
   isNonInteractive: () => boolean;
@@ -121,13 +126,42 @@ export async function selectResourceProfileForSandbox(
   return applyResourceEnvOverrides(selectedProfile, deps);
 }
 
+function appendRequiredResourceFlagsForProfile(
+  args: string[],
+  profile: ResourceProfile,
+  openshellBinary: string,
+): void {
+  try {
+    if (!profile.cpu.trim() || !profile.memory.trim()) {
+      throw new Error("Persisted CPU and memory quantities must both be non-empty.");
+    }
+    appendResourceFlagsOrThrow(args, profile, openshellBinary);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot replay persisted sandbox resources: ${detail}`);
+  }
+}
+
 export function appendResourceFlagsForProfile(
   args: string[],
   profile: ResourceProfile | null,
   openshellBinary: string,
   deps: ResourceProfileSelectionDeps,
+  options: ResourceFlagAppendOptions = {},
 ): void {
+  if (profile && options.required) {
+    appendRequiredResourceFlagsForProfile(args, profile, openshellBinary);
+    return;
+  }
   if (profile && !appendResourceFlags(args, profile, openshellBinary)) {
     deps.note("  OpenShell does not support resource flags — sandbox will use default limits.");
   }
+}
+
+/** Validate an authoritative resource replay without mutating create args. */
+export function preflightAuthoritativeResourceProfile(
+  profile: ResourceProfile | null,
+  openshellBinary: string,
+): void {
+  if (profile) appendRequiredResourceFlagsForProfile([], profile, openshellBinary);
 }
