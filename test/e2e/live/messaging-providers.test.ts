@@ -32,7 +32,6 @@ import {
   expectExitZero,
   INSTALL_TIMEOUT_MS,
   isNvidiaEndpointRateLimitFailure,
-  isProxyPolicyConnectDenial,
   isUnresolvedPlaceholderRejection,
   LIVE_TIMEOUT_MS,
   lastJsonLine,
@@ -574,38 +573,39 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       );
     }
 
+    // Probe the allowed Telegram bot API path (/bot<token>/**). The bare root
+    // path is blocked by the Telegram egress policy by design (asserted by M14),
+    // so probing it would conflate a correct policy denial with unreachability
+    // (issue #3836).
     const telegramReach = await sandboxOutput(
       sandbox,
       `node -e '
 const https = require("https");
-const req = https.get("https://api.telegram.org/", (res) => {
+const token = process.env.TELEGRAM_BOT_TOKEN || "missing";
+const req = https.get("https://api.telegram.org/bot" + token + "/getMe", (res) => {
   console.log("HTTP_" + res.statusCode);
   res.resume();
 });
-req.on("error", (e) => console.log("ERROR: " + (e.code ? e.code + " " : "") + e.message));
+req.on("error", (e) => console.log("ERROR: " + e.message));
 req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
       "telegram-reachability-messaging-providers",
       redactionValues,
     );
     if (/HTTP_/.test(telegramReach)) {
-      check(true, `M12: Node.js reached api.telegram.org (${telegramReach})`);
+      check(true, `M12: Node.js reached the Telegram bot API through the proxy (${telegramReach})`);
     } else if (
-      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL from the OpenShell gateway)
-      // means the proxy wiring is correct, not that the host is unreachable, so it
-      // is treated as a skip rather than a failure (issue #3836).
-      isProxyPolicyConnectDenial(telegramReach) ||
       /TIMEOUT|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|socket hang up/i.test(telegramReach)
     ) {
       await skipNote(
         artifacts,
         skips,
-        `M12: api.telegram.org not reachable from this network, or the upstream proxy policy blocked the CONNECT (${telegramReach.slice(0, 200)})`,
+        `M12: Telegram bot API unreachable from this network (${telegramReach.slice(0, 160)})`,
       );
     } else {
       check(
         false,
-        `M12: Node.js could not reach api.telegram.org (${telegramReach.slice(0, 200)})`,
+        `M12: Node.js could not reach the Telegram bot API (${telegramReach.slice(0, 200)})`,
       );
     }
 
@@ -661,7 +661,7 @@ for (const [name, url] of targets) {
   });
   req.on("error", (error) => {
     failed = true;
-    console.log(\`\${name}:ERROR_\${error.code ? error.code + " " : ""}\${error.message}\`);
+    console.log(\`\${name}:ERROR_\${error.message}\`);
     done();
   });
   req.setTimeout(15000, () => {
@@ -678,10 +678,6 @@ NODE`,
     if (discordReach.includes("api:HTTP_") && discordReach.includes("cdn:HTTP_")) {
       check(true, "M13: Node.js reached Discord API and CDN through proxy");
     } else if (
-      // A proxy-policy CONNECT denial (ERR_PROXY_TUNNEL from the OpenShell gateway)
-      // means the proxy wiring is correct, not that Discord is unreachable, so it
-      // is treated as a skip rather than a failure (issue #3836).
-      isProxyPolicyConnectDenial(discordReach) ||
       /TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network/i.test(
         discordReach,
       )
@@ -689,7 +685,7 @@ NODE`,
       await skipNote(
         artifacts,
         skips,
-        `M13: Discord API/CDN not reachable from this network, or the upstream proxy policy blocked the CONNECT (${discordReach.slice(0, 200)})`,
+        `M13: live Discord unreachable from this network (${discordReach.slice(0, 200)})`,
       );
     } else {
       check(false, `M13: Node.js could not reach Discord API/CDN (${discordReach.slice(0, 200)})`);

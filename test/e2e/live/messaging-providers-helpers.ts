@@ -18,11 +18,6 @@ import {
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-// Re-exported so the messaging-provider suite imports it from this barrel like
-// the rest of its helpers; the classifier itself lives in a dependency-free
-// module so it can be unit-tested without the live E2E fixtures.
-export { isProxyPolicyConnectDenial } from "./proxy-policy-denial.ts";
-
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const BASE_POLICY = path.join(
