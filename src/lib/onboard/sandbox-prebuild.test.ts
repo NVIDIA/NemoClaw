@@ -31,6 +31,15 @@ describe("resolveSandboxPrebuildEnabled", () => {
     expect(resolveSandboxPrebuildEnabled({ NEMOCLAW_SANDBOX_PREBUILD: "0" }, true)).toBe(false);
     expect(resolveSandboxPrebuildEnabled({ NEMOCLAW_SANDBOX_PREBUILD: "1" }, false)).toBe(true);
   });
+
+  it("is inert under the Vitest runner unless explicitly forced", () => {
+    expect(resolveSandboxPrebuildEnabled({ VITEST: "true" }, true)).toBe(false);
+    expect(resolveSandboxPrebuildEnabled({ NODE_ENV: "test" }, true)).toBe(false);
+    // Explicit opt-in still wins under the test runner.
+    expect(
+      resolveSandboxPrebuildEnabled({ VITEST: "true", NEMOCLAW_SANDBOX_PREBUILD: "1" }, true),
+    ).toBe(true);
+  });
 });
 
 describe("sandboxLocalImageRef", () => {

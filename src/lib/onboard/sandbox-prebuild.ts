@@ -82,6 +82,12 @@ export function resolveSandboxPrebuildEnabled(
     .toLowerCase();
   if (TRUTHY_FLAG_VALUES.has(override)) return true;
   if (FALSY_FLAG_VALUES.has(override)) return false;
+  // Inert under the Vitest runner (unless explicitly forced above): onboard
+  // integration tests drive the real create flow and inspect the Dockerfile
+  // through the `--from <ctx>/Dockerfile` create arg, which this optimization
+  // rewrites to an image ref. Real CLI/E2E runs have no VITEST and get the
+  // speedup; E2E can force it with NEMOCLAW_SANDBOX_PREBUILD=1.
+  if (env.VITEST || env.NODE_ENV === "test") return false;
   return dockerDriverGateway;
 }
 
