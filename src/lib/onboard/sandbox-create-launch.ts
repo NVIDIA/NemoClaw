@@ -23,7 +23,6 @@ export interface SandboxCreateLaunchInput {
   hermesDashboardState: HermesDashboardOnboardState;
   manageDashboard?: boolean;
   openshellShellCommand: OpenshellShellCommand;
-  sandboxName?: string;
   buildEnv?(): Record<string, string>;
 }
 
@@ -33,6 +32,11 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+}
+
+function readCreateArgValue(createArgs: readonly string[], flag: string): string | undefined {
+  const flagIndex = createArgs.indexOf(flag);
+  return flagIndex === -1 ? undefined : createArgs[flagIndex + 1];
 }
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -78,8 +82,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
   }
 
-  if (input.agent?.name === "langchain-deepagents-code" && input.sandboxName) {
-    envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", input.sandboxName));
+  if (input.agent?.name === "langchain-deepagents-code") {
+    const sandboxName = readCreateArgValue(input.createArgs, "--name");
+    if (sandboxName) {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
+    }
   }
 
   appendExtraPlaceholderKeysEnvArg(envArgs, input.extraPlaceholderKeys, formatEnvAssignment);

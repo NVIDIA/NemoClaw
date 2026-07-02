@@ -235,7 +235,6 @@ describe("prepareSandboxCreateLaunch", () => {
       hermesDashboardState: disabledHermesDashboardState,
       manageDashboard: false,
       openshellShellCommand: (args) => args.join(" "),
-      sandboxName: "dcode-demo",
       buildEnv: () => ({}),
     });
 
@@ -252,7 +251,6 @@ describe("prepareSandboxCreateLaunch", () => {
       getDashboardForwardPort: () => "19000",
       hermesDashboardState: disabledHermesDashboardState,
       openshellShellCommand: (args) => args.join(" "),
-      sandboxName: "demo",
       buildEnv: () => ({}),
     });
 
