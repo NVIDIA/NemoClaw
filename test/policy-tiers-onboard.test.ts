@@ -795,35 +795,6 @@ console.log = () => {};
     assert.deepEqual(payload.removedCalls, ["nous-web"]);
   });
 
-  it("rejects unsupported Deep Agents messaging presets during setup policy selection", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
-    const script =
-      buildPreamble({
-        tierEnv: "balanced",
-        policyMode: "custom",
-        policyPresets: "telegram",
-        stubOpenshellBin: true,
-        runCaptureReturn: "Running",
-      }) +
-      String.raw`
-const policies = require(${policiesPath});
-policies.applyPreset = () => { process.stdout.write("UNEXPECTED_APPLY\n"); return true; };
-policies.applyPresets = () => { process.stdout.write("UNEXPECTED_APPLY_BATCH\n"); return true; };
-policies.getAppliedPresets = () => [];
-
-console.log = () => {};
-
-(async () => {
-  const applied = await setupPoliciesWithSelection("test-sb", { agent: "langchain-deepagents-code" });
-  process.stdout.write(JSON.stringify({ applied }) + "\n");
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 1, result.stderr);
-    assert.match(result.stderr, /Unknown policy preset\(s\): telegram/);
-    assert.doesNotMatch(result.stdout, /UNEXPECTED_APPLY/);
-  });
-
   it("preserves a resumed custom preset whose name matches an unsupported built-in", () => {
     const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =

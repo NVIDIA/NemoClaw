@@ -89,6 +89,37 @@ process.stdout.write("__RESULT__" + JSON.stringify({ gatewayPresets }));
     const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
     expect(payload.gatewayPresets).toEqual(["npm"]);
   });
+  it("setup policy preset catalog omits unsupported Deep Agents messaging policies (#6185)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-setup-agent-"));
+    const script = String.raw`
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({
+  name: "deepagents-sandbox",
+  agent: "langchain-deepagents-code",
+  policies: [],
+});
+const names = policies.listSetupPolicyPresets("deepagents-sandbox").map((preset) => preset.name);
+process.stdout.write("__RESULT__" + JSON.stringify({ names }));
+`;
+    const result = spawnSync(process.execPath, [...SOURCE_NODE_ARGS, "-e", script], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.names).toContain("npm");
+    expect(payload.names).not.toContain("telegram");
+    expect(payload.names).not.toContain("discord");
+    expect(payload.names).not.toContain("slack");
+    expect(payload.names).not.toContain("teams");
+    expect(payload.names).not.toContain("whatsapp");
+    expect(payload.names).not.toContain("wechat");
+  });
+
   it("policy-add treats unsupported Deep Agents messaging policy as unknown before preview or prompt (#6185)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-agent-gate-"));
     const script = String.raw`
