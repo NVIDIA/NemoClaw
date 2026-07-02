@@ -20,7 +20,7 @@ const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
-const HERMES_MCP_RESTART_TIMEOUT_MS = 210_000;
+const HERMES_MCP_RECOVERY_TIMEOUT_MS = 210_000;
 const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
@@ -100,7 +100,7 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
   );
 }
 
-function isExactGatewayRestartCompletion(
+function isExactGatewayRecoveryCompletion(
   result: ReturnType<typeof executeGatewaySupervisorAction>,
 ): boolean {
   if (!result || result.status !== 0 || result.stderr.trim()) return false;
@@ -166,33 +166,37 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
     return;
   }
 
-  let restart: ReturnType<typeof executeGatewaySupervisorAction> = null;
-  let restartFailureDetail = "";
+  let recovery: ReturnType<typeof executeGatewaySupervisorAction> = null;
+  let recoveryFailureDetail = "";
   try {
-    restart = executeGatewaySupervisorAction(sandboxName, "restart", HERMES_MCP_RESTART_TIMEOUT_MS);
+    recovery = executeGatewaySupervisorAction(
+      sandboxName,
+      "recover",
+      HERMES_MCP_RECOVERY_TIMEOUT_MS,
+    );
   } catch (error) {
-    restartFailureDetail = error instanceof Error ? error.message : String(error);
+    recoveryFailureDetail = error instanceof Error ? error.message : String(error);
   }
-  const restartCompleted = isExactGatewayRestartCompletion(restart);
-  if (!restartCompleted) {
-    restartFailureDetail ||= restart ? commandOutput(restart).trim() : "no controller result";
-    const classification = classifyGatewayRestartFailure(restart);
+  const recoveryCompleted = isExactGatewayRecoveryCompletion(recovery);
+  if (!recoveryCompleted) {
+    recoveryFailureDetail ||= recovery ? commandOutput(recovery).trim() : "no controller result";
+    const classification = classifyGatewayRestartFailure(recovery);
     const claimsInvalidCompletion =
-      restart !== null && (restart.status === 0 || restart.stdout.trim().length > 0);
+      recovery !== null && (recovery.status === 0 || recovery.stdout.trim().length > 0);
     const terminalIntegrityFailure =
       claimsInvalidCompletion ||
       classification.layer === "secret-boundary refusal" ||
       classification.layer === "unsafe config path" ||
       classification.layer === "config hash mismatch" ||
       classification.layer === "health timeout" ||
-      restartFailureDetail.includes("SUPERVISOR_REBUILD_REQUIRED") ||
-      restartFailureDetail.includes("SUPERVISOR_UNSAFE_CONTROL_DIR") ||
-      restartFailureDetail.includes("SUPERVISOR_BUSY") ||
-      restartFailureDetail.includes("SUPERVISOR_INVALID_") ||
-      restartFailureDetail.includes("GATEWAY_GUARDS_MISSING");
+      recoveryFailureDetail.includes("SUPERVISOR_REBUILD_REQUIRED") ||
+      recoveryFailureDetail.includes("SUPERVISOR_UNSAFE_CONTROL_DIR") ||
+      recoveryFailureDetail.includes("SUPERVISOR_BUSY") ||
+      recoveryFailureDetail.includes("SUPERVISOR_INVALID_") ||
+      recoveryFailureDetail.includes("GATEWAY_GUARDS_MISSING");
     if (terminalIntegrityFailure) {
       throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' managed gateway restart failed before MCP mutation: ${restartFailureDetail || classification.detail}.`,
+        `Hermes sandbox '${sandboxName}' managed gateway recovery failed before MCP mutation: ${recoveryFailureDetail || classification.detail}.`,
       );
     }
   }
@@ -203,11 +207,11 @@ export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): v
   // packaged helper and a stable, trusted gateway topology before any MCP
   // provider, policy, attachment, or adapter side effect.
   if (!waitUntil(probe, HERMES_MCP_STARTUP_TIMEOUT_SECONDS, 1_000)) {
-    const restartDetail = restartFailureDetail
-      ? ` Managed restart attempt did not complete: ${restartFailureDetail}.`
+    const recoveryDetail = recoveryFailureDetail
+      ? ` Managed recovery attempt did not complete: ${recoveryFailureDetail}.`
       : "";
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after a managed gateway restart. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}${restartDetail}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after managed gateway recovery. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}${recoveryDetail}`,
     );
   }
 }

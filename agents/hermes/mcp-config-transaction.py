@@ -47,6 +47,7 @@ import yaml
 
 CONFIG_PATH = "/sandbox/.hermes/config.yaml"
 HERMES_DIR = "/sandbox/.hermes"
+GATEWAY_PID_PATH = f"{HERMES_DIR}/gateway.pid"
 STRICT_HASH_PATH = "/etc/nemoclaw/hermes.config-hash"
 GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
@@ -76,6 +77,7 @@ SENSITIVE_PAYLOAD_KEY_RE = re.compile(
     r"(?i)(?:authorization|bearer|api[_-]?key|token|secret|password|credential)"
 )
 MAX_ERROR_MESSAGE_LENGTH = 512
+MAX_GATEWAY_PID_RECORD_BYTES = 4096
 BLOCKED_IPV4_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -628,19 +630,124 @@ def _gateway_has_managed_parent(pid: int) -> bool:
     return parent_pid is not None and _is_service_manager_process(parent_pid)
 
 
+def _gateway_pid_record_candidate(expected_uid: int) -> tuple[int, int | None] | None:
+    """Read Hermes runtime metadata as an untrusted PID candidate.
+
+    Pinned Hermes rejects NemoClaw's root-owned ``hermes.real`` wrapper target
+    before returning the otherwise valid PID/lock record.  The candidate is
+    never authority by itself: ``_gateway_identity`` still requires the live
+    same-UID process, exact trusted launcher argv, managed parent, and a stable
+    process start identity before mutation or reload.
+    """
+
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    non_blocking = getattr(os, "O_NONBLOCK", 0)
+    if not no_follow or not non_blocking:
+        raise PermissionError("Hermes gateway PID record cannot be opened safely")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | no_follow
+        | non_blocking
+    )
+    try:
+        descriptor = os.open(GATEWAY_PID_PATH, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise PermissionError("Hermes gateway PID record cannot be opened safely") from error
+
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != expected_uid
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > MAX_GATEWAY_PID_RECORD_BYTES
+        ):
+            raise PermissionError("Hermes gateway PID record is unsafe")
+        raw = os.read(descriptor, MAX_GATEWAY_PID_RECORD_BYTES + 1)
+        after = os.fstat(descriptor)
+        if (
+            len(raw) != before.st_size
+            or len(raw) > MAX_GATEWAY_PID_RECORD_BYTES
+            or (
+                before.st_dev,
+                before.st_ino,
+                before.st_mode,
+                before.st_uid,
+                before.st_nlink,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            != (
+                after.st_dev,
+                after.st_ino,
+                after.st_mode,
+                after.st_uid,
+                after.st_nlink,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+        ):
+            raise PermissionError("Hermes gateway PID record changed while reading")
+    finally:
+        os.close(descriptor)
+
+    try:
+        decoded = raw.decode("utf-8").strip()
+    except UnicodeDecodeError as error:
+        raise PermissionError("Hermes gateway PID record is malformed") from error
+    try:
+        record: object = json.loads(decoded)
+    except json.JSONDecodeError:
+        try:
+            record = {"pid": int(decoded)}
+        except ValueError as error:
+            raise PermissionError("Hermes gateway PID record is malformed") from error
+    if isinstance(record, int) and not isinstance(record, bool):
+        record = {"pid": record}
+    if not isinstance(record, dict):
+        raise PermissionError("Hermes gateway PID record is malformed")
+
+    pid = record.get("pid")
+    recorded_start = record.get("start_time")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 1:
+        raise PermissionError("Hermes gateway PID record is malformed")
+    if recorded_start is not None and (
+        isinstance(recorded_start, bool)
+        or not isinstance(recorded_start, int)
+        or recorded_start <= 0
+    ):
+        raise PermissionError("Hermes gateway PID record is malformed")
+    return pid, recorded_start
+
+
 def _gateway_identity() -> tuple[int, object] | None:
     os.environ["HERMES_HOME"] = HERMES_DIR
     from gateway.status import get_process_start_time, get_running_pid
 
+    expected_uid = pwd.getpwnam("gateway").pw_uid if os.geteuid() == 0 else os.geteuid()
     pid = get_running_pid(cleanup_stale=False)
     if not pid:
-        return None
-    numeric_pid = int(pid)
+        from gateway.status import is_gateway_runtime_lock_active
+
+        if not is_gateway_runtime_lock_active():
+            return None
+        candidate = _gateway_pid_record_candidate(expected_uid)
+        if candidate is None:
+            return None
+        numeric_pid, recorded_start = candidate
+    else:
+        numeric_pid = int(pid)
+        recorded_start = None
     try:
         owner_uid = os.stat(f"/proc/{numeric_pid}").st_uid
     except FileNotFoundError:
         return None
-    expected_uid = pwd.getpwnam("gateway").pw_uid if os.geteuid() == 0 else os.geteuid()
     if owner_uid != expected_uid:
         expected_identity = "gateway" if os.geteuid() == 0 else "sandbox"
         raise PermissionError(
@@ -650,7 +757,14 @@ def _gateway_identity() -> tuple[int, object] | None:
         raise PermissionError(
             "Hermes gateway PID does not identify the trusted launcher"
         )
-    return numeric_pid, get_process_start_time(numeric_pid)
+    start_time = get_process_start_time(numeric_pid)
+    if start_time is None:
+        raise PermissionError("Hermes gateway process start identity is unavailable")
+    if recorded_start is not None and recorded_start != start_time:
+        return None
+    if get_process_start_time(numeric_pid) != start_time:
+        return None
+    return numeric_pid, start_time
 
 
 def _gateway_healthy() -> bool:

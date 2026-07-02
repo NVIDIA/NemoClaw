@@ -826,6 +826,109 @@ else:
     expect(result.stdout).toContain("does not identify the trusted launcher");
   });
 
+  it("recognizes the wrapped Hermes gateway from its bounded PID record", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-gateway-pid-"));
+    const pidPath = path.join(temp, "gateway.pid");
+    fs.writeFileSync(pidPath, JSON.stringify({ pid: 4242, start_time: 99 }), { mode: 0o600 });
+
+    try {
+      const result = runPython(
+        `
+import importlib.util, json, os, sys, types
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+expected_uid = os.geteuid()
+gateway = types.ModuleType("gateway")
+status = types.ModuleType("gateway.status")
+status.get_running_pid = lambda cleanup_stale=False: None
+status.get_process_start_time = lambda pid: 99
+runtime = {"lock_active": True}
+status.is_gateway_runtime_lock_active = lambda: runtime["lock_active"]
+sys.modules["gateway"] = gateway
+sys.modules["gateway.status"] = status
+
+module.GATEWAY_PID_PATH = sys.argv[3]
+module.os.stat = lambda path: types.SimpleNamespace(st_uid=expected_uid)
+module._is_trusted_gateway_process = lambda pid: pid == 4242
+
+recognized = module._gateway_identity()
+runtime["lock_active"] = False
+unlocked = module._gateway_identity()
+runtime["lock_active"] = True
+status.get_process_start_time = lambda pid: 100
+reused = module._gateway_identity()
+start_times = iter((99, 100))
+status.get_process_start_time = lambda pid: next(start_times)
+unstable = module._gateway_identity()
+status.get_process_start_time = lambda pid: 99
+module._is_trusted_gateway_process = lambda pid: False
+try:
+    module._gateway_identity()
+except PermissionError as error:
+    untrusted = str(error)
+else:
+    raise SystemExit(9)
+print(json.dumps({
+    "recognized": recognized,
+    "reused": reused,
+    "unstable": unstable,
+    "unlocked": unlocked,
+    "untrusted": untrusted,
+}))
+`,
+        [pidPath],
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual({
+        recognized: [4242, 99],
+        reused: null,
+        unstable: null,
+        unlocked: null,
+        untrusted: "Hermes gateway PID does not identify the trusted launcher",
+      });
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a FIFO gateway PID record without blocking", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-gateway-fifo-"));
+    const fifoPath = path.join(temp, "gateway.pid");
+
+    try {
+      const result = runPython(
+        `
+import importlib.util, os, signal, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.GATEWAY_PID_PATH = sys.argv[3]
+os.mkfifo(module.GATEWAY_PID_PATH, 0o600)
+signal.alarm(2)
+try:
+    module._gateway_pid_record_candidate(os.geteuid())
+except PermissionError as error:
+    print(str(error))
+else:
+    raise SystemExit(9)
+finally:
+    signal.alarm(0)
+`,
+        [fifoPath],
+      );
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("Hermes gateway PID record is unsafe");
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
   it("trusts the current real Hermes launcher and retained compatibility paths", () => {
     const result = runPython(`
 import importlib.util, json, sys
