@@ -63,6 +63,11 @@ run_dcode() {
 #   rejects secret-shaped runtime/.env values, or (b) all dcode invocations
 #   route through a Node entrypoint that imports the canonical patterns directly.
 
+has_context_secret_shape() {
+  local upper="${1^^}"
+  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+}
+
 has_non_slack_secret_shape() {
   local value="$1"
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
@@ -90,6 +95,9 @@ has_non_slack_secret_shape() {
     return 0
   fi
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+    return 0
+  fi
+  if has_context_secret_shape "$value"; then
     return 0
   fi
   return 1
@@ -178,6 +186,9 @@ is_secret_shaped_value() {
     return 0
   fi
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+    return 0
+  fi
+  if has_context_secret_shape "$value"; then
     return 0
   fi
   return 1

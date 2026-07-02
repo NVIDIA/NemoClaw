@@ -233,22 +233,30 @@ describe.skipIf(!canRun)(
 
     it("does not write secret-shaped mutable identity metadata", () => {
       withTempDir((dir) => {
-        const secret = `tvly-${OPAQUE}`;
-        const config = SAMPLE_CONFIG.replace("route: inference", `route: ${secret}`)
-          .replace("upstream provider: nvidia-prod", `upstream provider: ${secret}`)
-          .replace('default = "backend-dev"', `default = "${secret}"`)
-          .replace('default = "openai:demo-model"', `default = "openai:${secret}"`);
-        const fixture = buildFixture(dir, config);
-        addAgentDir(fixture, secret);
-        const run = runBashWrapper(fixture, ["status"], {});
+        const agentSecret = "PASSWORD opaquevalue12345";
+        fs.mkdirSync(path.join(dir, agentSecret));
+        const secretValues = [
+          `tvly-${OPAQUE}`,
+          "API_KEY=opaquevalue12345",
+          "TOKEN:opaquevalue12345",
+          agentSecret,
+        ];
+        for (const secret of secretValues) {
+          const config = SAMPLE_CONFIG.replace("route: inference", `route: ${secret}`)
+            .replace("upstream provider: nvidia-prod", `upstream provider: ${secret}`)
+            .replace('default = "backend-dev"', `default = "${agentSecret}"`)
+            .replace('default = "openai:demo-model"', `default = "openai:${secret}"`);
+          const run = runBashWrapper(buildFixture(dir, config), ["status"], {});
 
-        expect(run.status).toBe(0);
-        expect(run.stdout).not.toContain(secret);
-        expect(run.stdout).toContain("Sandbox:  unknown");
-        expect(run.stdout).toContain("Agent:    agent (default)");
-        expect(run.stdout).not.toContain("Route:");
-        expect(run.stdout).not.toContain("Provider:");
-        expect(run.stdout).not.toContain("Model:");
+          expect(run.status).toBe(0);
+          expect(run.stdout).not.toContain(secret);
+          expect(run.stdout).not.toContain(agentSecret);
+          expect(run.stdout).toContain("Sandbox:  unknown");
+          expect(run.stdout).toContain("Agent:    agent (default)");
+          expect(run.stdout).not.toContain("Route:");
+          expect(run.stdout).not.toContain("Provider:");
+          expect(run.stdout).not.toContain("Model:");
+        }
       });
     });
 
@@ -270,9 +278,10 @@ describe.skipIf(!canRun)(
                 : SAMPLE_CONFIG.replace('base_url = "https://inference.local/v1"', "");
             const env = source === "runtime" ? { OPENAI_BASE_URL: endpoint } : {};
             const run = runBashWrapper(buildFixture(dir, config), ["status"], env);
+            const refusedByRuntimeGuard = source === "runtime" && /api_key=/i.test(endpoint);
 
-            expect(run.status).toBe(0);
-            expect(run.stdout).not.toContain(endpoint);
+            expect(run.status).toBe(refusedByRuntimeGuard ? 2 : 0);
+            expect(`${run.stdout}\n${run.stderr}`).not.toContain(endpoint);
             expect(run.stdout).not.toContain("Endpoint:");
           }
         }
