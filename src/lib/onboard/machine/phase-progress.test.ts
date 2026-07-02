@@ -10,12 +10,14 @@ import {
   type PhaseProgressRecord,
   resolvePhaseProgressEnabled,
 } from "./phase-progress";
-import type { OnboardSequencePhase } from "./sequence-runner";
+import { buildOnboardSequenceHandlers, type OnboardSequencePhase } from "./sequence-runner";
 
 interface Harness {
   lines: string[];
   records: PhaseProgressRecord[];
   events: Array<{ name: string; attributes?: Record<string, unknown> }>;
+  summaries: string[];
+  resets: number;
   clockMs: number;
   timerCallback: (() => void) | null;
   timerIntervalMs: number | null;
@@ -28,6 +30,8 @@ function makeHarness(overrides: Partial<PhaseProgressOptions> = {}): Harness {
     lines: [],
     records: [],
     events: [],
+    summaries: [],
+    resets: 0,
     clockMs: 0,
     timerCallback: null,
     timerIntervalMs: null,
@@ -48,6 +52,14 @@ function makeHarness(overrides: Partial<PhaseProgressOptions> = {}): Harness {
     },
     traceEvent: (name, attributes) => state.events.push({ name, attributes }),
     record: (record) => state.records.push(record),
+    // Render the summary from the same records the reporter fed us, so the test
+    // observes exactly which phases were written before the reset.
+    formatSummary: () =>
+      state.records.length > 0 ? `SUMMARY:${state.records.map((r) => r.phase).join(",")}` : "",
+    emitSummary: (summary) => state.summaries.push(summary),
+    resetTimings: () => {
+      state.resets += 1;
+    },
     heartbeatIntervalMs: 30_000,
     completionThresholdMs: 5_000,
     ...overrides,
@@ -169,11 +181,39 @@ describe("createPhaseProgressReporter", () => {
     expect(harness.events[0].attributes).toMatchObject({ heartbeats: 1 });
   });
 
-  it("does not schedule heartbeats for interactive phases", async () => {
+  it.each([
+    "gateway",
+    "sandbox",
+    "inference",
+    "agent_setup",
+    "openclaw",
+    "finalizing",
+  ])("keeps the wait-heavy phase %s on the heartbeat path", async (state) => {
+    const harness = makeHarness();
+    const reporter = createPhaseProgressReporter(harness.options);
+    await reporter
+      .wrap(
+        fakePhase(state as OnboardSequencePhase<string>["state"], async () => {
+          harness.clockMs = 1;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+    // A timer was scheduled for this state (heartbeat coverage guard).
+    expect(harness.timerCallback, `heartbeat not scheduled for ${state}`).not.toBeNull();
+  });
+
+  it.each([
+    "provider_selection",
+    "policies",
+  ])("does not schedule heartbeats for the interactive phase %s", async (state) => {
     const harness = makeHarness();
     const reporter = createPhaseProgressReporter(harness.options);
     const wrapped = reporter.wrap(
-      fakePhase("provider_selection", async () => ({ context: "ctx", result: "ok" })),
+      fakePhase(state as OnboardSequencePhase<string>["state"], async () => ({
+        context: "ctx",
+        result: "ok",
+      })),
     );
 
     await wrapped.run("ctx");
@@ -216,8 +256,119 @@ describe("createPhaseProgressReporter", () => {
     expect(harness.records[0].label).toBe("mystery");
   });
 
-  it("exposes friendly labels for the known phases", () => {
+  it("exposes a non-empty friendly label for every known phase", () => {
+    const entries = Object.entries(ONBOARD_PHASE_LABELS);
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [state, label] of entries) {
+      expect(typeof label, `label for ${state}`).toBe("string");
+      expect(label.trim().length, `label for ${state}`).toBeGreaterThan(0);
+    }
     expect(ONBOARD_PHASE_LABELS.gateway).toBe("Gateway startup");
     expect(ONBOARD_PHASE_LABELS.sandbox).toBe("Sandbox creation");
+  });
+
+  it("emits the timing summary once after the finalizing phase, including its own timing", async () => {
+    const harness = makeHarness();
+    const reporter = createPhaseProgressReporter(harness.options);
+
+    // Record an earlier phase so the summary spans more than finalization.
+    harness.clockMs = 0;
+    await reporter
+      .wrap(
+        fakePhase("gateway", async () => {
+          harness.clockMs = 4_000;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+
+    harness.clockMs = 4_000;
+    await reporter
+      .wrap(
+        fakePhase("finalizing", async () => {
+          harness.clockMs = 5_000;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+
+    // The summary is emitted exactly once, and it includes the finalizing phase
+    // (recorded before the summary is formatted) — not just the earlier phases.
+    expect(harness.summaries).toHaveLength(1);
+    expect(harness.summaries[0]).toBe("SUMMARY:gateway,finalizing");
+    // Registry is reset only after the summary is written (no stray-entry leak).
+    expect(harness.resets).toBe(1);
+    // Summary phase does not also print a standalone completion line on success.
+    expect(harness.lines.some((line) => line.includes("Finalization completed in"))).toBe(false);
+  });
+
+  it("does not emit a summary when the finalizing phase fails", async () => {
+    const harness = makeHarness();
+    const reporter = createPhaseProgressReporter(harness.options);
+    const wrapped = reporter.wrap(
+      fakePhase("finalizing", async () => {
+        harness.clockMs = 6_000;
+        throw new Error("finalization failed");
+      }),
+    );
+
+    await expect(wrapped.run("ctx")).rejects.toThrow("finalization failed");
+    expect(harness.summaries).toHaveLength(0);
+    expect(harness.resets).toBe(0);
+    // A failed summary phase still surfaces its own failure line.
+    expect(harness.lines.some((line) => line.includes("✗ Finalization failed after"))).toBe(true);
+  });
+
+  it("resolves the heartbeat interval from the injected env", async () => {
+    const harness = makeHarness({
+      env: { NEMOCLAW_ONBOARD_HEARTBEAT_MS: "12000" },
+      heartbeatIntervalMs: undefined,
+    });
+    const reporter = createPhaseProgressReporter(harness.options);
+    await reporter
+      .wrap(
+        fakePhase("gateway", async () => {
+          harness.clockMs = 1;
+          return { context: "ctx", result: "ok" };
+        }),
+      )
+      .run("ctx");
+    expect(harness.timerIntervalMs).toBe(12_000);
+  });
+});
+
+describe("buildOnboardSequenceHandlers wiring (seam integration)", () => {
+  it("drives heartbeat + timing through the onboarding sequence seam", async () => {
+    const harness = makeHarness();
+    const reporter = createPhaseProgressReporter(harness.options);
+    const gatewayPhase = fakePhase("gateway", async () => {
+      // Simulate a silent wait that outlives one heartbeat interval.
+      harness.clockMs = 30_000;
+      harness.timerCallback?.();
+      harness.clockMs = 31_000;
+      return { context: "ctx", result: "ok" };
+    });
+
+    // The reporter is applied inside buildOnboardSequenceHandlers, so the wrapped
+    // handler must emit the heartbeat and record timing for the real seam.
+    const handlers = buildOnboardSequenceHandlers<string>([gatewayPhase], () => {}, reporter);
+    await handlers.gateway?.("ctx");
+
+    expect(
+      harness.lines.some((line) =>
+        line.includes("⏳ Still working on Gateway startup… (30s elapsed)"),
+      ),
+    ).toBe(true);
+    expect(harness.records[0]).toMatchObject({ phase: "gateway", status: "completed" });
+  });
+
+  it("is inert at the seam when the reporter is disabled", async () => {
+    const harness = makeHarness({ enabled: false });
+    const reporter = createPhaseProgressReporter(harness.options);
+    const phase = fakePhase("gateway", async () => ({ context: "ctx", result: "ok" }));
+    const handlers = buildOnboardSequenceHandlers<string>([phase], () => {}, reporter);
+    await handlers.gateway?.("ctx");
+    expect(harness.records).toHaveLength(0);
+    expect(harness.lines).toHaveLength(0);
   });
 });

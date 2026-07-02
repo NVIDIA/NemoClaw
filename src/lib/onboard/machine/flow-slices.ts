@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resetPhaseTimings } from "../phase-timings";
 import type { OnboardFlowContext } from "./flow-context";
 import { onboardFlowPhaseResult } from "./flow-context";
 import { advanceTo } from "./result";
@@ -41,6 +42,10 @@ export async function runInitialOnboardFlowSequence<Context extends OnboardFlowC
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
 }) {
+  // Clear any per-phase timings left over from an earlier onboard run in the
+  // same process (e.g. a prior run that failed before finalization reset the
+  // registry) so this run's timing summary only reflects this run (#6002).
+  resetPhaseTimings();
   return runOnboardSequenceWithRunner({
     ...options,
     phases: initialOnboardFlowPhases(options.phases),

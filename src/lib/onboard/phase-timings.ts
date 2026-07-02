@@ -16,6 +16,13 @@
  * process, so a shared registry is what lets the final summary span all of
  * them without threading a collector through `onboard.ts` (which is held
  * net-neutral by a codebase-growth guardrail).
+ *
+ * Reset lifecycle (so stale data never leaks between runs in the same process):
+ *   - reset at the start of each onboard run (`runInitialOnboardFlowSequence`),
+ *     which clears anything a prior run left behind if it failed before
+ *     finalization;
+ *   - reset again right after the summary is emitted, once the terminal
+ *     (finalization) phase's own timing has been recorded (see `phase-progress`).
  */
 
 export type PhaseTimingStatus = "completed" | "failed";

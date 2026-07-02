@@ -28,11 +28,21 @@
  * `NEMOCLAW_ONBOARD_PROGRESS=1|0`.
  */
 
-import { formatPhaseDuration, type PhaseTimingStatus, recordPhaseTiming } from "../phase-timings";
+import {
+  formatPhaseDuration,
+  formatPhaseTimingsSummary,
+  type PhaseTimingStatus,
+  recordPhaseTiming,
+  resetPhaseTimings,
+} from "../phase-timings";
 import { addTraceEvent } from "../tracing";
 import type { OnboardSequencePhase } from "./sequence-runner";
+import type { OnboardNonTerminalMachineState } from "./types";
 
-export const ONBOARD_PHASE_LABELS: Readonly<Record<string, string>> = {
+// Keyed by every non-terminal FSM state so a newly-added onboarding state is a
+// compile error here until it gets a friendly label, rather than silently
+// falling back to the raw state id.
+export const ONBOARD_PHASE_LABELS: Readonly<Record<OnboardNonTerminalMachineState, string>> = {
   init: "Initialization",
   preflight: "Preflight checks",
   gateway: "Gateway startup",
@@ -59,6 +69,13 @@ const HEARTBEAT_PHASE_STATES: ReadonlySet<string> = new Set([
   "post_verify",
 ]);
 
+// Terminal phase(s) after which the accumulated per-phase timing summary is
+// emitted. Emitting from this seam — after the wrapped phase's own duration is
+// recorded — means the summary includes the finalization phase itself and the
+// registry is reset only once every phase has been written, so no stray entry
+// leaks into a later onboard in the same process (#6002 review PRA-2/PRA-8).
+const SUMMARY_PHASE_STATES: ReadonlySet<string> = new Set(["finalizing"]);
+
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const MIN_HEARTBEAT_INTERVAL_MS = 1_000;
 const DEFAULT_COMPLETION_THRESHOLD_MS = 5_000;
@@ -78,7 +95,13 @@ export interface PhaseProgressRecord {
 }
 
 export interface PhaseProgressOptions {
-  /** Force enable/disable. Defaults to `resolvePhaseProgressEnabled()`. */
+  /**
+   * Environment source. Used for both `resolvePhaseProgressEnabled` and the
+   * heartbeat-interval override so a single injected env drives every env-backed
+   * decision. Defaults to `process.env`.
+   */
+  env?: NodeJS.ProcessEnv;
+  /** Force enable/disable. Defaults to `resolvePhaseProgressEnabled(env)`. */
   enabled?: boolean;
   logLine?: (line: string) => void;
   now?: () => number;
@@ -90,6 +113,14 @@ export interface PhaseProgressOptions {
   completionThresholdMs?: number;
   labels?: Readonly<Record<string, string>>;
   heartbeatPhaseStates?: ReadonlySet<string>;
+  /** Phase states after which to emit the accumulated timing summary. */
+  summaryPhaseStates?: ReadonlySet<string>;
+  /** Emit the rendered summary block. Defaults to `logLine`. */
+  emitSummary?: (summary: string) => void;
+  /** Render the accumulated summary. Defaults to `formatPhaseTimingsSummary`. */
+  formatSummary?: () => string;
+  /** Clear the timing registry after the summary is emitted. */
+  resetTimings?: () => void;
 }
 
 export interface PhaseProgressReporter {
@@ -118,7 +149,8 @@ function resolveHeartbeatIntervalMs(env: NodeJS.ProcessEnv, fallback: number): n
 export function createPhaseProgressReporter(
   options: PhaseProgressOptions = {},
 ): PhaseProgressReporter {
-  const enabled = options.enabled ?? resolvePhaseProgressEnabled();
+  const env = options.env ?? process.env;
+  const enabled = options.enabled ?? resolvePhaseProgressEnabled(env);
   const logLine = options.logLine ?? ((line: string) => console.log(line));
   const now = options.now ?? Date.now;
   const setTimer =
@@ -130,10 +162,13 @@ export function createPhaseProgressReporter(
   const record = options.record ?? recordPhaseTiming;
   const labels = options.labels ?? ONBOARD_PHASE_LABELS;
   const heartbeatIntervalMs =
-    options.heartbeatIntervalMs ??
-    resolveHeartbeatIntervalMs(process.env, DEFAULT_HEARTBEAT_INTERVAL_MS);
+    options.heartbeatIntervalMs ?? resolveHeartbeatIntervalMs(env, DEFAULT_HEARTBEAT_INTERVAL_MS);
   const completionThresholdMs = options.completionThresholdMs ?? DEFAULT_COMPLETION_THRESHOLD_MS;
   const heartbeatPhaseStates = options.heartbeatPhaseStates ?? HEARTBEAT_PHASE_STATES;
+  const summaryPhaseStates = options.summaryPhaseStates ?? SUMMARY_PHASE_STATES;
+  const emitSummary = options.emitSummary ?? logLine;
+  const formatSummary = options.formatSummary ?? formatPhaseTimingsSummary;
+  const resetTimings = options.resetTimings ?? resetPhaseTimings;
 
   function wrap<Context>(phase: OnboardSequencePhase<Context>): OnboardSequencePhase<Context> {
     if (!enabled) return phase;
@@ -162,10 +197,20 @@ export function createPhaseProgressReporter(
             status,
             heartbeats,
           });
-          if (durationMs >= completionThresholdMs) {
+          const isSummaryPhase = summaryPhaseStates.has(phase.state);
+          // Summary phases fold their own timing into the summary block below,
+          // so skip the redundant standalone completion line on success.
+          if (durationMs >= completionThresholdMs && (!isSummaryPhase || status === "failed")) {
             const marker = status === "failed" ? "✗" : "✓";
             const verb = status === "failed" ? "failed after" : "completed in";
             logLine(`  ${marker} ${label} ${verb} ${formatPhaseDuration(durationMs)}`);
+          }
+          if (status === "completed" && isSummaryPhase) {
+            const summary = formatSummary();
+            if (summary) {
+              emitSummary(summary);
+              resetTimings();
+            }
           }
         };
 
