@@ -181,7 +181,7 @@ export function buildFallbackControlUiUrls(
   fallbackUrls: string[],
 ): string[] {
   return fallbackUrls.flatMap((fallback) => {
-    let rewritten = fallback;
+    let rewritten: string;
     try {
       const url = new URL(fallback);
       url.port = String(port);
