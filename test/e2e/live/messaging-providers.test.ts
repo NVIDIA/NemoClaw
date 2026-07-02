@@ -586,7 +586,7 @@ const req = https.get("https://api.telegram.org/bot" + token + "/getMe", (res) =
   console.log("HTTP_" + res.statusCode);
   res.resume();
 });
-req.on("error", (e) => console.log("ERROR: " + e.message));
+req.on("error", (e) => console.log("ERROR: " + e.message + (e.code ? " code=" + e.code : "")));
 req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
       "telegram-reachability-messaging-providers",
@@ -661,7 +661,7 @@ for (const [name, url] of targets) {
   });
   req.on("error", (error) => {
     failed = true;
-    console.log(\`\${name}:ERROR_\${error.message}\`);
+    console.log(\`\${name}:ERROR_\${error.message}\${error.code ? " code=" + error.code : ""}\`);
     done();
   });
   req.setTimeout(15000, () => {
