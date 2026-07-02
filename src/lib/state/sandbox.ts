@@ -121,6 +121,7 @@ export interface BackupResult {
   error?: string;
   backedUpFiles: string[];
   failedFiles: string[];
+  unreachable?: boolean;
 }
 
 export interface RestoreResult {
@@ -1018,6 +1019,12 @@ function restoreStateFile(
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
+export function isSshTransportFailure(result: { status: number | null; error?: Error }): boolean {
+  if (result.error) return true;
+  if (result.status === null) return true;
+  return result.status === 255;
+}
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1168,6 +1175,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         );
         return {
           success: false,
+          unreachable: isSshTransportFailure(existResult),
           manifest,
           backedUpDirs,
           failedDirs: [...stateDirs],
