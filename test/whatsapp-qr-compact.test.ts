@@ -297,7 +297,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       preloadPresent: true,
     });
-    expect(r.stderr).toContain("OPENCLAW_GATEWAY_URL is not set");
+    expect(r.stderr).toContain("gateway URL is not set");
     expect(r.stdout).toContain("GUARD_EXIT=1");
     // Must not attempt the login when the gateway env is missing.
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");

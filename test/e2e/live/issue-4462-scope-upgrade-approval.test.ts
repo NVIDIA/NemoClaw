@@ -82,15 +82,19 @@ if ! grep -F "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_
   exit 3
 fi
 . /tmp/nemoclaw-proxy-env.sh
-case "\${OPENCLAW_GATEWAY_URL:-}" in
+if [ -n "\${OPENCLAW_GATEWAY_URL:-}" ]; then
+  echo "BAD_OPENCLAW_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL}" >&2
+  exit 4
+fi
+case "\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" in
   ws://127.0.0.1:*|ws://localhost:*) ;;
   ws://10.*:*|ws://192.168.*:*|ws://172.1[6-9].*:*|ws://172.2[0-9].*:*|ws://172.3[0-1].*:*)
-    if [ "\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" != "1" ]; then
-      echo "MISSING_INSECURE_PRIVATE_WS_MARKER=\${OPENCLAW_GATEWAY_URL:-unset}" >&2
+    if [ "\${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" != "1" ]; then
+      echo "MISSING_INSECURE_PRIVATE_WS_MARKER=\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-unset}" >&2
       exit 4
     fi
     ;;
-  *) echo "BAD_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL:-unset}" >&2; exit 4 ;;
+  *) echo "BAD_GATEWAY_URL=\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-unset}" >&2; exit 4 ;;
 esac
 seed_token_proof=/tmp/issue4462-seed-token.sha256
 trap 'rm -f -- "$seed_token_proof"' EXIT

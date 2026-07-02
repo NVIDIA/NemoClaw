@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -103,7 +103,7 @@ describe("gateway websocket url host derivation", () => {
     expect(out).toContain("INSECURE=1");
   });
 
-  it("propagates the break-glass into the runtime shell env file", () => {
+  it("stores the private gateway URL outside OpenClaw env in runtime shell env", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-"));
     try {
       const envFilePath = path.join(tmpDir, "nemoclaw-proxy-env.sh");
@@ -132,8 +132,11 @@ describe("gateway websocket url host derivation", () => {
       });
       expect(result.status, result.stderr).toBe(0);
       const envFile = fs.readFileSync(envFilePath, "utf-8");
-      expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://10.200.0.2:18790'");
-      expect(envFile).toContain("export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'");
+      expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://10.200.0.2:18790'");
+      expect(envFile).toContain("export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'");
+      expect(envFile).toContain("unset OPENCLAW_GATEWAY_URL");
+      expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL=");
+      expect(envFile).not.toContain("export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -168,7 +171,10 @@ describe("gateway websocket url host derivation", () => {
       });
       expect(result.status, result.stderr).toBe(0);
       const envFile = fs.readFileSync(envFilePath, "utf-8");
-      expect(envFile).not.toContain("OPENCLAW_ALLOW_INSECURE_PRIVATE_WS");
+      expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+      expect(envFile).not.toContain("export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=");
+      expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL=");
+      expect(envFile).not.toContain("export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

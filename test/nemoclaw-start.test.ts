@@ -700,7 +700,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).not.toContain(".profile");
   });
 
-  it("writes the gateway port and URL into the runtime shell env (#3256)", () => {
+  it("keeps the gateway URL out of OpenClaw env in connect shells (#5324)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
       "stale-token",
@@ -710,7 +710,9 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("http://127.0.0.1:18790/");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("unset OPENCLAW_GATEWAY_URL");
+    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL=");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
   });
 
@@ -741,7 +743,8 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
     expect(configAfter.gateway.auth.token).not.toBe("");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
-    expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).toContain("export NEMOCLAW_OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
+    expect(envFile).not.toContain("export OPENCLAW_GATEWAY_URL=");
     expect(envFile).toContain(`export OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
     expect(envFile).not.toContain("stale-token");
     expect(hashAfter).not.toBe("initial-hash\n");
@@ -969,13 +972,134 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["config", "get", "foo"]).status).toBe(0);
       expect(runGuardedOpenclaw(setup, ["channels", "list"]).status).toBe(0);
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
-      expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+      expect(runGuardedOpenclaw(setup, ["channels", "login", "--channel", "whatsapp"]).status).toBe(
+        0,
+      );
+      const commandLog = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(commandLog).toContain(
+        "ARGS=agent --agent main -m hello URL=unset PORT=18789 TOKEN=test-gateway-token",
+      );
+      expect(commandLog).toContain("config get foo");
+      expect(commandLog).toContain("channels list");
+      expect(commandLog).toContain(
+        "ARGS=channels login --channel whatsapp URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
+      );
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
+  it("pre-approves allowlisted CLI pairing before agent commands (#5324)", () => {
+    const setup = writeProxyEnvWithGuard();
+    const approvedFlag = path.join(setup.tmpDir, "approved.flag");
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f ${JSON.stringify(approvedFlag)} ]; then
+    printf '{"pending":[],"paired":[{"clientMode":"cli"}]}\n'
+  else
+    printf '{"pending":[{"requestId":"pair-1","clientMode":"cli","scopes":["operator.pairing","operator.write"]}],"paired":[]}\n'
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  [ "\${3:-}" = "pair-1" ] || exit 9
+  touch ${JSON.stringify(approvedFlag)}
+  printf '{"ok":true}\n'
+  exit 0
+fi
+if [ "\${1:-}" = "agent" ]; then
+  if [ -f ${JSON.stringify(approvedFlag)} ]; then
+    printf 'agent ok\n'
+    exit 0
+  fi
+  echo 'gateway connect failed: GatewayClientRequestError: device pairing required (requestId: pair-1)' >&2
+  exit 1
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]);
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stdout).toContain("agent ok");
+      expect(result.stderr).not.toContain("device pairing required");
+      const commandLog = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(commandLog).toContain(
+        "ARGS=devices list --json URL=unset PORT=18789 TOKEN=test-gateway-token",
+      );
+      expect(commandLog).toContain(
+        "ARGS=devices approve pair-1 --json URL=unset PORT=unset TOKEN=unset",
+      );
+      expect(commandLog).toContain(
+        "ARGS=agent --agent main -m hello URL=unset PORT=18789 TOKEN=test-gateway-token",
+      );
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("approves and retries when agent creates a new CLI pairing request (#5324)", () => {
+    const setup = writeProxyEnvWithGuard();
+    const requestedFlag = path.join(setup.tmpDir, "requested.flag");
+    const approvedFlag = path.join(setup.tmpDir, "approved-after-agent.flag");
+    fs.writeFileSync(
+      path.join(setup.fakeBin, "openclaw"),
+      `#!/usr/bin/env bash
+printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f ${JSON.stringify(approvedFlag)} ]; then
+    printf '{"pending":[],"paired":[{"clientMode":"cli"}]}\n'
+  elif [ -f ${JSON.stringify(requestedFlag)} ]; then
+    printf '{"pending":[{"requestId":"pair-after-agent","clientMode":"cli","scopes":["operator.pairing","operator.write"]}],"paired":[]}\n'
+  else
+    printf '{"pending":[],"paired":[]}\n'
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  [ "\${3:-}" = "pair-after-agent" ] || exit 9
+  touch ${JSON.stringify(approvedFlag)}
+  printf '{"ok":true}\n'
+  exit 0
+fi
+if [ "\${1:-}" = "agent" ]; then
+  if [ -f ${JSON.stringify(approvedFlag)} ]; then
+    printf 'agent ok after retry\n'
+    exit 0
+  fi
+  touch ${JSON.stringify(requestedFlag)}
+  echo 'gateway connect failed: GatewayClientRequestError: device pairing required (requestId: pair-after-agent)' >&2
+  exit 1
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const result = runGuardedOpenclaw(setup, ["agent", "--agent", "main", "-m", "hello"]);
+
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(result.stdout).toContain("agent ok after retry");
+      expect(result.stderr).not.toContain("device pairing required");
+      const commandLog = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(commandLog).toContain(
+        "ARGS=devices list --json URL=unset PORT=18789 TOKEN=test-gateway-token",
+      );
+      expect(commandLog).toContain(
+        "ARGS=devices approve pair-after-agent --json URL=unset PORT=unset TOKEN=unset",
+      );
+      expect(commandLog.match(/ARGS=agent --agent main -m hello/g) ?? []).toHaveLength(2);
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");

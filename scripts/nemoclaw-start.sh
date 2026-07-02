@@ -2916,16 +2916,21 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      # Keep ordinary connect-shell OpenClaw CLI calls on OpenClaw's implicit
+      # local-loopback path; exporting OPENCLAW_GATEWAY_URL turns that into an
+      # explicit override and disables OpenClaw's local pairing fallback (#5324).
+      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      printf '%s\n' "if [ \"\${OPENCLAW_GATEWAY_URL:-}\" = \"\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}\" ]; then unset OPENCLAW_GATEWAY_URL; fi"
     fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Mirrors the gateway-process export above so connect-shell CLI
-      # clients accept the plaintext eth0 ws:// gateway URL too.
-      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+      # Preserved for wrapper-managed commands that intentionally use the
+      # private sandbox gateway URL; ordinary OpenClaw CLI calls do not need it.
+      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+      printf '%s\n' "if [ \"\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}\" = \"1\" ] && [ \"\${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}\" = \"1\" ]; then unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS; fi"
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
@@ -2984,12 +2989,81 @@ _nemoclaw_messaging_connect_node_options() {
   done < "/tmp/nemoclaw-messaging-connect-preloads.list"
   printf '%s' "$_nemoclaw_options"
 }
+_nemoclaw_safe_pending_pairing_ids() {
+  command -v python3 >/dev/null 2>&1 || return 0
+  NEMOCLAW_PAIRING_LIST_JSON="$1" python3 - <<'PYPAIRINGIDS' 2>/dev/null || true
+import json
+import os
+
+allowed_clients = {"openclaw-control-ui"}
+allowed_modes = {"webchat", "cli"}
+allowed_scopes = {"operator.pairing", "operator.read", "operator.write"}
+try:
+    data = json.loads(os.environ.get("NEMOCLAW_PAIRING_LIST_JSON") or "{}")
+except Exception:
+    data = {}
+pending = data.get("pending") if isinstance(data, dict) else []
+if not isinstance(pending, list):
+    pending = []
+for item in pending:
+    if not isinstance(item, dict):
+        continue
+    request_id = str(item.get("requestId") or "").strip()
+    if not request_id:
+        continue
+    client_id = str(item.get("clientId") or "")
+    client_mode = str(item.get("clientMode") or "")
+    if client_id not in allowed_clients and client_mode not in allowed_modes:
+        continue
+    scopes_value = item.get("scopes") if "scopes" in item else item.get("requestedScopes", [])
+    if not isinstance(scopes_value, list):
+        continue
+    scopes = {str(scope).strip() for scope in scopes_value if str(scope or "").strip()}
+    if scopes and not scopes.issubset(allowed_scopes):
+        continue
+    print(request_id)
+PYPAIRINGIDS
+}
+_nemoclaw_auto_approve_cli_pairing_once() {
+  [ -n "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  local _nemoclaw_pairing_errexit=0 _nemoclaw_pairing_json _nemoclaw_pairing_rc
+  local _nemoclaw_pairing_ids _nemoclaw_pairing_id
+  case $- in *e*) _nemoclaw_pairing_errexit=1 ;; esac
+  set +e
+  _nemoclaw_pairing_json="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_ALLOW_INSECURE_PRIVATE_WS; command openclaw devices list --json 2>/dev/null)"
+  _nemoclaw_pairing_rc=$?
+  if [ "$_nemoclaw_pairing_errexit" = "1" ]; then set -e; else set +e; fi
+  [ "$_nemoclaw_pairing_rc" -eq 0 ] || return 0
+  _nemoclaw_pairing_ids="$(_nemoclaw_safe_pending_pairing_ids "$_nemoclaw_pairing_json")"
+  [ -n "$_nemoclaw_pairing_ids" ] || return 0
+  for _nemoclaw_pairing_id in $_nemoclaw_pairing_ids; do
+    [ -n "$_nemoclaw_pairing_id" ] || continue
+    if openclaw devices approve "$_nemoclaw_pairing_id" --json >/dev/null 2>&1; then
+      _NEMOCLAW_PAIRING_APPROVED=1
+    fi
+  done
+}
+_nemoclaw_output_needs_pairing_approval() {
+  grep -qi 'device pairing required\|pairing required' "$@" 2>/dev/null
+}
+_nemoclaw_agent_command_can_retry_pairing() {
+  local _nemoclaw_agent_arg
+  for _nemoclaw_agent_arg in "$@"; do
+    case "$_nemoclaw_agent_arg" in
+      -m|--message|--message=*|-m?*) return 0 ;;
+    esac
+  done
+  return 1
+}
 openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
   # upgrades through the gateway without requesting the upgraded scopes for
   # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands keep the full gateway environment.
+  # URL/port/token; other commands use the connect-shell environment, which
+  # intentionally leaves OPENCLAW_GATEWAY_URL unset so OpenClaw can use its
+  # local pairing fallback (#5324).
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
     _nemoclaw_approve_request_id="${3:-}"
     _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
@@ -3234,8 +3308,11 @@ PYAPPROVEAFTER
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
           if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
-            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
-              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+            local _nemoclaw_whatsapp_gateway_url _nemoclaw_whatsapp_insecure_ws
+            _nemoclaw_whatsapp_gateway_url="${OPENCLAW_GATEWAY_URL:-${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}}"
+            _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}}"
+            if [ -z "$_nemoclaw_whatsapp_gateway_url" ]; then
+              echo "Error: WhatsApp pairing cannot start — gateway URL is not set in this shell." >&2
               echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
               echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
               echo "" >&2
@@ -3243,14 +3320,14 @@ PYAPPROVEAFTER
               echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
               return 1
             fi
-            # The OpenClaw gateway is a WebSocket endpoint (set to
-            # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
-            # so a typo'd/clobbered URL is reported as a gateway/env problem
-            # rather than failing inside the login as an ambiguous close.
-            case "${OPENCLAW_GATEWAY_URL}" in
+            # The OpenClaw gateway is a WebSocket endpoint. Reject a malformed
+            # scheme up front so a typo'd/clobbered URL is reported as a
+            # gateway/env problem rather than failing inside the login as an
+            # ambiguous close.
+            case "$_nemoclaw_whatsapp_gateway_url" in
               ws://*|wss://*) ;;
               *)
-                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "Error: WhatsApp pairing cannot start — gateway URL='$_nemoclaw_whatsapp_gateway_url' is not a ws:// gateway URL." >&2
                 echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
                 echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
                 echo "" >&2
@@ -3259,7 +3336,7 @@ PYAPPROVEAFTER
                 return 1
                 ;;
             esac
-            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] Pairing via gateway $_nemoclaw_whatsapp_gateway_url." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
             # Defense-in-depth: connect-session NODE_OPTIONS already wires
             # manifest-declared connect preloads for every openclaw invocation;
@@ -3267,9 +3344,14 @@ PYAPPROVEAFTER
             # preload modules are idempotent, so a double --require is harmless.
             _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
             if [ -n "$_nemoclaw_connect_node_options" ]; then
-              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                command openclaw "$@"
             else
-              command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                command openclaw "$@"
             fi
             _whatsapp_login_exit=$?
             if [ "$_whatsapp_login_exit" -ne 0 ]; then
@@ -3315,6 +3397,39 @@ PYAPPROVEAFTER
           return 1
         fi
       done
+      _NEMOCLAW_PAIRING_APPROVED=0
+      _nemoclaw_auto_approve_cli_pairing_once
+      if _nemoclaw_agent_command_can_retry_pairing "$@"; then
+        local _nemoclaw_agent_out _nemoclaw_agent_err _nemoclaw_agent_rc _nemoclaw_agent_errexit=0
+        _nemoclaw_agent_out="$(mktemp /tmp/nemoclaw-agent-out.XXXXXX 2>/dev/null || true)"
+        _nemoclaw_agent_err="$(mktemp /tmp/nemoclaw-agent-err.XXXXXX 2>/dev/null || true)"
+        if [ -n "$_nemoclaw_agent_out" ] && [ -n "$_nemoclaw_agent_err" ]; then
+          case $- in *e*) _nemoclaw_agent_errexit=1 ;; esac
+          set +e
+          command openclaw "$@" >"$_nemoclaw_agent_out" 2>"$_nemoclaw_agent_err"
+          _nemoclaw_agent_rc=$?
+          if [ "$_nemoclaw_agent_errexit" = "1" ]; then set -e; else set +e; fi
+          if [ "$_nemoclaw_agent_rc" -ne 0 ] && _nemoclaw_output_needs_pairing_approval "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"; then
+            _NEMOCLAW_PAIRING_APPROVED=0
+            _nemoclaw_auto_approve_cli_pairing_once
+            if [ "${_NEMOCLAW_PAIRING_APPROVED:-0}" = "1" ]; then
+              rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"
+              set +e
+              command openclaw "$@"
+              _nemoclaw_agent_rc=$?
+              if [ "$_nemoclaw_agent_errexit" = "1" ]; then set -e; else set +e; fi
+              _nemoclaw_restore_mutable_config_perms
+              return "$_nemoclaw_agent_rc"
+            fi
+          fi
+          [ ! -s "$_nemoclaw_agent_out" ] || cat "$_nemoclaw_agent_out"
+          [ ! -s "$_nemoclaw_agent_err" ] || cat "$_nemoclaw_agent_err" >&2
+          rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"
+          _nemoclaw_restore_mutable_config_perms
+          return "$_nemoclaw_agent_rc"
+        fi
+        rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err" 2>/dev/null || true
+      fi
       ;;
   esac
   # #4538: re-assert the mutable config perm contract after any openclaw run
