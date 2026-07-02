@@ -3,6 +3,7 @@
 
 import type { Session } from "../../../state/onboard-session";
 import { type DashboardRuntimeAgent, shouldManageDashboardForAgent } from "../../dashboard-runtime";
+import { formatPhaseTimingsSummary, resetPhaseTimings } from "../../phase-timings";
 import { completeOnboardMachine, type OnboardStateCompleteResult } from "../result";
 
 export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult> {
@@ -88,6 +89,17 @@ type TerminalReadyAgent = {
     headless_command?: unknown;
   } | null;
 };
+
+// Emit the accumulated per-phase timing summary once, just before the "ready"
+// block, so the user sees where onboarding wall-clock went (#6002). No-op when
+// no phases were recorded (e.g. the progress reporter was disabled). Resets the
+// registry so a subsequent onboard in the same process starts clean.
+function printPhaseTimingsSummary(log: (message?: string) => void): void {
+  const summary = formatPhaseTimingsSummary();
+  if (!summary) return;
+  log(summary);
+  resetPhaseTimings();
+}
 
 function logTerminalReadyBlock(
   sandboxName: string,
@@ -184,8 +196,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
     verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
     for (const line of verificationDiagnostics) deps.log(line);
+    printPhaseTimingsSummary(deps.log);
     deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
   } else {
+    printPhaseTimingsSummary(deps.log);
     logTerminalReadyBlock(sandboxName, agent, deps.log);
   }
 
