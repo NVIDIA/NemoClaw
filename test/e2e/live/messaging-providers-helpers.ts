@@ -16,6 +16,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -543,36 +544,6 @@ export async function sandboxOutput(
   return result.stdout.trim();
 }
 
-export function buildRawTokenProcessProbeScript(token: string, procRoot = "/proc"): string {
-  const tokenB64 =
-    token.length > 0
-      ? base64(token)
-      : (() => {
-          throw new Error("raw token process probe requires a nonempty token");
-        })();
-  return `set +a
-unset token || exit 1
-token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)" || exit 1
-scanned=0
-for cmdline_path in ${shellQuote(procRoot)}/[0-9]*/cmdline; do
-  [ -e "$cmdline_path" ] || continue
-  if ! cmdline="$(tr '\\000' '\\n' < "$cmdline_path" 2>/dev/null)"; then
-    [ ! -e "$cmdline_path" ] && continue
-    echo ERROR
-    exit 1
-  fi
-  scanned=1
-  case "$cmdline" in
-    *"$token"*)
-      echo FOUND
-      exit 0
-      ;;
-  esac
-done
-[ "$scanned" -eq 1 ] || { echo ERROR; exit 1; }
-echo ABSENT`;
-}
-
 export async function rawTokenSurfaceProbe(
   sandbox: SandboxClient,
   token: string,
@@ -586,7 +557,7 @@ export async function rawTokenSurfaceProbe(
       ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
       : surface === "process"
-        ? buildRawTokenProcessProbeScript(token)
+        ? buildProcessTokenProbe(token)
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
 if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;

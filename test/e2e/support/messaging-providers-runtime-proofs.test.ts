@@ -8,8 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { buildProcessTokenProbe } from "../fixtures/process-token-probe.ts";
 import {
-  buildRawTokenProcessProbeScript,
   buildSandboxNodeInvocation,
   buildSandboxShellInvocation,
   OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
@@ -50,13 +50,13 @@ describe("messaging provider installed-runtime proofs", () => {
     try {
       const selfProc = path.join(dir, "101");
       fs.mkdirSync(selfProc);
-      const script = buildRawTokenProcessProbeScript(token, dir);
+      const script = buildProcessTokenProbe(token, dir);
       const invocation = buildSandboxShellInvocation(script);
       fs.writeFileSync(path.join(selfProc, "cmdline"), `${invocation.join("\0")}\0`);
 
       expect(script).not.toContain(token);
       expect(script).not.toContain("grep");
-      expect(script).toContain('case "$cmdline" in');
+      expect(script).toContain('case "$nemoclaw_process_probe_cmdline" in');
       expect(invocation.every((argument) => !argument.includes(token))).toBe(true);
 
       const [command, ...args] = invocation;
@@ -76,13 +76,13 @@ describe("messaging provider installed-runtime proofs", () => {
       );
       const tokenInOtherProcess = spawnSync(command, args, { encoding: "utf8" });
       expect(tokenInOtherProcess.status, tokenInOtherProcess.stderr).toBe(0);
-      expect(tokenInOtherProcess.stdout.trim()).toBe("FOUND");
+      expect(tokenInOtherProcess.stdout.trim()).toBe("FOUND pid=202");
 
       fs.rmSync(selfProc, { recursive: true });
       fs.rmSync(otherProc, { recursive: true });
       const noProcessData = spawnSync(command, args, { encoding: "utf8" });
-      expect(noProcessData.status).not.toBe(0);
-      expect(noProcessData.stdout.trim()).toBe("ERROR");
+      expect(noProcessData.status, noProcessData.stderr).toBe(0);
+      expect(noProcessData.stdout.trim()).toBe("ABSENT");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
