@@ -211,6 +211,29 @@ describe("OpenClaw diagnostics compatibility patch (#4434)", () => {
       fs.rmSync(missingTmp, { recursive: true, force: true });
     }
 
+    const signatureDriftTmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openclaw-4434-signature-drift-"),
+    );
+    const signatureDriftDist = path.join(signatureDriftTmp, "dist");
+    fs.mkdirSync(signatureDriftDist);
+    const signatureDriftFixture = writeAssistantErrorFormatFixture(signatureDriftDist);
+    const recognizedSource = fs.readFileSync(signatureDriftFixture, "utf8");
+    fs.writeFileSync(
+      signatureDriftFixture,
+      recognizedSource.replace(
+        "function formatRawAssistantErrorForUi(raw) {",
+        "function formatRawAssistantErrorForUi(raw, options) {",
+      ),
+    );
+    try {
+      const audit = runPatchAudit(signatureDriftDist);
+      expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(3);
+      expect(audit.stdout).toContain("assistant error formatter: NOT FOUND");
+      expect(audit.stdout).toContain("1 file(s) NOT FOUND");
+    } finally {
+      fs.rmSync(signatureDriftTmp, { recursive: true, force: true });
+    }
+
     const unknownTmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-4434-unknown-"));
     const unknownDist = path.join(unknownTmp, "dist");
     fs.mkdirSync(unknownDist);

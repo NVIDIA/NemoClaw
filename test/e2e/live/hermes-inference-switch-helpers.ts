@@ -36,7 +36,6 @@ export const SWITCH_MODEL =
   process.env.NEMOCLAW_SWITCH_MODEL ??
   (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
-const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
@@ -51,6 +50,14 @@ export function mockAnthropicEndpointUrl(
 ): string {
   const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
   return `http://${host}:${port}`;
+}
+
+export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === "compatible-anthropic-endpoint" &&
+    (runtimeEnv.NEMOCLAW_SWITCH_INFERENCE_API ?? SWITCH_API) === "anthropic-messages" &&
+    runtimeEnv.NEMOCLAW_SWITCH_MOCK_ANTHROPIC === "1"
+  );
 }
 
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
@@ -286,7 +293,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
 ): Promise<string | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
     return null;
-  const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
+  const mock = mockAnthropicSwitchEnabled() ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
   const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
@@ -322,6 +329,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
 export async function installHermes(
   host: HostCliClient,
   apiKey: string,
+  installEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -331,7 +339,7 @@ export async function installHermes(
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,
-        env: env(apiKey),
+        env: env(apiKey, installEnv),
         redactionValues: [apiKey],
         timeoutMs: 25 * 60_000,
       },

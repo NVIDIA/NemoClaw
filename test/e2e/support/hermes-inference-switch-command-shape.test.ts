@@ -17,6 +17,7 @@ import {
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicEndpointUrl,
+  mockAnthropicSwitchEnabled,
   openshellGatewayName,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
@@ -79,6 +80,25 @@ describe("Hermes inference switch command shape", () => {
     ).toBe("http://host.openshell.internal:18766");
   });
 
+  it("enables local baseline inference only for the mock Anthropic lane", () => {
+    const mockAnthropic = {
+      NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+      NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "1",
+    };
+    expect(mockAnthropicSwitchEnabled(mockAnthropic)).toBe(true);
+    expect(
+      mockAnthropicSwitchEnabled({
+        ...mockAnthropic,
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-endpoint",
+      }),
+    ).toBe(false);
+    expect(
+      mockAnthropicSwitchEnabled({ ...mockAnthropic, NEMOCLAW_SWITCH_MOCK_ANTHROPIC: "0" }),
+    ).toBe(false);
+    expect(mockAnthropicSwitchEnabled({})).toBe(false);
+  });
+
   it("retries live PONG probes before returning the final result", async () => {
     const probeResult = (stdout: string): ShellProbeResult =>
       ({ exitCode: 0, stdout, stderr: "" }) as ShellProbeResult;
@@ -108,6 +128,23 @@ describe("Hermes inference switch command shape", () => {
       "--fresh",
       "--yes-i-accept-third-party-software",
     ]);
+  });
+
+  it("passes an authenticated local baseline only to the requested install", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const baselineEnv = {
+      COMPATIBLE_API_KEY: "fixture-key",
+      NEMOCLAW_ENDPOINT_URL: "http://127.0.0.1:34567/v1",
+      NEMOCLAW_MODEL: "fixture-model",
+      NEMOCLAW_PROVIDER: "custom",
+    };
+
+    await installHermes({ command } as unknown as HostCliClient, "fixture-key", baselineEnv);
+
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: baselineEnv,
+      redactionValues: ["fixture-key"],
+    });
   });
 
   it("resets the sandbox and gateway before each isolated attempt", async () => {

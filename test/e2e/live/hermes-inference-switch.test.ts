@@ -5,6 +5,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   apiKeyShape,
@@ -23,6 +24,7 @@ import {
   installHermes,
   maybeAssertEnvHashStable,
   maybeAssertPidStable,
+  mockAnthropicSwitchEnabled,
   parseHermesModelBlock,
   registryState,
   runHermesInferenceSetWithRetry,
@@ -35,12 +37,13 @@ import {
 } from "./hermes-inference-switch-helpers.ts";
 
 const TIMEOUT_MS = 45 * 60_000;
+const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
+const MOCK_BASELINE_MODEL = "hermes-inference-switch-baseline-model";
 
 test.skipIf(!shouldRunLiveE2E())(
   "Hermes inference set updates route/config and preserves live runtime",
   { timeout: TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.writeJson("target.json", {
       id: "hermes-inference-switch",
       boundary: "install.sh + Hermes sandbox + inference set + in-sandbox health/chat probes",
@@ -62,8 +65,47 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     expect(docker.exitCode, resultText(docker)).toBe(0);
 
-    const install = await installHermes(host, apiKey);
+    const mockBaseline = mockAnthropicSwitchEnabled()
+      ? await startFakeOpenAiCompatibleServer({
+          apiKey: MOCK_BASELINE_API_KEY,
+          model: MOCK_BASELINE_MODEL,
+          requireAuth: true,
+        })
+      : undefined;
+    if (mockBaseline) {
+      cleanup.add("close Hermes inference switch baseline fixture", async () => {
+        await artifacts.writeJson(
+          "baseline-openai-compatible-requests.json",
+          mockBaseline.requests(),
+        );
+        await mockBaseline.close();
+      });
+    }
+    const apiKey = mockBaseline
+      ? MOCK_BASELINE_API_KEY
+      : secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const installEnv: NodeJS.ProcessEnv = mockBaseline
+      ? {
+          COMPATIBLE_API_KEY: apiKey,
+          NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
+          NEMOCLAW_ENDPOINT_URL: mockBaseline.baseUrl,
+          NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
+          NEMOCLAW_PREFERRED_API: "openai-completions",
+          NEMOCLAW_PROVIDER: "custom",
+        }
+      : {};
+
+    const install = await installHermes(host, apiKey, installEnv);
     expect(install.exitCode, resultText(install)).toBe(0);
+    if (mockBaseline) {
+      expect(mockBaseline.requests()).toContainEqual(
+        expect.objectContaining({
+          auth: "ok",
+          model: MOCK_BASELINE_MODEL,
+          path: "/v1/chat/completions",
+        }),
+      );
+    }
     const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");

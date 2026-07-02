@@ -411,7 +411,7 @@ describe("fetch-guard patch regression guard", () => {
     expect(result.status).toBe(42);
   });
 
-  it("upgrades stale OpenClaw to the runtime build target and leaves current installs alone", () => {
+  it("installs the reviewed archive for stale and same-version OpenClaw bases", () => {
     const stale = runOpenClawUpgradeBlock("2026.3.11");
     expect(stale.result.status).toBe(0);
     expect(stale.result.stdout).toContain(
@@ -430,10 +430,13 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.result.stdout).toContain(
       `matches reviewed target ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
     );
-    expect(current.calls).not.toContain(
+    expect(current.calls).toContain(
       `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
     );
-    expect(current.calls).not.toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(current.calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(current.calls).toContain(
+      `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
+    );
 
     const newer = runOpenClawUpgradeBlock("2026.6.10");
     expect(newer.result.status).toBe(1);

@@ -249,7 +249,7 @@ RUN set -eu; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || true); \
     CUR_VER="${CUR_VER:-0.0.0}"; \
     if [ "$CUR_VER" = "$OPENCLAW_VERSION" ]; then \
-        echo "INFO: Base image OpenClaw $CUR_VER matches target; reinstalling reviewed archive"; \
+        echo "INFO: Base image OpenClaw $CUR_VER matches reviewed target $OPENCLAW_VERSION; reinstalling reviewed archive"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \

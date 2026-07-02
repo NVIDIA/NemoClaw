@@ -541,7 +541,7 @@ describe("OpenClaw npm integrity pins", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      `Base image OpenClaw ${PINNED_OPENCLAW_VERSION} matches target; reinstalling reviewed archive`,
+      `Base image OpenClaw ${PINNED_OPENCLAW_VERSION} matches reviewed target ${PINNED_OPENCLAW_VERSION}; reinstalling reviewed archive`,
     );
     expect(calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
     expect(calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
