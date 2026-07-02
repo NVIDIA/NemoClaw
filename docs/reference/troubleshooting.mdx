@@ -628,10 +628,12 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 The normal uninstall path keeps user data under `~/.nemoclaw/`, including sandbox registry metadata, backups, and saved credentials unless you explicitly remove them.
-If `$$nemoclaw uninstall` reports that the local uninstall script is missing, copy the versioned `uninstall.sh` URL that it prints, review it, run it, and then retry the installer:
+If `$$nemoclaw uninstall` reports that the local uninstall script is missing, follow the CLI's security boundary: download the versioned NVIDIA/NemoClaw tag URL that it prints, inspect the script locally, run that local copy, and then retry the installer.
 
 ```bash
-curl -fsSL <versioned-uninstall-url> | bash
+curl -fsSLo uninstall.sh <versioned-uninstall-url>
+less uninstall.sh
+bash uninstall.sh --yes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
