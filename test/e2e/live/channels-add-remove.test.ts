@@ -375,9 +375,13 @@ liveTest(
         `channels-add-remove live test is destructive and only accepts sandbox names with prefix ${TEST_SANDBOX_PREFIX}; got ${SANDBOX_NAME}`,
       );
     }
+    // The OpenShell router reaches this fixture from its own network namespace,
+    // so runner loopback is not a valid advertised provider endpoint.
     const baseline = await startFakeOpenAiCompatibleServer({
       apiKey: BASELINE_API_KEY,
+      host: "0.0.0.0",
       model: BASELINE_MODEL,
+      publicHost: "host.openshell.internal",
       requireAuth: true,
     });
     cleanup.add("close channels add/remove baseline fixture", async () => {
@@ -443,13 +447,6 @@ liveTest(
     );
 
     await onboardWithLocalBaseline(host, baseline.baseUrl);
-    expect(baseline.requests()).toContainEqual(
-      expect.objectContaining({
-        auth: "ok",
-        model: BASELINE_MODEL,
-        path: "/v1/chat/completions",
-      }),
-    );
     await expectSandboxReady(sandbox, "phase-1-sandbox-ready-after-onboard");
 
     await expectProvider(host, "absent", "phase-2-provider-get-baseline");
@@ -467,6 +464,7 @@ liveTest(
     expectHostTelegramConfig("after channels add");
     expectHostTelegramPlan("active", "after channels add");
 
+    const baselineRequestCountBeforeCredentialReuseRebuild = baseline.requests().length;
     const rebuildAdd = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-3-rebuild-after-add-without-host-compatible-key",
       env: channelEnv(),
@@ -475,6 +473,15 @@ liveTest(
     });
     expect(resultText(rebuildAdd)).not.toContain("provider credential not found");
     assertExitZero(rebuildAdd, `nemoclaw ${SANDBOX_NAME} rebuild --yes after add`);
+    expect(
+      baseline.requests().slice(baselineRequestCountBeforeCredentialReuseRebuild),
+    ).toContainEqual(
+      expect.objectContaining({
+        auth: "ok",
+        model: BASELINE_MODEL,
+        path: "/v1/chat/completions",
+      }),
+    );
     await lifecycle.assertSandboxReadyAfterRebuild(SANDBOX_NAME, {
       artifactNamePrefix: "phase-3-sandbox-ready-after-add-rebuild",
       env: sandboxAccessEnv(),
