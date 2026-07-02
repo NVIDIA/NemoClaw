@@ -22,11 +22,17 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
-import {
-  parseOpenShellPolicy,
-  withoutProviderComposedPolicies,
-} from "../shared/openshell-policy-boundary.cjs";
+import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
 import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
+
+// The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
+// .cjs specifier back to .cts and exposes that same module as its default.
+const sourceOrGeneratedOpenShellPolicyBoundary =
+  importedOpenShellPolicyBoundary as typeof importedOpenShellPolicyBoundary & {
+    default?: typeof importedOpenShellPolicyBoundary;
+  };
+const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
+  sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
 type Action = "plan" | "apply" | "status" | "rollback";
 

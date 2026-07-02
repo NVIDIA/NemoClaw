@@ -100,6 +100,22 @@ describe("OpenShell policy boundary package contract", () => {
     expect(pluginRunner.actionApply).toBeTypeOf("function");
   });
 
+  it("loads the source plugin runner through the tsx subprocess boundary", () => {
+    const runnerPath = path.join(repoRoot, "nemoclaw", "src", "blueprint", "runner.ts");
+    const output = execFileSync(
+      process.execPath,
+      [
+        path.join(repoRoot, "node_modules", "tsx", "dist", "cli.mjs"),
+        "--input-type=module",
+        "--eval",
+        `const runner = await import(${JSON.stringify(pathToFileURL(runnerPath).href)}); process.stdout.write(typeof runner.actionApply);`,
+      ],
+      { cwd: repoRoot, encoding: "utf8" },
+    );
+
+    expect(output).toBe("function");
+  });
+
   it("preserves fail-soft CLI parsing while the canonical runner parser stays strict", () => {
     const cliPolicy = require("../../dist/lib/policy/index.js") as {
       parseCurrentPolicy: (raw: string | null | undefined) => string;
