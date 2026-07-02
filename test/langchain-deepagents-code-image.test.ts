@@ -164,6 +164,7 @@ function makeStartScriptFixture(tempDir: string): {
 
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
 
 function runStartScriptProxyProbe(
   scriptPath: string,
@@ -171,12 +172,14 @@ function runStartScriptProxyProbe(
   env: NodeJS.ProcessEnv,
 ): { envFileText: string; output: string } {
   const probe = [
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
-    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy",
+    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
+    "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
+    "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
   ].join("\n");
@@ -283,6 +286,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       http_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       https_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       no_proxy: "corp.internal,inference.local",
+      ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
+      all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
       ...inheritedSecrets,
     });
 
@@ -302,6 +307,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=${managedNoProxy}`);
       expect(envFileLines).toContain(`export ${name}=${managedNoProxy.replaceAll(",", "\\,")}`);
     }
+    expect(envFileLines).toContain("unset ALL_PROXY all_proxy");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
     ).not.toEqual(expect.arrayContaining([expect.stringContaining("inference.local")]));
@@ -314,10 +320,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     for (const secret of Object.values(inheritedSecrets)) {
       expect(envFileText).not.toContain(secret);
     }
-    expect(combined).not.toContain("corp-proxy.example");
-    expect(combined).not.toContain("lower-proxy.example");
-    expect(combined).not.toContain("corp-user");
-    expect(combined).not.toContain("corp-password");
+    expect(combined).not.toContain("proxy.example");
+    expect(combined).not.toContain("user");
+    expect(combined).not.toContain("password");
     expect(combined).not.toContain("corp.internal");
   });
 
@@ -615,6 +620,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).toContain("sandbox_login_exec");
     expect(headlessCheck).toContain("sandbox_login_proxy_contract");
     expect(headlessCheck).toContain("-u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY");
+    expect(headlessCheck).toContain("-u ALL_PROXY -u all_proxy");
     expect(headlessCheck).toContain("-u http_proxy -u https_proxy -u no_proxy");
     expect(headlessCheck).toContain('HOME=/sandbox bash -lc "$1"');
     expect(headlessCheck).toContain('bash -lc "$1"');

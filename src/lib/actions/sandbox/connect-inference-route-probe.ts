@@ -16,6 +16,8 @@ const PROXY_ENV_KEYS = [
   "https_proxy",
   "NO_PROXY",
   "no_proxy",
+  "ALL_PROXY",
+  "all_proxy",
 ] as const;
 
 export function buildSandboxInferenceRouteProbeArgs(

@@ -20,6 +20,7 @@ const headlessCheckPath = path.join(
 );
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
 const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
@@ -65,7 +66,7 @@ function makeLauncherProxyProbeFixture(
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
   const probe = [
     "#!/usr/bin/env bash",
-    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
+    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
     '  printf \'LAUNCHER_%s=%s\\n\' "$name" "${!name-__unset__}"',
     "done",
     "",
@@ -135,6 +136,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       http_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       https_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       no_proxy: "corp.internal,inference.local",
+      ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
+      all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -147,11 +150,16 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     for (const name of NO_PROXY_ENV_NAMES) {
       expect(lines).toContain(`LAUNCHER_${name}=${managedNoProxy}`);
     }
+    for (const name of CLEARED_PROXY_ENV_NAMES) {
+      expect(lines).toContain(`LAUNCHER_${name}=__unset__`);
+    }
     const output = `${result.stdout}\n${result.stderr}`;
     expect(output).not.toContain("inference.local");
     expect(output).not.toContain("corp-proxy.example");
     expect(output).not.toContain("corp-user");
     expect(output).not.toContain("corp-password");
+    expect(output).not.toContain("all-proxy.example");
+    expect(output).not.toContain("all-password");
   });
 
   it("pins validated proxy overrides into direct dcode execution paths (#6191)", () => {
@@ -174,6 +182,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     );
     expect(launcher).toContain('export HTTPS_PROXY="$_PROXY_URL"');
     expect(launcher).toContain('export no_proxy="$_NO_PROXY_VAL"');
+    expect(launcher).toContain("unset ALL_PROXY all_proxy");
   });
 
   it("does not let runtime config override the image-baked dcode proxy (#6191)", () => {
@@ -184,6 +193,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const untrustedEnv = {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       NO_PROXY: "corp.internal,inference.local",
+      ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
+      all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
       NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
       NEMOCLAW_PROXY_PORT: "4444",
     };
@@ -194,7 +205,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
         scriptPath,
         "bash",
         "-c",
-        'printf \'START_PROXY=%s|%s|%s|%s\\n\' "$HTTPS_PROXY" "$NO_PROXY" "${NEMOCLAW_PROXY_HOST-__unset__}" "${NEMOCLAW_PROXY_PORT-__unset__}"',
+        'printf \'START_PROXY=%s|%s|%s|%s|%s|%s\\n\' "$HTTPS_PROXY" "$NO_PROXY" "${NEMOCLAW_PROXY_HOST-__unset__}" "${NEMOCLAW_PROXY_PORT-__unset__}" "${ALL_PROXY-__unset__}" "${all_proxy-__unset__}"',
       ],
       {
         env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...untrustedEnv },
@@ -209,12 +220,14 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     const startNoProxy = startResult.stdout.match(/^START_PROXY=[^|]*\|([^|]*)\|/m)?.[1];
     expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(startResult.stdout).toContain(
-      "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__",
+      "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__|__unset__|__unset__",
     );
     expect(envFileText).toContain("export HTTPS_PROXY=http://trusted-proxy.internal:3129");
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );
+    expect(envFileText).toContain("unset ALL_PROXY all_proxy");
+    expect(envFileText).not.toMatch(/^export (?:ALL_PROXY|all_proxy)=/m);
     // The two standalone shell boundaries construct the same exclusion list.
     // TypeScript does not reconstruct NO_PROXY; its connect probe deliberately
     // sources this persisted value from /tmp/nemoclaw-proxy-env.sh.
@@ -226,6 +239,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(combined).not.toContain("attacker-proxy.internal");
     expect(combined).not.toContain("corp-proxy.example");
     expect(combined).not.toContain("corp-password");
+    expect(combined).not.toContain("all-proxy.example");
+    expect(combined).not.toContain("all-password");
   });
 
   it("fails closed when the image-baked dcode proxy contract is missing (#6191)", () => {

@@ -40,6 +40,7 @@ function validateLoginProxyContract(
   noProxy: string,
   lowerProxy = proxyUrl,
   runtimeEnvMetadata: RuntimeEnvMetadataCase = "valid",
+  allProxy: string | null = null,
 ): string {
   const loginHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-"));
   const hostFile = path.join(loginHome, "trusted-proxy-host");
@@ -58,6 +59,12 @@ function validateLoginProxyContract(
     `export https_proxy=${JSON.stringify(lowerProxy)}`,
     `export NO_PROXY=${JSON.stringify(noProxy)}`,
     `export no_proxy=${JSON.stringify(noProxy)}`,
+    ...(allProxy === null
+      ? ["unset ALL_PROXY all_proxy"]
+      : [
+          `export ALL_PROXY=${JSON.stringify(allProxy)}`,
+          `export all_proxy=${JSON.stringify(allProxy)}`,
+        ]),
     "",
   ].join("\n");
   switch (runtimeEnvMetadata) {
@@ -105,11 +112,15 @@ function validateLoginProxyContract(
       [
         "sandbox_login_exec() {",
         "  case \"$1\" in *$'\\n'*|*$'\\r'*) return 97 ;; esac",
-        '  env -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u no_proxy HOME="$TEST_LOGIN_HOME" bash -lc "$1"',
+        '  env -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u no_proxy -u ALL_PROXY -u all_proxy HOME="$TEST_LOGIN_HOME" bash -lc "$1"',
         "}",
         "if sandbox_login_proxy_contract >/dev/null 2>&1; then printf pass; else printf fail; fi",
       ].join("\n"),
-      { TEST_LOGIN_HOME: loginHome },
+      {
+        TEST_LOGIN_HOME: loginHome,
+        ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
+        all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
+      },
       checkFixture,
     );
   } finally {
@@ -149,6 +160,15 @@ describe("Deep Agents Code login-shell proxy contract", () => {
       validateLoginProxyContract(
         "http://attacker-proxy.internal:9999",
         "localhost,127.0.0.1,::1,attacker-proxy.internal",
+      ),
+    ).toBe("fail");
+    expect(
+      validateLoginProxyContract(
+        managedProxy,
+        managedNoProxy,
+        managedProxy,
+        "valid",
+        "socks5://all-user:all-password@all-proxy.example:1080",
       ),
     ).toBe("fail");
   });
