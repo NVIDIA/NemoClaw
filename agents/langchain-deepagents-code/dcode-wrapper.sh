@@ -355,31 +355,52 @@ toml_provider_metadata() {
   return 0
 }
 
+is_safe_dcode_agent_name() {
+  local value="$1"
+  local LC_ALL=C
+  [ -n "$value" ] || return 1
+  case "$value" in
+    . | .. | */* | *\\*) return 1 ;;
+  esac
+  ! [[ "$value" =~ [[:cntrl:]] ]]
+}
+
 resolve_dcode_agent() {
   local config_dir candidate
   config_dir="${DEEPAGENTS_CONFIG_FILE%/*}"
   candidate="$(toml_section_scalar agents default)"
-  if [ -n "$candidate" ] && [ -d "$config_dir/$candidate" ]; then
+  if is_safe_dcode_agent_name "$candidate" && [ -d "$config_dir/$candidate" ]; then
     printf '%s' "$candidate"
     return 0
   fi
   candidate="$(toml_section_scalar agents recent)"
-  if [ -n "$candidate" ] && [ -d "$config_dir/$candidate" ]; then
+  if is_safe_dcode_agent_name "$candidate" && [ -d "$config_dir/$candidate" ]; then
     printf '%s' "$candidate"
     return 0
   fi
   printf '%s' 'agent (default)'
 }
 
+terminal_safe_identity_value() {
+  local value="$1"
+  local fallback="${2:-}"
+  local LC_ALL=C
+  if [[ "$value" =~ [[:cntrl:]] ]]; then
+    printf '%s' "$fallback"
+  else
+    printf '%s' "$value"
+  fi
+}
+
 print_identity() {
   local sandbox_name agent model endpoint route provider
-  sandbox_name="${NEMOCLAW_SANDBOX_NAME:-unknown}"
-  agent="$(resolve_dcode_agent)"
-  model="$(toml_section_scalar models default)"
-  [ -n "$model" ] || model="$(toml_section_scalar models recent)"
-  endpoint="$(toml_section_scalar models.providers.openai base_url)"
-  route="$(toml_provider_metadata route)"
-  provider="$(toml_provider_metadata provider)"
+  sandbox_name="$(terminal_safe_identity_value "${NEMOCLAW_SANDBOX_NAME:-unknown}" unknown)"
+  agent="$(terminal_safe_identity_value "$(resolve_dcode_agent)" 'agent (default)')"
+  model="$(terminal_safe_identity_value "$(toml_section_scalar models default)")"
+  [ -n "$model" ] || model="$(terminal_safe_identity_value "$(toml_section_scalar models recent)")"
+  endpoint="$(terminal_safe_identity_value "$(toml_section_scalar models.providers.openai base_url)")"
+  route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
+  provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
   printf 'Sandbox:  %s\n' "$sandbox_name"
   printf 'Harness:  %s\n' 'langchain-deepagents-code'

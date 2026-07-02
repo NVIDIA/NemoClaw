@@ -146,6 +146,37 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("ignores traversal-shaped agent preferences", () => {
+      withTempDir((dir) => {
+        const config = SAMPLE_CONFIG.replace('default = "backend-dev"', 'default = ".."');
+        const fixture = buildFixture(dir, config);
+        addAgentDir(fixture, "frontend-dev");
+        const run = runBashWrapper(fixture, ["status"], {});
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain("Agent:    frontend-dev");
+      });
+    });
+
+    it("does not write control characters from mutable identity metadata", () => {
+      withTempDir((dir) => {
+        const escape = "\u001b[31m";
+        const config = SAMPLE_CONFIG.replace(
+          'default = "openai:demo-model"',
+          `default = "openai:${escape}spoof"`,
+        ).replace("upstream provider: nvidia-prod", `upstream provider: nvidia-prod${escape}`);
+        const run = runBashWrapper(buildFixture(dir, config), ["status"], {
+          NEMOCLAW_SANDBOX_NAME: `demo${escape}`,
+        });
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).not.toContain("\u001b");
+        expect(run.stdout).toContain("Sandbox:  unknown");
+        expect(run.stdout).not.toContain("Provider:");
+        expect(run.stdout).not.toContain("Model:");
+      });
+    });
+
     it("advertises the managed identity commands before delegating help upstream", () => {
       withTempDir((dir) => {
         const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--help"], {});
