@@ -39,6 +39,7 @@ The release candidate is the exact full `origin/main` commit SHA captured by the
 Before asking for the exact release confirmation phrase, build and show an evidence ledger for that SHA:
 
 - Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
+- Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
 - Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
 - Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
 - Map each test with green evidence to its successful run or job URL and attempt number.

@@ -87,7 +87,9 @@ describe("maintainer skills follow canonical workflow policy", () => {
   });
 
   it("requires exact-SHA E2E evidence or itemized maintainer exceptions before tagging", () => {
+    const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
@@ -97,6 +99,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(policy).toContain("at least one completed, successful execution");
     expect(policy).toContain("multiple workflow runs, selective runs, reruns, and attempts");
     expect(policy).toContain("explicit selection and every expanded matrix execution");
+    expect(policy).toContain("each expanded matrix execution as a separate ledger entry");
+    expect(policy).toContain("matrix `id`");
     expect(policy).toContain("A later failure does not erase an earlier successful execution");
     expect(policy).toContain(
       "Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence",
@@ -115,6 +119,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evidenceSummary).toBeLessThan(confirmationPrompt);
     expect(evening).toContain("every test has green evidence");
     expect(evening).toContain("explicit itemized maintainer exception");
+    expect(dailyFlow).toContain("freeze the exact candidate SHA and review every E2E test");
+    expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
