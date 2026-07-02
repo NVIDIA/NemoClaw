@@ -10,7 +10,7 @@ import { redact } from "../../runner";
 export type EnsureTerminalInferenceRoute = (
   sandboxName: string,
   options: { quiet: true },
-) => unknown;
+) => { routeHealthy: boolean | null };
 
 export function runTerminalAgentConnectProbe({
   agent,
@@ -25,7 +25,13 @@ export function runTerminalAgentConnectProbe({
   ensureInferenceRoute: EnsureTerminalInferenceRoute;
   sandboxName: string;
 }): void {
-  ensureInferenceRoute(sandboxName, { quiet: true });
+  const routeResult = ensureInferenceRoute(sandboxName, { quiet: true });
+  if (agent.name === "langchain-deepagents-code" && routeResult.routeHealthy === false) {
+    console.error(
+      `  Probe failed: ${agentName} could not reach the managed inference.local route in '${sandboxName}'.`,
+    );
+    process.exit(1);
+  }
   const smokeResult = runAgentSmokeCommands(sandboxName, agent, capture);
   if (!smokeResult.ok) {
     console.error(
