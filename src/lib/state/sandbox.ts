@@ -121,6 +121,9 @@ export interface BackupResult {
   error?: string;
   backedUpFiles: string[];
   failedFiles: string[];
+  // Set when a failure stems from an SSH transport failure against a running
+  // sandbox (see isSshTransportFailure), as opposed to an audit rejection or
+  // a partial tar read error.
   unreachable?: boolean;
 }
 
@@ -1114,6 +1117,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const failedDirs: string[] = [];
   const backedUpFiles: string[] = [];
   const failedFiles: string[] = [];
+  let unreachable = false;
 
   if (stateDirs.length === 0 && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
@@ -1222,6 +1226,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           _log(`FAILED: Pre-backup audit command failed — ${detail}`);
           return {
             success: false,
+            unreachable: isSshTransportFailure(auditResult),
             manifest,
             backedUpDirs,
             failedDirs: [...existingDirs],
@@ -1289,6 +1294,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         _log(
           `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
         );
+        if (isSshTransportFailure(result)) unreachable = true;
 
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
         // 2 = errors (e.g. permission denied) but archive still written to stdout.
@@ -1393,6 +1399,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   return {
     success: failedDirs.length === 0 && failedFiles.length === 0,
+    unreachable,
     manifest,
     backedUpDirs,
     failedDirs,

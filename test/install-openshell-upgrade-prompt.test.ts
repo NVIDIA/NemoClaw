@@ -229,9 +229,7 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
     expect(result.status).toBe(0);
     expect(result.stdout + result.stderr).toContain("Retrying with the current NemoClaw CLI");
     expect(result.stdout).toContain("RESTORE=1");
-    expect(cliLog.split(/\r?\n/)).toContain("old:backup-all");
-    expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
-    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
+    expect(cliLog).toMatch(/old:backup-all[\s\S]*prepare-current[\s\S]*current:backup-all/);
     expect(openshellLog).toBe("");
   });
 
