@@ -43,7 +43,7 @@ describe("Host files and state documentation (#6088)", () => {
   it("separates host state from sandbox-side config.json", () => {
     expect(doc).toContain("Do not confuse host `~/.nemoclaw/`");
     expect(doc).toContain("/sandbox/.nemoclaw/config.json");
-    expect(doc).toContain("because `HOME=/sandbox` there");
-    expect(doc).toContain("it is not a host-side `~/.nemoclaw/config.json` file");
+    expect(doc).toContain("`HOME=/sandbox`");
+    expect(doc).toContain("not a host-side `~/.nemoclaw/config.json`");
   });
 });

@@ -23,8 +23,10 @@ Do not confuse host `~/.nemoclaw/` with the sandbox's `/sandbox/.nemoclaw/` dire
 
 ## User Data Preserved By Uninstall
 
+<Warning>
 `$$nemoclaw uninstall` and `nemohermes uninstall` preserve these entries by default.
 They are removed only when you pass `--destroy-user-data`, set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`, or answer the interactive data-loss prompt with `y`.
+</Warning>
 
 | Path | Created by | Purpose | Safe to delete? |
 |------|------------|---------|-----------------|
