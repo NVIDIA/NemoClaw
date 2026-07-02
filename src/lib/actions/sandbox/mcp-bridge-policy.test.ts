@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
+import * as policies from "../../policy";
+import * as registry from "../../state/registry";
 import {
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -14,6 +16,10 @@ import {
 import { applyGeneratedPolicy } from "./mcp-bridge-policy";
 
 describe("MCP OpenShell policy", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("refuses to apply a generated policy without exact public address pins", () => {
     expect(() =>
       applyGeneratedPolicy(
@@ -95,6 +101,38 @@ describe("MCP OpenShell policy", () => {
       max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
       strict_tool_names: true,
       allow_all_known_mcp_methods: false,
+    });
+  });
+
+  it("applies internally generated DNS pins outside the user-supplied preset path", () => {
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    vi.spyOn(registry, "addCustomPolicy").mockReturnValue(true);
+    vi.spyOn(policies, "getPresetContentGatewayState")
+      .mockReturnValueOnce("absent")
+      .mockReturnValueOnce("match");
+    const applyPresetContent = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
+
+    applyGeneratedPolicy(
+      "alpha",
+      {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://api.githubcopilot.com/mcp",
+        env: ["GITHUB_MCP_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      },
+      ["8.8.8.8"],
+    );
+
+    const [, , generatedContent, options] = applyPresetContent.mock.calls[0];
+    expect(generatedContent).toContain("allowed_ips:");
+    expect(options).toEqual({
+      allowedExistingNetworkPolicyKeys: [],
+      nonFatal: true,
+      skipRegistryUpdate: true,
     });
   });
 

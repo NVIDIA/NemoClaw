@@ -158,8 +158,10 @@ export function applyGeneratedPolicy(
     };
     persistGeneratedPolicyRegistration(sandboxName, reservation);
   }
+  // `custom` denotes user-supplied preset content and intentionally rejects
+  // `allowed_ips`. This content is generated from validated MCP inputs and the
+  // ownership reservation above; `skipRegistryUpdate` avoids a second write.
   const ok = policies.applyPresetContent(sandboxName, entry.policyName, content, {
-    custom: { sourcePath: MCP_BRIDGE_POLICY_SOURCE },
     allowedExistingNetworkPolicyKeys: ownsExistingPolicyKey ? [policyKey] : [],
     nonFatal: true,
     skipRegistryUpdate: true,
