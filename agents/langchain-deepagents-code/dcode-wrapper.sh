@@ -357,12 +357,11 @@ toml_provider_metadata() {
 
 is_safe_dcode_agent_name() {
   local value="$1"
+  local pattern='^[A-Za-z0-9_ -]+$'
   local LC_ALL=C
   [ -n "$value" ] || return 1
-  case "$value" in
-    . | .. | */* | *\\*) return 1 ;;
-  esac
-  ! [[ "$value" =~ [[:cntrl:]] ]]
+  [ -n "$(trim_whitespace "$value")" ] || return 1
+  [[ "$value" =~ $pattern ]]
 }
 
 resolve_dcode_agent() {
@@ -385,7 +384,7 @@ terminal_safe_identity_value() {
   local value="$1"
   local fallback="${2:-}"
   local LC_ALL=C
-  if [[ "$value" =~ [[:cntrl:]] ]]; then
+  if [ ${#value} -gt 256 ] || [[ "$value" =~ [[:cntrl:]] ]]; then
     printf '%s' "$fallback"
   else
     printf '%s' "$value"
@@ -402,6 +401,7 @@ print_identity() {
   route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
   provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
   [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
+  endpoint="$(terminal_safe_identity_value "$endpoint")"
   printf 'Sandbox:  %s\n' "$sandbox_name"
   printf 'Harness:  %s\n' 'langchain-deepagents-code'
   printf 'Agent:    %s\n' "$agent"

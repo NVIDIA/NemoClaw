@@ -158,15 +158,38 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("ignores agent preferences that dcode cannot activate", () => {
+      withTempDir((dir) => {
+        for (const invalidName of [".hidden", "   "]) {
+          const config = SAMPLE_CONFIG.replace(
+            'default = "backend-dev"',
+            `default = "${invalidName}"`,
+          );
+          const fixture = buildFixture(dir, config);
+          addAgentDir(fixture, invalidName);
+          addAgentDir(fixture, "frontend-dev");
+          const run = runBashWrapper(fixture, ["status"], {});
+
+          expect(run.status).toBe(0);
+          expect(run.stdout).toContain("Agent:    frontend-dev");
+          expect(run.stdout).not.toContain(`Agent:    ${invalidName}`);
+          fs.rmSync(path.join(fixture.configDir, "frontend-dev"), { recursive: true });
+        }
+      });
+    });
+
     it("does not write control characters from mutable identity metadata", () => {
       withTempDir((dir) => {
         const escape = "\u001b[31m";
         const config = SAMPLE_CONFIG.replace(
           'default = "openai:demo-model"',
           `default = "openai:${escape}spoof"`,
-        ).replace("upstream provider: nvidia-prod", `upstream provider: nvidia-prod${escape}`);
+        )
+          .replace("upstream provider: nvidia-prod", `upstream provider: nvidia-prod${escape}`)
+          .replace('base_url = "https://inference.local/v1"', "");
         const run = runBashWrapper(buildFixture(dir, config), ["status"], {
           NEMOCLAW_SANDBOX_NAME: `demo${escape}`,
+          OPENAI_BASE_URL: `https://inference.local/${escape}`,
         });
 
         expect(run.status).toBe(0);
@@ -174,6 +197,23 @@ describe.skipIf(!canRun)(
         expect(run.stdout).toContain("Sandbox:  unknown");
         expect(run.stdout).not.toContain("Provider:");
         expect(run.stdout).not.toContain("Model:");
+        expect(run.stdout).not.toContain("Endpoint:");
+      });
+    });
+
+    it("does not write oversized mutable identity metadata", () => {
+      withTempDir((dir) => {
+        const oversized = "x".repeat(257);
+        const config = SAMPLE_CONFIG.replace('base_url = "https://inference.local/v1"', "");
+        const run = runBashWrapper(buildFixture(dir, config), ["status"], {
+          NEMOCLAW_SANDBOX_NAME: oversized,
+          OPENAI_BASE_URL: oversized,
+        });
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).toContain("Sandbox:  unknown");
+        expect(run.stdout).not.toContain(oversized);
+        expect(run.stdout).not.toContain("Endpoint:");
       });
     });
 
