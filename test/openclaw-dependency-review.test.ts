@@ -334,7 +334,7 @@ check_contains "$optional_plugin_block" 'rm -rf "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_
 
 	grep -Fq 'spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"]' "$messaging_build_applier"
 	grep -Fq '["openclaw", "plugins", "install", packed.archivePath, ...(install.pin ? ["--pin"] : [])]' "$messaging_build_applier"
-	grep -Fq 'npmViewString(install.npmPackageSpec, "dist.integrity", env)' "$messaging_build_applier"
+	grep -Fq 'OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField' "$messaging_build_applier"
 	grep -Fq 'downloaded tarball integrity mismatch' "$messaging_build_applier"
 	grep -Fq 'mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"))' "$messaging_build_applier"
 	grep -Fq 'rmSync(rootDir, { recursive: true, force: true })' "$messaging_build_applier"

@@ -125,6 +125,14 @@ type OpenClawPluginInstall = {
   readonly pin: boolean;
 };
 
+export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze({
+  schemaVersion: 1,
+  packageIdentity: "exact-npm-package-spec",
+  registryIntegrityField: "dist.integrity",
+  packedArchiveIntegrity: "must-match-committed-sri",
+  registryTarballUrl: "not-pinned",
+} as const);
+
 type HermesUvPackageInstall = {
   readonly spec: string;
 };
@@ -158,14 +166,9 @@ export function reviewedOpenClawPluginIntegrityByPackageSpec(
     for (const packageSpec of manifest.agentPackages ?? []) {
       if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
       const resolvedSpec = resolveOpenClawPackageSpec(packageSpec.spec, env);
-      const npmPackage = parseNpmPackageSpec(resolvedSpec);
-      if (!npmPackage) {
-        throw new MessagingBuildApplierError(
-          `Trusted manifest ${manifest.id} declares a non-npm OpenClaw plugin package: ${resolvedSpec}`,
-        );
-      }
+      const npmPackage = requireExactNpmPackageSpec(resolvedSpec, manifest.id);
       const integrity =
-        packageSpec.integrity ?? packageSpec.integrityByVersion?.[npmPackage.version ?? ""];
+        packageSpec.integrity ?? packageSpec.integrityByVersion?.[npmPackage.version];
       if (integrity) entries.push([npmPackage.packageSpec, integrity]);
     }
   }
@@ -532,12 +535,7 @@ function trustedOpenClawPluginSpecsForManifests(
     for (const packageSpec of manifest.agentPackages ?? []) {
       if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
       const resolvedSpec = resolveOpenClawPackageSpec(packageSpec.spec, env);
-      const npmPackage = parseNpmPackageSpec(resolvedSpec);
-      if (!npmPackage) {
-        throw new MessagingBuildApplierError(
-          `Trusted manifest ${manifest.id} declares a non-npm OpenClaw plugin package: ${resolvedSpec}`,
-        );
-      }
+      requireExactNpmPackageSpec(resolvedSpec, manifest.id);
       specs.add(resolvedSpec);
     }
   }
@@ -1085,6 +1083,27 @@ function parseNpmPackageSpec(
   return { packageSpec, version: packageSpec.slice(versionAt + 1) };
 }
 
+const EXACT_NPM_VERSION_PATTERN =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+
+function requireExactNpmPackageSpec(
+  spec: string,
+  manifestId: string,
+): { readonly packageSpec: string; readonly version: string } {
+  const parsed = parseNpmPackageSpec(spec);
+  if (!parsed) {
+    throw new MessagingBuildApplierError(
+      `Trusted manifest ${manifestId} declares a non-npm OpenClaw plugin package: ${spec}`,
+    );
+  }
+  if (!parsed.version || !EXACT_NPM_VERSION_PATTERN.test(parsed.version)) {
+    throw new MessagingBuildApplierError(
+      `Trusted manifest ${manifestId} must use an exact-version OpenClaw plugin package: ${spec}`,
+    );
+  }
+  return { packageSpec: parsed.packageSpec, version: parsed.version };
+}
+
 function runCommand(args: readonly string[], env: Env): void {
   console.log(`+ ${args.join(" ")}`);
   const result = spawnSync(args[0] as string, args.slice(1), {
@@ -1215,7 +1234,11 @@ function packVerifiedOpenClawPluginArchive(
       `OpenClaw plugin ${install.npmPackageSpec} has no committed npm integrity pin`,
     );
   }
-  const actual = npmViewString(install.npmPackageSpec, "dist.integrity", env);
+  const actual = npmViewString(
+    install.npmPackageSpec,
+    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField,
+    env,
+  );
   if (actual !== install.integrity) {
     throw new MessagingBuildApplierError(
       `OpenClaw plugin ${install.npmPackageSpec} npm integrity mismatch. Expected: ${install.integrity}. Actual: ${actual}`,

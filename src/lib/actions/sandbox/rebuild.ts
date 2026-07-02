@@ -69,9 +69,12 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
-import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
+import {
+  finalizeRebuildPostRestore,
+  resetRebuildShieldsStateAfterRecreate,
+} from "./rebuild-finalization";
 import {
   backupSandboxStateForRebuild,
   ensureRebuildAgentBaseImage,
@@ -85,6 +88,7 @@ import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
+import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import {
   getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
@@ -813,49 +817,13 @@ export async function rebuildSandbox(
     relockRebuildShieldsWindow(sandboxName, rebuildShieldsWindow, sandboxStillExists, CLI_NAME);
 
   let sandboxStillExists = true;
-  let removedRegistryEntry: registry.SandboxEntry | null = null;
-  let registryEntryRemoved = false;
-  let registryRollbackAttempted = false;
-  const restoreRegistryEntryForRetry = (): void => {
-    if (registryRollbackAttempted) return;
-
-    // Prepared installer recovery takes a refreshed registry snapshot directly
-    // before deletion. Restore that exact entry even if failed onboarding wrote
-    // a partial replacement, so the validated pre-upgrade contract wins.
-    const snapshotEntry = recoveryRegistrySnapshot?.sandboxes?.[sandboxName];
-    if (preparedBackupRecovery && snapshotEntry) {
-      registryRollbackAttempted = true;
-      try {
-        registry.restoreSandboxEntry(snapshotEntry, {
-          reclaimDefault:
-            recoveryRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
-        });
-        log("Recovery recreate failed: restored preserved registry entry for retry");
-      } catch (err) {
-        log(`Failed to restore registry entry after recovery recreate failure: ${String(err)}`);
-      }
-      return;
-    }
-
-    // Ordinary and stale rebuilds use the removal receipt and never overwrite a
-    // replacement that onboarding may already have registered.
-    if (!registryEntryRemoved || !removedRegistryEntry) return;
-    registryRollbackAttempted = true;
-    try {
-      const restored = registry.restoreSandboxEntryIfMissing({
-        ...removedRegistryEntry,
-        imageTag: null,
-      });
-      const recreateLabel = staleRecovery ? "Stale-recovery recreate" : "Recreate";
-      log(
-        restored
-          ? `${recreateLabel} failed: restored registry metadata for retry`
-          : "Recreate failed: kept the replacement registry metadata already present",
-      );
-    } catch (err) {
-      log(`Failed to restore registry metadata after recreate failure: ${String(err)}`);
-    }
-  };
+  const registryRollback = createRebuildRegistryRollback({
+    sandboxName,
+    preparedBackupRecovery,
+    staleRecovery,
+    getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
+    log,
+  });
 
   try {
     // Re-read the prepared manifest immediately before the destructive phase.
@@ -919,9 +887,7 @@ export async function rebuildSandbox(
       return;
     }
     sandboxStillExists = false;
-    const removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
-    removedRegistryEntry = removalReceipt?.entry ?? null;
-    registryEntryRemoved = removalReceipt !== null;
+    registryRollback.recordRemoval(removeSandboxRegistryEntryWithReceipt(sandboxName));
     log(
       `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
     );
@@ -1085,7 +1051,7 @@ export async function rebuildSandbox(
       // Put the pre-delete retry metadata back only when this rebuild actually
       // removed. Prepared recovery restores its refreshed snapshot; ordinary
       // rebuilds restore the removal receipt only when no replacement exists.
-      restoreRegistryEntryForRetry();
+      registryRollback.restoreForRetry();
 
       console.error("");
       if (recoveryRecreate) {
@@ -1125,9 +1091,7 @@ export async function rebuildSandbox(
     // Recreate succeeded. Reset the prior shields state so the freshly recreated
     // (mutable) sandbox reports its true posture. Deferred until here so a failed
     // recreate above leaves the lockdown record intact for a retry (#4497).
-    if (recoveryRecreate) {
-      shields.clearShieldsState(sandboxName);
-    }
+    resetRebuildShieldsStateAfterRecreate(sandboxName, recoveryRecreate);
 
     const preservedRegistryFields = {
       ...(hasRebuildHermesToolGateways
@@ -1225,8 +1189,6 @@ export async function rebuildSandbox(
     // gateway-side config writes, so the final result is downgraded below.
     let mutablePermsRepairUnverified = false;
     let mutableConfigHashRefreshUnverified = false;
-    let messagingHostForwardUnverified = false;
-    const policyPresetRestoreIncomplete = failedPresets.length > 0;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1312,107 +1274,29 @@ export async function rebuildSandbox(
     // missing directories implicitly. The NemoClaw plugin's skill cache refreshes on
     // on_session_start. Gateway startup is non-fatal if state.db migration fails.
 
-    // Step 7: Update registry with new version
-    //
-    // Source-of-truth reconciliation for `policies`:
-    //
-    // - Invalid state: `registry.policies` retained a preset name after the
-    //   reapply loop pruned it (disabled messaging channel) or skipped it
-    //   (failed `applyPreset`), so `policy-list` showed a ● marker for a
-    //   preset whose rules were absent from the gateway.
-    // - Source boundary: `policies.applyPreset` only appends to
-    //   `registry.policies`; nothing else writes the canonical post-rebuild
-    //   set. The reapply loop above is the only place that knows which
-    //   presets were actually reapplied.
-    // - Source-fix constraint: must run after the reapply loop and use the
-    //   successfully restored subset, not `savedPresets` (which still
-    //   includes failures).
-    // - Regression test:
-    //   `src/lib/actions/sandbox/rebuild-flow.test.ts` asserts
-    //   `registry.updateSandbox` receives `policies: restoredPresets` for
-    //   both the successful-rebuild and partial-restore harnesses.
-    // - Removal condition: drop this once `applyPreset` writes the
-    //   canonical post-apply set itself (replacing its append-only
-    //   contract), making the rebuild flow's reconciliation redundant.
-    registry.updateSandbox(sandboxName, {
-      agentVersion: agentDef.expectedVersion || null,
-      policies: restoredPresets,
+    // Step 7: reconcile registry and recovery invariants after all restore work.
+    finalizeRebuildPostRestore({
+      sandboxName,
+      agentExpectedVersion: agentDef.expectedVersion,
+      reportedVersion: versionCheck.expectedVersion,
+      rebuiltAgentName,
+      restoredPresets,
+      failedPresets,
+      rebuildMessagingPlan,
+      restoreSucceeded,
+      mutablePermsRepairUnverified,
+      mutableConfigHashRefreshUnverified,
+      staleRecovery,
+      backup: backupManifest,
+      recoveryRecreate,
+      staleSandboxWasLocked,
+      preparedBackupRecovery,
+      relockShields: () => relockShieldsIfNeeded(true),
+      log,
+      bail,
     });
-    log(
-      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}]`,
-    );
-
-    if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
-    if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
-      messagingHostForwardUnverified = true;
-    }
-
-    console.log("");
-    const postRestoreComplete =
-      restoreSucceeded &&
-      !mutablePermsRepairUnverified &&
-      !mutableConfigHashRefreshUnverified &&
-      !messagingHostForwardUnverified &&
-      !policyPresetRestoreIncomplete;
-    if (postRestoreComplete) {
-      console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
-      if (staleRecovery && !backupManifest) {
-        console.log(
-          `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
-        );
-      }
-      if (versionCheck.expectedVersion) {
-        console.log(`    Now running: ${rebuiltAgentName} v${versionCheck.expectedVersion}`);
-      }
-    } else {
-      // At least one post-restore step is incomplete. Surface every applicable
-      // failure (#4538: a failed state restore and an unverified permission
-      // repair are independent \u2014 report both so the operator does not miss the
-      // backup-restore recovery just because permissions also need attention).
-      console.log(
-        `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but some post-restore steps were incomplete`,
-      );
-      if (!restoreSucceeded && backupManifest) {
-        console.log(
-          `    State restore was incomplete \u2014 backup available at: ${backupManifest.backupPath}`,
-        );
-      }
-      if (mutablePermsRepairUnverified) {
-        console.log(
-          `    Mutable config permissions were not verified \u2014 run \`${CLI_NAME} ${sandboxName} doctor --fix\` to restore the OpenClaw config permission contract`,
-        );
-      }
-      if (mutableConfigHashRefreshUnverified) {
-        console.log(
-          `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
-        );
-      }
-      if (messagingHostForwardUnverified) {
-        console.log(
-          `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
-        );
-      }
-      if (policyPresetRestoreIncomplete) {
-        console.log(
-          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
-        );
-      }
-    }
-    // Stale recovery reset the shields state to mutable (the gone sandbox's lock
-    // seal could not carry over to the fresh image). If lockdown had been enabled,
-    // tell the operator to re-apply it on the recreated sandbox (#4497).
-    if (recoveryRecreate && staleSandboxWasLocked) {
-      console.log(
-        `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
-      );
-    }
-    if (preparedBackupRecovery && !postRestoreComplete) {
-      bail(
-        `Prepared backup recovery for '${sandboxName}' completed with unverified post-restore state.`,
-      );
-    }
   } catch (err) {
-    if (!sandboxStillExists) restoreRegistryEntryForRetry();
+    if (!sandboxStillExists) registryRollback.restoreForRetry();
     throw err;
   } finally {
     if (!rebuildShieldsWindow.relocked) {

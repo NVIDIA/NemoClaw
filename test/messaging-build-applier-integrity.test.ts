@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "./helpers/timeouts";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
@@ -39,12 +40,84 @@ function fakeSlackNpmScript(): string {
     "  exit 0",
     "fi",
     'if [ "${1:-}" = "view" ] && [ "${3:-}" = "dist.integrity" ]; then printf "%s\\n" "$OPENCLAW_SLACK_INTEGRITY"; exit 0; fi',
+    'if [ "${1:-}" = "view" ] && [ "${3:-}" = "dist.tarball" ]; then printf "%s\\n" "$OPENCLAW_UNEXPECTED_TARBALL_URL"; exit 0; fi',
     "exit 1",
     "",
   ].join("\n");
 }
 
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
+  it(
+    "accepts the explicit SRI-only registry provenance boundary without querying dist.tarball",
+    () => {
+      expect(OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY).toEqual({
+        schemaVersion: 1,
+        packageIdentity: "exact-npm-package-spec",
+        registryIntegrityField: "dist.integrity",
+        packedArchiveIntegrity: "must-match-committed-sri",
+        registryTarballUrl: "not-pinned",
+      });
+
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-provenance-"));
+      const tracePath = path.join(tmp, "openclaw.trace");
+      fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
+      fs.writeFileSync(
+        path.join(tmp, "openclaw"),
+        [
+          "#!/bin/sh",
+          'printf \'openclaw|%s|%s|%s|%s\\n\' "$1" "$2" "$3" "$4" >> "$OPENCLAW_TRACE"',
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      try {
+        const env = withLegacyMessagingPlanEnv(
+          {
+            PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+            OPENCLAW_TRACE: tracePath,
+            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
+            OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
+            OPENCLAW_UNEXPECTED_TARBALL_URL:
+              "https://unexpected.invalid/openclaw/slack-2026.6.9.tgz",
+            OPENCLAW_VERSION: "2026.6.9",
+            NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+          },
+          "openclaw",
+        );
+        const result = spawnSync(
+          "node",
+          [
+            "--experimental-strip-types",
+            SCRIPT_PATH,
+            "--agent",
+            "openclaw",
+            "--phase",
+            "agent-install",
+          ],
+          {
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+            env,
+            timeout: 10_000,
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        const trace = fs.readFileSync(tracePath, "utf-8");
+        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.9|dist.integrity");
+        expect(trace).not.toContain("dist.tarball");
+        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.9|--pack-destination");
+        expect(trace).toContain("openclaw|plugins|install");
+        expect(trace).toContain("slack-2026.6.9.tgz|--pin");
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+    testTimeout(15_000),
+  );
+
   it(
     "fails closed before installing the 2026.6.9 Slack plugin when the packed archive integrity drifts",
     () => {

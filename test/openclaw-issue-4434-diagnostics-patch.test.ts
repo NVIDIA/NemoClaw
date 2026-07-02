@@ -70,6 +70,24 @@ function writeUnrecognizedAssistantFormatterFixture(dist: string): string {
   return fixture;
 }
 
+function writeRenamedArrowAssistantFormatterFixture(dist: string): string {
+  const fixture = path.join(dist, "assistant-error-format-fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      'const MALFORMED_STREAMING_FRAGMENT_USER_MESSAGE = "fixture";',
+      "function parseApiErrorInfo(raw) { return null; }",
+      "const formatRawAssistantErrorForUi_v2 = (raw) => {",
+      '  const trimmed = (raw ?? "").trim();',
+      '  if (!trimmed) return "LLM request failed with an unknown error.";',
+      "  return trimmed;",
+      "};",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
 function runPatch(dist: string, args: string[] = []) {
   return spawnSync(process.execPath, ["--experimental-strip-types", PATCH_SCRIPT, ...args, dist], {
     encoding: "utf-8",
@@ -232,6 +250,24 @@ describe("OpenClaw diagnostics compatibility patch (#4434)", () => {
       expect(audit.stdout).toContain("1 file(s) NOT FOUND");
     } finally {
       fs.rmSync(signatureDriftTmp, { recursive: true, force: true });
+    }
+
+    const renamedArrowTmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openclaw-4434-renamed-arrow-"),
+    );
+    const renamedArrowDist = path.join(renamedArrowTmp, "dist");
+    fs.mkdirSync(renamedArrowDist);
+    writeRenamedArrowAssistantFormatterFixture(renamedArrowDist);
+    try {
+      const audit = runPatchAudit(renamedArrowDist);
+      expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(3);
+      expect(audit.stdout).toContain("assistant error formatter: NOT FOUND");
+      expect(audit.stdout).toContain(
+        "[MISS] expected exactly one OpenClaw assistant error formatter file, found 0",
+      );
+      expect(audit.stdout).toContain("[MISS] issue-4434-diagnostics: file unresolved");
+    } finally {
+      fs.rmSync(renamedArrowTmp, { recursive: true, force: true });
     }
 
     const unknownTmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-4434-unknown-"));
