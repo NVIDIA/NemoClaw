@@ -50,3 +50,5 @@ them before upload, deletes the raw trace directory, and uploads only
 target artifact. These per-target summaries are artifact evidence only; the
 Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
 artifact so baseline aggregation stays stable.
+Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
+map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.

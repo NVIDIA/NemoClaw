@@ -47,6 +47,9 @@ The durable E2E system has one execution path:
   at `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`.
   The workflow owns `NEMOCLAW_TRACE_DIR`, keeps raw traces under runner
   temporary storage, and deletes those raw traces before uploading artifacts.
+  Older issue and migration notes may call this the Vitest artifact path; in
+  the current consolidated workflow that path is the live registry-target
+  artifact root.
   The dedicated `cloud-onboard` artifact remains the only source for the
   Slack and GitHub scorecard timing comparison.
 - `test/e2e/fixtures/` is fixture/support code, not a test harness

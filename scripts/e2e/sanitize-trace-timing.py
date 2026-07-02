@@ -10,8 +10,10 @@ writes a single allowlisted summary without attributes, events, paths, prompts,
 environment data, or raw error messages.
 
 Source-of-truth note: raw trace shape is produced by src/lib/trace.ts
-TraceArtifact. This reducer is intentionally narrower than that source schema
-until the producer can emit the timing-only CI artifact directly.
+TraceArtifact. This reducer is intentionally narrower than that source schema:
+raw traces remain useful local diagnostics, while CI only needs timing evidence.
+If the producer grows a timing-only artifact, this post-run reducer can be
+removed in favor of that source artifact.
 """
 
 from __future__ import annotations

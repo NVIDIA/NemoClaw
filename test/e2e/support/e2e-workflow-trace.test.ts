@@ -119,6 +119,21 @@ describe("e2e workflow live trace boundary", () => {
       ]),
     );
   });
+
+  it("rejects live trace sanitizer script path drift", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      const sanitizeStep = liveStep(workflow, "Build trusted live E2E timing summary");
+      expect(sanitizeStep.run).toEqual(expect.any(String));
+      sanitizeStep.run = String(sanitizeStep.run).replace(
+        "scripts/e2e/sanitize-trace-timing.py",
+        "scripts/e2e/renamed-sanitize-trace-timing.py",
+      );
+    });
+
+    expect(errors).toContain(
+      "step 'Build trusted live E2E timing summary' run script must include scripts/e2e/sanitize-trace-timing.py",
+    );
+  });
 });
 
 const TRACE_SOURCE_ASSIGNMENT =
