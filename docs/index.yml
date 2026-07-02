@@ -168,6 +168,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.openclaw.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.openclaw.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
                 slug: network-policies
@@ -320,6 +323,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.hermes.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.hermes.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
                 slug: network-policies

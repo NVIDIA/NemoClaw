@@ -40,6 +40,15 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
+  it("redacts a complete multi-segment LangSmith key without exposing its tail", () => {
+    const canonical = `lsv2_sk_${"a".repeat(36)}_${"tail".repeat(3)}`;
+
+    const out = redactString(`canonical=${canonical}`);
+
+    expect(out).toBe("canonical=<REDACTED>");
+    expect(out).not.toContain("_tailtailtail");
+  });
+
   it("applies explicit values longest first so a shorter substring cannot expose a longer one", () => {
     const longer = "alpha-beta-gamma";
     const shorter = "alpha";

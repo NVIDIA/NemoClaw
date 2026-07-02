@@ -100,6 +100,9 @@ has_non_slack_secret_shape() {
   if has_context_secret_shape "$value"; then
     return 0
   fi
+  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -189,6 +192,9 @@ is_secret_shaped_value() {
     return 0
   fi
   if has_context_secret_shape "$value"; then
+    return 0
+  fi
+  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
     return 0
   fi
   return 1
