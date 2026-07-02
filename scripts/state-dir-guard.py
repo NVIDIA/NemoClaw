@@ -1215,6 +1215,10 @@ def _chown_symlink(
         raise GuardOperationError(
             Issue("entry-raced", path, "symlink changed while ownership was updated")
         )
+    if action == "unlock":
+        issue = _validate_symlink(context, parent_fd, name, relative_path, after)
+        if issue is not None:
+            raise GuardOperationError(issue)
 
 
 def _mutate_dir(

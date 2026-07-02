@@ -82,6 +82,55 @@ print(json.dumps({
 }))
 `;
 
+const RUN_SYMLINK_POST_CHOWN_RACE = String.raw`
+import importlib.util
+import json
+import os
+import sys
+
+guard_path, config_dir, outside_dir = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("nemoclaw_state_dir_guard_race", guard_path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+identity = module.Identity(
+    root_uid=os.getuid(), root_gid=os.getgid(),
+    sandbox_uid=os.getuid(), sandbox_gid=os.getgid(),
+)
+config_fd = module._open_absolute_dir_nofollow(config_dir)
+plugins_fd = -1
+original_chown = module.os.chown
+try:
+    config_st = os.fstat(config_fd)
+    plugins_st = os.stat("plugins", dir_fd=config_fd, follow_symlinks=False)
+    plugins_fd = module._open_child_dir(config_fd, "plugins", plugins_st)
+    context = module.TraversalContext(
+        config_fd, config_dir, config_st.st_dev, ("plugins",),
+        module.WorkBudget(module.time.monotonic() + 30),
+    )
+
+    def racing_chown(name, uid, gid, *, dir_fd, follow_symlinks):
+        original_chown(name, uid, gid, dir_fd=dir_fd, follow_symlinks=follow_symlinks)
+        os.unlink("target", dir_fd=dir_fd)
+        os.symlink(outside_dir, "target", dir_fd=dir_fd)
+
+    module.os.chown = racing_chown
+    try:
+        module._chown_symlink(
+            plugins_fd, "current", "plugins/current", context,
+            "high-risk", "unlock", identity,
+        )
+    except module.GuardOperationError as exc:
+        print(json.dumps(exc.issue.as_json()))
+    else:
+        print(json.dumps({"type": "result", "status": "unexpected-success"}))
+finally:
+    module.os.chown = original_chown
+    if plugins_fd >= 0:
+        os.close(plugins_fd)
+    os.close(config_fd)
+`;
+
 interface GuardLine {
   type: "issue" | "result";
   code?: string;
@@ -219,6 +268,34 @@ describe("state-dir-guard", () => {
     expect(fs.readlinkSync(path.join(pluginDir, "current"))).toBe("versions/v1");
     expect(mode(pluginDir)).toBe(0o755);
     expect(mode(path.join(versionDir, "plugin.js"))).toBe(0o644);
+  });
+
+  it("rejects a nested symlink target replaced during unlock ownership change", () => {
+    const { root, configDir } = fixture();
+    const pluginsDir = path.join(configDir, "plugins");
+    const currentLink = path.join(pluginsDir, "current");
+    const targetLink = path.join(pluginsDir, "target");
+    const outsideDir = path.join(root, "outside");
+    fs.mkdirSync(path.join(pluginsDir, "versions", "v1"), { recursive: true });
+    fs.mkdirSync(outsideDir);
+    fs.symlinkSync("versions/v1", targetLink);
+    fs.symlinkSync("target", currentLink);
+
+    const result = spawnSync(
+      "python3",
+      ["-c", RUN_SYMLINK_POST_CHOWN_RACE, GUARD_PATH, configDir, outsideDir],
+      { encoding: "utf-8", timeout: 15_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout.trim())).toEqual(
+      expect.objectContaining({
+        type: "issue",
+        code: "symlink-outside-protected-root",
+        path: currentLink,
+      }),
+    );
+    expect(fs.readlinkSync(targetLink)).toBe(outsideDir);
   });
 
   it("preserves the exact image-owned OpenClaw extension peer link across transitions", () => {
