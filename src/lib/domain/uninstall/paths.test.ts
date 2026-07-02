@@ -27,6 +27,7 @@ describe("uninstall paths", () => {
     expect(paths.openshellConfigDir).toBe(path.join("/home/test", ".config", "openshell"));
     expect(paths.nemoclawConfigDir).toBe(path.join("/home/test", ".config", "nemoclaw"));
     expect(paths.nemoclawShimPath).toBe(path.join("/home/test", ".local", "bin", "nemoclaw"));
+    expect(paths.nemohermsShimPath).toBe(path.join("/home/test", ".local", "bin", "nemohermes"));
     expect(paths.openshellInstallPaths).toEqual([
       ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/usr/local/bin", binary)),
       ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/xdg/bin", binary)),

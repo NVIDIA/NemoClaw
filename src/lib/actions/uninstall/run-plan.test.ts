@@ -60,6 +60,43 @@ describe("uninstall run plan", () => {
     );
   });
 
+  it("removes the nemohermes shim when it is an installer-managed symlink (#6098)", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-hermes-shim-"));
+    const userBin = path.join(tmpHome, ".local", "bin");
+    fs.mkdirSync(userBin, { recursive: true });
+    const nemohermsShimPath = path.join(userBin, "nemohermes");
+    fs.symlinkSync("/dev/null", nemohermsShimPath);
+
+    const removed: string[] = [];
+    try {
+      runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          commandExists: () => false,
+          env: {
+            HOME: tmpHome,
+            NEMOCLAW_AGENT: "hermes",
+            TMPDIR: tmpHome,
+          } as NodeJS.ProcessEnv,
+          existsSync: (target) => fs.existsSync(target),
+          isTty: false,
+          log: () => {},
+          rmSync: vi.fn((target: fs.PathLike, opts?: fs.RmOptions) => {
+            removed.push(String(target));
+            fs.rmSync(target, opts);
+          }),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(removed).toContain(nemohermsShimPath);
+      expect(fs.existsSync(nemohermsShimPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("applies a non-destructive uninstall run with fake tools", () => {
     const logs: string[] = [];
     const run = vi.fn((_command: string, args: string[]) => {

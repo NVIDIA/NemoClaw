@@ -686,6 +686,13 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
       `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
     );
   }
+  const agentShim = classifyShimPath(paths.nemohermsShimPath);
+  if (agentShim.remove) removePath(paths.nemohermsShimPath, runtime);
+  else if (agentShim.kind === "preserve-foreign-file") {
+    runtime.warn(
+      `Leaving ${paths.nemohermsShimPath} in place because it is not an installer-managed shim.`,
+    );
+  }
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
 }

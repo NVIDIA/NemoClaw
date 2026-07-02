@@ -31,6 +31,7 @@ export interface UninstallPaths {
   managedSwapMarkerPath: string;
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
+  nemohermsShimPath: string;
   nemoclawStateDir: string;
   gatewayLocalStateDir: string;
   openshellConfigDir: string;
@@ -59,6 +60,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     managedSwapMarkerPath: path.join(options.home, ".nemoclaw", "managed_swap"),
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
+    nemohermsShimPath: path.join(options.home, ".local", "bin", "nemohermes"),
     nemoclawStateDir: path.join(options.home, ".nemoclaw"),
     gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
