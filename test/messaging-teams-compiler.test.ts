@@ -7,8 +7,8 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
 } from "../src/lib/messaging/channels";
-import { createBuiltInMessagingHookRegistry } from "../src/lib/messaging/hooks";
 import { ManifestCompiler } from "../src/lib/messaging/compiler/manifest-compiler";
+import { createBuiltInMessagingHookRegistry } from "../src/lib/messaging/hooks";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
