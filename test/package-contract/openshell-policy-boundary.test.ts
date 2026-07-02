@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -22,6 +23,19 @@ function packageFiles(packageRoot: string): string[] {
 }
 
 describe("OpenShell policy boundary package contract", () => {
+  it("pins the YAML parser used by both production package boundaries", () => {
+    for (const packageRoot of [repoRoot, path.join(repoRoot, "nemoclaw")]) {
+      const dependencyVersion = JSON.parse(
+        execFileSync("npm", ["pkg", "get", "dependencies.yaml"], {
+          cwd: packageRoot,
+          encoding: "utf8",
+        }),
+      ) as string;
+
+      expect(dependencyVersion).toBe("2.8.3");
+    }
+  });
+
   it("routes the CommonJS CLI and ESM plugin through one canonical CJS boundary", async () => {
     const cliPolicy = require("../../dist/lib/policy/merge.js") as {
       parseOpenShellPolicy: (raw: string) => {
