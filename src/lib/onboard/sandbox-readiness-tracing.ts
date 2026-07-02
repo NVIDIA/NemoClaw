@@ -47,13 +47,14 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * `sandbox list` replay in sandbox-readiness-tracing.test.ts) showing a
  * transient create-time Error that recovers to Ready.
  *
- * Tracking mechanism: the maintainer-enabled removal-signal test
- * `upstream_openshell_sandbox_list_error_transient_fixed`
+ * Tracking mechanism: removal is tracked on NemoClaw #6043 (which owns the
+ * pending OpenShell `sandbox list` fix). The maintainer-enabled removal-signal
+ * test `upstream_openshell_sandbox_list_error_transient_fixed`
  * (sandbox-readiness-tracing.test.ts, currently `it.skip`) is the executable
  * checkpoint — point it at a captured `sandbox list` trace from a fixed
  * OpenShell and, once it passes (no transient Error), this debounce can be
- * removed. Escalate to a GitHub tracking issue against the OpenShell fix if the
- * workaround outlives a release cycle.
+ * removed. Escalate to a dedicated OpenShell-fix tracking issue (referenced
+ * here and in the test) if the workaround outlives a release cycle.
  *
  * The readiness loop polls `sandbox list` every 2 seconds, so the default of
  * 30 tolerates ~60s of sustained Error before failing.

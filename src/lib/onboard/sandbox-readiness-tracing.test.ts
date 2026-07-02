@@ -312,11 +312,12 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
   // transient Error branch this replay exercises.
 
   // Removal signal for the debounce workaround (see the source-of-truth block
-  // in sandbox-readiness-tracing.ts). A maintainer enables this once OpenShell
-  // guarantees `sandbox list` no longer reports a transient Error while the
-  // gateway re-registers a just-created sandbox: if the raw upstream sequence
-  // contains no Error rows, the debounce in waitForCreatedSandboxReadyWithTrace
-  // can be deleted.
+  // in sandbox-readiness-tracing.ts). Removal is tracked on NemoClaw #6043
+  // (which owns the pending upstream OpenShell `sandbox list` fix). A maintainer
+  // enables this once OpenShell guarantees `sandbox list` no longer reports a
+  // transient Error while the gateway re-registers a just-created sandbox: if
+  // the raw upstream sequence contains no Error rows, the debounce in
+  // waitForCreatedSandboxReadyWithTrace can be deleted.
   it.skip("upstream_openshell_sandbox_list_error_transient_fixed", () => {
     // Replace `reporterSequence` with a captured `sandbox list` trace from a
     // fixed OpenShell during a fresh GPU onboard, then assert no Error rows.
