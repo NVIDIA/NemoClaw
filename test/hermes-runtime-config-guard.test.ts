@@ -835,6 +835,45 @@ with tempfile.TemporaryDirectory() as tmp:
 });
 
 describe("Hermes startup readiness lease", () => {
+  it("rejects a supervisor argv polluted with the appended startup command (#6110)", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+
+polluted_supervisor = (
+    b"/opt/openshell/bin/openshell-sandbox\\0"
+    b"env\\0CHAT_UI_URL=http://127.0.0.1:18789\\0nemoclaw-start\\0"
+)
+guard.__file__ = guard.INSTALLED_RUNTIME_CONFIG_GUARD
+guard._open_proc_root = lambda: 101
+guard._open_proc_pid = lambda _root, _pid: 102
+guard._read_proc_pid_file = lambda _fd, _name, _display: polluted_supervisor
+guard.os.close = lambda _fd: None
+guard.os.getppid = lambda: 1
+guard.pwd.getpwnam = lambda _name: type("User", (), {"pw_uid": 1000})()
+guard._startup_ready_marker_absent = lambda: True
+guard._openshell_supervised_nonroot_start_is_live = lambda *_args: False
+
+classification = guard._pid1_is_nemoclaw_start()
+
+try:
+    guard._validate_action_readiness("ensure-api-key", True)
+    error = None
+except guard.UnsafePathError as exc:
+    error = str(exc)
+
+print(json.dumps({
+    "classification": classification,
+    "error": error,
+}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      classification: false,
+      error: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+    });
+  });
+
   it("fails closed under foreign PID 1 only for the installed guard entrypoint", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json

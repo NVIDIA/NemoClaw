@@ -1970,10 +1970,10 @@ async function startGatewayWithOptions(
   if (isLinuxDockerDriverGatewayEnabled()) {
     return startDockerDriverGateway({
       exitOnFailure,
-      skipSandboxBridgeReachability:
-        gpuPassthrough &&
-        process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" &&
-        dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host",
+      skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+        gpuPassthrough,
+        _gpu?.platform,
+      ),
     });
   }
 
