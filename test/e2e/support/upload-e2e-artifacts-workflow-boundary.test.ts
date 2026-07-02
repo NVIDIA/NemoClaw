@@ -77,7 +77,7 @@ function validateActionMutation(mutate: (action: MutableAction) => void): string
 }
 
 describe("upload-e2e-artifacts workflow boundary", () => {
-  it("binds one canonical uploader to all 73 E2E execution jobs", () => {
+  it("binds one canonical uploader to all 74 E2E execution jobs", () => {
     expect(validateUploadE2eArtifactsAction()).toEqual([]);
     expect(validateUploadE2eArtifactsInvocations(readWorkflow())).toEqual([]);
   });
@@ -175,8 +175,8 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
-        "upload-e2e-artifacts must cover exactly 73 live and E2E_JOB execution jobs",
-        "upload-e2e-artifacts must keep exactly 64 default callers",
+        "upload-e2e-artifacts must cover exactly 74 live and E2E_JOB execution jobs",
+        "upload-e2e-artifacts must keep exactly 65 default callers",
       ]),
     );
   });

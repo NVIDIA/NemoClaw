@@ -52,9 +52,10 @@ export async function setupHermesProviderInference(
       );
     }
     // DNS-resolving + pinning validation closes the DNS-rebinding gap a
-    // string-only hostname check leaves open. For http this returns the
-    // pinned-IP URL; for https it returns the original hostname (preserving TLS
-    // SNI/cert validation).
+    // string-only hostname check leaves open. For HTTP this returns the
+    // pinned-IP URL. DNS-backed HTTPS fails closed until NemoClaw has a
+    // runtime-aware transport that can preserve TLS SNI/Host while pinning the
+    // resolved peer IP across the downstream OpenShell boundary.
     try {
       const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
       resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
