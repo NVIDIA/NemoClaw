@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { verifySandboxBridgeGatewayReachableOrExit } from "./gateway-sandbox-reachability";
 
 describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   // host_gateway route so the UFW auto-apply branch (bridge_gateway only) is skipped.
   const unreachable = {
     ok: false as const,
@@ -16,7 +20,7 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
 
   it("invokes onUnreachable before aborting on a genuine unreachable probe", async () => {
     const onUnreachable = vi.fn();
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
         reachabilityImpl: () => unreachable,
@@ -25,12 +29,32 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
       }),
     ).rejects.toThrow("sandbox-bridge unreachable");
     expect(onUnreachable).toHaveBeenCalledTimes(1);
-    error.mockRestore();
+  });
+
+  it("invokes onUnreachable before process.exit on the production fatal path", async () => {
+    const calls: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: string | number | null) => {
+      calls.push(`exit:${String(code ?? 0)}`);
+      throw new Error(`process.exit(${String(code ?? 0)})`);
+    }) as never);
+
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(true, {
+        reachabilityImpl: () => unreachable,
+        onUnreachable: () => void calls.push("cleanup"),
+        retryAttempts: 1,
+      }),
+    ).rejects.toThrow("process.exit(1)");
+
+    expect(calls).toEqual(["cleanup", "exit:1"]);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(error).toHaveBeenCalledOnce();
   });
 
   it("attaches cleanup failure as cause without masking the fatal probe failure", async () => {
     const cleanupError = new Error("cleanup failed");
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
@@ -49,13 +73,11 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
         "Gateway cleanup after sandbox-bridge failure failed: cleanup failed",
       ),
     );
-    error.mockRestore();
-    warn.mockRestore();
   });
 
   it("attaches async cleanup rejection as cause without masking the fatal probe failure", async () => {
     const cleanupError = new Error("async cleanup failed");
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
@@ -74,8 +96,6 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
         "Gateway cleanup after sandbox-bridge failure failed: async cleanup failed",
       ),
     );
-    error.mockRestore();
-    warn.mockRestore();
   });
 
   it("does not invoke onUnreachable when the probe succeeds", async () => {
@@ -89,13 +109,12 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
 
   it("does not invoke onUnreachable for a soft probe_unavailable result", async () => {
     const onUnreachable = vi.fn();
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await verifySandboxBridgeGatewayReachableOrExit(false, {
       reachabilityImpl: () => ({ ...unreachable, reason: "probe_unavailable" }),
       onUnreachable,
     });
     expect(onUnreachable).not.toHaveBeenCalled();
-    warn.mockRestore();
   });
 
   it("invokes onUnreachable after UFW auto-apply re-probe still fails", async () => {
@@ -108,8 +127,8 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
       gatewayIp: "172.18.0.1",
     };
     const onUnreachable = vi.fn();
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
     await expect(
       verifySandboxBridgeGatewayReachableOrExit(false, {
         autoApplyImpl: () => ({ applied: true, reason: "applied" }),
@@ -119,7 +138,5 @@ describe("verifySandboxBridgeGatewayReachableOrExit onUnreachable cleanup (#5513
       }),
     ).rejects.toThrow("sandbox-bridge unreachable");
     expect(onUnreachable).toHaveBeenCalledTimes(1);
-    error.mockRestore();
-    log.mockRestore();
   });
 });

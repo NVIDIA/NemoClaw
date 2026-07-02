@@ -8,5 +8,5 @@ export function warnIfCleanupFailed(
   stopDockerDriverGatewayProcess: () => boolean,
   warn: (message: string) => void = console.warn,
 ): void {
-  void (stopDockerDriverGatewayProcess() || warn(CLEANUP_FAILURE_WARNING));
+  if (!stopDockerDriverGatewayProcess()) warn(CLEANUP_FAILURE_WARNING);
 }

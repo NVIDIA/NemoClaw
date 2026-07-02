@@ -48,6 +48,7 @@ interface OpenShellGatewayUserServiceIdentity {
 }
 
 export function getOpenShellGatewayUserServicePaths(): string[] {
+  // Trusted package-managed unit paths are assumed to be root-owned and not writable by users.
   return [
     "/usr/local/lib/systemd/user/openshell-gateway.service",
     "/usr/lib/systemd/user/openshell-gateway.service",
