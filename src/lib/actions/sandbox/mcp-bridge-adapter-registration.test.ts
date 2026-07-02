@@ -8,11 +8,13 @@ import type { McpBridgeEntry } from "../../state/registry";
 
 const mocks = vi.hoisted(() => ({
   executeSandboxCommand: vi.fn(),
+  executeGatewaySupervisorAction: vi.fn(),
   runOpenshellProviderCommand: vi.fn(),
 }));
 
 vi.mock("./process-recovery", () => ({
   executeSandboxCommand: mocks.executeSandboxCommand,
+  executeGatewaySupervisorAction: mocks.executeGatewaySupervisorAction,
 }));
 
 vi.mock("../../actions/global", () => ({
@@ -83,6 +85,7 @@ const adapterCases: AdapterCase[] = [
 describe.each(adapterCases)("$name MCP adapter registration", (adapterCase) => {
   beforeEach(() => {
     mocks.executeSandboxCommand.mockReset();
+    mocks.executeGatewaySupervisorAction.mockReset();
     mocks.runOpenshellProviderCommand.mockReset();
   });
 

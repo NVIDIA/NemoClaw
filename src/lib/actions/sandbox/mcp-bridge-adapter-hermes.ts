@@ -5,6 +5,7 @@ import { runOpenshellProviderCommand } from "../../actions/global";
 import { waitUntil } from "../../core/wait";
 import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
+import { classifyGatewayRestartFailure } from "./gateway-restart";
 import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
@@ -13,11 +14,14 @@ import {
 import { buildHermesMcpStatusCommand, entryHeaders } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { executeGatewaySupervisorAction } from "./process-recovery";
 
 const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
+const HERMES_MCP_RESTART_TIMEOUT_MS = 210_000;
+const HERMES_MCP_INITIAL_PROBE_ATTEMPTS = 3;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 const HERMES_MCP_LIFECYCLE_NOT_READY =
   "Hermes gateway is not running under the managed service lifecycle";
@@ -96,6 +100,18 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
   );
 }
 
+function isExactGatewayRestartCompletion(
+  result: ReturnType<typeof executeGatewaySupervisorAction>,
+): boolean {
+  if (!result || result.status !== 0 || result.stderr.trim()) return false;
+  const lines = result.stdout.trim().split(/\r?\n/);
+  if (lines.length !== 2) return false;
+  const completion = lines[0]?.match(
+    /^v1 ([0-9a-f]{64}) complete (?:ok|already-running) ([0-9]+) ([1-9][0-9]*)$/,
+  );
+  return completion !== null && lines[1] === `GATEWAY_PID=${completion[3]}`;
+}
+
 /**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
@@ -104,47 +120,94 @@ export function assertHermesMcpConfigMutationAllowed(sandboxName: string): void 
 export function assertHermesMcpMutationRuntimeCapability(sandboxName: string): void {
   assertHermesMcpConfigMutationAllowed(sandboxName);
   let lastDetail = "";
-  const ready = waitUntil(
-    () => {
-      let result: ReturnType<typeof runOpenshellProviderCommand>;
-      try {
-        result = runOpenshellProviderCommand(
-          buildHermesMcpExecArgs(
-            sandboxName,
-            buildHermesMcpProbeCommand(),
-            HERMES_MCP_PROBE_TIMEOUT_SECONDS,
-          ),
-          {
-            ignoreError: true,
-            stdio: ["ignore", "pipe", "pipe"],
-            timeout: 45_000,
-          },
-        );
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new McpBridgeError(
-          `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
-        );
-      }
-      const response = parseLastJsonObject(result.stdout || "");
-      if (result.status === 0 && !result.error && response?.ok === true) return true;
-      lastDetail = commandOutput(result).trim();
-      if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
-      if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
-        throw new McpBridgeError(
-          `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
-        );
-      }
-      throw new McpBridgeError(
-        `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
+  const probe = (): boolean => {
+    let result: ReturnType<typeof runOpenshellProviderCommand>;
+    try {
+      result = runOpenshellProviderCommand(
+        buildHermesMcpExecArgs(
+          sandboxName,
+          buildHermesMcpProbeCommand(),
+          HERMES_MCP_PROBE_TIMEOUT_SECONDS,
+        ),
+        {
+          ignoreError: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 45_000,
+        },
       );
-    },
-    HERMES_MCP_STARTUP_TIMEOUT_SECONDS,
-    1_000,
-  );
-  if (!ready) {
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new McpBridgeError(
+        `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+      );
+    }
+    const response = parseLastJsonObject(result.stdout || "");
+    if (result.status === 0 && !result.error && response?.ok === true) return true;
+    lastDetail = commandOutput(result).trim();
+    if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
+    if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
+      throw new McpBridgeError(
+        `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
+      );
+    }
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after waiting for startup. Run \`nemoclaw ${sandboxName} recover\` and retry, or rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
+    );
+  };
+
+  if (
+    waitUntil(probe, {
+      maxAttempts: HERMES_MCP_INITIAL_PROBE_ATTEMPTS,
+      initialIntervalMs: 1_000,
+      maxIntervalMs: 1_000,
+      backoffFactor: 1,
+    })
+  ) {
+    return;
+  }
+
+  let restart: ReturnType<typeof executeGatewaySupervisorAction> = null;
+  let restartFailureDetail = "";
+  try {
+    restart = executeGatewaySupervisorAction(sandboxName, "restart", HERMES_MCP_RESTART_TIMEOUT_MS);
+  } catch (error) {
+    restartFailureDetail = error instanceof Error ? error.message : String(error);
+  }
+  const restartCompleted = isExactGatewayRestartCompletion(restart);
+  if (!restartCompleted) {
+    restartFailureDetail ||= restart ? commandOutput(restart).trim() : "no controller result";
+    const classification = classifyGatewayRestartFailure(restart);
+    const claimsInvalidCompletion =
+      restart !== null && (restart.status === 0 || restart.stdout.trim().length > 0);
+    const terminalIntegrityFailure =
+      claimsInvalidCompletion ||
+      classification.layer === "secret-boundary refusal" ||
+      classification.layer === "unsafe config path" ||
+      classification.layer === "config hash mismatch" ||
+      classification.layer === "health timeout" ||
+      restartFailureDetail.includes("SUPERVISOR_REBUILD_REQUIRED") ||
+      restartFailureDetail.includes("SUPERVISOR_UNSAFE_CONTROL_DIR") ||
+      restartFailureDetail.includes("SUPERVISOR_BUSY") ||
+      restartFailureDetail.includes("SUPERVISOR_INVALID_") ||
+      restartFailureDetail.includes("GATEWAY_GUARDS_MISSING");
+    if (terminalIntegrityFailure) {
+      throw new McpBridgeError(
+        `Hermes sandbox '${sandboxName}' managed gateway restart failed before MCP mutation: ${restartFailureDetail || classification.detail}.`,
+      );
+    }
+  }
+
+  // A privileged controller completion never authorizes mutation by itself.
+  // Even when transient controller unavailability lets the managed lifecycle
+  // finish naturally, the ordinary sandbox identity must freshly prove the
+  // packaged helper and a stable, trusted gateway topology before any MCP
+  // provider, policy, attachment, or adapter side effect.
+  if (!waitUntil(probe, HERMES_MCP_STARTUP_TIMEOUT_SECONDS, 1_000)) {
+    const restartDetail = restartFailureDetail
+      ? ` Managed restart attempt did not complete: ${restartFailureDetail}.`
+      : "";
+    throw new McpBridgeError(
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after a managed gateway restart. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}${restartDetail}`,
     );
   }
 }

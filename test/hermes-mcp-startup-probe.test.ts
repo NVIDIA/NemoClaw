@@ -6,16 +6,39 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 type ProbeResult = { status: number; stdout: string; stderr: string };
+type SupervisorResult = ProbeResult | null;
 
-function runHermesProbe(results: ProbeResult[], shieldsDown = true) {
+function runHermesProbe(
+  results: ProbeResult[],
+  shieldsDown = true,
+  supervisorResults: SupervisorResult[] = [],
+) {
   const script = String.raw`
 const globalActions = require("./src/lib/actions/global.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
 const wait = require("./src/lib/core/wait.js");
 const shields = require("./src/lib/shields/index.js");
 const results = ${JSON.stringify(results)};
+const supervisorResults = ${JSON.stringify(supervisorResults)};
 let calls = 0;
+let restartCalls = 0;
+const restartActions = [];
 globalActions.runOpenshellProviderCommand = () => results[calls++];
-wait.waitUntil = (condition) => [0, 1, 2].some(() => condition());
+processRecovery.executeGatewaySupervisorAction = (_sandbox, action, timeout) => {
+  restartActions.push({ action, timeout });
+  return supervisorResults[restartCalls++] ?? null;
+};
+wait.waitUntil = (condition, optionsOrTimeout) => {
+  const maxAttempts = typeof optionsOrTimeout === "object"
+    ? (optionsOrTimeout.maxAttempts ?? Number.POSITIVE_INFINITY)
+    : Number.POSITIVE_INFINITY;
+  let attempts = 0;
+  while (calls < results.length && attempts < maxAttempts) {
+    attempts += 1;
+    if (condition()) return true;
+  }
+  return false;
+};
 shields.isShieldsDown = () => ${JSON.stringify(shieldsDown)};
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 let message = "";
@@ -24,7 +47,7 @@ try {
 } catch (error) {
   message = error instanceof Error ? error.message : String(error);
 }
-process.stdout.write(JSON.stringify({ calls, message }));
+process.stdout.write(JSON.stringify({ calls, restartActions, message }));
 `;
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
@@ -33,7 +56,11 @@ process.stdout.write(JSON.stringify({ calls, message }));
     timeout: 30_000,
   });
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  return JSON.parse(result.stdout) as { calls: number; message: string };
+  return JSON.parse(result.stdout) as {
+    calls: number;
+    restartActions: Array<{ action: string; timeout: number }>;
+    message: string;
+  };
 }
 
 const starting: ProbeResult = {
@@ -46,18 +73,110 @@ const ready: ProbeResult = {
   stdout: '{"ok":true}\n',
   stderr: "",
 };
+const restarted: SupervisorResult = {
+  status: 0,
+  stdout: `v1 ${"a".repeat(64)} complete ok 0 4242\nGATEWAY_PID=4242`,
+  stderr: "",
+};
 
 describe("Hermes managed MCP startup probe", () => {
   it("refuses shields-up config before invoking the sandbox helper", () => {
     const result = runHermesProbe([ready], false);
 
     expect(result.calls).toBe(0);
+    expect(result.restartActions).toEqual([]);
     expect(result.message).toContain("has shields up or an unreadable shields posture");
     expect(result.message).toContain("nemohermes hermes-box shields down");
   });
 
   it("retries only the exact transient gateway-starting result", () => {
-    expect(runHermesProbe([starting, ready])).toEqual({ calls: 2, message: "" });
+    expect(runHermesProbe([starting, ready])).toEqual({
+      calls: 2,
+      restartActions: [],
+      message: "",
+    });
+  });
+
+  it("does not restart when the third exact startup probe is ready", () => {
+    expect(runHermesProbe([starting, starting, ready])).toEqual({
+      calls: 3,
+      restartActions: [],
+      message: "",
+    });
+  });
+
+  it("uses one host-authenticated restart after repeated exact not-ready probes", () => {
+    expect(runHermesProbe([starting, starting, starting, ready], true, [restarted])).toEqual({
+      calls: 4,
+      restartActions: [{ action: "restart", timeout: 210_000 }],
+      message: "",
+    });
+  });
+
+  it("keeps the fresh helper wait when privileged restart is unavailable", () => {
+    expect(runHermesProbe([starting, starting, starting, ready])).toEqual({
+      calls: 4,
+      restartActions: [{ action: "restart", timeout: 210_000 }],
+      message: "",
+    });
+  });
+
+  it("does not treat controller success as transaction-helper readiness", () => {
+    const result = runHermesProbe([starting, starting, starting, starting, starting], true, [
+      restarted,
+    ]);
+
+    expect(result.calls).toBe(5);
+    expect(result.restartActions).toEqual([{ action: "restart", timeout: 210_000 }]);
+    expect(result.message).toContain("after a managed gateway restart");
+  });
+
+  it.each([
+    "GATEWAY_CONFIG_HASH_MISMATCH",
+    "SUPERVISOR_REBUILD_REQUIRED",
+    "SUPERVISOR_UNSAFE_CONTROL_DIR",
+    "SUPERVISOR_INVALID_STATUS",
+    "GATEWAY_HEALTH_TIMEOUT",
+    "SUPERVISOR_TIMEOUT",
+    "SUPERVISOR_BUSY",
+  ])("fails typed managed-restart integrity refusal %s without another sandbox probe", (marker) => {
+    const result = runHermesProbe([starting, starting, starting, ready], true, [
+      { status: 1, stdout: "", stderr: marker },
+    ]);
+
+    expect(result.calls).toBe(3);
+    expect(result.restartActions).toEqual([{ action: "restart", timeout: 210_000 }]);
+    expect(result.message).toContain("managed gateway restart failed before MCP mutation");
+    expect(result.message).toContain(marker);
+  });
+
+  it.each([
+    {
+      label: "non-numeric PID",
+      result: { status: 0, stdout: "GATEWAY_PID=garbage", stderr: "" },
+    },
+    {
+      label: "failure output beside a completion",
+      result: { ...restarted!, stderr: "SUPERVISOR_UNSAFE_CONTROL_DIR" },
+    },
+    {
+      label: "failure status beside a completion",
+      result: { ...restarted!, status: 1 },
+    },
+    {
+      label: "partial completion protocol",
+      result: {
+        status: 1,
+        stdout: `v1 ${"a".repeat(64)} complete ok 0 4242`,
+        stderr: "",
+      },
+    },
+  ])("rejects invalid controller response: $label", ({ result: invalidResult }) => {
+    const result = runHermesProbe([starting, starting, starting, ready], true, [invalidResult]);
+
+    expect(result.calls).toBe(3);
+    expect(result.restartActions).toEqual([{ action: "restart", timeout: 210_000 }]);
+    expect(result.message).toContain("managed gateway restart failed before MCP mutation");
   });
 
   it("fails immediately on trust and topology errors", () => {
@@ -71,6 +190,7 @@ describe("Hermes managed MCP startup probe", () => {
     ]);
 
     expect(result.calls).toBe(1);
+    expect(result.restartActions).toEqual([]);
     expect(result.message).toContain("does not identify the trusted launcher");
     expect(result.message).not.toContain("nemoclaw hermes-box recover");
   });
@@ -86,6 +206,7 @@ describe("Hermes managed MCP startup probe", () => {
     ]);
 
     expect(result.calls).toBe(1);
+    expect(result.restartActions).toEqual([]);
     expect(result.message).toContain("nemoclaw hermes-box recover");
     expect(result.message).toContain("managed service lifecycle");
   });
@@ -94,8 +215,8 @@ describe("Hermes managed MCP startup probe", () => {
     const result = runHermesProbe([starting, starting, starting]);
 
     expect(result.calls).toBe(3);
-    expect(result.message).toContain("after waiting for startup");
-    expect(result.message).toContain("nemoclaw hermes-box recover");
-    expect(result.message).toContain("Hermes gateway is not running for managed MCP reload");
+    expect(result.restartActions).toEqual([{ action: "restart", timeout: 210_000 }]);
+    expect(result.message).toContain("after a managed gateway restart");
+    expect(result.message).toContain("no controller result");
   });
 });

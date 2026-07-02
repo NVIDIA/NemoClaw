@@ -408,6 +408,7 @@ async function assertConcurrentAddSerialized(
     mcpUrl: string;
     expectedAdapter: McpAdapter;
     artifactPrefix: string;
+    concurrentAddTimeoutMs: number;
   },
 ): Promise<void> {
   cleanup.add(`remove ${options.artifactPrefix} concurrent MCP bridge`, () =>
@@ -433,7 +434,12 @@ async function assertConcurrentAddSerialized(
         artifactName: `${options.artifactPrefix}-mcp-concurrent-add-${attempt}`,
         env,
         redactionValues: [HOST_SECRET],
-        timeoutMs: 3 * 60_000,
+        // Hermes may need one host-authenticated managed restart (210s), a
+        // fresh helper-readiness window (90s), and its acknowledged config
+        // reload (300s). Keep both concurrent clients alive through that
+        // bounded recovery; the loser then acquires the lifecycle lock and
+        // rejects the committed duplicate.
+        timeoutMs: options.concurrentAddTimeoutMs,
       }),
     ),
   );
@@ -931,6 +937,7 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
     mcpUrl,
     expectedAdapter: "mcporter",
     artifactPrefix: "openclaw",
+    concurrentAddTimeoutMs: 3 * 60_000,
   });
 
   const providerName = await addBridgeAndReadStatus(host, {
@@ -1250,6 +1257,7 @@ liveAgentMatrixTest(
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
+      concurrentAddTimeoutMs: 12 * 60_000,
     });
 
     const initialDiscoveryOffset = fakeMcp.requests.length;
@@ -1395,6 +1403,7 @@ liveAgentMatrixTest(
       mcpUrl,
       expectedAdapter: "deepagents-config",
       artifactPrefix: "deepagents",
+      concurrentAddTimeoutMs: 3 * 60_000,
     });
 
     const providerName = await addBridgeAndReadStatus(host, {
