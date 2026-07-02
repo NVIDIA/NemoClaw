@@ -16,6 +16,8 @@ The release is one annotated semver tag on an already-merged `origin/main` commi
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
+- Do not generate the release plan until release-prep docs are merged or explicitly waived.
+- If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
 - Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
 - Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
@@ -40,6 +42,9 @@ Release Progress:
 ```
 
 ### Step 1: Generate Release Plan
+
+Before this step, confirm release-prep docs are merged or explicitly waived.
+Return to `nemoclaw-maintainer-evening` if docs are still pending.
 
 Run exactly one of:
 

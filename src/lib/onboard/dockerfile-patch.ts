@@ -246,9 +246,9 @@ export function patchStagedDockerfile(
     );
   }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
-  // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
-  // Without this, the host export is silently dropped at image build time and
-  // the sandbox falls back to the default 10.200.0.1:3128 proxy. See #1409.
+  // shell. Agent Dockerfiles consume these validated build args; dcode pins
+  // them into root-owned image files so untrusted runtime env cannot redirect
+  // its managed inference traffic. See #1409 and #6191.
   const proxyHostEnv = process.env.NEMOCLAW_PROXY_HOST;
   if (proxyHostEnv && isValidProxyHost(proxyHostEnv)) {
     dockerfile = dockerfile.replace(
