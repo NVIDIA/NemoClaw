@@ -99,6 +99,13 @@ export async function runLiveOnboardFlowSlice<Context>({
   assertUniquePhases(phases);
   let nextContext = context;
   for (const phase of phases) {
+    // This resume-repair compatibility branch runs the raw phases directly and
+    // is intentionally NOT wrapped by the phase-progress reporter: heartbeats
+    // and per-phase timing are scoped to fresh onboarding (the reporter runs on
+    // the strict runOnboardSequenceWithRunner path). Because this branch never
+    // records timings, and the registry is per-process and cleared at the start
+    // of each fresh run, a resume can neither surface a partial "Phase timings"
+    // summary nor leak stale timing state into a later run (#6002 review PRA-7).
     const phaseResult = await phase.run(nextContext);
     for (const result of asResultArray(phaseResult.result, phase.state)) {
       await applyCompatibleResult(result);
