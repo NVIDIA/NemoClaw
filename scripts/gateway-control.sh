@@ -8,6 +8,10 @@ set -eu
 # it must not inherit command resolution from the container environment. Use a
 # fixed interpreter and trusted system PATH before invoking any external tool.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Nonce validation below uses an explicit locale-independent character class
+# ([!0123456789abcdef]) rather than the range [a-f], whose case-sensitivity
+# varies by locale (macOS UTF-8 folds [a-f] case-insensitively), keeping the
+# lowercase-only hex nonce check byte-exact without relying on LC_ALL.
 
 INSTALLED_CONTROL_HELPER="/usr/local/bin/nemoclaw-gateway-control"
 if [ "$0" = "$INSTALLED_CONTROL_HELPER" ]; then
@@ -40,7 +44,7 @@ case "$ACTION" in
   *) fail "SUPERVISOR_INVALID_ACTION" ;;
 esac
 case "$NONCE" in
-  *[!0-9a-f]* | '') fail "SUPERVISOR_INVALID_NONCE" ;;
+  *[!0123456789abcdef]* | '') fail "SUPERVISOR_INVALID_NONCE" ;;
 esac
 [ "${#NONCE}" -eq 64 ] || fail "SUPERVISOR_INVALID_NONCE"
 [ "$CONTROL_CALLER_UID" -eq 0 ] || fail "PRIVILEGED_CONTROL_UNAVAILABLE"

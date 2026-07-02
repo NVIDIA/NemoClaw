@@ -89,6 +89,14 @@ describe("agent definitions", () => {
     expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
   });
 
+  it("declares the Hermes expected version in the runtime semver scheme", () => {
+    const hermes = loadAgent("hermes");
+
+    expect(hermes.expectedVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    const major = Number.parseInt(String(hermes.expectedVersion).split(".")[0] ?? "", 10);
+    expect(major).toBeLessThan(1000);
+  });
+
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
     const deepAgentsCode = loadAgent("langchain-deepagents-code");
 

@@ -7,7 +7,7 @@ export const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 
 export function buildSandboxExecMarkedCommand(command: string): string {
   if (!command.includes("validate-hermes-env-secret-boundary.py")) {
-    return `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
+    return `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
   }
   const encodedCommand = Buffer.from(command, "utf8").toString("base64");
   return [

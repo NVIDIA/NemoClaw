@@ -252,17 +252,32 @@ if [ -e "$HERMES_STARTUP_READY_FILE" ] && ! rm -f "$HERMES_STARTUP_READY_FILE"; 
 fi
 
 # The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
-# base-image python3 that is first on PATH at container boot. (An interactive
-# login shell activates the venv, masking this: `python3` there resolves to
-# /opt/hermes/.venv/bin/python3 and has yaml, but the entrypoint that runs this
-# script does not.) Invoked with bare python3, the seeder hits its "PyYAML
-# unavailable; skipping model seed" branch and returns 0, so the model routing
-# is silently never mirrored into the dashboard home and the Models page shows
-# no models. Resolve the venv interpreter explicitly, falling back to python3.
-_HERMES_PYTHON="/opt/hermes/.venv/bin/python"
-if [ ! -x "$_HERMES_PYTHON" ]; then
-  _HERMES_PYTHON="$(command -v python3 || echo python3)"
-fi
+# base-image python3 that is first on PATH at container boot. Invoked with
+# the base python3, the seeder hits its "PyYAML unavailable; skipping model
+# seed" branch and returns 0, so the model routing is silently never mirrored
+# into the dashboard home and the Models page shows no models.
+#
+# Pick the venv interpreter from a fixed trusted absolute-path list so a
+# PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
+# entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
+# The list scans first-wins ordered most-preferred first (venv > local >
+# system) so the venv python3 is selected when present and falls back to
+# system python3 when the sandbox image has no venv yet. The same priority
+# is mirrored in `agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3` and
+# `src/lib/agent/hermes-recovery-boundary.ts:buildTrustedPython3Picker` so
+# all three entry points pick the same interpreter when several are present.
+# The deprecated `/opt/hermes/.venv/bin/python` symlink path is intentionally
+# not consulted: it is a symlink an attacker with write access to
+# /opt/hermes/.venv could repoint, while the regular files in the trusted
+# list cannot be substituted without breaking the image.
+_HERMES_PYTHON=""
+for _candidate in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
+  if [ -x "$_candidate" ]; then
+    _HERMES_PYTHON="$_candidate"
+    break
+  fi
+done
+unset _candidate
 
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
@@ -1709,13 +1724,15 @@ validate_hermes_env_secret_boundary() {
     echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
     return 1
   fi
+  # `_HERMES_PYTHON` was resolved from the trusted absolute-path list earlier;
+  # use it here so a PATH-shadowed `python3` cannot substitute the validator.
   "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
-    python3 "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
+    "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
 }
 
 validate_hermes_runtime_env_secret_boundary() {
   "${_HERMES_BOUNDARY_TIMEOUT[@]}" \
-    python3 "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
+    "$_HERMES_PYTHON" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
 hermes_gateway_healthy() {
@@ -1797,7 +1814,7 @@ seal_hermes_restart_inputs() {
   HERMES_RESTART_SEALED=0
   install_hermes_restart_seal_traps
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
+    ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
       --hermes-dir "$HERMES_DIR" \
       --hash-file "$HERMES_HASH_FILE" \
       --state-file "$HERMES_RESTART_SEAL_STATE" \
@@ -1814,7 +1831,7 @@ seal_hermes_restart_inputs() {
     # gateway.
     original_failure_code="$HERMES_RESTART_FAILURE_CODE"
     if owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" \
         --lock-token "$GATEWAY_CONTROL_NONCE" 2>&1
@@ -1857,7 +1874,7 @@ unseal_hermes_restart_inputs() {
   HERMES_RESTART_UNSEALING=1
   trap 'HERMES_RESTART_SIGNAL_PENDING=1' SIGTERM SIGINT HUP
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
+    ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
       --hermes-dir "$HERMES_DIR" \
       --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
   )"; then
@@ -1991,7 +2008,7 @@ recover_startup_hermes_mutation() {
 
   while [ -e "$HERMES_CONFIG_MUTATION_LOCK" ] || [ -e "$HERMES_RESTART_SEAL_STATE" ]; do
     if ! owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
     )"; then
@@ -2475,13 +2492,13 @@ hermes_managed_controller_is_live() {
   first_start="$(gateway_control_pid_start_identity "$pid")" || return 1
   first_state="$(gateway_control_pid_state "$pid")" || return 1
   first_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
-  mapfile -d '' -t first_argv <"${proc_root}/${pid}/cmdline" || return 1
+  while IFS= read -r -d "" elem; do first_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
   hermes_managed_controller_argv_is_expected "${first_argv[@]}" || return 1
 
   second_start="$(gateway_control_pid_start_identity "$pid")" || return 1
   second_state="$(gateway_control_pid_state "$pid")" || return 1
   second_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
-  mapfile -d '' -t second_argv <"${proc_root}/${pid}/cmdline" || return 1
+  while IFS= read -r -d "" elem; do second_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
   hermes_managed_controller_argv_is_expected "${second_argv[@]}" || return 1
 
   [ "$first_start" = "$expected_start_identity" ] \
@@ -2499,7 +2516,6 @@ hermes_managed_gateway_exit_was_host_authorized() {
   local marker dir_metadata marker_metadata
   local version marker_pid marker_start_identity controller_pid controller_start_identity extra
   local trailing=""
-  local marker_fd
 
   case "$pid" in
     '' | 0 | 1 | *[!0-9]*) return 1 ;;
@@ -2518,18 +2534,17 @@ hermes_managed_gateway_exit_was_host_authorized() {
   marker_metadata="$(stat -c '%u:%g %a %h' "$marker" 2>/dev/null || true)"
   [ "$marker_metadata" = "0:0 444 1" ] || return 1
 
-  exec {marker_fd}<"$marker" || return 1
-  if ! IFS=' ' read -r \
-    version marker_pid marker_start_identity controller_pid controller_start_identity extra \
-    <&"$marker_fd"; then
-    exec {marker_fd}<&-
-    return 1
-  fi
-  if IFS= read -r trailing <&"$marker_fd" || [ -n "$trailing" ]; then
-    exec {marker_fd}<&-
-    return 1
-  fi
-  exec {marker_fd}<&-
+  # bash 4.1+ named FDs ({var}<file) are not available on bash 3.2 (macOS).
+  # Use a grouped redirect instead — variables assigned inside {} remain in scope.
+  {
+    if ! IFS=' ' read -r \
+      version marker_pid marker_start_identity controller_pid controller_start_identity extra; then
+      return 1
+    fi
+    if IFS= read -r trailing || [ -n "$trailing" ]; then
+      return 1
+    fi
+  } <"$marker" || return 1
 
   [ "$version" = "v1" ] \
     && [ "$marker_pid" = "$pid" ] \

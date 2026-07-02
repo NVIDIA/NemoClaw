@@ -693,7 +693,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expectExitZero(hermesVersion, "Hermes version after rebuild");
     expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
     const hermesVersionText = resultText(hermesVersion);
-    const actualHermesVersion = hermesVersionText.match(/\((\d+\.\d+\.\d+)\)/)?.[1];
+    const actualHermesVersion = hermesVersionText.match(/v(\d+\.\d+\.\d+)/)?.[1];
     expectEqual(
       actualHermesVersion,
       expectedVersion,

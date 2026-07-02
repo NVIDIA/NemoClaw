@@ -34,6 +34,7 @@ function makeDeps(overrides: {
   credentialValue?: string | null;
   nonInteractive?: boolean;
   remoteProviderConfig?: Record<string, RemoteProviderConfigEntry>;
+  validate?: (key: string, credentialEnv: string) => string | null;
 }): DepsRecorder {
   const log: string[] = [];
   const warn: string[] = [];
@@ -58,7 +59,7 @@ function makeDeps(overrides: {
       replaceCalls.push({ env, label });
       return "fresh-key";
     },
-    validateNvidiaApiKeyValue: () => null,
+    validateNvidiaApiKeyValue: overrides.validate ?? (() => null),
   };
   return { log, warn, note, exitCalls, replaceCalls, deps };
 }
@@ -144,5 +145,43 @@ describe("ensureResumeProviderReady", () => {
     expect(recorder.warn.join("\n")).toContain("COMPATIBLE_API_KEY");
     expect(recorder.warn.join("\n")).toContain("during resume");
     expect(recorder.replaceCalls).toHaveLength(0);
+  });
+
+  it("exits 1 without recreating the provider when a hydrated key is invalid in non-interactive mode", async () => {
+    const recorder = makeDeps({
+      providerExists: false,
+      credentialValue: "not-a-nvidia-key",
+      nonInteractive: true,
+      validate: () => "  Invalid NVIDIA API key. Must start with nvapi-",
+    });
+    const result = await ensureResumeProviderReady(
+      "compatible-endpoint",
+      "COMPATIBLE_API_KEY",
+      recorder.deps,
+    );
+    expect(result.forceInferenceSetup).toBe(false);
+    expect(recorder.exitCalls).toEqual([1]);
+    expect(recorder.warn.join("\n")).toContain("Must start with nvapi-");
+    expect(recorder.replaceCalls).toHaveLength(0);
+    expect(recorder.note).toHaveLength(0);
+  });
+
+  it("re-prompts instead of recreating when a hydrated key is invalid in interactive mode", async () => {
+    const recorder = makeDeps({
+      providerExists: false,
+      credentialValue: "not-a-nvidia-key",
+      validate: () => "  Invalid NVIDIA API key. Must start with nvapi-",
+    });
+    const result = await ensureResumeProviderReady(
+      "compatible-endpoint",
+      "COMPATIBLE_API_KEY",
+      recorder.deps,
+    );
+    expect(result.forceInferenceSetup).toBe(true);
+    expect(recorder.exitCalls).toEqual([]);
+    expect(recorder.replaceCalls).toEqual([
+      { env: "COMPATIBLE_API_KEY", label: "Compatible Endpoint API key" },
+    ]);
+    expect(recorder.note).toHaveLength(0);
   });
 });
