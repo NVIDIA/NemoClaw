@@ -35,6 +35,34 @@ function liveStep(workflow: E2eWorkflow, name: string): Record<string, unknown> 
 }
 
 describe("e2e workflow live trace boundary", () => {
+  it("rejects missing live trace boundary steps", () => {
+    for (const name of [
+      "Configure live E2E trace directory",
+      "Build trusted live E2E timing summary",
+      "Delete raw live E2E traces",
+    ]) {
+      const errors = validateMutatedWorkflow((workflow) => {
+        workflow.jobs.live.steps = workflow.jobs.live.steps.filter((step) => step.name !== name);
+      });
+
+      expect(errors).toContain(`run-target job missing step: ${name}`);
+    }
+  });
+
+  it("rejects live sanitizer and cleanup steps without always guards", () => {
+    const errors = validateMutatedWorkflow((workflow) => {
+      liveStep(workflow, "Build trusted live E2E timing summary").if = undefined;
+      liveStep(workflow, "Delete raw live E2E traces").if = undefined;
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        "live trace sanitizer must always run",
+        "live raw trace cleanup must always run",
+      ]),
+    );
+  });
+
   it("rejects live trace setup after workspace preparation", () => {
     const errors = validateMutatedWorkflow((workflow) => {
       const steps = workflow.jobs.live.steps;

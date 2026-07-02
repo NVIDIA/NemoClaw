@@ -52,6 +52,7 @@ describe("fixture redaction entry point", () => {
         E2E_ARTIFACT_DIR: "/tmp/e2e-artifacts/live/target",
         NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
         NEMOCLAW_TRACE_FILE: "/tmp/raw-trace.json",
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-secret",
       },
       {
         fixtureOverlay: {
@@ -59,6 +60,7 @@ describe("fixture redaction entry point", () => {
           E2E_PHASE: "onboard",
           E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
         },
+        secretEnv: ["NVIDIA_INFERENCE_API_KEY"],
       },
     );
 
@@ -68,6 +70,7 @@ describe("fixture redaction entry point", () => {
       E2E_PHASE: "onboard",
       E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
       NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
+      NVIDIA_INFERENCE_API_KEY: "nvapi-test-secret",
     });
     expect(childEnv.NEMOCLAW_TRACE_FILE).toBeUndefined();
   });
