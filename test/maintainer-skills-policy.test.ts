@@ -119,6 +119,8 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(evidenceSummary).toBeLessThan(confirmationPrompt);
     expect(evening).toContain("every test has green evidence");
     expect(evening).toContain("explicit itemized maintainer exception");
+    expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
+    expect(evening).not.toContain("tag `main`");
     expect(dailyFlow).toContain("freeze the exact candidate SHA and review every E2E test");
     expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
   });

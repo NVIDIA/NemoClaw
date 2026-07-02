@@ -42,7 +42,7 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. After the release plan freezes the exact candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
+Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. After the release plan freezes the exact candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag the confirmed release commit with `vX.Y.Z`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
