@@ -46,7 +46,7 @@ function readPreparedPolicy(prepared: {
   policyPath: string;
   cleanup?: () => boolean;
 }): PolicyDocument {
-  if (prepared.cleanup) cleanupFns.push(prepared.cleanup);
+  cleanupFns.push(() => prepared.cleanup?.());
   return YAML.parse(fs.readFileSync(prepared.policyPath, "utf-8")) as PolicyDocument;
 }
 
