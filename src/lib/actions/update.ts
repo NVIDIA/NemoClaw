@@ -275,12 +275,6 @@ export async function runUpdateAction(
     };
   }
 
-  if (available === false && options.fresh) {
-    log(
-      `  ${branding.displayName} is already up to date; reinstalling anyway (--fresh) for a clean re-clone.`,
-    );
-  }
-
   if (!options.yes) {
     if (env.NEMOCLAW_NON_INTERACTIVE === "1") {
       error("  Refusing to prompt in non-interactive mode. Re-run with --yes to update.");
@@ -323,6 +317,15 @@ export async function runUpdateAction(
         updateAvailable: available,
       };
     }
+  }
+
+  // Only announce the --fresh reinstall once the user has actually confirmed
+  // (or passed --yes): before this point the run could still be declined, and
+  // claiming a reinstall was happening would be untrue (CodeRabbit review #5963).
+  if (available === false && options.fresh) {
+    log(
+      `  ${branding.displayName} is already up to date; reinstalling anyway (--fresh) for a clean re-clone.`,
+    );
   }
 
   log(`  Running maintained ${branding.displayName} installer...`);

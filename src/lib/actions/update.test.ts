@@ -191,6 +191,30 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
   });
 
+  it("does not announce a --fresh reinstall when the user declines the prompt (#5960)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const log = vi.fn();
+    const prompt = vi.fn(async () => "n");
+
+    const result = await runUpdateAction(
+      { fresh: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        prompt,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    // The reinstall claim must not print before/without confirmation.
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Update cancelled"));
+  });
+
   it("still refuses --fresh from a developer source checkout (no reinstall)", async () => {
     const spawnSyncImpl = vi.fn();
 
