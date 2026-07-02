@@ -68,30 +68,58 @@ Install the following before you begin.
 
 ## Getting Started
 
-Install the root dependencies and build the TypeScript plugin:
+From the repository root, prepare the checkout with one command:
 
 ```bash
-# Install root dependencies (OpenClaw + CLI entry point)
-npm install
-
-# Install and build the TypeScript plugin
-cd nemoclaw && npm install && npm run build && cd ..
-
-# Install Python documentation dependencies from the repository root
-uv sync
+./scripts/dev-setup.sh
 ```
 
-Verify that the checkout is ready for contributor work:
+The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, installs prek hooks, and exposes the development `nemoclaw` command.
+It is safe to rerun and does not install host packages, change accounts or global Git configuration, accept licenses, manage credentials, or create a runtime sandbox.
+Use `./scripts/dev-setup.sh --repair` to explicitly rerun the same repository-local repairs.
+
+The command finishes with the read-only contributor doctor.
+Follow each remediation it reports for host tools, Docker, GitHub authentication, contributor identity, or commit signing, then rerun setup.
+You can run the doctor independently in human-readable or JSON form:
 
 ```bash
 npm run dev:doctor
+./scripts/dev-setup.sh --doctor --json
 ```
 
-The contributor doctor is read-only.
-It checks the toolchain, dependencies, build artifacts, Git hooks, contributor identity and signing, GitHub authentication, Docker availability, and the locally linked NemoClaw CLI.
-It does not install packages, change configuration, start services, or create a sandbox.
-It complements the end-user installer and coding-agent starter prompt; those paths install and operate NemoClaw but do not prepare a source checkout for contribution.
-Fix any reported failures, then run the command again before creating a feature branch.
+Before your first commit, make sure the doctor reports a configured signing key and `commit.gpgsign=true`.
+Every commit in a contributor PR must appear as `Verified` on GitHub, and the PR description must include your `Signed-off-by:` DCO declaration.
+
+To drive the same workflow through a compatible coding agent, ask:
+
+> Set up this machine as a NemoClaw contributor and prepare it for a first PR.
+
+The `nemoclaw-contributor-onboard` skill invokes the setup script, pauses for user-controlled account or privileged changes, and explains the first-PR workflow.
+Launch the repository-pinned Pi coding agent with:
+
+```bash
+npm run agent
+```
+
+Runtime onboarding is separate because many documentation and unit-test changes do not need a sandbox.
+Run `./scripts/dev-setup.sh --with-runtime` only when the intended issue requires runtime validation.
+That mode delegates to the interactive `nemoclaw onboard` workflow so you retain control of software acceptance, inference, credentials, sandbox resources, messaging, and network policy.
+
+### Manual and Advanced Setup
+
+Use these commands when troubleshooting an individual setup step:
+
+```bash
+npm install
+npm --prefix nemoclaw install
+uv sync --python 3.11
+npm run build:cli
+npm --prefix nemoclaw run build
+npm run typecheck:cli
+npm --prefix nemoclaw exec -- tsc --noEmit
+./node_modules/.bin/prek install
+bash scripts/npm-link-or-shim.sh
+```
 
 ## Building
 
@@ -128,7 +156,9 @@ These are the primary `make` and `npm` targets for day-to-day development:
 
 | Task | Purpose |
 |------|---------|
+| `npm run dev:setup` | Install or repair repository-local contributor tooling |
 | `npm run dev:doctor` | Run read-only contributor environment readiness checks |
+| `npm run agent` | Launch the repository-pinned Pi coding agent |
 | `make check` | Run all linters (TypeScript + Python) |
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |

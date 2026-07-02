@@ -12,23 +12,62 @@ PLUGIN_BUILD_ARTIFACT="${NEMOCLAW_DEV_DOCTOR_PLUGIN_ARTIFACT:-${REPO_ROOT}/nemoc
 PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
+OUTPUT_FORMAT="human"
+JSON_RESULTS=""
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/dev-setup.sh --doctor
+Usage: ./scripts/dev-setup.sh [--repair | --with-runtime]
+       ./scripts/dev-setup.sh --doctor [--json]
 
-Run read-only checks for a NemoClaw contributor environment.
-The doctor never installs packages, changes configuration, or starts services.
+Modes:
+  (default)       Install or repair repository-local contributor tooling.
+  --repair        Re-run the repository-local setup workflow.
+  --with-runtime  Set up the checkout, verify readiness, then run `nemoclaw onboard`.
+  --doctor        Run read-only contributor-readiness checks.
+  --json          Emit the doctor report as JSON. Valid only with --doctor.
+
+Setup never changes host packages, global Git configuration, GitHub state,
+signing keys, credentials, licenses, or sandboxes. Runtime onboarding is
+interactive and opt-in through --with-runtime.
 EOF
+}
+
+json_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+record_json_result() {
+  local status="$1"
+  local label="$2"
+  local remediation="${3:-}"
+  local separator=""
+
+  if [ -n "${JSON_RESULTS}" ]; then
+    separator=","
+  fi
+  JSON_RESULTS="${JSON_RESULTS}${separator}{\"status\":\"$(json_escape "${status}")\",\"label\":\"$(json_escape "${label}")\""
+  if [ -n "${remediation}" ]; then
+    JSON_RESULTS="${JSON_RESULTS},\"remediation\":\"$(json_escape "${remediation}")\""
+  fi
+  JSON_RESULTS="${JSON_RESULTS}}"
 }
 
 pass() {
   PASS_COUNT=$((PASS_COUNT + 1))
-  printf '  ✓ %s\n' "$1"
+  if [ "${OUTPUT_FORMAT}" = "json" ]; then
+    record_json_result "pass" "$1"
+  else
+    printf '  ✓ %s\n' "$1"
+  fi
 }
 
 warn() {
   WARN_COUNT=$((WARN_COUNT + 1))
+  if [ "${OUTPUT_FORMAT}" = "json" ]; then
+    record_json_result "warning" "$1" "${2:-}"
+    return
+  fi
   printf '  ! %s\n' "$1"
   if [ -n "${2:-}" ]; then
     printf '    Next: %s\n' "$2"
@@ -37,6 +76,10 @@ warn() {
 
 fail() {
   FAIL_COUNT=$((FAIL_COUNT + 1))
+  if [ "${OUTPUT_FORMAT}" = "json" ]; then
+    record_json_result "fail" "$1" "${2:-}"
+    return
+  fi
   printf '  ✗ %s\n' "$1"
   if [ -n "${2:-}" ]; then
     printf '    Next: %s\n' "$2"
@@ -156,6 +199,76 @@ check_executable() {
   fi
 }
 
+check_quiet_command() {
+  local label="$1"
+  local remediation="$2"
+  shift 2
+
+  if "$@" >/dev/null 2>&1; then
+    pass "${label}"
+  else
+    fail "${label}: failed" "${remediation}"
+  fi
+}
+
+setup_requirement() {
+  local command_name="$1"
+  local remediation="$2"
+
+  if command -v "${command_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'Missing required host command: %s\n' "${command_name}" >&2
+  printf 'Next: %s\n' "${remediation}" >&2
+  return 1
+}
+
+run_setup_step() {
+  local label="$1"
+  shift
+
+  printf '\n==> %s\n' "${label}"
+  if "$@"; then
+    return 0
+  fi
+  printf 'Setup stopped while attempting: %s\n' "${label}" >&2
+  return 1
+}
+
+repair_repository() {
+  local setup_failed=0
+
+  printf '\nNemoClaw contributor setup\n\n'
+  printf 'Repository: %s\n' "${REPO_ROOT}"
+  printf 'This workflow changes repository-local dependencies, builds, hooks, and CLI exposure only.\n'
+
+  setup_requirement node "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
+  setup_requirement npm "Install npm 10 or newer, then rerun this command." || setup_failed=1
+  setup_requirement uv "Install uv from https://docs.astral.sh/uv/, then rerun this command." || setup_failed=1
+  setup_requirement git "Install Git, then rerun this command." || setup_failed=1
+  if ((setup_failed > 0)); then
+    return 1
+  fi
+
+  cd -- "${REPO_ROOT}" || return 1
+
+  if git config --local --get core.hooksPath >/dev/null 2>&1; then
+    run_setup_step "Remove the obsolete repository-local Git hooks override" \
+      git config --local --unset-all core.hooksPath || return 1
+  fi
+  run_setup_step "Install root dependencies" npm install || return 1
+  run_setup_step "Install plugin dependencies" npm --prefix nemoclaw install || return 1
+  run_setup_step "Synchronize the repository Python environment" uv sync --python 3.11 || return 1
+  run_setup_step "Build the CLI" npm run build:cli || return 1
+  run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
+  run_setup_step "Type-check the CLI" npm run typecheck:cli || return 1
+  run_setup_step "Type-check the plugin without emitting files" \
+    npm --prefix nemoclaw exec -- tsc --noEmit || return 1
+  run_setup_step "Install repository Git hooks" "${REPO_ROOT}/node_modules/.bin/prek" install || return 1
+  run_setup_step "Expose the development NemoClaw CLI" \
+    bash "${REPO_ROOT}/scripts/npm-link-or-shim.sh" || return 1
+}
+
 git_config() {
   git -C "${REPO_ROOT}" config --get "$1" 2>/dev/null || true
 }
@@ -261,56 +374,128 @@ check_local_cli() {
   fail "NemoClaw CLI resolves to a different installation" "Run npm install from ${REPO_ROOT}."
 }
 
-if [ "$#" -ne 1 ] || [ "$1" != "--doctor" ]; then
-  usage
-  exit 2
+run_doctor() {
+  local host_os host_arch ready_json
+
+  PASS_COUNT=0
+  WARN_COUNT=0
+  FAIL_COUNT=0
+  JSON_RESULTS=""
+  host_os="$(uname -s 2>/dev/null || printf unknown)"
+  host_arch="$(uname -m 2>/dev/null || printf unknown)"
+
+  if [ "${OUTPUT_FORMAT}" = "human" ]; then
+    printf '\nNemoClaw contributor environment\n\n'
+    printf '  Host: %s %s\n' "${host_os}" "${host_arch}"
+    printf '  Repo: %s\n\n' "${REPO_ROOT}"
+  fi
+
+  case "${host_os}:${host_arch}" in
+    Darwin:arm64 | Darwin:x86_64 | Linux:aarch64 | Linux:x86_64)
+      pass "Supported host ${host_os} ${host_arch}"
+      ;;
+    *)
+      fail "Unsupported host ${host_os} ${host_arch}" \
+        "Use a supported macOS or Linux host on arm64/aarch64 or x86_64."
+      ;;
+  esac
+
+  if [ -f "${REPO_ROOT}/package.json" ] && [ -f "${REPO_ROOT}/AGENTS.md" ]; then
+    pass "NemoClaw source checkout"
+  else
+    fail "NemoClaw source checkout not found" "Run this command from a NemoClaw repository checkout."
+  fi
+
+  check_minimum_version "Node.js" node "22.16.0" "Install Node.js 22.16 or newer."
+  check_minimum_version "npm" npm "10.0.0" "Install npm 10 or newer."
+  check_command "uv" uv "Install uv from https://docs.astral.sh/uv/."
+  if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
+    check_minimum_version "Python repository environment" "${REPO_ROOT}/.venv/bin/python" "3.11.0" \
+      "Run: uv sync --python 3.11"
+  else
+    fail "Python repository environment: missing" "Run: uv sync --python 3.11"
+  fi
+  check_command "Git" git "Install Git."
+  check_command "GitHub CLI" gh "Install GitHub CLI."
+  check_command "hadolint" hadolint "Install hadolint (macOS: brew install hadolint)."
+
+  check_executable "Root TypeScript dependencies" "${REPO_ROOT}/node_modules/.bin/tsc" "Run: npm install"
+  check_executable "Pinned Pi coding agent" "${REPO_ROOT}/node_modules/.bin/pi" "Run: npm install"
+  check_executable "Prek dependency" "${REPO_ROOT}/node_modules/.bin/prek" "Run: npm install"
+  check_executable "Plugin TypeScript dependencies" "${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc" \
+    "Run: cd nemoclaw && npm install"
+  check_build_artifact "CLI build artifacts" "${CLI_BUILD_ARTIFACT}" "Run: npm run build:cli" \
+    "${REPO_ROOT}/src" "${REPO_ROOT}/bin" "${REPO_ROOT}/nemoclaw-blueprint/scripts" \
+    "${REPO_ROOT}/tsconfig.src.json"
+  check_build_artifact "Plugin build artifacts" "${PLUGIN_BUILD_ARTIFACT}" \
+    "Run: cd nemoclaw && npm run build" "${REPO_ROOT}/nemoclaw/src" \
+    "${REPO_ROOT}/nemoclaw/tsconfig.json" "${REPO_ROOT}/nemoclaw/package.json"
+  check_quiet_command "CLI type check" "Run: npm run typecheck:cli" \
+    npm --prefix "${REPO_ROOT}" run typecheck:cli
+  check_quiet_command "Plugin type check" "Run: npm --prefix nemoclaw exec -- tsc --noEmit" \
+    npm --prefix "${REPO_ROOT}/nemoclaw" exec -- tsc --noEmit
+
+  check_git_configuration
+  check_github_authentication
+  check_docker
+  check_local_cli
+
+  if ((FAIL_COUNT > 0)); then
+    ready_json=false
+  else
+    ready_json=true
+  fi
+
+  if [ "${OUTPUT_FORMAT}" = "json" ]; then
+    printf '{"schemaVersion":1,"ready":%s,"host":{"os":"%s","arch":"%s"},"repo":"%s","summary":{"passed":%d,"warnings":%d,"failed":%d},"checks":[%s]}\n' \
+      "${ready_json}" "$(json_escape "${host_os}")" "$(json_escape "${host_arch}")" \
+      "$(json_escape "${REPO_ROOT}")" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${JSON_RESULTS}"
+  else
+    printf '\n  Summary: %d passed, %d warning(s), %d failed\n\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
+    if ((FAIL_COUNT > 0)); then
+      printf 'Contributor environment is not ready. Complete the actions above and run the doctor again.\n'
+    else
+      printf 'Ready to create a feature branch.\n'
+      printf 'Runtime sandbox: not required for contributor readiness.\n'
+    fi
+  fi
+
+  ((FAIL_COUNT == 0))
+}
+
+MODE="setup"
+ARG1="${1:-}"
+ARG2="${2:-}"
+case "$#:${ARG1}:${ARG2}" in
+  0::) ;;
+  1:--repair:)
+    MODE="repair"
+    ;;
+  1:--with-runtime:)
+    MODE="runtime"
+    ;;
+  1:--doctor:)
+    MODE="doctor"
+    ;;
+  2:--doctor:--json)
+    MODE="doctor"
+    OUTPUT_FORMAT="json"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
+
+if [ "${MODE}" = "doctor" ]; then
+  run_doctor
+  exit $?
 fi
 
-printf '\nNemoClaw contributor environment\n\n'
-printf '  Host: %s %s\n' "$(uname -s 2>/dev/null || printf unknown)" "$(uname -m 2>/dev/null || printf unknown)"
-printf '  Repo: %s\n\n' "${REPO_ROOT}"
+repair_repository || exit 1
+run_doctor || exit 1
 
-if [ -f "${REPO_ROOT}/package.json" ] && [ -f "${REPO_ROOT}/AGENTS.md" ]; then
-  pass "NemoClaw source checkout"
-else
-  fail "NemoClaw source checkout not found" "Run this command from a NemoClaw repository checkout."
+if [ "${MODE}" = "runtime" ]; then
+  printf '\nContributor setup is ready. Starting optional runtime onboarding.\n'
+  exec nemoclaw onboard
 fi
-
-check_minimum_version "Node.js" node "22.16.0" "Install Node.js 22.16 or newer."
-check_minimum_version "npm" npm "10.0.0" "Install npm 10 or newer."
-check_command "uv" uv "Install uv from https://docs.astral.sh/uv/."
-if [ -x "${REPO_ROOT}/.venv/bin/python" ]; then
-  check_minimum_version "Python repository environment" "${REPO_ROOT}/.venv/bin/python" "3.11.0" \
-    "Run: uv sync --python 3.11"
-else
-  fail "Python repository environment: missing" "Run: uv sync --python 3.11"
-fi
-check_command "Git" git "Install Git."
-check_command "GitHub CLI" gh "Install GitHub CLI."
-check_command "hadolint" hadolint "Install hadolint (macOS: brew install hadolint)."
-
-check_executable "Root TypeScript dependencies" "${REPO_ROOT}/node_modules/.bin/tsc" "Run: npm install"
-check_executable "Prek dependency" "${REPO_ROOT}/node_modules/.bin/prek" "Run: npm install"
-check_executable "Plugin TypeScript dependencies" "${REPO_ROOT}/nemoclaw/node_modules/.bin/tsc" \
-  "Run: cd nemoclaw && npm install"
-check_build_artifact "CLI build artifacts" "${CLI_BUILD_ARTIFACT}" "Run: npm run build:cli" \
-  "${REPO_ROOT}/src" "${REPO_ROOT}/bin" "${REPO_ROOT}/nemoclaw-blueprint/scripts" \
-  "${REPO_ROOT}/tsconfig.src.json"
-check_build_artifact "Plugin build artifacts" "${PLUGIN_BUILD_ARTIFACT}" \
-  "Run: cd nemoclaw && npm run build" "${REPO_ROOT}/nemoclaw/src" \
-  "${REPO_ROOT}/nemoclaw/tsconfig.json" "${REPO_ROOT}/nemoclaw/package.json"
-
-check_git_configuration
-check_github_authentication
-check_docker
-check_local_cli
-
-printf '\n  Summary: %d passed, %d warning(s), %d failed\n\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"
-
-if ((FAIL_COUNT > 0)); then
-  printf 'Contributor environment is not ready. Complete the actions above and run the doctor again.\n'
-  exit 1
-fi
-
-printf 'Ready to create a feature branch.\n'
-printf 'Runtime sandbox: not required for contributor readiness.\n'

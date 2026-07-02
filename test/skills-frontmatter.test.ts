@@ -113,6 +113,19 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("sensitive-path handling, or CI-waiver handling");
   });
 
+  it("keeps contributor onboarding anchored to the setup script", () => {
+    const skillPath = path.join(skillsRoot, "nemoclaw-contributor-onboard", "SKILL.md");
+    const skill = fs.readFileSync(skillPath, "utf8");
+
+    expect(skill).toContain("./scripts/dev-setup.sh");
+    expect(skill).toContain("./scripts/dev-setup.sh --doctor");
+    expect(skill).toContain("./scripts/dev-setup.sh --with-runtime");
+    expect(skill).toContain("obtain explicit approval");
+    expect(skill).toContain("Never print tokens");
+    expect(skill).toContain("Signed-off-by:");
+    expect(skill).toContain("Verified");
+  });
+
   it("preserves the single NVSkills catalog skill copy", () => {
     const catalogEntries = fs.readdirSync(catalogSkillsRoot).sort();
     expect(catalogEntries).toEqual(["README.md", "nemoclaw-user-guide"]);
