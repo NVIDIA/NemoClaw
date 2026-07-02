@@ -123,7 +123,7 @@ function parseArgs(argv: string[]): CliOptions {
         break;
       case "-h":
       case "--help":
-        process.stdout.write(`${USAGE}\n`);
+        fs.writeSync(1, `${USAGE}\n`);
         process.exit(0);
         break;
       default:
@@ -262,11 +262,11 @@ async function main(): Promise<void> {
   preflight(options);
   const report = await buildReport(options);
   writeOutputs(report, options);
-  process.exit(hasBlockingError(report) ? 1 : 0);
+  process.exitCode = hasBlockingError(report) ? 1 : 0;
 }
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`${message}\n`);
-  process.exit(1);
+  process.exitCode = 1;
 });
