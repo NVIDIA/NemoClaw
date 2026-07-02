@@ -40,6 +40,7 @@ const {
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const sandboxPrebuild: typeof import("./onboard/sandbox-prebuild") = require("./onboard/sandbox-prebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
@@ -3020,11 +3021,19 @@ async function createSandbox(
     warn: console.warn,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
+  // Pre-build the image locally with BuildKit so openshell skips its slower
+  // classic build; falls back to the openshell build if ineligible/fails (#6002).
+  const { createArgs: launchCreateArgs } = await sandboxPrebuild.prebuildSandboxImageIfEligible({
+    buildCtx,
+    createArgs,
+    sandboxName,
+    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+  });
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
     sandboxCreateLaunch.prepareSandboxCreateLaunch({
       agent,
       chatUiUrl,
-      createArgs,
+      createArgs: launchCreateArgs,
       env: process.env,
       extraPlaceholderKeys,
       getDashboardForwardPort,
@@ -3068,27 +3077,12 @@ async function createSandbox(
   dockerGpuCreatePatch.exitOnPatchError();
 
   if (createResult.status !== 0) {
-    const failure = classifySandboxCreateFailure(createResult.output);
-    if (failure.kind === "sandbox_create_incomplete") {
-      // The sandbox was created in the gateway but the create stream exited
-      // with a non-zero code (e.g. SSH 255).  Fall through to the ready-wait
-      // loop — the sandbox may still reach Ready on its own.
-      console.warn("");
-      console.warn(
-        `  Create stream exited with code ${createResult.status} after sandbox was created.`,
-      );
-      console.warn("  Checking whether the sandbox reaches Ready state...");
-    } else {
-      console.error("");
-      console.error(`  Sandbox creation failed (exit ${createResult.status}).`);
-      if (createResult.output) {
-        console.error("");
-        console.error(createResult.output);
-      }
-      console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output, { createArgs });
-      process.exit(createResult.status || 1);
-    }
+    sandboxCreateFailureDiagnostics.handleSandboxCreateResultFailure(createResult, {
+      classifyFailure: classifySandboxCreateFailure,
+      printRecoveryHints: printSandboxCreateRecoveryHints,
+      createArgs,
+      exit: (code) => process.exit(code),
+    });
   }
 
   dockerGpuCreatePatch.ensureApplied();

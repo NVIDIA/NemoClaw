@@ -220,3 +220,48 @@ export function collectSandboxCreateFailureDiagnostics(
     summaryLines: relevantLines.slice(-8),
   };
 }
+
+export interface SandboxCreateResultLike {
+  status: number;
+  output: string;
+}
+
+export interface HandleSandboxCreateResultFailureDeps {
+  classifyFailure(output: string): { kind: string };
+  printRecoveryHints(output: string, options: { createArgs: readonly string[] }): void;
+  createArgs: readonly string[];
+  warn?(message: string): void;
+  error?(message: string): void;
+  exit(code: number): never;
+}
+
+/**
+ * Handle a non-zero `openshell sandbox create` result. For an "incomplete"
+ * create (the sandbox exists but the create stream exited non-zero, e.g. SSH
+ * 255) it warns and returns so the caller can fall through to the ready-wait
+ * loop; for any other failure it prints diagnostics + recovery hints and exits
+ * non-zero. Extracted from onboard.ts so the create entrypoint stays lean.
+ */
+export function handleSandboxCreateResultFailure(
+  result: SandboxCreateResultLike,
+  deps: HandleSandboxCreateResultFailureDeps,
+): void {
+  if (result.status === 0) return;
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
+  const error = deps.error ?? ((message: string) => console.error(message));
+  if (deps.classifyFailure(result.output).kind === "sandbox_create_incomplete") {
+    warn("");
+    warn(`  Create stream exited with code ${result.status} after sandbox was created.`);
+    warn("  Checking whether the sandbox reaches Ready state...");
+    return;
+  }
+  error("");
+  error(`  Sandbox creation failed (exit ${result.status}).`);
+  if (result.output) {
+    error("");
+    error(result.output);
+  }
+  error("  Try:  openshell sandbox list        # check gateway state");
+  deps.printRecoveryHints(result.output, { createArgs: deps.createArgs });
+  deps.exit(result.status || 1);
+}
