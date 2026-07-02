@@ -73,7 +73,8 @@ run_dcode() {
 #   route through a Node entrypoint that imports the canonical patterns directly.
 
 has_context_secret_shape() {
-  local upper="${1^^}"
+  local upper
+  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
   # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
