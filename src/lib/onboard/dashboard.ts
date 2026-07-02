@@ -7,12 +7,12 @@ import path from "node:path";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
-import { buildChain, buildControlUiUrls } from "../dashboard/contract";
+import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
-import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
   createSandboxForwardStopper,
@@ -478,9 +478,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         note: deps.note,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
           const primary = buildControlUiUrls(tokenValue, port, chain.accessUrl);
-          const fallbacks = chain.fallbackUrls.flatMap((fallback) =>
-            buildControlUiUrls(tokenValue, port, fallback).slice(1),
-          );
+          const fallbacks = buildFallbackControlUiUrls(tokenValue, port, chain.fallbackUrls);
           return [...new Set([...primary, ...fallbacks])];
         },
       });

@@ -174,3 +174,21 @@ export function buildControlUiUrls(
   }
   return [...new Set(urls)];
 }
+
+export function buildFallbackControlUiUrls(
+  token: string | null,
+  port: number,
+  fallbackUrls: string[],
+): string[] {
+  return fallbackUrls.flatMap((fallback) => {
+    let rewritten = fallback;
+    try {
+      const url = new URL(fallback);
+      url.port = String(port);
+      rewritten = url.toString();
+    } catch {
+      rewritten = fallback;
+    }
+    return buildControlUiUrls(token, port, rewritten).slice(1);
+  });
+}

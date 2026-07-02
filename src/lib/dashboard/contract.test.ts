@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildChain, buildControlUiUrls } from "./contract.js";
+import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "./contract.js";
 
 describe("buildChain", () => {
   it("returns default loopback chain with no arguments", () => {
@@ -163,5 +163,21 @@ describe("buildControlUiUrls", () => {
   it("encodes special characters in tokens", () => {
     const urls = buildControlUiUrls("a=b&c");
     expect(urls[0]).toContain("#token=a%3Db%26c");
+  });
+});
+
+describe("buildFallbackControlUiUrls", () => {
+  it("rewrites the fallback host's port to the requested port", () => {
+    const urls = buildFallbackControlUiUrls("tok", 8642, ["http://172.24.240.1:18789"]);
+    expect(urls).toEqual(["http://172.24.240.1:8642/#token=tok"]);
+  });
+
+  it("returns an empty array when there are no fallback URLs", () => {
+    expect(buildFallbackControlUiUrls(null, 8642, [])).toEqual([]);
+  });
+
+  it("leaves an unparseable fallback URL's port unrewritten", () => {
+    const urls = buildFallbackControlUiUrls(null, 8642, ["http://[invalid"]);
+    expect(urls).toEqual(["http://[invalid/"]);
   });
 });
