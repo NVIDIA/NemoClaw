@@ -231,7 +231,9 @@ export function prepareInitialSandboxCreatePolicy(
     tierKnown && options.policyTier !== "restricted"
       ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
       : [];
-  const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath);
+  const isHermesPolicyFromPath = isHermesPolicyPath(basePolicyPath);
+  const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyFromPath;
+  const policyAgent = options.agentName ?? (isHermesPolicyFromPath ? "hermes" : null);
   const messagingCreateTimePresets = isHermesPolicy
     ? allMessagingChannelPolicyPresets(activeMessagingChannels)
     : requiredMessagingChannelPolicyPresets(activeMessagingChannels);
@@ -302,7 +304,7 @@ export function prepareInitialSandboxCreatePolicy(
   }
 
   const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
-    agent: options.agentName ?? null,
+    agent: policyAgent,
   });
   if (mergedPolicy.missingPresets.length > 0) {
     throw new Error(
