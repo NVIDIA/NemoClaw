@@ -20,6 +20,9 @@ endpoints:
     access: read-write
     enforcement: enforce
 binaries:
+  # OpenShell attributes Deep Agents Code Tavily requests to this managed
+  # Python venv, which its strict Landlock policy mounts read-only.
+  - /opt/venv/bin/python3*
   - /usr/local/bin/node
   - /usr/bin/node
   - /usr/local/bin/curl

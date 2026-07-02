@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { UPLOAD_E2E_ARTIFACTS_ACTION } from "../../../tools/e2e/upload-e2e-artifacts-workflow-boundary.mts";
 import {
   evaluateE2eWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
@@ -92,13 +93,8 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
 
     const upload = namedStep(job, "Upload OpenShell gateway auth contract artifacts");
     expect(upload?.if).toBe("always()");
-    expect(upload?.with).toMatchObject({
-      name: "e2e-openshell-gateway-auth-contract",
-      path: "e2e-artifacts/live/openshell-gateway-auth-contract/",
-      "include-hidden-files": false,
-      "if-no-files-found": "ignore",
-      "retention-days": 14,
-    });
+    expect(upload?.uses).toBe(UPLOAD_E2E_ARTIFACTS_ACTION);
+    expect(upload?.with).toBeUndefined();
   });
 
   it("waits for the auth contract in every aggregate result job", () => {

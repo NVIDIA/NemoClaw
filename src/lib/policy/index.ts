@@ -108,6 +108,41 @@ function parseNetworkPolicies(content: string | null | undefined): PolicyObject 
   }
 }
 
+// The single sandbox->host bridge hostname OpenShell provisions. An endpoint
+// that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
+// (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
+// is a user-preset egress-bypass attempt (#6073). Mirrors the
+// ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS trust boundary in
+// src/lib/actions/inference-set.ts.
+const HOST_GATEWAY_BRIDGE_HOST = "host.openshell.internal";
+
+function endpointHostIsGatewayBridge(ep: PolicyObject): boolean {
+  const host = (ep as { host?: unknown }).host;
+  return (
+    typeof host === "string" && host.replace(/\.$/, "").toLowerCase() === HOST_GATEWAY_BRIDGE_HOST
+  );
+}
+
+function networkPoliciesHasAllowedIps(np: PolicyObject): boolean {
+  for (const policyVal of Object.values(np)) {
+    if (!isPolicyObject(policyVal)) continue;
+    // Object-level `allowed_ips` has no endpoint host context and is never a
+    // legitimate shape; always reject. Use `in` (not `Object.hasOwn`) so an
+    // inherited/prototype-chain `allowed_ips` can't bypass the guard (#6072).
+    if ("allowed_ips" in policyVal) return true;
+    const endpoints = (policyVal as PolicyObject).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const ep of endpoints) {
+      if (!isPolicyObject(ep) || !("allowed_ips" in ep)) continue;
+      // Trust-boundary exemption: `allowed_ips` is permitted only to pin the
+      // sandbox->host bridge; reject it for every other host (#6073).
+      if (endpointHostIsGatewayBridge(ep)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) return [];
@@ -768,6 +803,16 @@ function applyPresetContent(
     );
   }
 
+  if (options.custom) {
+    const np = parseNetworkPolicies(presetContent);
+    if (np && networkPoliciesHasAllowedIps(np)) {
+      console.error(
+        `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
+      );
+      return false;
+    }
+  }
+
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
@@ -1065,6 +1110,13 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     console.error(`  Preset missing network_policies section: ${filePath}`);
     return null;
   }
+  const np = parsed.network_policies as PolicyObject;
+  if (networkPoliciesHasAllowedIps(np)) {
+    console.error(
+      `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,
+    );
+    return null;
+  }
   const builtin = listPresets().map((p) => p.name);
   if (builtin.includes(presetName)) {
     console.error(
@@ -1318,6 +1370,7 @@ export {
   loadPresetFromFile,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
+  networkPoliciesHasAllowedIps,
   PERMISSIVE_POLICY_PATH,
   PRESETS_DIR,
   parseCurrentPolicy,

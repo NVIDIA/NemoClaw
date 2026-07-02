@@ -467,7 +467,14 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+
 The exit code is the remote command's exit code.
+
+The OpenShell exec endpoint rejects any command argument (the values after `--`) that contains a newline or carriage return, so multi-line commands such as a `bash` heredoc cannot be passed through `exec`.
+NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` instead of surfacing the lower-level OpenShell `InvalidArgument` error.
+Join the statements with semicolons (`nemohermes <name> exec -- bash -lc "cmd1; cmd2"`).
+Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | nemohermes <name> exec -- bash`).
+Or write the script to a file in the sandbox and run it (`nemohermes <name> exec -- bash <script-path>`).
 
 | Flag | Description |
 |------|-------------|
@@ -526,6 +533,9 @@ nemohermes my-assistant shields down --timeout 5m --reason "maintenance"
 | `shields status` | Show whether lockdown is configured, active, temporarily unlocked, or in error |
 | `shields up` | Lock the sandbox config and restore the saved restrictive policy |
 | `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
+
+If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `nemohermes <name> shields up`.
+If the retry still fails, rebuild a known-good baseline with `nemohermes <name> rebuild --yes`.
 
 Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
 When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
@@ -606,7 +616,9 @@ Terminal agents do not have a gateway runtime and fail as unsupported.
 
 ### `nemohermes <name> status`
 
-Show sandbox status, health, and inference configuration.
+Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
+Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints.
+Do not pass a sandbox name to `nemohermes status`; that command is the global all-sandbox/service overview.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
@@ -713,8 +725,10 @@ nemohermes my-assistant doctor [--json]
 ### `nemohermes <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
+The command runs as the sandbox user with `HOME=/sandbox`.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
+
+The command exits with the remote command's exit code.
 
 ```bash
 nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
@@ -1071,16 +1085,28 @@ nemohermes my-assistant channels start telegram
 
 ### `nemohermes <name> channels status`
 
-Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+Run messaging channel status checks.
+Without `--channel`, the command prints a compact summary for every configured channel, including registration, policy coverage, and non-secret rendered config comparisons.
+With `--channel`, it prints the detailed status for that channel.
+
+For WhatsApp, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
+A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
+
+For registered non-WhatsApp channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
+Secret inputs, including tokens, are not printed.
+If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
+Optional unset inputs remain informational.
 
 ```bash
+nemohermes my-assistant channels status
 nemohermes my-assistant channels status --channel whatsapp
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--channel <channel>` | Channel to inspect; defaults to `whatsapp` when registered |
-| `--json` | Emit the diagnostic report as JSON (exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--channel <channel>` | Channel to inspect in detail |
+| `--json` | Emit the status report as JSON (for the detailed WhatsApp probe, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
 The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
 
@@ -1583,7 +1609,9 @@ This command remains as a compatibility alias to `nemohermes tunnel stop`.
 
 ### `nemohermes status`
 
-Show the sandbox list and the status of host auxiliary services (for example cloudflared).
+Show the global sandbox list and the status of host auxiliary services (for example cloudflared).
+This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, messaging overlap warnings, gateway health, and host services.
+Use `nemohermes <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.

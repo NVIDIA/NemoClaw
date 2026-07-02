@@ -1124,6 +1124,12 @@ export async function connectSandbox(
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
+    // The policy-denial breadcrumb (#5978) is emitted once by the in-sandbox
+    // `nemoclaw-policy-denial-hint` stanza when this connect shell sources
+    // /tmp/nemoclaw-proxy-env.sh. We deliberately do NOT also print it here:
+    // doing so duplicated the hint in the normal connect flow, and the stanza
+    // already shows the real sandbox name on supported OpenShell (it reads
+    // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {

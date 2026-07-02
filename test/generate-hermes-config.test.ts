@@ -171,7 +171,7 @@ function findRawSecretEnvEntries(envFile: string): string[] {
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
   const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
   // Mirror ENV_FILE_ALLOWED_RAW_SECRET_KEYS in
-  // agents/hermes/validate-env-secret-boundary.py. API_SERVER_KEY is the bearer
+  // agents/hermes/validate-hermes-env-secret-boundary.py. API_SERVER_KEY is the bearer
   // token Hermes' own api_server (v0.16.0+) requires; it is minted at sandbox
   // startup and never travels through the OpenShell proxy, so it has no resolver
   // placeholder and is allowed to be raw.
