@@ -70,7 +70,7 @@ has_non_slack_secret_shape() {
   if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
   if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
@@ -152,7 +152,7 @@ is_secret_shaped_value() {
   if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
   if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
