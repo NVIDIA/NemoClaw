@@ -86,6 +86,36 @@ const INSTALLER_MUTATIONS: Partial<Record<FixtureMode, (source: string) => strin
   "partial-asset-missing": (source) =>
     source.replace(ASSETS.at(-1) ?? "missing", UNPUBLISHED_ASSET),
 };
+type InputMutationContext = {
+  brevInstaller: string;
+  fixtureRoot: string;
+  installer: string;
+};
+const INPUT_MUTATIONS: Partial<Record<FixtureMode, (context: InputMutationContext) => void>> = {
+  "non-regular-brev-input": ({ brevInstaller }) => {
+    fs.rmSync(brevInstaller);
+    fs.mkdirSync(brevInstaller);
+  },
+  "oversized-installer-input": ({ installer }) => {
+    fs.appendFileSync(installer, `\n# ${"x".repeat(1024 * 1024)}\n`);
+  },
+  "symlink-installer-input": ({ fixtureRoot, installer }) => {
+    const symlinkTarget = path.join(fixtureRoot, "valid-installer-target.sh");
+    fs.renameSync(installer, symlinkTarget);
+    fs.writeFileSync(symlinkTarget, `""\n${SYMLINK_INPUT_MARKER}\n`);
+    fs.symlinkSync(symlinkTarget, installer);
+  },
+  "symlink-scripts-parent": ({ fixtureRoot }) => {
+    const candidateScriptsDir = path.join(fixtureRoot, "scripts");
+    const scriptsTarget = path.join(fixtureRoot, "candidate-scripts-target");
+    fs.renameSync(candidateScriptsDir, scriptsTarget);
+    fs.writeFileSync(
+      path.join(scriptsTarget, "install-openshell.sh"),
+      `""\n${SYMLINK_INPUT_MARKER}\n`,
+    );
+    fs.symlinkSync(scriptsTarget, candidateScriptsDir, "dir");
+  },
+};
 const CHECKSUM_MANIFESTS = new Map([
   [
     "openshell-checksums-sha256.txt",
@@ -296,17 +326,6 @@ function runFixture(
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   const mutateBrev = BREV_MUTATIONS[mode] ?? ((source: string) => source);
   fs.writeFileSync(brevInstaller, mutateBrev(brevSource));
-  if (mode === "symlink-installer-input") {
-    const symlinkTarget = path.join(fixtureRoot, "valid-installer-target.sh");
-    fs.renameSync(installer, symlinkTarget);
-    fs.writeFileSync(symlinkTarget, `""\n${SYMLINK_INPUT_MARKER}\n`);
-    fs.symlinkSync(symlinkTarget, installer);
-  } else if (mode === "non-regular-brev-input") {
-    fs.rmSync(brevInstaller);
-    fs.mkdirSync(brevInstaller);
-  } else if (mode === "oversized-installer-input") {
-    fs.appendFileSync(installer, `\n# ${"x".repeat(1024 * 1024)}\n`);
-  }
   const targetParser = path.join(fixtureRoot, "scripts", "checks", "extract-installer-pins.mts");
   fs.writeFileSync(
     targetParser,
@@ -314,16 +333,7 @@ function runFixture(
       ? 'process.stdout.write("PR_PARSER_EXECUTED\\n");\n'
       : fs.readFileSync(targetParser, "utf8"),
   );
-  if (mode === "symlink-scripts-parent") {
-    const candidateScriptsDir = path.join(fixtureRoot, "scripts");
-    const scriptsTarget = path.join(fixtureRoot, "candidate-scripts-target");
-    fs.renameSync(candidateScriptsDir, scriptsTarget);
-    fs.writeFileSync(
-      path.join(scriptsTarget, "install-openshell.sh"),
-      `""\n${SYMLINK_INPUT_MARKER}\n`,
-    );
-    fs.symlinkSync(scriptsTarget, candidateScriptsDir, "dir");
-  }
+  INPUT_MUTATIONS[mode]?.({ brevInstaller, fixtureRoot, installer });
   return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
