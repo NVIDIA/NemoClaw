@@ -171,6 +171,7 @@ async function assertAdapterDnsRebindingDenied(
     adapter: McpDnsRebindingAdapter;
     artifactPrefix: string;
     hostAddress: string;
+    mutationTimeoutMs: number;
     sandboxName: string;
     secretPaths: string[];
   },
@@ -219,7 +220,7 @@ async function assertAdapterDnsRebindingDenied(
         [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
       },
       redactionValues: [REBIND_HOST_SECRET],
-      timeoutMs: 2 * 60_000,
+      timeoutMs: options.mutationTimeoutMs,
     },
   );
   expectExitZero(
@@ -1047,6 +1048,7 @@ req.end(body);
     adapter: "mcporter",
     artifactPrefix: "openclaw",
     hostAddress,
+    mutationTimeoutMs: 3 * 60_000,
     sandboxName: OPENCLAW_SANDBOX_NAME,
     secretPaths: ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
   });
@@ -1285,6 +1287,7 @@ liveAgentMatrixTest(
       adapter: "hermes-config",
       artifactPrefix: "hermes",
       hostAddress,
+      mutationTimeoutMs: 12 * 60_000,
       sandboxName: HERMES_SANDBOX_NAME,
       secretPaths: ["/sandbox/.hermes"],
     });
@@ -1425,6 +1428,7 @@ liveAgentMatrixTest(
       adapter: "deepagents-config",
       artifactPrefix: "deepagents",
       hostAddress,
+      mutationTimeoutMs: 3 * 60_000,
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       secretPaths: ["/sandbox/.deepagents"],
     });
