@@ -1387,6 +1387,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },
       { name: "pypi", sample: "pypi-abcdefghijklmnop" },
+      { name: "tavily", sample: "tvly-abcdefghijklmnop" },
       { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       {

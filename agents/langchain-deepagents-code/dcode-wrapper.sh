@@ -15,6 +15,7 @@ export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
+readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 
 run_dcode() {
   exec python3 -m deepagents_code "$@"
@@ -195,20 +196,14 @@ has_credential_name_context() {
   return 1
 }
 
-# SECURITY: OpenShell injects transport-layer infrastructure variables (such as
-# the sandbox's local TLS listener key) into the runtime environment. Their names
-# end in a credential keyword, so the name-context heuristic above would refuse to
-# start on them even though they are not user provider secrets. Exempt these exact
-# names from the name-context rejection ONLY; is_secret_shaped_value still runs on
-# every value, so a real provider token carried under one of these names is still
-# rejected. Keep this list narrow and exact — never a prefix wildcard.
-is_openshell_infra_key_name() {
-  case "$1" in
-    OPENSHELL_TLS_KEY)
-      return 0
-      ;;
-  esac
-  return 1
+# SECURITY: OpenShell's supervisor injects this mounted TLS key path into the
+# runtime environment. Allow only the exact name/value pair after the generic
+# value scan. Never allow the name alone, and never apply this exception to the
+# mutable Deep Agents Code .env file.
+is_allowed_openshell_runtime_value() {
+  local name="$1"
+  local value="$2"
+  [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
 }
 
 is_dynamic_dotenv_value() {
@@ -249,7 +244,7 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
-    if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_openshell_infra_key_name "$name"; then
+    if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
   done < <(env -0)

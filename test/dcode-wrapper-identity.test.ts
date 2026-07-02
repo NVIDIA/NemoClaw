@@ -32,8 +32,9 @@ const SAMPLE_CONFIG = [
 ].join("\n");
 
 const OPAQUE = "Zx3Qw9Lp7Rt2Vn5Bd8Kf1Mh6Cg4Js0Ay";
+const CANONICAL_TLS_KEY_PATH = "/etc/openshell/tls/client/tls.key";
 
-type Fixture = { wrapperPath: string; ranMarker: string };
+type Fixture = { wrapperPath: string; ranMarker: string; envFile: string };
 
 function buildFixture(tempDir: string, configContent: string): Fixture {
   const wrapperPath = path.join(tempDir, "dcode");
@@ -58,12 +59,12 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
   fs.writeFileSync(configFile, configContent, "utf8");
   fs.writeFileSync(wrapperPath, fixture, "utf8");
   fs.chmodSync(wrapperPath, 0o755);
-  return { wrapperPath, ranMarker };
+  return { wrapperPath, ranMarker, envFile };
 }
 
 type Run = { status: number | null; stdout: string; stderr: string; launched: boolean };
 
-function runWrapper(fixture: Fixture, args: readonly string[], env: NodeJS.ProcessEnv): Run {
+function runBashWrapper(fixture: Fixture, args: readonly string[], env: NodeJS.ProcessEnv): Run {
   const result = spawnSync("bash", [fixture.wrapperPath, ...args], {
     env: {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -96,7 +97,7 @@ describe.skipIf(!canRun)(
     for (const sub of ["status", "whoami", "identity"]) {
       it(`'${sub}' reports the sandbox identity and does not launch dcode`, () => {
         withTempDir((dir) => {
-          const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), [sub], {
+          const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), [sub], {
             NEMOCLAW_SANDBOX_NAME: "dcode-demo",
           });
 
@@ -113,7 +114,7 @@ describe.skipIf(!canRun)(
 
     it("reports the sandbox as unknown when the name was not injected", () => {
       withTempDir((dir) => {
-        const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), ["status"], {});
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["status"], {});
 
         expect(run.status).toBe(0);
         expect(run.launched).toBe(false);
@@ -123,7 +124,7 @@ describe.skipIf(!canRun)(
 
     it("still launches dcode for a normal interactive invocation", () => {
       withTempDir((dir) => {
-        const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), [], {
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), [], {
           NEMOCLAW_SANDBOX_NAME: "dcode-demo",
         });
 
@@ -137,9 +138,11 @@ describe.skipIf(!canRun)(
 describe.skipIf(!canRun)(
   "agents/langchain-deepagents-code/dcode-wrapper.sh OpenShell infra-key allowlist",
   () => {
-    it("starts dcode when OPENSHELL_TLS_KEY carries an opaque infrastructure value", () => {
+    it("starts dcode when runtime OPENSHELL_TLS_KEY carries the canonical mounted path", () => {
       withTempDir((dir) => {
-        const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), [], { OPENSHELL_TLS_KEY: OPAQUE });
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
+          OPENSHELL_TLS_KEY: CANONICAL_TLS_KEY_PATH,
+        });
 
         expect(run.status).toBe(0);
         expect(run.launched).toBe(true);
@@ -147,21 +150,68 @@ describe.skipIf(!canRun)(
       });
     });
 
-    it("still refuses when OPENSHELL_TLS_KEY carries a real provider token", () => {
-      withTempDir((dir) => {
-        const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), [], {
-          OPENSHELL_TLS_KEY: `nvapi-${OPAQUE}`,
+    it("refuses noncanonical OpenShell TLS key values without printing them", () => {
+      const pemValue = [
+        "-----BEGIN PRIVATE ",
+        "KEY-----\nraw-private-key\n-----END PRIVATE ",
+        "KEY-----",
+      ].join("");
+      for (const value of [
+        OPAQUE,
+        pemValue,
+        "relative/tls.key",
+        "/tmp/tls.key",
+        `${CANONICAL_TLS_KEY_PATH}.bak`,
+        `tvly-${OPAQUE}`,
+      ]) {
+        withTempDir((dir) => {
+          const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
+            OPENSHELL_TLS_KEY: value,
+          });
+
+          expect(run.status).toBe(2);
+          expect(run.launched).toBe(false);
+          expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+          expect(run.stderr).not.toContain(value);
         });
+      }
+    });
+
+    it("refuses the canonical OpenShell TLS key path in the mutable env file", () => {
+      withTempDir((dir) => {
+        const fixture = buildFixture(dir, SAMPLE_CONFIG);
+        fs.writeFileSync(fixture.envFile, `OPENSHELL_TLS_KEY=${CANONICAL_TLS_KEY_PATH}\n`, "utf8");
+
+        const run = runBashWrapper(fixture, ["--version"], {});
 
         expect(run.status).toBe(2);
         expect(run.launched).toBe(false);
         expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+        expect(run.stderr).toContain(path.join(dir, ".env"));
+        expect(run.stderr).not.toContain(CANONICAL_TLS_KEY_PATH);
       });
+    });
+
+    it("still refuses recognized provider tokens carried by OPENSHELL_TLS_KEY", () => {
+      for (const value of [`nvapi-${OPAQUE}`, `tvly-${OPAQUE}`]) {
+        withTempDir((dir) => {
+          const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), ["--version"], {
+            OPENSHELL_TLS_KEY: value,
+          });
+
+          expect(run.status).toBe(2);
+          expect(run.launched).toBe(false);
+          expect(run.stderr).toContain("OPENSHELL_TLS_KEY");
+          expect(run.stderr).not.toContain(value);
+        });
+      }
     });
 
     it("still refuses an opaque credential-name-context variable outside the allowlist", () => {
       withTempDir((dir) => {
-        const run = runWrapper(buildFixture(dir, SAMPLE_CONFIG), [], { CUSTOM_API_KEY: OPAQUE });
+        const run = runBashWrapper(buildFixture(dir, SAMPLE_CONFIG), [], {
+          CUSTOM_API_KEY: OPAQUE,
+        });
 
         expect(run.status).toBe(2);
         expect(run.launched).toBe(false);
