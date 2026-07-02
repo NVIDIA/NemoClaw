@@ -126,11 +126,11 @@ registry.registerSandbox({
     const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
     const text = [...payload.output, ...payload.errors].join("\n");
     expect(payload.exitCode).toBe(1);
-    expect(text).toContain("Channel 'telegram' does not support agent 'langchain-deepagents-code'");
-    expect(text).toContain("Channel-supported agents: openclaw, hermes.");
-    expect(text).toContain("Channels supported by agent 'langchain-deepagents-code': (none).");
-    expect(text).not.toContain("Unknown preset");
-    expect(text).not.toContain("Valid presets:");
+    expect(text).toContain("Unknown preset 'telegram'.");
+    expect(text).toContain("Valid presets:");
+    expect(text).not.toContain("telegram,");
+    expect(text).not.toContain("not supported for agent");
+    expect(text).not.toContain("Terminal-runtime agents do not run inbound messaging bridges.");
     expect(text).not.toContain("Preset not found");
     expect(text).not.toContain("Endpoints that would be opened");
     expect(text).not.toContain("Apply 'telegram'");
