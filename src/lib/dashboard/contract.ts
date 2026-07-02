@@ -181,14 +181,14 @@ export function buildFallbackControlUiUrls(
   fallbackUrls: string[],
 ): string[] {
   return fallbackUrls.flatMap((fallback) => {
-    let rewritten: string;
+    let url: URL;
     try {
-      const url = new URL(fallback);
-      url.port = String(port);
-      rewritten = url.toString();
+      url = new URL(fallback);
     } catch {
-      rewritten = fallback;
+      return [];
     }
-    return buildControlUiUrls(token, port, rewritten).slice(1);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    url.port = String(port);
+    return buildControlUiUrls(token, port, url.toString()).slice(1);
   });
 }

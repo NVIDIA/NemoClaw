@@ -186,8 +186,18 @@ describe("buildFallbackControlUiUrls", () => {
     expect(buildFallbackControlUiUrls(null, 8642, [])).toEqual([]);
   });
 
-  it("leaves an unparseable fallback URL's port unrewritten", () => {
+  it("drops an unparseable fallback URL", () => {
     const urls = buildFallbackControlUiUrls(null, 8642, ["http://[invalid"]);
-    expect(urls).toEqual(["http://[invalid/"]);
+    expect(urls).toEqual([]);
+  });
+
+  it("drops fallback URLs that are not http/https", () => {
+    const urls = buildFallbackControlUiUrls(null, 8642, [
+      "ftp://x.com",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "http://valid.example.com:18789",
+    ]);
+    expect(urls).toEqual(["http://valid.example.com:8642/"]);
   });
 });
