@@ -96,9 +96,15 @@ function installBuildContextCleanupFallback(
     return cleaned;
   };
   const handle = (signal: "SIGINT" | "SIGTERM") => {
-    cleanup();
-    cleanupSignalResources();
-    process.kill(process.pid, signal);
+    try {
+      cleanup();
+    } finally {
+      try {
+        cleanupSignalResources();
+      } finally {
+        process.kill(process.pid, signal);
+      }
+    }
   };
   const onSigint = () => handle("SIGINT");
   const onSigterm = () => handle("SIGTERM");
@@ -207,9 +213,9 @@ export async function preflightRebuildImage(
       // Best effort: cleanup errors must not prevent build-context/env cleanup.
     }
     if (!retainBuildContext && cleanupBuildContext) {
-      // Keep an exit safety net armed if inline cleanup fails; staged contexts
-      // may contain copied source or secret-bearing build inputs.
-      process.on("exit", cleanupBuildContext);
+      // installBuildContextCleanupFallback already armed an exit safety net.
+      // Leave that single listener in place if inline cleanup fails because a
+      // staged context may contain copied source or secret-bearing inputs.
       try {
         cleanupBuildContextWithExitFallback(cleanupBuildContext);
       } catch {

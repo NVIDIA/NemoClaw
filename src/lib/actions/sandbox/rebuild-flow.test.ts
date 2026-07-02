@@ -615,26 +615,45 @@ describe("rebuildSandbox flow", () => {
     // sandbox and left its selection env in the process before
     // `upgrade-sandboxes --auto` rebuilds an existing OpenClaw (registry agent
     // null) sandbox.
-    const restoreEnv = snapshotEnv(["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER_KEY"]);
+    const restoreEnv = snapshotEnv([
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
+    ]);
     process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
     process.env.NEMOCLAW_PROVIDER_KEY = "sk-bogus-installer-key";
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = "host";
 
     let envSeenInsideOnboard: {
       agent: string | undefined;
+      dockerGpuPatchNetwork: string | undefined;
       providerKey: string | undefined;
     } | null = null;
+    let authoritativeDockerGpuPatchNetwork: unknown;
 
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
-        onboard: () => {
+        onboard: (_session, options) => {
           // onboard --resume's agent/provider/credential resolution reads these
           // directly from process.env; they must be gone during recreate so the
           // pinned registry session wins.
           envSeenInsideOnboard = {
             agent: process.env.NEMOCLAW_AGENT,
+            dockerGpuPatchNetwork: process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK,
             providerKey: process.env.NEMOCLAW_PROVIDER_KEY,
           };
+          authoritativeDockerGpuPatchNetwork = options.authoritativeDockerGpuPatchNetwork;
+        },
+      });
+      harness.imagePreflightSpy.mockResolvedValue({
+        ok: true,
+        preparedBuildContext: {
+          buildCtx: "/tmp/rebuild-flow-preflight",
+          stagedDockerfile: "/tmp/rebuild-flow-preflight/Dockerfile",
+          buildId: "flow-build",
+          dockerGpuPatchNetwork: "preserve",
+          cleanupBuildCtx: vi.fn(() => true),
         },
       });
 
@@ -642,9 +661,15 @@ describe("rebuildSandbox flow", () => {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(envSeenInsideOnboard).toEqual({ agent: undefined, providerKey: undefined });
+      expect(envSeenInsideOnboard).toEqual({
+        agent: undefined,
+        dockerGpuPatchNetwork: undefined,
+        providerKey: undefined,
+      });
+      expect(authoritativeDockerGpuPatchNetwork).toBe("preserve");
       // The caller's env is left exactly as it was after the rebuild.
       expect(process.env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
+      expect(process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
       expect(process.env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus-installer-key");
     } finally {
       restoreEnv();
@@ -708,6 +733,29 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("redacts secret-looking Docker output when image preflight fails (#6195)", async () => {
+    const secret = `nvapi-${"a".repeat(30)}`;
+    const harness = createRebuildFlowHarness();
+    harness.imagePreflightSpy.mockResolvedValue({
+      ok: false,
+      detail: `docker stdout: NVIDIA_INFERENCE_API_KEY=${secret}; docker stderr: rejected`,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Replacement sandbox image preflight failed");
+
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain("replacement sandbox image did not build");
+    expect(output).not.toContain(secret);
+    expect(output).toContain("nvap");
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
   it("does not inherit messaging config or staged plan env from a prior sandbox", async () => {
     const restoreEnv = snapshotEnv(["DISCORD_SERVER_ID", "NEMOCLAW_MESSAGING_PLAN_B64"]);
     process.env.DISCORD_SERVER_ID = "sandbox-a-guild";
@@ -738,6 +786,29 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("bounds a Ready sandbox to two inference smoke checks before deletion (#6195)", async () => {
+    const harness = createRebuildFlowHarness();
+    harness.captureOpenshellSpy.mockImplementation((args: string[]) =>
+      args[0] === "sandbox" && args[1] === "list"
+        ? ({ status: 0, output: "alpha Ready" } as never)
+        : ({ status: 0, output: "" } as never),
+    );
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.inferenceRouteSpy).toHaveBeenCalledTimes(2);
+    expect(harness.inferenceRouteSpy).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ sandboxName: "alpha" }),
+    );
+    expect(harness.inferenceRouteSpy).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ sandboxName: "alpha" }),
+    );
+  });
+
   it("validates retained Brave egress while ignoring an ambient host key", async () => {
     const restoreEnv = snapshotEnv(["BRAVE_API_KEY"]);
     process.env.BRAVE_API_KEY = "hostile-ambient-brave-key";
@@ -750,7 +821,7 @@ describe("rebuildSandbox flow", () => {
       ).resolves.toBeUndefined();
 
       expect(harness.braveRouteSpy).toHaveBeenCalledWith("alpha");
-      expect(harness.braveRouteSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
+      expect(harness.braveRouteSpy).toHaveBeenCalledOnce();
       expect(harness.braveCredentialSpy).not.toHaveBeenCalled();
       expect(process.env.BRAVE_API_KEY).toBe("hostile-ambient-brave-key");
     } finally {

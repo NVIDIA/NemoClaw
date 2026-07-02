@@ -179,23 +179,23 @@ export function buildRebuildRecreateOnboardOpts(args: {
   }
   let authoritativeHermesDashboardConfig: HermesDashboardConfig | null = null;
   if (args.rebuildAgent === "hermes" && args.sb?.hermesDashboardEnabled === true) {
-    const dashboardPort = args.sb.hermesDashboardPort;
+    const hermesDashboardPort = args.sb.hermesDashboardPort;
     const internalPort = args.sb.hermesDashboardInternalPort;
-    if (dashboardPort == null || internalPort == null) {
+    if (hermesDashboardPort == null || internalPort == null) {
       throw new Error("Cannot recreate an enabled Hermes dashboard without its persisted ports.");
     }
     authoritativeHermesDashboardConfig = readHermesDashboardConfig({
       [HERMES_DASHBOARD_ENABLE_ENV]: "1",
-      [HERMES_DASHBOARD_PORT_ENV]: String(dashboardPort),
+      [HERMES_DASHBOARD_PORT_ENV]: String(hermesDashboardPort),
       [HERMES_DASHBOARD_INTERNAL_PORT_ENV]: String(internalPort),
       ...(args.sb.hermesDashboardTui ? { [HERMES_DASHBOARD_TUI_ENV]: "1" } : {}),
     });
     if (
-      dashboardPort === internalPort ||
-      dashboardPort === HERMES_OPENAI_API_PORT ||
+      hermesDashboardPort === internalPort ||
+      hermesDashboardPort === HERMES_OPENAI_API_PORT ||
       internalPort === HERMES_OPENAI_API_PORT ||
       (args.sb.dashboardPort != null &&
-        (dashboardPort === args.sb.dashboardPort || internalPort === args.sb.dashboardPort))
+        (hermesDashboardPort === args.sb.dashboardPort || internalPort === args.sb.dashboardPort))
     ) {
       throw new Error("Invalid persisted Hermes dashboard port configuration.");
     }

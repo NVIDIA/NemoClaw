@@ -367,7 +367,15 @@ describe("atomic dcode rebuild preflight (#6195)", () => {
     ).rejects.toThrow("fatal target preflight failed");
 
     expect(harness.preflightTargetSpy).toHaveBeenCalledOnce();
-    expect(harness.recoverGatewaySpy).toHaveBeenCalledWith({ gatewayName: targetGatewayName });
+    expect(harness.recoverGatewaySpy).toHaveBeenCalledWith({
+      gatewayName: targetGatewayName,
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
     expect(harness.imagePreflightSpy).not.toHaveBeenCalled();
     expect(harness.routeReadySpy).not.toHaveBeenCalled();
     expectNoDestructiveWork(harness);
@@ -413,7 +421,6 @@ describe("atomic dcode rebuild preflight (#6195)", () => {
       "final-image",
       `liveness:${targetGatewayName}`,
       "target-preflight",
-      "inference-probe",
       "final-route",
       "shields-unlock",
       "backup",

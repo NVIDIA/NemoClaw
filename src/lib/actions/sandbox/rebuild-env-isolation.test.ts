@@ -139,6 +139,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_POLICY_TIER: "bogus",
       NEMOCLAW_RESOURCE_PROFILE: "bogus",
       NEMOCLAW_VLLM_MODEL: "bogus",
+      NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
     };
@@ -149,6 +150,7 @@ describe("isolateAmbientRecreateEnv", () => {
       expect(env[name]).toBeUndefined();
     }
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBeUndefined();
 
     restore();
 
@@ -159,6 +161,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_POLICY_TIER).toBe("bogus");
     expect(env.NEMOCLAW_RESOURCE_PROFILE).toBe("bogus");
     expect(env.NEMOCLAW_VLLM_MODEL).toBe("bogus");
+    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.
     expect("NEMOCLAW_PROVIDER" in env).toBe(false);

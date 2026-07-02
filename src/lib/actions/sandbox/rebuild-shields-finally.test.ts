@@ -171,7 +171,15 @@ describe("rebuild shields relock guard", () => {
     expect(relockSpy).toHaveBeenCalledWith("alpha", rebuildWindow, true, expect.any(String));
     expect(sandboxListRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
     expect(targetGatewayRecoverySpy).toHaveBeenCalledOnce();
-    expect(targetGatewayRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
+    expect(targetGatewayRecoverySpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-8090",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
     expect(authoritativePreflightSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         authoritativeResumeConfig: true,

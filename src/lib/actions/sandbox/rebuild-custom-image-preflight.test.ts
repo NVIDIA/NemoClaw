@@ -175,6 +175,28 @@ describe("preflightRebuildImage", () => {
     expect(process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe(originalDockerGpuPatchNetwork);
   });
 
+  it("keeps only one exit fallback when inline context cleanup is incomplete (#6195)", async () => {
+    const processOnSpy = vi.spyOn(process, "on").mockReturnValue(process);
+    vi.spyOn(process, "once").mockReturnValue(process);
+    const cleanupBuildCtx = vi.fn(() => false);
+
+    const result = await preflightRebuildImage(dcodeInput(), {
+      stageBuildContext: vi.fn(() => ({
+        buildCtx: "/tmp/dcode-rebuild-incomplete-cleanup",
+        stagedDockerfile: "/tmp/dcode-rebuild-incomplete-cleanup/Dockerfile",
+        cleanupBuildCtx,
+      })),
+      prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+      buildImage: vi.fn(() => ({ status: 1, stderr: "build failed" }) as never),
+      removeImage: vi.fn(() => ({ status: 0 }) as never),
+      createImageTag: () => "nemoclaw-rebuild-preflight:incomplete-cleanup",
+    });
+
+    expect(result).toMatchObject({ ok: false });
+    expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+    expect(processOnSpy.mock.calls.filter(([eventName]) => eventName === "exit")).toHaveLength(1);
+  });
+
   it("cleans the staged context and throwaway image before re-signaling an interrupt", async () => {
     let sigintHandler: (() => void) | null = null;
     vi.spyOn(process, "once").mockImplementation(((
@@ -210,6 +232,50 @@ describe("preflightRebuildImage", () => {
       suppressOutput: true,
     });
     expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGINT");
+    expect(cleanupBuildCtx.mock.invocationCallOrder[0]).toBeLessThan(
+      removeImage.mock.invocationCallOrder[0],
+    );
+    expect(removeImage.mock.invocationCallOrder[0]).toBeLessThan(
+      killSpy.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("still cleans the throwaway image and re-signals when context cleanup throws (#6195)", async () => {
+    let sigtermHandler: (() => void) | null = null;
+    vi.spyOn(process, "once").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      if (eventName === "SIGTERM") sigtermHandler = listener;
+      return process;
+    }) as typeof process.once);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const cleanupBuildCtx = vi.fn(() => {
+      throw new Error("context cleanup failed");
+    });
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
+
+    const result = await preflightRebuildImage(dcodeInput(), {
+      stageBuildContext: vi.fn(() => ({
+        buildCtx: "/tmp/dcode-rebuild-throwing-cleanup",
+        stagedDockerfile: "/tmp/dcode-rebuild-throwing-cleanup/Dockerfile",
+        cleanupBuildCtx,
+      })),
+      prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+      buildImage: vi.fn(() => {
+        sigtermHandler?.();
+        return { status: 1, stderr: "interrupted" } as never;
+      }),
+      removeImage,
+      createImageTag: () => "nemoclaw-rebuild-preflight:throwing-cleanup",
+    });
+
+    expect(result).toEqual({ ok: false, detail: "context cleanup failed" });
+    expect(removeImage).toHaveBeenCalledWith("nemoclaw-rebuild-preflight:throwing-cleanup", {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGTERM");
     expect(cleanupBuildCtx.mock.invocationCallOrder[0]).toBeLessThan(
       removeImage.mock.invocationCallOrder[0],
     );

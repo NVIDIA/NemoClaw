@@ -11,6 +11,10 @@ type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
 
+// Warm the large CommonJS source graph outside the per-test hook timeout.
+requireDist("./rebuild.js");
+delete require.cache[requireDist.resolve("./rebuild.js")];
+
 const driftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
   drift: {
@@ -181,7 +185,15 @@ describe("rebuild gateway drift preflight", () => {
     );
     expect(checkAgentVersionSpy).toHaveBeenCalledOnce();
     expect(acquireOnboardLockSpy).toHaveBeenCalledWith("nemoclaw alpha rebuild");
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
     expect(authoritativePreflightSpy).not.toHaveBeenCalled();
     expect(imagePreflightSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).not.toHaveBeenCalled();
@@ -263,7 +275,8 @@ describe("rebuild gateway drift preflight", () => {
     );
     expect(inferenceRouteReadySpy).toHaveBeenCalledWith("ollama-local", "nvidia/nemotron");
     expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
-    // The liveness query ran twice (initial failure + post-recovery retry).
+    // One early inference-route eligibility read plus the failed liveness read
+    // and its post-recovery retry.
     expect(listCalls).toBe(3);
   });
 
@@ -425,8 +438,16 @@ describe("rebuild gateway drift preflight", () => {
     );
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(1);
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
-    expect(captureOpenshellSpy).toHaveBeenCalledTimes(1);
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
+    expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
   });
 });

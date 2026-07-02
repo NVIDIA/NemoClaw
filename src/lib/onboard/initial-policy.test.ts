@@ -290,6 +290,21 @@ network_policies:
     expect(prepared.cleanup?.()).toBe(true);
   });
 
+  it("rejects invalid persisted custom policy YAML before create (#6195)", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+
+    expect(() =>
+      prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+        additionalPresetContents: [
+          {
+            name: "unsafe-internal-api",
+            content: "network_policies:\n  unsafe-internal-api: [\n",
+          },
+        ],
+      }),
+    ).toThrow("custom preset 'unsafe-internal-api' is invalid YAML");
+  });
+
   it("cleans earlier GPU temp policy state when a recorded preset is missing", () => {
     const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
     const before = new Set(

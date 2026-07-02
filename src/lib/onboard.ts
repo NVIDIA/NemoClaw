@@ -39,16 +39,16 @@ const {
   abortNonInteractive,
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
-const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
+const authoritativeRebuildMessaging: typeof import("./onboard/authoritative-rebuild-messaging") =
+  require("./onboard/authoritative-rebuild-messaging");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
 const onboardEntryOptions: typeof import("./onboard/entry-options") = require("./onboard/entry-options");
 const onboardSessionBootstrap: typeof import("./onboard/session-bootstrap") = require("./onboard/session-bootstrap");
-const channelState: typeof import("./onboard/channel-state") = require("./onboard/channel-state");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -67,9 +67,11 @@ const {
 const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
 const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inference") = require("./onboard/docker-gpu-local-inference");
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
+const gatewayBoundOperations: typeof import("./onboard/gateway-bound-operations") =
+  require("./onboard/gateway-bound-operations");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
-const dockerDriverGatewayLocalTls: typeof import("./onboard/docker-driver-gateway-local-tls") =
-  require("./onboard/docker-driver-gateway-local-tls");
+const dockerDriverGatewayStart: typeof import("./onboard/docker-driver-gateway-start") =
+  require("./onboard/docker-driver-gateway-start");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
 const {
   findReadableNvidiaCdiSpecFiles,
@@ -81,7 +83,6 @@ const {
 }: typeof import("./onboard/sandbox-gpu-create") = require("./onboard/sandbox-gpu-create");
 const {
   appendResourceFlagsForProfile,
-  preflightAuthoritativeResourceProfile,
   selectResourceProfileForSandbox,
 }: typeof import("./onboard/resource-profile-selection") = require("./onboard/resource-profile-selection");
 const {
@@ -101,7 +102,9 @@ const {
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
 }: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
-const initialPolicy: typeof import("./onboard/initial-policy") = require("./onboard/initial-policy");
+const {
+  preflightAuthoritativeRebuildCreatePolicy,
+}: typeof import("./onboard/authoritative-rebuild-policy") = require("./onboard/authoritative-rebuild-policy");
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
@@ -121,9 +124,6 @@ const {
 const {
   reconcileGatewayGpuReuseForGpuIntent,
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
-const {
-  syncPresetSelection,
-}: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const {
   maybeForceE2eStepFailure,
 }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
@@ -165,7 +165,6 @@ const pRetry = require("p-retry");
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
-const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -185,10 +184,7 @@ const {
   dockerStop,
 } = docker;
 const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
-const {
-  getGatewayClusterContainerName,
-  getGatewayClusterImageDrift: getGatewayClusterImageDriftForName,
-} = gatewayDrift;
+const { getGatewayClusterContainerName } = gatewayDrift;
 const sandboxBaseImage: typeof import("./sandbox-base-image") = require("./sandbox-base-image");
 const { OPENCLAW_SANDBOX_BASE_IMAGE: SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } = sandboxBaseImage;
 const {
@@ -214,7 +210,6 @@ const {
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
 } = require("./core/ports");
-const gatewayAddress: typeof import("./core/gateway-address") = require("./core/gateway-address");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   resetOllamaHostCache,
@@ -330,6 +325,7 @@ const {
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const {
   waitForGatewayHealth,
+  getGatewayHealthWaitConfig,
 }: typeof import("./onboard/gateway-health-wait") = require("./onboard/gateway-health-wait");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
@@ -494,6 +490,8 @@ const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const policyTierEnv: typeof import("./onboard/policy-tier-env") = require("./onboard/policy-tier-env");
+const policySelectionRuntime: typeof import("./onboard/policy-selection-runtime") =
+  require("./onboard/policy-selection-runtime");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
@@ -502,6 +500,8 @@ const {
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const authoritativeRebuildTarget: typeof import("./onboard/authoritative-rebuild-target") =
   require("./onboard/authoritative-rebuild-target");
+const authoritativeRebuildRuntime: typeof import("./onboard/authoritative-rebuild-runtime") =
+  require("./onboard/authoritative-rebuild-runtime");
 const { assertDashboardPortNotReserved, buildRequiredPreflightPorts } =
   require("./onboard/preflight-ports") as typeof import("./onboard/preflight-ports");
 const { tryCleanupOrphanedDashboardForward } =
@@ -520,27 +520,15 @@ const { gatewayCliSupportsLifecycleCommands } =
   require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
 const { reconcilePreflightGatewayReuseState } =
   require("./onboard/preflight-gateway-reuse") as typeof import("./onboard/preflight-gateway-reuse");
+const { getGatewayReuseHealthWaitConfig } =
+  require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
 const {
-  getGatewayReuseHealthWaitConfig,
-  isDockerDriverGatewayHttpReady: probeDockerDriverGatewayHttpReady,
-  isGatewayHttpReady: probeGatewayHttpReady,
-  waitForGatewayHttpReady: waitForGatewayHttpReadyBase,
-} = require("./onboard/gateway-http-readiness") as typeof import("./onboard/gateway-http-readiness");
-const { isGatewayTcpReady: probeGatewayTcpReady } =
-  require("./onboard/gateway-tcp-readiness") as typeof import("./onboard/gateway-tcp-readiness");
-const { trackChildExit } =
-  require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
-const { reportDockerDriverGatewayStartFailure } =
-  require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { printDockerDaemonRecovery, reportLegacyGatewayStartResultFailure } =
-  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
+  handleFinalGatewayStartFailure: handleFinalGatewayStartFailureImpl,
+  reportLegacyGatewayStartResultFailure,
+} = require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
-const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
-  require("./onboard/docker-driver-gateway-runtime-marker");
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
-const fatalRuntimePreflight: typeof import("./onboard/fatal-runtime-preflight") =
-  require("./onboard/fatal-runtime-preflight");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo, planHostRemediation } =
@@ -586,7 +574,6 @@ import {
 } from "./onboard/hermes-managed-tools";
 import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import { filterEnabledChannelsByAgent } from "./onboard/messaging-state";
-import { getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
 import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
@@ -595,14 +582,7 @@ import type {
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
-import {
-  computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
-  preparePolicyPresetResumeSelection,
-  type SetupPolicySelectionOptions,
-  type SetupPresetSuggestionOptions,
-  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
-} from "./onboard/policy-selection";
-import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
+import { preparePolicyPresetResumeSelection } from "./onboard/policy-selection";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
@@ -660,61 +640,8 @@ const {
 
 import type { JsonObject as LooseObject } from "./core/json-types";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
+import type { OnboardOptions } from "./onboard/options";
 
-type OnboardOptions = {
-  nonInteractive?: boolean;
-  recreateSandbox?: boolean;
-  authoritativeResumeConfig?: boolean;
-  /** Internal persisted policy replay; ambient policy-tier env is ignored. */
-  authoritativePolicyTier?: string | null;
-  /** Internal exact CPU/RAM replay; null explicitly keeps the default resources. */
-  authoritativeResourceProfile?: import("./resources-cmd").ResourceProfile | null;
-  /** Internal persisted Hermes dashboard replay. */
-  authoritativeHermesDashboardConfig?: import("./hermes-dashboard").HermesDashboardConfig | null;
-  /** Internal exact web-search replay; null explicitly keeps it disabled. */
-  authoritativeWebSearchConfig?: WebSearchConfig | null;
-  /** True only after rebuild validated the retained Brave credential. */
-  authoritativeWebSearchValidated?: boolean;
-  /** True only after rebuild ran messaging conflict hooks for the staged plan. */
-  authoritativeMessagingPrevalidated?: boolean;
-  /** Exact provider attachments validated for rebuild; ambient tokens are ignored. */
-  authoritativeMessagingReuse?: {
-    providers: string[];
-    channels: string[];
-    disabledChannels: string[];
-    detachProviders: string[];
-    extraProviders: string[];
-    extraPlaceholderKeys: string[];
-  };
-  /** Exact fatal-runtime result prepared while the original sandbox existed. */
-  authoritativeRuntimePreflight?: import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightResult;
-  /** Exact boot policy prepared and parsed before destructive rebuild work. */
-  authoritativeInitialPolicy?: import("./onboard/initial-policy").InitialSandboxPolicy;
-  /** Exact custom policy metadata already merged into the prepared boot policy. */
-  authoritativeCustomPolicies?: import("./state/registry").CustomPolicyEntry[];
-  /** Internal authoritative rebuild target; never exposed as a public option. */
-  targetGatewayName?: string | null;
-  /** Internal authoritative rebuild target; must match targetGatewayName. */
-  targetGatewayPort?: number | null;
-  /** Internal rebuild handoff: the outer lifecycle owns the onboard lock. */
-  onboardLockAlreadyHeld?: boolean;
-  /** Exact staged + patched context already built before the old sandbox was removed. */
-  preparedBuildContext?: PreparedSandboxBuildContext;
-  /** GPU patch network mode produced by the retained Dockerfile preparation. */
-  authoritativeDockerGpuPatchNetwork?: string | null;
-  resume?: boolean;
-  fresh?: boolean;
-  fromDockerfile?: string | null;
-  sandboxName?: string | null;
-  sandboxGpu?: "enable" | "disable" | null;
-  sandboxGpuDevice?: string | null;
-  acceptThirdPartySoftware?: boolean;
-  agent?: string | null;
-  controlUiPort?: number | null;
-  gpu?: boolean;
-  noGpu?: boolean;
-  autoYes?: boolean;
-};
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -771,45 +698,21 @@ async function promptYesNoOrDefault(
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function getDockerDriverGatewayEndpoint(): string {
-  return dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(GATEWAY_PORT);
-}
-
-function getGatewayClusterImageDrift() {
-  return getGatewayClusterImageDriftForName({ gatewayName: GATEWAY_NAME });
-}
-
-function isGatewayHttpReady(
-  timeoutMs?: number,
-  url?: string,
-  method?: "GET" | "POST",
-): Promise<boolean> {
-  return probeGatewayHttpReady(
-    timeoutMs,
-    url ?? `${gatewayAddress.getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
-    method,
-  );
-}
-
-function isDockerDriverGatewayHttpReady(timeoutMs?: number, url?: string): Promise<boolean> {
-  return probeDockerDriverGatewayHttpReady(
-    timeoutMs,
-    url ?? `${gatewayAddress.getGatewayHttpsEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
-  );
-}
-
-function waitForGatewayHttpReady(
-  opts: import("./onboard/gateway-http-readiness").WaitForGatewayHttpReadyOpts = {},
-): Promise<boolean> {
-  return waitForGatewayHttpReadyBase({
-    ...opts,
-    probe: opts.probe ?? (() => isGatewayHttpReady()),
-  });
-}
-
-function isGatewayTcpReady(timeoutMs?: number): Promise<boolean> {
-  return probeGatewayTcpReady(GATEWAY_PORT, timeoutMs);
-}
+const {
+  buildGatewayClusterExecArgv,
+  checkGatewayPortAvailable,
+  getDockerDriverGatewayEndpoint,
+  getGatewayClusterImageDrift,
+  getGatewayClusterContainerState,
+  getGatewayLocalEndpoint,
+  isDockerDriverGatewayHttpReady,
+  isGatewayHttpReady,
+  isGatewayTcpReady,
+  waitForGatewayHttpReady,
+} = gatewayBoundOperations.createGatewayBoundOperations(() => ({
+  name: GATEWAY_NAME,
+  port: GATEWAY_PORT,
+}));
 
 const {
   getOpenshellBinary,
@@ -1448,108 +1351,21 @@ function handleFinalGatewayStartFailure({
   exitProcess = (code) => process.exit(code),
   printError = (message = "") => console.error(message),
 }: FinalGatewayStartFailureOptions): never {
-  if (dockerUnreachable) {
-    printDockerDaemonRecovery(printError);
-    return exitProcess(1);
-  }
-
-  printError(`  Gateway failed to start after ${retries + 1} attempts.`);
-  printError("  Gateway state preserved until diagnostics are collected.");
-  printError("");
-
-  try {
-    const logs = redact(collectDiagnostics() || "");
-    if (logs) {
-      printError("  Gateway logs:");
-      for (const line of String(logs)
-        .split("\n")
-        .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
-        .filter(Boolean)) {
-        printError(`    ${line}`);
-      }
-      printError("");
-    }
-  } catch {
-    // doctor logs unavailable — continue to best-effort cleanup and manual instructions
-  }
-
-  printError("  Cleaning up failed gateway state...");
-  try {
-    cleanupGateway();
-    printError("  Cleanup attempted.");
-  } catch (err) {
-    const message = compactText(err instanceof Error ? err.message : String(err));
-    printError(message ? `  Cleanup attempt failed: ${message}` : "  Cleanup attempt failed.");
-  }
-  printError("");
-  printError("  Diagnostic command attempted before cleanup:");
-  printError(`    openshell doctor logs --name ${GATEWAY_NAME}`);
-  printError("    openshell doctor check");
-  printError("");
-  printError("  If gateway cleanup did not complete, run:");
-  printError(`    openshell gateway remove ${GATEWAY_NAME}`);
-  printError(`    # For OpenShell releases that still expose lifecycle commands:`);
-  printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
-  if (process.platform === "linux") {
-    printError(
-      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-    );
-  }
-  printError(
-    `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
-  );
-  printError(`    nemoclaw onboard --resume`);
-  return exitProcess(1);
-}
-
-function getGatewayClusterContainerState(): string {
-  const containerName = getGatewayClusterContainerName(GATEWAY_NAME);
-  const state = dockerContainerInspectFormat(
-    "{{.State.Status}}{{if .State.Health}} {{.State.Health.Status}}{{end}}",
-    containerName,
-    { ignoreError: true },
-  )
-    .trim()
-    .toLowerCase();
-  return state || "missing";
-}
-
-function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
-  const isArm64 = process.arch === "arm64";
-  const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
-  const standardInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", isArm64 ? 10 : 5);
-  const extendedCount = envInt("NEMOCLAW_GATEWAY_START_POLL_COUNT", standardCount);
-  const extendedInterval = envInt("NEMOCLAW_GATEWAY_START_POLL_INTERVAL", standardInterval);
-  const normalizedState = String(containerState || "")
-    .trim()
-    .toLowerCase();
-  const normalizedContainerState = normalizedState || "missing";
-  const useExtendedWait = normalizedContainerState !== "missing";
-
-  return {
-    count: useExtendedWait ? extendedCount : standardCount,
-    interval: useExtendedWait ? extendedInterval : standardInterval,
-    extended: useExtendedWait,
-    containerState: normalizedContainerState,
-  };
-}
-
-function buildGatewayClusterExecArgv(script: string): string[] {
-  return dockerExecArgv(getGatewayClusterContainerName(GATEWAY_NAME), ["sh", "-lc", script]);
+  return handleFinalGatewayStartFailureImpl({
+    retries,
+    gatewayName: GATEWAY_NAME,
+    dockerUnreachable,
+    collectDiagnostics,
+    cleanupGateway,
+    exitProcess,
+    printError,
+  });
 }
 
 function captureProcessArgs(pid: number): string {
   return runCapture(["ps", "-p", String(pid), "-o", "args="], {
     ignoreError: true,
   }).trim();
-}
-
-function checkGatewayPortAvailable() {
-  return checkPortAvailable(GATEWAY_PORT, dockerDriverGatewayEnv.getGatewayPortCheckOptions());
-}
-
-function getGatewayLocalEndpoint(): string {
-  return dockerDriverGatewayEnv.getGatewayHttpsEndpoint(GATEWAY_PORT);
 }
 
 const { gatewayClusterHealthcheckPassed, repairGatewayBootstrapSecrets } =
@@ -2244,218 +2060,31 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
-async function startDockerDriverGateway({
-  exitOnFailure = true,
-  skipSandboxBridgeReachability = false,
-}: {
-  exitOnFailure?: boolean;
-  skipSandboxBridgeReachability?: boolean;
-} = {}): Promise<void> {
-  const gatewayBin = resolveOpenShellGatewayBinary();
-  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
-  const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
-  const stateDir = getDockerDriverGatewayStateDir();
-  const runtimeIdentity = gatewayBin
-    ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({
-        gatewayBin,
-        gatewayEnv,
-        stateDir,
-        sandboxBin: resolveOpenShellSandboxBinary(),
-        compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-        ensureLocalTlsBundle: true,
-      })
-    : null;
-  const gatewayLaunch = runtimeIdentity?.launch ?? null;
-  const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(
-    runtimeIdentity,
-    gatewayBin,
-  );
-  const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
-  const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const { verifySandboxBridgeGatewayReachableOrExit } =
-    require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
-  if (
-    await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({
-      clearDockerDriverGatewayRuntimeFiles,
-      exitOnFailure,
-      gatewayEnv,
-      gatewayName: GATEWAY_NAME,
-      isDockerDriverGatewayReady: () => isDockerDriverGatewayHttpReady(),
-      registerDockerDriverGatewayEndpoint,
-      runCaptureOpenshell,
-      skipSandboxBridgeReachability,
-      verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
-        verifySandboxBridgeGatewayReachableOrExit(fail, {
-          ...options,
-          port: GATEWAY_PORT,
-        }),
-    })
-  )
-    return;
-
-  const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-  const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-    ignoreError: true,
-  });
-  const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const pidFileGatewayPid = getDockerDriverGatewayPid();
-  if (
-    pidFileGatewayPid !== null &&
-    isDockerDriverGatewayProcessAlive() &&
-    isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
-  ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(
-      pidFileGatewayPid,
-      driftGatewayEnv,
-      driftGatewayBin,
-    );
-    if (drift) {
-      restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
-    } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-        port: GATEWAY_PORT,
-      });
-      console.log("  ✓ Reusing existing Docker-driver gateway");
-      return;
-    } else {
-      console.log(
-        `  Docker-driver gateway metadata reports healthy but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Starting a fresh gateway...`,
-      );
-    }
-  }
-
-  const portCheck = await checkGatewayPortAvailable();
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin: identityGatewayBin,
-  });
-  if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(
-      portListenerPid,
-      driftGatewayEnv,
-      driftGatewayBin,
-    );
-    if (drift) {
-      rememberDockerDriverGatewayPid(portListenerPid);
-      restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
-    } else {
-      rememberDockerDriverGatewayPid(portListenerPid);
-    }
-    if (!drift && registerDockerDriverGatewayEndpoint()) {
-      const adoptedStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-      const adoptedGwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-        ignoreError: true,
-      });
-      const adoptedActiveGatewayInfo = runCaptureOpenshell(["gateway", "info"], {
-        ignoreError: true,
-      });
-      if (
-        isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
-        (await isDockerDriverGatewayHttpReady())
-      ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-          skip: skipSandboxBridgeReachability,
-          port: GATEWAY_PORT,
-        });
-        console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
-        return;
-      }
-    }
-  }
-  if (!gatewayBin) {
-    console.error("  OpenShell Docker-driver gateway binary not found.");
-    console.error(
-      `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
-    );
-    if (exitOnFailure) process.exit(1);
-    throw new Error("OpenShell gateway binary not found");
-  }
-
-  const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
-  if (existingPid !== null && isPidAlive(existingPid)) {
-    if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
-      clearDockerDriverGatewayRuntimeFiles();
-    } else {
-      console.log(`  Restarting unhealthy Docker-driver gateway process (PID ${existingPid})...`);
-      try {
-        process.kill(existingPid, "SIGTERM");
-        sleepSeconds(1);
-      } catch {
-        /* best effort; the new process will surface any remaining port conflict */
-      }
-    }
-  }
-
-  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
-  const logPath = path.join(stateDir, "openshell-gateway.log");
-  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
-  console.log("  Starting OpenShell Docker-driver gateway...");
-  console.log(`  Gateway log: ${logPath}`);
-  const launch = gatewayLaunch ?? {
-    command: gatewayBin,
-    args: [],
-    env: { ...process.env, ...gatewayEnv },
-    mode: "host" as const,
-    processGatewayBin: gatewayBin,
-  };
-  dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
-  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
-  const childExit = trackChildExit(child); // #3111 zombie-safe liveness
-  child.unref();
-  const childPid = child.pid ?? 0;
-  if (childPid <= 0) {
-    throw new Error("OpenShell gateway process did not return a pid");
-  }
-  rememberDockerDriverGatewayPid(childPid);
-  dockerDriverGatewayRuntimeMarker.writeDockerDriverGatewayRuntimeMarkerForStateDir(
-    getDockerDriverGatewayStateDir(),
-    {
-      pid: childPid,
-      desiredEnv: driftGatewayEnv,
-      endpoint: getDockerDriverGatewayEndpoint(),
-      gatewayBin: driftGatewayBin,
-      openshellVersion: getInstalledOpenshellVersion(openshellVersionOutput),
-      dockerHost: process.env.DOCKER_HOST || null,
-    },
-  );
-
-  const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
-  const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
-  for (let i = 0; i < pollCount; i += 1) {
-    if (childExit.exited || !isPidAlive(childPid)) {
-      break;
-    }
-    if (!registerDockerDriverGatewayEndpoint()) {
-      if (i < pollCount - 1) sleepSeconds(pollInterval);
-      continue;
-    }
-    const status = runCaptureOpenshell(["status"], { ignoreError: true });
-    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-      ignoreError: true,
-    });
-    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    // #4430: the status/gateway-info/TCP probes above take real wall-clock time; re-confirm
-    // childExit/isPidAlive *after* them so a gateway that drifts on schema and aborts during
-    // migration after accepting briefly can never print the misleading healthy line below.
-    if (
-      isGatewayHealthy(status, namedInfo, currentInfo) &&
-      (await isGatewayTcpReady()) &&
-      !childExit.exited &&
-      isPidAlive(childPid)
-    ) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-        port: GATEWAY_PORT,
-      });
-      console.log("  ✓ Docker-driver gateway is healthy");
-      return;
-    }
-    if (i < pollCount - 1) sleepSeconds(pollInterval);
-  }
-
-  reportDockerDriverGatewayStartFailure(logPath, childExit, { exitOnFailure });
-  throw new Error("Docker-driver gateway failed to start");
-}
+const startDockerDriverGateway = dockerDriverGatewayStart.createDockerDriverGatewayStarter({
+  getBinding: () => ({ name: GATEWAY_NAME, port: GATEWAY_PORT }),
+  runtime: {
+    clearDockerDriverGatewayRuntimeFiles,
+    getDockerDriverGatewayEnv,
+    getDockerDriverGatewayPid,
+    getDockerDriverGatewayPortListenerPid,
+    getDockerDriverGatewayRuntimeDrift,
+    getDockerDriverGatewayStateDir,
+    isDockerDriverGatewayProcess,
+    isDockerDriverGatewayProcessAlive,
+    isPidAlive,
+    rememberDockerDriverGatewayPid,
+    resolveOpenShellGatewayBinary,
+    resolveOpenShellSandboxBinary,
+  },
+  runCaptureOpenshell,
+  isDockerDriverGatewayHttpReady,
+  registerDockerDriverGatewayEndpoint,
+  isGatewayHealthy,
+  restartDockerDriverGatewayProcessForDrift,
+  checkGatewayPortAvailable,
+  getDockerDriverGatewayEndpoint,
+  isGatewayTcpReady,
+});
 
 async function startGateway(
   _gpu: ReturnType<typeof nim.detectGpu>,
@@ -2650,239 +2279,20 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
-function createSandboxMessagingPreflightDeps(
-  options: {
-    gatewayName?: string;
-    forceNonInteractive?: boolean;
-    exitProcess?: (code: number) => never;
-  } = {},
-): import("./onboard/sandbox-messaging-preflight").SandboxMessagingPreflightDeps {
-  return {
-    readMessagingPlanFromEnv,
-    resolveDisabledChannels: channelState.resolveDisabledChannels,
-    gatewayName: options.gatewayName ?? GATEWAY_NAME,
-    registry,
-    providerExistsInGateway,
-    isNonInteractive:
-      options.forceNonInteractive === undefined
-        ? isNonInteractive
-        : () => options.forceNonInteractive === true,
-    promptYesNoOrDefault,
-    cliName,
-    log: (message) => console.log(message),
-    error: (message) => console.error(message),
-    exitProcess: options.exitProcess ?? ((code) => process.exit(code)),
-    getValidatedMessagingTokenByEnvKey,
-    getCredential,
-    normalizeCredentialValue,
-    registerExtraPlaceholderProviders: extraPlaceholderKeysModule.registerExtraPlaceholderProviders,
-    getMessagingChannelForEnvKey,
-  };
-}
-
-/** Run messaging plan conflict hooks while the original sandbox is still intact. */
-async function preflightAuthoritativeRebuildMessagingConflicts(options: {
-  sandboxName: string;
-  targetGatewayName: string;
-  webSearchEnabled: boolean;
-}): Promise<NonNullable<OnboardOptions["authoritativeMessagingReuse"]>> {
-  const disabledChannels = channelState.resolveDisabledChannels(options.sandboxName);
-  const previousGateway = process.env.OPENSHELL_GATEWAY;
-  process.env.OPENSHELL_GATEWAY = options.targetGatewayName;
-  try {
-    await sandboxMessagingPreflight.checkMessagingPlanConflicts(
-      options.sandboxName,
-      disabledChannels,
-      createSandboxMessagingPreflightDeps({
-        gatewayName: options.targetGatewayName,
-        forceNonInteractive: true,
-        exitProcess: (code): never => {
-          throw new Error(`messaging conflict preflight exited with code ${String(code)}`);
-        },
-      }),
-    );
-  } finally {
-    if (previousGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousGateway;
-  }
-  return snapshotAuthoritativeRebuildMessagingState(options);
-}
-
-function sortedUnique(values: readonly string[]): string[] {
-  return [...new Set(values.filter(Boolean))].sort();
-}
-
-/** Read the exact non-secret messaging/provider contract without running hooks. */
-function snapshotAuthoritativeRebuildMessagingState(options: {
-  sandboxName: string;
-  targetGatewayName: string;
-  webSearchEnabled: boolean;
-}): NonNullable<OnboardOptions["authoritativeMessagingReuse"]> {
-  const storedDisabledChannels = channelState.resolveDisabledChannels(options.sandboxName);
-  const previousGateway = process.env.OPENSHELL_GATEWAY;
-  process.env.OPENSHELL_GATEWAY = options.targetGatewayName;
-  try {
-    const plan = readMessagingPlanFromEnv();
-    const disabled = new Set([...(plan?.disabledChannels ?? []), ...storedDisabledChannels]);
-    const channels = sortedUnique(
-      plan?.sandboxName === options.sandboxName
-        ? plan.channels
-            .filter((channel) => channel.active === true && !disabled.has(channel.channelId))
-            .map((channel) => channel.channelId)
-        : [],
-    );
-    const activeChannels = new Set(channels);
-    const allMessagingProviders = sortedUnique(
-      plan?.sandboxName === options.sandboxName
-        ? plan.credentialBindings.map((binding) => binding.providerName)
-        : [],
-    );
-    const activeProviders =
-      plan?.sandboxName === options.sandboxName
-        ? plan.credentialBindings
-            .filter((binding) => activeChannels.has(binding.channelId))
-            .map((binding) => binding.providerName)
-        : [];
-    if (options.webSearchEnabled) {
-      activeProviders.push(`${options.sandboxName}-brave-search`);
-    }
-
-    const sandboxEntry = registry.getSandbox(options.sandboxName);
-    const rawExtraPlaceholderKeys = sandboxEntry?.extraPlaceholderKeys ?? [];
-    if (!Array.isArray(rawExtraPlaceholderKeys)) {
-      throw new Error("Recorded extra placeholder keys are malformed.");
-    }
-    const parsedExtraPlaceholderKeys = extraPlaceholderKeysModule.parseExtraPlaceholderKeys(
-      rawExtraPlaceholderKeys.join(","),
-      extraPlaceholderKeysModule.canonicalPlaceholderKeys(),
-    );
-    const extraPlaceholderKeys = sortedUnique(parsedExtraPlaceholderKeys.keys);
-    const normalizedRawExtraPlaceholderKeys = sortedUnique(rawExtraPlaceholderKeys);
-    if (
-      parsedExtraPlaceholderKeys.warnings.length > 0 ||
-      extraPlaceholderKeys.length !== normalizedRawExtraPlaceholderKeys.length ||
-      extraPlaceholderKeys.some((key, index) => key !== normalizedRawExtraPlaceholderKeys[index])
-    ) {
-      throw new Error("Recorded extra placeholder keys are invalid.");
-    }
-    const extraPlaceholderProviders = extraPlaceholderKeys.map(
-      (envKey) =>
-        `${options.sandboxName}-extra-${extraPlaceholderKeysModule.extraPlaceholderProviderSlug(envKey)}`,
-    );
-    const providers = sortedUnique([...activeProviders, ...extraPlaceholderProviders]);
-    const extraProviders = sortedUnique(registry.listExtraProviders());
-    const requiredProviders = sortedUnique([...providers, ...extraProviders]);
-    const providerExists = new Map(
-      sortedUnique([...allMessagingProviders, ...requiredProviders]).map((providerName) => [
-        providerName,
-        providerExistsInGateway(providerName),
-      ]),
-    );
-    for (const providerName of requiredProviders) {
-      if (!providerExists.get(providerName)) {
-        throw new Error(`Recorded sandbox provider '${providerName}' is not registered.`);
-      }
-    }
-    const detachProviders = sortedUnique([
-      ...requiredProviders,
-      ...allMessagingProviders.filter((providerName) => providerExists.get(providerName)),
-    ]);
-    return {
-      providers,
-      channels,
-      disabledChannels: sortedUnique([...disabled]),
-      detachProviders,
-      extraProviders,
-      extraPlaceholderKeys,
-    };
-  } finally {
-    if (previousGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousGateway;
-  }
-}
-
-/** Validate Hermes managed-tool runtime/provider state before destructive rebuild work. */
-async function preflightAuthoritativeHermesToolGateways(options: {
-  sandboxName: string;
-  targetGatewayName: string;
-  toolGateways: string[];
-}): Promise<string | null> {
-  if (options.toolGateways.length === 0) return null;
-  const previousGateway = process.env.OPENSHELL_GATEWAY;
-  process.env.OPENSHELL_GATEWAY = options.targetGatewayName;
-  try {
-    const broker = getHermesToolGatewayBroker();
-    if (!broker.ensureHermesToolGatewayBroker()) {
-      throw new Error(
-        "Hermes managed-tool broker is unavailable or its recorded runtime identity changed.",
-      );
-    }
-    const providerName = broker.getHermesToolGatewayProviderName(options.sandboxName);
-    if (!providerExistsInGateway(providerName)) {
-      throw new Error(`Hermes managed-tool provider '${providerName}' is not registered.`);
-    }
-    return providerName;
-  } finally {
-    if (previousGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousGateway;
-  }
-}
-
-async function preflightAuthoritativeProviderAttachments(options: {
-  targetGatewayName: string;
-  providerNames: string[];
-}): Promise<void> {
-  const previousGateway = process.env.OPENSHELL_GATEWAY;
-  process.env.OPENSHELL_GATEWAY = options.targetGatewayName;
-  try {
-    for (const providerName of [...new Set(options.providerNames)]) {
-      if (!providerExistsInGateway(providerName)) {
-        throw new Error(`Recorded sandbox provider '${providerName}' is not registered.`);
-      }
-    }
-  } finally {
-    if (previousGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousGateway;
-  }
-}
-
-function preflightAuthoritativeRebuildCreatePolicy(options: {
-  agentName: string | null;
-  activeMessagingChannels: string[];
-  hermesToolGateways: string[];
-  recordedPolicyPresets: string[];
-  customPolicies: import("./state/registry").CustomPolicyEntry[];
-  policyTier: string | null;
-  sandboxGpuConfig: SandboxGpuConfig;
-}): import("./onboard/initial-policy").InitialSandboxPolicy {
-  const agent = options.agentName ? agentDefs.loadAgent(options.agentName) : null;
-  const defaultPolicyPath = path.join(
-    ROOT,
-    "nemoclaw-blueprint",
-    "policies",
-    "openclaw-sandbox.yaml",
-  );
-  const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  const { useDockerGpuPatch } = dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(
-    options.sandboxGpuConfig,
-    { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
-  );
-  return initialPolicy.prepareInitialSandboxCreatePolicy(
-    basePolicyPath,
-    options.activeMessagingChannels,
-    {
-      directGpu: options.sandboxGpuConfig.sandboxGpuEnabled,
-      dockerGpuPatch: useDockerGpuPatch,
-      additionalPresets: [...options.recordedPolicyPresets, ...options.hermesToolGateways],
-      additionalPresetContents: options.customPolicies.map(({ name, content }) => ({
-        name,
-        content,
-      })),
-      agentName: agent?.name,
-      policyTier: options.policyTier,
-    },
-  );
-}
+const {
+  createSandboxMessagingPreflightDeps,
+  preflightAuthoritativeHermesToolGateways,
+  preflightAuthoritativeProviderAttachments,
+  preflightAuthoritativeRebuildMessagingConflicts,
+  snapshotAuthoritativeRebuildMessagingState,
+} = authoritativeRebuildMessaging.createAuthoritativeRebuildMessagingHelpers({
+  gatewayName: () => GATEWAY_NAME,
+  providerExistsInGateway,
+  isNonInteractive,
+  promptYesNoOrDefault,
+  cliName,
+  getHermesToolGatewayBroker,
+});
 
 async function createSandbox(
   gpu: ReturnType<typeof nim.detectGpu>,
@@ -4871,79 +4281,6 @@ function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] 
   return selectedPresets.every((preset) => applied.has(preset));
 }
 
-function getPolicySelectionPromptHelpers(): ReturnType<typeof createPolicySelectionPromptHelpers> {
-  return createPolicySelectionPromptHelpers({
-    tiers,
-    policyTierEnv,
-    isNonInteractive,
-    note,
-    prompt,
-    selectFromNumberedMenuOrExit,
-    makeOnboardCancelExit,
-    sandboxCancelRollback,
-    useColor: USE_COLOR,
-  });
-}
-
-async function selectPolicyTier(): Promise<string> {
-  return getPolicySelectionPromptHelpers().selectPolicyTier();
-}
-
-async function selectTierPresetsAndAccess(
-  tierName: string,
-  allPresets: Array<{ name: string; description?: string }>,
-  extraSelected: string[] = [],
-): Promise<Array<{ name: string; access: string }>> {
-  return getPolicySelectionPromptHelpers().selectTierPresetsAndAccess(
-    tierName,
-    allPresets,
-    extraSelected,
-  );
-}
-
-async function presetsCheckboxSelector(
-  allPresets: Array<{ name: string; description: string }>,
-  initialSelected: string[],
-): Promise<string[]> {
-  return getPolicySelectionPromptHelpers().presetsCheckboxSelector(allPresets, initialSelected);
-}
-
-const computeSetupPresetSuggestions = (
-  tierName: string,
-  options: SetupPresetSuggestionOptions = {},
-): string[] =>
-  computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
-    tierName,
-    options,
-  );
-
-async function setupPoliciesWithSelection(
-  sandboxName: string,
-  options: SetupPolicySelectionOptions = {},
-) {
-  return setupPoliciesWithSelectionImpl(
-    {
-      policies,
-      tiers,
-      localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
-      step,
-      note,
-      isNonInteractive,
-      waitForSandboxReady,
-      syncPresetSelection,
-      selectPolicyTier,
-      setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
-      getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
-      selectTierPresetsAndAccess,
-      parsePolicyPresetEnv,
-      env: process.env,
-    },
-    sandboxName,
-    options,
-  );
-}
-
 const {
   buildChain,
   buildControlUiUrls,
@@ -4983,6 +4320,24 @@ const sandboxCancelRollback = installSandboxCancelRollback({
   clearOnboardSession: onboardSession.clearSession,
 }); // #4614
 
+const {
+  computeSetupPresetSuggestions,
+  presetsCheckboxSelector,
+  selectPolicyTier,
+  selectTierPresetsAndAccess,
+  setupPoliciesWithSelection,
+} = policySelectionRuntime.createPolicySelectionRuntime({
+  isNonInteractive,
+  note,
+  prompt,
+  selectFromNumberedMenuOrExit,
+  makeOnboardCancelExit,
+  sandboxCancelRollback,
+  useColor: USE_COLOR,
+  step,
+  waitForSandboxReady,
+});
+
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
@@ -5013,138 +4368,35 @@ function skippedStepMessage(
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
-/** Run only non-destructive fatal onboard gates while the old sandbox exists. */
-async function preflightAuthoritativeRebuildTarget(
-  opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
-): Promise<import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightResult> {
-  const authoritativeGateway =
-    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
-  if (!authoritativeGateway) throw new Error("Authoritative rebuild preflight has no gateway");
-  const previous = {
-    dashboardPort: _preflightDashboardPort,
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-    nonInteractive: NON_INTERACTIVE,
-  };
-  GATEWAY_NAME = authoritativeGateway.name;
-  GATEWAY_PORT = authoritativeGateway.port;
-  NON_INTERACTIVE = true;
-  _preflightDashboardPort = opts.controlUiPort ?? null;
-  let runtimeResult: ReturnType<
-    typeof fatalRuntimePreflight.runFatalOnboardRuntimePreflight
-  > | null = null;
-  const fail = (message: string): never => {
-    throw new Error(message);
-  };
-  try {
-    await authoritativeRebuildTarget.preflightAuthoritativeRebuildTarget(
-      { ...opts, controlUiPort: opts.controlUiPort ?? null },
-      {
-        runFatalRuntimePreflight: () => {
-          runtimeResult = fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
-            {
-              authoritativeResumeConfig: true,
-              sandboxGpu: opts.sandboxGpu,
-              sandboxGpuDevice: opts.sandboxGpuDevice,
-              gpu: opts.gpu,
-              noGpu: opts.noGpu,
-              optedOutGpuPassthrough: opts.optedOutGpuPassthrough,
-            },
-            {
-              nonInteractive: true,
-              exitProcess: (code) =>
-                fail(`onboard runtime preflight exited with code ${String(code)}`),
-            },
-          );
-        },
-        ensureOpenshell: () =>
-          ensureOpenshellForOnboard((code) =>
-            fail(`OpenShell component preflight exited with code ${String(code)}`),
-          ),
-        preflightResourceProfile: (profile) =>
-          preflightAuthoritativeResourceProfile(profile, getOpenshellBinary()),
-        prepareGatewayTransport: async () => {
-          if (!isLinuxDockerDriverGatewayEnabled()) {
-            if (gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
-              const containerState = verifyGatewayContainerRunning(authoritativeGateway.name);
-              if (containerState !== "running") {
-                fail(
-                  `Target gateway '${authoritativeGateway.name}' legacy container state is '${containerState}'.`,
-                );
-              }
-              const imageDrift = getGatewayClusterImageDrift();
-              if (imageDrift) {
-                fail(
-                  `Target gateway '${authoritativeGateway.name}' image ${imageDrift.currentVersion} does not match OpenShell ${imageDrift.expectedVersion}.`,
-                );
-              }
-            }
-            if (!(await isGatewayHttpReady())) {
-              fail(`Target gateway '${authoritativeGateway.name}' is not HTTP-ready.`);
-            }
-            return;
-          }
-          const gatewayBin =
-            resolveOpenShellGatewayBinary() ||
-            fail("OpenShell gateway binary is unavailable for mTLS preflight.");
-          const stateDir = getDockerDriverGatewayStateDir();
-          dockerDriverGatewayLocalTls.ensureDockerDriverGatewayLocalTlsBundle({
-            gatewayBin,
-            stateDir,
-          });
-          const gatewayEnv = getDockerDriverGatewayEnv(
-            runCaptureOpenshell(["--version"], { ignoreError: true }),
-          );
-          dockerDriverGatewayEnv.assertDockerDriverGatewayAuthConfigSafe(gatewayEnv);
-          const runtimeIdentity = dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity(
-            {
-              gatewayBin,
-              gatewayEnv,
-              stateDir,
-              sandboxBin: resolveOpenShellSandboxBinary(),
-              compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
-            },
-          );
-          const gatewayPid = getDockerDriverGatewayPid();
-          if (gatewayPid === null || !isDockerDriverGatewayProcessAlive()) {
-            fail(`Target gateway '${authoritativeGateway.name}' has no live recorded runtime.`);
-          }
-          const verifiedGatewayPid = gatewayPid ?? fail("Target gateway runtime PID is missing.");
-          const drift = getDockerDriverGatewayRuntimeDrift(
-            verifiedGatewayPid,
-            runtimeIdentity.desiredEnv,
-            dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin),
-          );
-          if (drift) {
-            fail(`Target gateway '${authoritativeGateway.name}' runtime drift: ${drift.reason}`);
-          }
-          const localTlsDir =
-            gatewayEnv.OPENSHELL_LOCAL_TLS_DIR?.trim() ||
-            fail("Target gateway mTLS directory is unavailable.");
-          process.env.OPENSHELL_LOCAL_TLS_DIR = localTlsDir;
-          if (!(await isDockerDriverGatewayHttpReady())) {
-            fail(`Target gateway '${authoritativeGateway.name}' is not HTTPS/mTLS-ready.`);
-          }
-        },
-        inferenceRouteReady: isInferenceRouteReady,
-        captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-        checkPort: (port) => checkPortAvailable(port),
-      },
-    );
-    const completedRuntimeResult = runtimeResult as ReturnType<
-      typeof fatalRuntimePreflight.runFatalOnboardRuntimePreflight
-    > | null;
-    if (!completedRuntimeResult) {
-      throw new Error("Authoritative runtime preflight did not return a result");
-    }
-    return completedRuntimeResult;
-  } finally {
-    GATEWAY_NAME = previous.gatewayName;
-    GATEWAY_PORT = previous.gatewayPort;
-    NON_INTERACTIVE = previous.nonInteractive;
-    _preflightDashboardPort = previous.dashboardPort;
-  }
-}
+const preflightAuthoritativeRebuildTarget =
+  authoritativeRebuildRuntime.createAuthoritativeRebuildRuntimePreflight({
+    getRuntimeState: () => ({
+      dashboardPort: _preflightDashboardPort,
+      gatewayName: GATEWAY_NAME,
+      gatewayPort: GATEWAY_PORT,
+      nonInteractive: NON_INTERACTIVE,
+    }),
+    setRuntimeState: (state) => {
+      _preflightDashboardPort = state.dashboardPort;
+      GATEWAY_NAME = state.gatewayName;
+      GATEWAY_PORT = state.gatewayPort;
+      NON_INTERACTIVE = state.nonInteractive;
+    },
+    ensureOpenshell: ensureOpenshellForOnboard,
+    getOpenshellBinary,
+    runCaptureOpenshell,
+    isGatewayHttpReady,
+    isDockerDriverGatewayHttpReady,
+    inferenceRouteReady: isInferenceRouteReady,
+    checkPort: checkPortAvailable,
+    resolveOpenShellGatewayBinary,
+    resolveOpenShellSandboxBinary,
+    getDockerDriverGatewayStateDir,
+    getDockerDriverGatewayEnv,
+    getDockerDriverGatewayPid,
+    isDockerDriverGatewayProcessAlive,
+    getDockerDriverGatewayRuntimeDrift,
+  });
 
 // ── Main ─────────────────────────────────────────────────────────
 const AUTHORITATIVE_HERMES_DASHBOARD_ENV_NAMES = [

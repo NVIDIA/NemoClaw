@@ -22,6 +22,7 @@ const CHECKS: readonly CheckCommand[] = [
     args: [
       "scripts/checks/direct-credential-env.ts",
       "src/lib/onboard.ts",
+      "src/lib/onboard/authoritative-rebuild-messaging.ts",
       "src/lib/onboard/provider-key-bridge.ts",
       "src/lib/onboard/providers.ts",
     ],

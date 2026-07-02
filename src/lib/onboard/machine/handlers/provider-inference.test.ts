@@ -176,6 +176,26 @@ describe("handleProviderInferenceState", () => {
       "provider_selection",
       "nvidia-prod / nvidia/test (prevalidated)",
     );
+    expect(calls.recordSkip).toHaveBeenNthCalledWith(1, "provider_selection", {
+      reason: "resume",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.recordSkip).toHaveBeenNthCalledWith(2, "inference", {
+      reason: "resume",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(calls.complete).toHaveBeenNthCalledWith(
+      1,
+      "provider_selection",
+      expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
+    );
+    expect(calls.complete).toHaveBeenNthCalledWith(
+      2,
+      "inference",
+      expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
+    );
     expect(result).toMatchObject({
       sandboxName: "alpha",
       provider: "nvidia-prod",

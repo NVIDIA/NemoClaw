@@ -1680,7 +1680,7 @@ A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"
 Auto-mode sandboxes remain auto.
 Rebuild uses the sandbox's recorded agent, provider, model, gateway, GPU configuration, and dashboard settings when that agent has a dashboard.
 Ambient `NEMOCLAW_AGENT`, `NEMOCLAW_PROVIDER`, `NEMOCLAW_PROVIDER_KEY`, `NEMOCLAW_ENDPOINT_URL`, and `NEMOCLAW_MODEL` values do not override that recorded target.
-LangChain Deep Agents Code has no dashboard; rebuild does not treat its OpenShell gateway listener, including port 8080, as a dashboard conflict.
+LangChain Deep Agents Code has no dashboard; rebuild does not treat its OpenShell gateway listener, including port `8080`, as a dashboard conflict.
 
 ```bash
 $$nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
@@ -1695,10 +1695,11 @@ If another terminal has an active SSH session to the sandbox, `rebuild` prints a
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 The command shares one lifecycle lock with onboarding and other rebuilds, so concurrent lifecycle work stops before it changes the sandbox.
 After confirmation, NemoClaw selects the recorded gateway, validates the exact provider and model route with a small completion from the live sandbox, runs blocking Docker, GPU, CDI, DNS, and OpenShell checks, prepares recorded messaging attachments and policies, pins the resolved agent base image when applicable, and builds a temporary replacement image from the recorded configuration before it opens shields, starts backup, or deletes a live sandbox.
-When matching onboarding state records Brave Search as enabled, rebuild also probes that route; a legacy Brave-enabled entry without matching state fails closed.
+When matching onboarding state records Brave Search as enabled, rebuild also probes that route once; the successful probe consumes one Brave Search API request, while a legacy Brave-enabled entry without matching state fails closed.
+To recover from that legacy-state check, rerun interactive onboarding with `$$nemoclaw onboard --fresh --name <sandbox-name> --agent <recorded-agent>`, select the sandbox's recorded provider and model, enable Brave Search again, and reuse the existing sandbox when prompted so NemoClaw records a matching session; then retry rebuild.
 If both CPU and memory values are recorded, rebuild validates and replays both; a partial record fails before deletion, while legacy entries with neither value use OpenShell defaults.
 Terminal runtimes without a dashboard skip the dashboard-port check.
-After any backup and immediately before provider detachment or deletion, NemoClaw rechecks the target gateway and registry entry and repeats the inference and applicable Brave Search probes.
+After any backup and immediately before provider detachment or deletion, NemoClaw rechecks the target gateway, registry entry, provider attachments, and inference route without issuing another Brave Search request.
 If any preflight check fails, NemoClaw stops before the destructive phase and leaves the live sandbox and registry entry in place.
 If recreation fails after deletion, NemoClaw keeps any available backup and attempts to restore the original registry entry and relock a possible partial replacement, reporting when either recovery step cannot complete.
 

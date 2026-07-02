@@ -100,7 +100,7 @@ import {
 } from "../../onboard/sandbox-provider-cleanup";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
 import * as shields from "../../shields";
@@ -141,6 +141,10 @@ import {
   prepareRebuildResumeConfig,
 } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
+import {
+  installPrependedExitAndSignalRecovery,
+  installRetainedResourceSignalCleanup,
+} from "./rebuild-signal-cleanup";
 import { preflightRebuildBraveSearchRoute } from "./rebuild-web-search-preflight";
 
 export function buildRefreshMutableOpenClawConfigHashCommand(
@@ -537,6 +541,52 @@ function preflightRebuildCredentials(
   return false;
 }
 
+type RebuildInferenceSelection = Pick<
+  AtomicRebuildPreflight["resumeConfig"],
+  "model" | "preferredInferenceApi" | "provider"
+>;
+
+function validateRecordedInferenceRoute(
+  sandboxName: string,
+  selection: RebuildInferenceSelection,
+  bail: RebuildBail,
+): boolean {
+  const inferenceProbe = preflightRebuildInferenceRoute({
+    sandboxName,
+    provider: selection.provider,
+    model: selection.model,
+    preferredInferenceApi: selection.preferredInferenceApi,
+  });
+  if (inferenceProbe.ok) return true;
+
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} recorded inference credentials or route for provider '${selection.provider}' were rejected.`,
+  );
+  console.error(`  ${redact(inferenceProbe.detail)}`);
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail("Recorded inference route smoke check failed.");
+  return false;
+}
+
+function preflightListedSandboxInferenceRoute(
+  sandboxName: string,
+  selection: RebuildInferenceSelection,
+  bail: RebuildBail,
+): boolean {
+  let liveList: ReturnType<typeof captureOpenshell>;
+  try {
+    liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  } catch {
+    // The authoritative liveness pass below owns list failures and gateway
+    // recovery. A failed early read is not evidence that this is a live sandbox.
+    return true;
+  }
+  if (liveList.status !== 0) return true;
+  if (!parseReadySandboxNames(liveList.output || "").has(sandboxName)) return true;
+  return validateRecordedInferenceRoute(sandboxName, selection, bail);
+}
+
 function hydrateMessagingConfigForRebuild(sandboxName: string, log: (msg: string) => void): void {
   const rebuildSession = onboardSession.loadSession();
   const hydratedMessagingConfig = hydrateMessagingChannelConfig(
@@ -723,6 +773,7 @@ async function preflightAtomicRebuild(
     credentialEnv: resumeConfig.credentialEnv,
   };
   if (!preflightRebuildCredentials(sandboxName, credentialEntry, log, bail)) return null;
+  if (!preflightListedSandboxInferenceRoute(sandboxName, resumeConfig, bail)) return null;
 
   const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
     sandboxName,
@@ -844,6 +895,9 @@ async function preflightAtomicRebuild(
   }
 
   if (webSearchConfig) {
+    // A successful Brave Search API probe consumes one request. Run it once per
+    // rebuild here; later TOCTOU checks still verify the retained provider
+    // attachment without issuing additional searches.
     const braveProbe = preflightRebuildBraveSearchRoute(sandboxName);
     if (!braveProbe.ok) {
       console.error("");
@@ -927,10 +981,13 @@ async function preflightAtomicRebuild(
         process.once("exit", preparedInitialPolicy.cleanup);
       }
       removePreflightSignalCleanup = installRetainedResourceSignalCleanup(() => {
-        if (preparedInitialPolicy?.cleanup?.()) {
-          process.removeListener("exit", preparedInitialPolicy.cleanup);
+        try {
+          if (preparedInitialPolicy?.cleanup?.()) {
+            process.removeListener("exit", preparedInitialPolicy.cleanup);
+          }
+        } finally {
+          restoreBaseImagePin();
         }
-        restoreBaseImagePin();
       });
       recreateOpts.authoritativeInitialPolicy = preparedInitialPolicy;
     } catch (err) {
@@ -1084,35 +1141,7 @@ async function revalidateAtomicRebuildTarget(
     return false;
   }
   if (probeExistingSandbox) {
-    const inferenceProbe = preflightRebuildInferenceRoute({
-      sandboxName,
-      provider: selection.provider,
-      model: selection.model,
-      preferredInferenceApi: selection.preferredInferenceApi,
-    });
-    if (!inferenceProbe.ok) {
-      console.error("");
-      console.error(
-        `  ${_RD}Rebuild preflight failed:${R} recorded inference credentials or route were rejected.`,
-      );
-      console.error(`  ${redact(inferenceProbe.detail)}`);
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail("Recorded inference route smoke check failed.");
-      return false;
-    }
-    if (recreateOpts.authoritativeWebSearchConfig?.fetchEnabled === true) {
-      const braveProbe = preflightRebuildBraveSearchRoute(sandboxName);
-      if (!braveProbe.ok) {
-        console.error("");
-        console.error(
-          `  ${_RD}Rebuild preflight failed:${R} recorded Brave Search credentials or route were rejected.`,
-        );
-        console.error(`  ${redact(braveProbe.detail)}`);
-        console.error("  Sandbox is untouched — no data was lost.");
-        bail("Recorded Brave Search route smoke check failed.");
-        return false;
-      }
-    }
+    if (!validateRecordedInferenceRoute(sandboxName, selection, bail)) return false;
   }
   if (onboardModule.isInferenceRouteReady(selection.provider, selection.model)) return true;
 
@@ -1252,49 +1281,6 @@ function restoreRegistrySnapshotForRetry(
     console.error(`  Could not restore the original registry entry: ${redact(message)}`);
     return false;
   }
-}
-
-function installRetainedResourceSignalCleanup(cleanup: () => void): () => void {
-  let armed = true;
-  const remove = () => {
-    if (!armed) return;
-    armed = false;
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigterm);
-  };
-  const handle = (signal: "SIGINT" | "SIGTERM") => {
-    if (!armed) return;
-    remove();
-    cleanup();
-    process.kill(process.pid, signal);
-  };
-  const onSigint = () => handle("SIGINT");
-  const onSigterm = () => handle("SIGTERM");
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
-  return remove;
-}
-
-function installPrependedExitAndSignalRecovery(recover: () => void): () => void {
-  let armed = true;
-  const remove = () => {
-    if (!armed) return;
-    armed = false;
-    process.removeListener("exit", onExit);
-    process.removeListener("SIGINT", onSignal);
-    process.removeListener("SIGTERM", onSignal);
-  };
-  const runRecovery = () => {
-    if (!armed) return;
-    remove();
-    recover();
-  };
-  const onExit = runRecovery;
-  const onSignal = runRecovery;
-  process.prependOnceListener("exit", onExit);
-  process.prependOnceListener("SIGINT", onSignal);
-  process.prependOnceListener("SIGTERM", onSignal);
-  return remove;
 }
 
 type ExactProviderDetachFailure = { name: string; output: string };
@@ -1575,7 +1561,7 @@ async function rebuildSandboxInner(
         recreateOpts,
         hermesToolGateways,
         hermesToolProvider,
-        !staleRecovery,
+        false,
         bail,
       ))
     ) {
@@ -1735,12 +1721,18 @@ async function rebuildSandboxInner(
       const handlePostDeleteSignal = () => {
         if (!postDeleteSignalHandlersArmed) return;
         removePostDeleteSignalHandlers();
-        if (postDeleteRecoveryArmed) {
-          restoreRegistrySnapshotForRetry(sandboxName, recoveryRegistrySnapshot, log);
+        try {
+          if (postDeleteRecoveryArmed) {
+            restoreRegistrySnapshotForRetry(sandboxName, recoveryRegistrySnapshot, log);
+          }
+        } finally {
+          sandboxStillExists = true;
+          try {
+            relockShieldsIfNeeded(true);
+          } finally {
+            restorePostDeleteExit();
+          }
         }
-        sandboxStillExists = true;
-        relockShieldsIfNeeded(true);
-        restorePostDeleteExit();
       };
       postDeleteSigintHandler = handlePostDeleteSignal;
       postDeleteSigtermHandler = handlePostDeleteSignal;

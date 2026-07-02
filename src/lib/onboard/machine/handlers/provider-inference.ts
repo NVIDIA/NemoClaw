@@ -266,7 +266,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       provider,
       model,
     });
-    session = await deps.recordStepComplete("provider_selection", updates);
+    await deps.recordStepComplete("provider_selection", updates);
     const providerStateResult = advanceTo("inference", {
       metadata: { state: "provider_selection", provider, model },
     });

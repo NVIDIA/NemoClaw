@@ -83,6 +83,7 @@ function createFixture(opts: {
   providerRegistered?: boolean;
   registeredProviders?: string[];
   activeSessionCount?: number | null;
+  inferenceProbeHttpStatus?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -98,6 +99,7 @@ function createFixture(opts: {
     providerRegistered = true,
     registeredProviders,
     activeSessionCount = 0,
+    inferenceProbeHttpStatus = null,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -228,6 +230,9 @@ function createFixture(opts: {
   const workspaceDir = path.join(fakeRoot, "workspace");
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "test-workspace");
+  const deletedMarker = path.join(tmpDir, "sandbox-deleted");
+  const atomicityMarker = path.join(fakeRoot, "rebuild-atomicity-marker.txt");
+  fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
@@ -243,12 +248,35 @@ function createFixture(opts: {
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
 const registeredProviders = ${registeredProvidersLiteral};
+const deletedMarker = ${JSON.stringify(deletedMarker)};
+const atomicityMarker = ${JSON.stringify(atomicityMarker)};
+const sandboxIsLive = () => !fs.existsSync(deletedMarker);
 if (a[0]==="--version" || a[0]==="-V")         { process.stdout.write("openshell 0.0.71\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write(sandboxIsLive() ? "${sandboxName} Ready\\n" : "No sandboxes found.\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deletedMarker, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="exec") {
+  const nameIndex = a.indexOf("--name");
+  const targetName = nameIndex >= 0 ? a[nameIndex + 1] : null;
+  if (targetName !== "${sandboxName}" || !sandboxIsLive()) process.exit(3);
+  const command = a.join(" ");
+  if (command.includes("rebuild-atomicity-marker.txt")) {
+    process.stdout.write(fs.readFileSync(atomicityMarker, "utf-8"));
+    process.exit(0);
+  }
+  if (!command.includes("https://inference.local/")) {
+    process.stderr.write("unexpected sandbox exec command\\n");
+    process.exit(4);
+  }
+  const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
+  process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + probeStatus + "\\n");
+  if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
+  process.stderr.write("upstream rejected stored provider credential\\n");
+  process.exit(1);
+}
 if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -342,12 +370,22 @@ function runRebuild(
   extraEnv: Record<string, string> = {},
   options: { yes?: boolean; input?: string } = {},
 ) {
-  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
-  if (options.yes !== false) argv.push("--yes");
+  const args = [fixture.sandboxName, "rebuild"];
+  if (options.yes !== false) args.push("--yes");
+  return runCli(fixture, args, extraEnv, options.input);
+}
+
+function runCli(
+  fixture: ReturnType<typeof createFixture>,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+  input?: string,
+) {
+  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), ...args];
   return spawnSync(process.execPath, argv, {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    input: options.input,
+    input,
     env: {
       HOME: fixture.tmpDir,
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
@@ -526,6 +564,43 @@ describe("atomic rebuild (#2273)", () => {
       expectCredentialGatePassedToStrictRuntimePreflight(output);
       expect(output).not.toContain("Missing credential: NVIDIA_INFERENCE_API_KEY");
       expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("preserves the listed sandbox when the registered provider credential returns 401 (#6195)", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "langchain-deepagents-code",
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: true,
+        inferenceProbeHttpStatus: 401,
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("credentials or route for provider 'nvidia-prod' were rejected");
+      expect(output).toContain("HTTP 401");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+      const liveList = spawnSync(path.join(f.tmpDir, "openshell"), ["sandbox", "list"], {
+        encoding: "utf-8",
+      });
+      expect(liveList.status).toBe(0);
+      expect(liveList.stdout).toContain(`${f.sandboxName} Ready`);
+      const marker = runCli(f, [
+        f.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
     });
 
     it("aborts before backup when the gateway provider is missing even with host credential", {

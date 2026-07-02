@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 
-import { expect, type MockInstance, vi } from "vitest";
+import { type MockInstance, vi } from "vitest";
 
 type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
@@ -41,7 +41,7 @@ type RebuildFlowSession = Record<string, unknown> & {
 type RebuildFlowOverrides = {
   applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
-  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
+  onboard?: (session: RebuildFlowSession, options: Record<string, unknown>) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
@@ -86,6 +86,7 @@ type RebuildFlowHarness = {
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   imagePreflightSpy: MockInstance;
+  inferenceRouteSpy: MockInstance;
   initialPolicyPreflightSpy: MockInstance;
   logSpy: MockInstance;
   markStepFailedSpy: MockInstance;
@@ -366,9 +367,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const stopNimContainerByNameSpy = vi
     .spyOn(nim, "stopNimContainerByName")
     .mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
-    await overrides.onboard?.(session);
-  });
+  const onboardSpy = vi
+    .spyOn(onboardMod, "onboard")
+    .mockImplementation(async (...args: unknown[]) => {
+      await overrides.onboard?.(session, (args[0] ?? {}) as Record<string, unknown>);
+    });
   const braveCredentialSpy = vi
     .spyOn(onboardMod, "ensureValidatedBraveSearchCredential")
     .mockResolvedValue("host-credential-that-must-not-be-used");
@@ -424,9 +427,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       if (overrides.initialPolicyError) throw overrides.initialPolicyError;
       return { policyPath: "/tmp/rebuild-prevalidated-policy.yaml", appliedPresets: [] };
     });
-  vi.spyOn(rebuildInferencePreflight, "preflightRebuildInferenceRoute").mockReturnValue({
-    ok: true,
-  });
+  const inferenceRouteSpy = vi
+    .spyOn(rebuildInferencePreflight, "preflightRebuildInferenceRoute")
+    .mockReturnValue({ ok: true });
   const braveRouteSpy = vi
     .spyOn(rebuildWebSearchPreflight, "preflightRebuildBraveSearchRoute")
     .mockReturnValue({ ok: true });
@@ -483,6 +486,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     imagePreflightSpy,
+    inferenceRouteSpy,
     initialPolicyPreflightSpy,
     logSpy,
     markStepFailedSpy,

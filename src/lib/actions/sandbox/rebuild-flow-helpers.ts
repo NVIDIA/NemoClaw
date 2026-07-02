@@ -66,7 +66,10 @@ export async function ensureRebuildTargetGatewaySelected(
     bail(detail);
     return false;
   }
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  const recovery = await recoverNamedGatewayRuntime({
+    gatewayName,
+    recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
+  });
   const beforeState = recovery.before?.state ?? "unknown";
   const afterState = recovery.after?.state ?? "unknown";
   if (!recovery.recovered || afterState !== "healthy_named") {
@@ -205,11 +208,11 @@ export function ensureRebuildAgentBaseImage(
   bail: (msg: string, code?: number) => never,
 ): RebuildAgentBaseImagePreflight {
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
-  const agentDef = loadAgent(rebuildAgent);
-  const overrideEnvVar = `NEMOCLAW_${agentDef.name
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
   try {
+    const agentDef = loadAgent(rebuildAgent);
+    const overrideEnvVar = `NEMOCLAW_${agentDef.name
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
     const result = ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
     return { ok: true, imageRef: result.imageTag, overrideEnvVar };
   } catch (err) {
