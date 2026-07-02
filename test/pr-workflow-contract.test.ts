@@ -55,10 +55,10 @@ const trustedPrActionPaths = {
 
 const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10";
 const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
-const installerHashBootstrapCommit = "ea9dc63bb1f68347967130fb9bff40c71ddc4848";
-const installerHashBootstrapTree = "5a3cafa3d36b6a4c2d7332604b3c474c32d703f5";
-const installerHashBootstrapCreatedAt = "2026-07-01T07:42:43Z";
-const installerHashBootstrapExpiresAt = "2026-12-28T07:42:43Z";
+const installerHashBootstrapCommit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
+const installerHashBootstrapTree = "1fdf59efe40b78c407e222fd42043b23a61e199a";
+const installerHashBootstrapCreatedAt = "2026-07-02T19:35:41Z";
+const installerHashBootstrapExpiresAt = "2026-12-29T19:35:41Z";
 
 const trustedActionDirs = [
   ".github/actions/ci-static-checks",
