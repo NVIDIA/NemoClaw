@@ -45,6 +45,33 @@ describe("fixture redaction entry point", () => {
     expect(childEnv.NEMOCLAW_LOG_LEVEL).toBe("debug");
   });
 
+  it("preserves the trace directory when fixture overlay values are layered", () => {
+    const childEnv = buildChildEnv(
+      {
+        PATH: "/usr/bin",
+        E2E_ARTIFACT_DIR: "/tmp/e2e-artifacts/live/target",
+        NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
+        NEMOCLAW_TRACE_FILE: "/tmp/raw-trace.json",
+      },
+      {
+        fixtureOverlay: {
+          E2E_CONTEXT_DIR: "/tmp/e2e-context",
+          E2E_PHASE: "onboard",
+          E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+        },
+      },
+    );
+
+    expect(childEnv).toMatchObject({
+      E2E_ARTIFACT_DIR: "/tmp/e2e-artifacts/live/target",
+      E2E_CONTEXT_DIR: "/tmp/e2e-context",
+      E2E_PHASE: "onboard",
+      E2E_TARGET_ID: "ubuntu-repo-cloud-openclaw",
+      NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-e2e-traces/target",
+    });
+    expect(childEnv.NEMOCLAW_TRACE_FILE).toBeUndefined();
+  });
+
   it("redacts explicit values with [REDACTED] and canonical shapes with <REDACTED>", () => {
     const explicit = "test-secret-aBcD";
     const canonical = `nvapi-${"x".repeat(24)}`;

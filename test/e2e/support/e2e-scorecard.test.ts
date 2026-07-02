@@ -544,9 +544,87 @@ describe("E2E scorecard", () => {
         join(source, "not-onboard.json"),
         JSON.stringify({ resource_spans: [], summary: { total_duration_ms: 1 } }),
       );
+      writeFileSync(
+        join(source, "missing-total.json"),
+        JSON.stringify({
+          ...makeRawTrace(),
+          summary: { trace_id: "0123456789abcdef0123456789abcdef" },
+        }),
+      );
+      writeFileSync(
+        join(source, "missing-phase.json"),
+        JSON.stringify({
+          resource_spans: [
+            { scope_spans: [{ spans: [{ name: "nemoclaw.onboard", duration_ms: 1 }] }] },
+          ],
+          summary: { total_duration_ms: 1 },
+        }),
+      );
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
       expect(readdirSync(output)).toEqual([]);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("keeps only allowlisted candidate fields from onboard trace summaries", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-candidate-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+      writeFileSync(
+        join(source, "trace.json"),
+        JSON.stringify({
+          ...makeRawTrace(1234.5678, 321.9876),
+          summary: {
+            trace_id: "not-a-trace-id",
+            total_duration_ms: 1234.5678,
+            slowest_spans: [
+              {
+                name: "nemoclaw.onboard.phase.preflight",
+                duration_ms: 321.9876,
+                status: "NOT_A_STATUS",
+                attributes: { secret: "nvapi-secret" },
+              },
+              {
+                name: "nemoclaw.onboard.phase.inference",
+                duration_ms: 200,
+                status: "ERROR",
+              },
+              {
+                name: "nemoclaw.onboard.phase.attacker-controlled",
+                duration_ms: 999,
+                status: "ERROR",
+              },
+            ],
+          },
+        }),
+      );
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        JSON.parse(readFileSync(join(output, "cloud-onboard-trace-timing-summary.json"), "utf8")),
+      ).toEqual({
+        phases: { "nemoclaw.onboard.phase.preflight": 321.988 },
+        schema_version: "nemoclaw.trace_timing.v1",
+        slowest_spans: [
+          {
+            duration_ms: 321.988,
+            name: "nemoclaw.onboard.phase.preflight",
+            status: "UNSET",
+          },
+          {
+            duration_ms: 200,
+            name: "nemoclaw.onboard.phase.inference",
+            status: "ERROR",
+          },
+        ],
+        total_duration_ms: 1234.568,
+        trace_id: null,
+      });
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }

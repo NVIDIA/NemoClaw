@@ -314,6 +314,8 @@ jobs:
           set -euo pipefail
           printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
 
+      # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
+      # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
@@ -325,6 +327,8 @@ jobs:
           set -euo pipefail
           npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default
 
+      # The sanitizer reads raw traces only after checking the workflow-owned
+      # runner-temp path, then writes the timing-only file into upload roots.
       - name: Build trusted live E2E timing summary
         if: always()
         env:
@@ -341,6 +345,8 @@ jobs:
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}/${TARGET_ID}"
 
+      # Cleanup intentionally runs after sanitization and before upload so raw
+      # trace JSON never becomes part of the uploaded artifact surface.
       - name: Delete raw live E2E traces
         if: always()
         env:
