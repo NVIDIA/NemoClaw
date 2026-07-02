@@ -63,6 +63,7 @@ type MergePresetNamesOptions = {
 
 type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
+  agent?: string | null;
 };
 
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
@@ -356,7 +357,16 @@ function listSetupPolicyPresets(
   sandboxName: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): PresetInfo[] {
-  return [...filterSetupPolicyPresets(listPresets(), options), ...listCustomPresets(sandboxName)];
+  let sandboxAgent: string | null = null;
+  try {
+    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  } catch {
+    sandboxAgent = null;
+  }
+  return [
+    ...filterSetupPolicyPresets(listPresets({ agent: options.agent ?? sandboxAgent }), options),
+    ...listCustomPresets(sandboxName),
+  ];
 }
 
 function clampSetupPolicyPresetNames(

@@ -30,7 +30,7 @@ import { withPolicyApplicationTrace } from "./tracing";
 export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 type Preset = { name: string; access?: string };
-type SupportOptions = { webSearchSupported?: boolean | null };
+type SupportOptions = { webSearchSupported?: boolean | null; agent?: string | null };
 type PoliciesApi = {
   setupPolicyPresetSupported(name: string, options?: SupportOptions): boolean;
   listSetupPolicyPresets(sandboxName: string, options?: SupportOptions): Preset[];
@@ -234,7 +234,7 @@ async function setupPoliciesWithSelectionInner(
 
   deps.step(8, 8, "Policy presets");
 
-  const supportOptions = { webSearchSupported: options.webSearchSupported };
+  const supportOptions = { webSearchSupported: options.webSearchSupported, agent };
   const allPresets = filterSetupPolicyPresetsForAgent(
     deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
     agent,
