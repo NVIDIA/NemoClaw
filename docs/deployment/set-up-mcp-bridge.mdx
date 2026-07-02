@@ -159,6 +159,8 @@ If shields are raised concurrently between those checks, the command fails inste
 `mcp list` and `mcp status` are read-only and do not require lowering shields.
 NemoClaw invokes the validated transaction helper as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable path and argument shape.
 The helper runs as the normal sandbox identity, rejects the legacy root-separated runtime topology, validates the gateway PID and launcher before signaling it, updates the managed compatibility hash, verifies loopback health after reload, and rolls back the config and hashes if reload fails.
+Within the existing five-minute reload deadline, if the first signal has not converged after half the budget, the helper may send one additional `SIGUSR1` only after revalidating the current gateway identity and its managed parent.
+Success still requires a replacement gateway identity, healthy loopback endpoints on internal port `18642` and public port `8642`, and a stable final identity; timeout diagnostics preserve the furthest safely observed phase, and rollback behavior is unchanged.
 There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 

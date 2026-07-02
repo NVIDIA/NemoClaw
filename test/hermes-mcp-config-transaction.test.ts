@@ -1087,10 +1087,10 @@ def signal_gateway(pid, sent_signal):
     observed["signal_name"] = signal.Signals(sent_signal).name
     gateway_state["start_time"] = 100
 module.os.kill = signal_gateway
-def gateway_healthy():
+def gateway_health_phase(deadline=None):
     observed["health_uid"] = module.os.geteuid()
-    return True
-module._gateway_healthy = gateway_healthy
+    return True, "waiting-for-stable-replacement-identity"
+module._gateway_health_phase = gateway_health_phase
 
 payload = {
     "server": "fake",
@@ -1329,7 +1329,7 @@ print(json.dumps(module.probe(), sort_keys=True))
     expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
-  it("restores config and hashes when runtime reload fails", () => {
+  it("restores config and hashes after both desired-config reload signals fail", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-rollback-"));
     const hermesDir = path.join(temp, ".hermes");
     const configPath = path.join(hermesDir, "config.yaml");
@@ -1348,7 +1348,7 @@ print(json.dumps(module.probe(), sort_keys=True))
     try {
       const result = runPython(
         `
-import importlib.util, json, os, sys
+import importlib.util, json, os, signal, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
@@ -1358,15 +1358,23 @@ module.HERMES_DIR = sys.argv[3]
 module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
 module.STRICT_HASH_PATH = sys.argv[4]
 module.os.geteuid = lambda: 0
-module._require_lifecycle_identity = lambda: None
 module._assert_mutable_snapshot = lambda snapshot: None
-calls = []
-def reload():
-    calls.append(1)
-    if len(calls) == 1:
-        raise TimeoutError("forward reload timeout")
-    return True
-module.reload_gateway = reload
+module.RELOAD_TIMEOUT_SECONDS = 4
+clock = {"now": 0}
+gateway = {"identity": (4242, 99)}
+signals = []
+module._gateway_identity = lambda: gateway["identity"]
+module._gateway_has_managed_parent = lambda pid: True
+module._gateway_health_phase = lambda deadline=None: (
+    True, "waiting-for-stable-replacement-identity"
+)
+module.time.monotonic = lambda: clock["now"]
+module.time.sleep = lambda seconds: clock.__setitem__("now", clock["now"] + seconds)
+def signal_gateway(pid, sent_signal):
+    signals.append((pid, signal.Signals(sent_signal).name))
+    if len(signals) == 3:
+        gateway["identity"] = (4243, 100)
+module.os.kill = signal_gateway
 try:
     module.apply_transaction_and_reload("add", {
         "server": "fake",
@@ -1375,7 +1383,7 @@ try:
         "replace_existing": False,
     })
 except RuntimeError as error:
-    print(json.dumps({"error": str(error), "reload_calls": len(calls)}))
+    print(json.dumps({"error": str(error), "signals": signals}))
 else:
     raise SystemExit(9)
 `,
@@ -1383,7 +1391,14 @@ else:
       );
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(JSON.parse(result.stdout)).toMatchObject({ reload_calls: 2 });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        signals: [
+          [4242, "SIGUSR1"],
+          [4242, "SIGUSR1"],
+          [4242, "SIGUSR1"],
+        ],
+      });
+      expect(result.stdout).toContain("re-kick sent: yes");
       expect(fs.readFileSync(configPath, "utf8")).toBe(config);
       expect(fs.readFileSync(compatHash, "utf8")).toBe(originalHash);
       expect(fs.readFileSync(strictHash, "utf8")).toBe(originalHash);

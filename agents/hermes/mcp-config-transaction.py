@@ -140,8 +140,10 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
 
 def _manifest_strings(manifest: dict[str, object], key: str) -> frozenset[str]:
     values = manifest.get(key)
-    if not isinstance(values, list) or not values or not all(
-        isinstance(value, str) and value for value in values
+    if (
+        not isinstance(values, list)
+        or not values
+        or not all(isinstance(value, str) and value for value in values)
     ):
         raise RuntimeError(f"Hermes MCP credential boundary manifest has invalid {key}")
     return frozenset(values)
@@ -646,18 +648,15 @@ def _gateway_pid_record_candidate(expected_uid: int) -> tuple[int, int | None] |
     non_blocking = getattr(os, "O_NONBLOCK", 0)
     if not no_follow or not non_blocking:
         raise PermissionError("Hermes gateway PID record cannot be opened safely")
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_CLOEXEC", 0)
-        | no_follow
-        | non_blocking
-    )
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow | non_blocking
     try:
         descriptor = os.open(GATEWAY_PID_PATH, flags)
     except FileNotFoundError:
         return None
     except OSError as error:
-        raise PermissionError("Hermes gateway PID record cannot be opened safely") from error
+        raise PermissionError(
+            "Hermes gateway PID record cannot be opened safely"
+        ) from error
 
     try:
         before = os.fstat(descriptor)
@@ -769,8 +768,8 @@ def _gateway_identity() -> tuple[int, object] | None:
     return numeric_pid, start_time
 
 
-def _gateway_health_endpoint_ready(port: int) -> bool:
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+def _gateway_health_endpoint_ready(port: int, timeout_seconds: float = 2) -> bool:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout_seconds)
     try:
         connection.request("GET", "/health")
         response = connection.getresponse()
@@ -782,13 +781,30 @@ def _gateway_health_endpoint_ready(port: int) -> bool:
         connection.close()
 
 
-def _gateway_healthy() -> bool:
+def _gateway_health_phase(deadline: float | None = None) -> tuple[bool, str]:
     # Hermes can bind its internal API before the managed service loop repairs
     # the public socat relay after a SIGUSR1 reload.  A successful MCP command
     # must not return during that gap: callers use the documented public port.
-    if not _gateway_health_endpoint_ready(GATEWAY_INTERNAL_PORT):
-        return False
-    return _gateway_health_endpoint_ready(GATEWAY_PUBLIC_PORT)
+    def probe_timeout() -> float:
+        if deadline is None:
+            return 2
+        return max(0, min(2, deadline - time.monotonic()))
+
+    internal_timeout = probe_timeout()
+    if internal_timeout <= 0 or not _gateway_health_endpoint_ready(
+        GATEWAY_INTERNAL_PORT, internal_timeout
+    ):
+        return False, "waiting-for-internal-health-on-18642"
+    public_timeout = probe_timeout()
+    if public_timeout <= 0 or not _gateway_health_endpoint_ready(
+        GATEWAY_PUBLIC_PORT, public_timeout
+    ):
+        return False, "waiting-for-public-relay-health-on-8642"
+    return True, "waiting-for-stable-replacement-identity"
+
+
+def _gateway_healthy() -> bool:
+    return _gateway_health_phase()[0]
 
 
 def reload_gateway() -> bool:
@@ -802,18 +818,64 @@ def reload_gateway() -> bool:
             return False
         raise
 
-    deadline = time.monotonic() + RELOAD_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
+    started_at = time.monotonic()
+    deadline = started_at + RELOAD_TIMEOUT_SECONDS
+    re_kick_not_before = started_at + (RELOAD_TIMEOUT_SECONDS / 2)
+    re_kick_attempted = False
+    re_kick_sent = False
+    phase_order = {
+        "waiting-for-replacement-identity": 0,
+        "waiting-for-internal-health-on-18642": 1,
+        "waiting-for-public-relay-health-on-8642": 2,
+        "waiting-for-stable-replacement-identity": 3,
+    }
+    last_safe_phase = "waiting-for-replacement-identity"
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            break
         current = _gateway_identity()
+        if current is not None and current != previous:
+            healthy, observed_phase = _gateway_health_phase(deadline)
+            if phase_order[observed_phase] > phase_order[last_safe_phase]:
+                last_safe_phase = observed_phase
+            if healthy:
+                confirmed = _gateway_identity()
+                if confirmed == current and time.monotonic() < deadline:
+                    return True
+
+        # A pinned Hermes gateway can remain alive without converging after the
+        # first SIGUSR1.  Give it half of the existing total deadline, then
+        # permit one additional desired-config signal.  Re-read the complete
+        # trusted identity immediately before signaling and require its managed
+        # parent so known stale or unmanaged identities are refused.
+        now = time.monotonic()
         if (
-            current is not None
-            and current != previous
-            and _gateway_healthy()
+            not re_kick_attempted
+            and now >= re_kick_not_before
+            and now < deadline
+            and current is not None
+            and _gateway_has_managed_parent(current[0])
             and _gateway_identity() == current
+            and time.monotonic() < deadline
         ):
-            return True
-        time.sleep(1)
-    raise TimeoutError("Hermes gateway did not complete its managed MCP reload")
+            re_kick_attempted = True
+            try:
+                os.kill(current[0], signal.SIGUSR1)
+            except ProcessLookupError:
+                pass
+            else:
+                re_kick_sent = True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(1, remaining))
+    raise TimeoutError(
+        "Hermes gateway did not complete its managed MCP reload "
+        f"(last safe phase: {last_safe_phase}; "
+        f"re-kick attempted: {'yes' if re_kick_attempted else 'no'}; "
+        f"re-kick sent: {'yes' if re_kick_sent else 'no'})"
+    )
 
 
 def _assert_non_root_lifecycle_identity() -> None:
