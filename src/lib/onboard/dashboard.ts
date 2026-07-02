@@ -439,13 +439,27 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chain = buildChain({
       chatUiUrl,
       isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress(),
+      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl() }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
       dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
       deps,
     );
+    const fallbackDashboardUrls = chain.fallbackUrls.map((fallback) =>
+      dashboardUrlForDisplay(
+        dashboardAccess.buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token),
+        deps,
+      ),
+    );
+    const printWslFallback = (indent: string): void => {
+      if (fallbackDashboardUrls.length === 0) return;
+      console.log("");
+      console.log(`${indent}Browser (WSL fallback, if 127.0.0.1 is unreachable from Windows):`);
+      for (const fallbackUrl of fallbackDashboardUrls) {
+        console.log(`${indent}  ${fallbackUrl}`);
+      }
+    };
 
     console.log("");
     console.log(`  ${"─".repeat(50)}`);
@@ -463,7 +477,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
-          return buildControlUiUrls(tokenValue, port, chain.accessUrl);
+          const primary = buildControlUiUrls(tokenValue, port, chain.accessUrl);
+          const fallbacks = chain.fallbackUrls.flatMap((fallback) =>
+            buildControlUiUrls(tokenValue, port, fallback).slice(1),
+          );
+          return [...new Set([...primary, ...fallbacks])];
         },
       });
       console.log("");
@@ -474,6 +492,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback("    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
@@ -487,6 +506,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback("    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);

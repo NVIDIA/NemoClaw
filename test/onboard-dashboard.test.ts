@@ -222,6 +222,53 @@ describe("onboard dashboard helpers", () => {
     expect(nimStatus).toHaveBeenCalledWith("my-gpt-claw");
   });
 
+  it("shows the loopback dashboard URL with a WSL host-IP fallback under WSL", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runOpenshell = vi.fn((args: string[], _opts?: Record<string, unknown>) => {
+      if (args.join(" ").startsWith("sandbox download ")) {
+        const destDir = args[4];
+        fs.mkdirSync(destDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(destDir, "openclaw.json"),
+          JSON.stringify({ gateway: { auth: { token: "secret-token" } } }),
+        );
+      }
+      return { status: 0 };
+    });
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+
+    let output = "";
+    try {
+      helpers.printDashboard("my-gpt-claw", "gpt-oss:20b", "ollama");
+      output = logSpy.mock.calls.map(([line]) => String(line)).join("\n");
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(output).toContain("http://127.0.0.1:");
+    expect(output).toContain("WSL fallback");
+    expect(output).toContain("http://172.22.1.1:");
+    // Loopback stays the primary browser URL; the WSL host IP follows it.
+    expect(output.indexOf("http://127.0.0.1:")).toBeLessThan(output.indexOf("http://172.22.1.1:"));
+    expect(output).not.toMatch(/secret[-_]?token/);
+  });
+
   it("prints a token-free browser URL when the dashboard token is unavailable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const note = vi.fn();
