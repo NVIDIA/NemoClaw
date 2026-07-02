@@ -168,7 +168,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
-  it("truncates a fractional debounce override toward zero (2.9 -> 2)", () => {
+  it("rounds a fractional debounce override (2.6 -> 3), matching envInt semantics", () => {
     const { runCaptureOpenshell, sleep } = replay([`${NAME}   Error   3s ago`]);
 
     const ready = waitForCreatedSandboxReadyWithTrace({
@@ -177,7 +177,7 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
-      errorPhaseDebouncePolls: 2.9,
+      errorPhaseDebouncePolls: 2.6,
       sleep,
     });
 
@@ -186,8 +186,10 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
       reason: "terminal_failure_phase",
       failurePhase: "Error",
     });
-    // trunc(2.9) === 2, so the 2nd consecutive Error poll is terminal.
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    // round(2.6) === 3 (truncation would give 2), so the 3rd consecutive Error
+    // poll is terminal — the same rounding rule as the
+    // NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE env path.
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
   });
 
   it("ignores a non-finite debounce override and falls back to the env/default", () => {

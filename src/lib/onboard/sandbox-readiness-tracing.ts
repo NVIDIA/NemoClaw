@@ -47,6 +47,14 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * `sandbox list` replay in sandbox-readiness-tracing.test.ts) showing a
  * transient create-time Error that recovers to Ready.
  *
+ * Tracking mechanism: the maintainer-enabled removal-signal test
+ * `upstream_openshell_sandbox_list_error_transient_fixed`
+ * (sandbox-readiness-tracing.test.ts, currently `it.skip`) is the executable
+ * checkpoint — point it at a captured `sandbox list` trace from a fixed
+ * OpenShell and, once it passes (no transient Error), this debounce can be
+ * removed. Escalate to a GitHub tracking issue against the OpenShell fix if the
+ * workaround outlives a release cycle.
+ *
  * The readiness loop polls `sandbox list` every 2 seconds, so the default of
  * 30 tolerates ~60s of sustained Error before failing.
  */
@@ -140,12 +148,20 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   /**
    * Consecutive Error-phase polls required before the wait treats the phase as
    * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls /
-   * ~60s at the 2s poll interval). Trade-off: a genuinely stuck Error is
-   * reported ~60s later than a fast-fail; the window is intentionally bounded
-   * (and far below the readiness timeout) so it never masks a terminal failure.
-   * Fractional values are truncated toward zero (Math.trunc), matching the
-   * override contract in docker-gpu-supervisor-reconnect.ts; the env-var path
-   * ({@link getSandboxReadyErrorDebouncePolls}) rounds via envInt. Pass 1 to
+   * ~60s at the 2s poll interval).
+   *
+   * Trade-off: on a fresh create — the path this waiter guards — a healthy
+   * sandbox that briefly transits Error costs nothing (it flips to Ready and
+   * the wait returns on that poll), while a genuinely stuck Error is reported
+   * ~60s later than a fast-fail would. The default is deliberately conservative
+   * rather than tuned to the shortest observed transient: the re-registration
+   * window scales with host/gateway speed (slower on ARM64/DGX-class hosts), so
+   * a too-low default risks re-introducing #6043. The window is bounded and far
+   * below the readiness timeout, so it never masks a terminal failure; operators
+   * who want a tighter bound set NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE.
+   *
+   * Fractional values are rounded (Math.round), matching the env-var path's
+   * envInt rounding for one consistent rule across both entry points. Pass 1 to
    * restore the original fast-fail-on-first-Error behavior (used by callers
    * that have already ruled out the transient supervisor-reconnect race).
    */
@@ -163,7 +179,9 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   const errorPhaseDebouncePolls =
     options.errorPhaseDebouncePolls == null || !Number.isFinite(options.errorPhaseDebouncePolls)
       ? getSandboxReadyErrorDebouncePolls()
-      : Math.max(1, Math.trunc(options.errorPhaseDebouncePolls));
+      : // Round (not truncate) so a fractional override matches the env-var
+        // path's envInt rounding — one consistent rule for both entry points.
+        Math.max(1, Math.round(options.errorPhaseDebouncePolls));
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
     const readyAttempts = Math.max(1, Math.ceil(timeoutSecs / 2));
     let consecutiveFailurePolls = 0;
