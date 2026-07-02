@@ -99,17 +99,21 @@ function validateLoginProxyContract(
     ].join("\n"),
     "utf8",
   );
-  return runHeadlessCheckHelper(
-    [
-      "sandbox_login_exec() {",
-      "  case \"$1\" in *$'\\n'*|*$'\\r'*) return 97 ;; esac",
-      '  env -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u no_proxy HOME="$TEST_LOGIN_HOME" bash -lc "$1"',
-      "}",
-      "if sandbox_login_proxy_contract >/dev/null 2>&1; then printf pass; else printf fail; fi",
-    ].join("\n"),
-    { TEST_LOGIN_HOME: loginHome },
-    checkFixture,
-  );
+  try {
+    return runHeadlessCheckHelper(
+      [
+        "sandbox_login_exec() {",
+        "  case \"$1\" in *$'\\n'*|*$'\\r'*) return 97 ;; esac",
+        '  env -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u no_proxy HOME="$TEST_LOGIN_HOME" bash -lc "$1"',
+        "}",
+        "if sandbox_login_proxy_contract >/dev/null 2>&1; then printf pass; else printf fail; fi",
+      ].join("\n"),
+      { TEST_LOGIN_HOME: loginHome },
+      checkFixture,
+    );
+  } finally {
+    fs.rmSync(loginHome, { force: true, recursive: true });
+  }
 }
 
 describe("Deep Agents Code login-shell proxy contract", () => {

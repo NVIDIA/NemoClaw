@@ -138,8 +138,8 @@ prepare_runtime_env() {
   # root-supervised OpenClaw/Hermes startup path. Accepted model: the atomic,
   # sandbox-user-owned file contains only credential-free configuration, is
   # regression-scanned against canonical token shapes, and must be readable by
-  # independent non-root login/exec shells. Mode 0444 prevents later writes
-  # without changing the image's final USER boundary.
+  # independent non-root login/exec shells. Mode 0444 removes write bits so
+  # ordinary later writes fail without changing the image's final USER boundary.
   chmod 444 "$tmp"
   mv -f "$tmp" "$target"
 }
