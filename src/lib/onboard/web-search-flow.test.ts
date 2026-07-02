@@ -83,8 +83,16 @@ describe("web search provider validation", () => {
       expect(configPath).not.toBe("");
       expect(args.join(" ")).not.toContain(apiKey);
       expect(args).toContain(configPath);
-      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
-      expect(fs.readFileSync(configPath, "utf8")).toContain(header);
+      const configFd = fs.openSync(
+        configPath,
+        fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+      );
+      try {
+        expect(fs.fstatSync(configFd).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(configFd, "utf8")).toContain(header);
+      } finally {
+        fs.closeSync(configFd);
+      }
       return {
         ok: true,
         httpStatus: 200,
@@ -167,7 +175,6 @@ describe("web search provider selection", () => {
       ).resolves.toEqual({ fetchEnabled: true, provider: "tavily" });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
-      delete process.env.TAVILY_API_KEY;
     }
   });
 
@@ -214,6 +221,7 @@ describe("web search provider selection", () => {
       getCredential: (envKey: string) => (envKey === "TAVILY_API_KEY" ? "tvly-saved" : null),
       saveCredential,
     });
+    const processEnvValue = process.env.TAVILY_API_KEY;
 
     try {
       await expect(
@@ -221,9 +229,9 @@ describe("web search provider selection", () => {
       ).resolves.toEqual({ fetchEnabled: true, provider: "tavily" });
       expect(saveCredential).toHaveBeenCalledWith("TAVILY_API_KEY", "tvly-saved");
       expect(env.TAVILY_API_KEY).toBe("tvly-saved");
+      expect(process.env.TAVILY_API_KEY).toBe(processEnvValue);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
-      delete process.env.TAVILY_API_KEY;
     }
   });
 

@@ -46,8 +46,6 @@ export interface CreateSandboxMessagingPrepResult {
   reusableMessagingProviders: string[];
   reusableMessagingChannels: string[];
   missingWebSearchCredentialEnv: string | null;
-  /** @deprecated Compatibility alias for older callers and tests. */
-  missingBraveApiKey: boolean;
 }
 
 export function prepareCreateSandboxMessaging(
@@ -87,7 +85,6 @@ export function prepareCreateSandboxMessaging(
     : null;
   const missingWebSearchCredentialEnv =
     webSearchEnabled && !webSearchApiKey ? webSearchCredentialEnv : null;
-  const missingBraveApiKey = missingWebSearchCredentialEnv === webSearch.BRAVE_API_KEY_ENV;
   if (missingWebSearchCredentialEnv) {
     return {
       disabledChannelNames,
@@ -97,7 +94,6 @@ export function prepareCreateSandboxMessaging(
       reusableMessagingProviders: [],
       reusableMessagingChannels: [],
       missingWebSearchCredentialEnv,
-      missingBraveApiKey,
     };
   }
 
@@ -143,6 +139,5 @@ export function prepareCreateSandboxMessaging(
     reusableMessagingProviders,
     reusableMessagingChannels,
     missingWebSearchCredentialEnv,
-    missingBraveApiKey,
   };
 }

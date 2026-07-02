@@ -23,7 +23,6 @@ function createResult(overrides = {}) {
     reusableMessagingProviders: [],
     reusableMessagingChannels: [],
     missingWebSearchCredentialEnv: null,
-    missingBraveApiKey: false,
     ...overrides,
   };
 }
@@ -249,7 +248,6 @@ describe("prepareSandboxMessagingPreflight", () => {
       prepareCreateSandboxMessaging: vi.fn(() =>
         createResult({
           missingWebSearchCredentialEnv: "BRAVE_API_KEY",
-          missingBraveApiKey: true,
         }),
       ),
     });

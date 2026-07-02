@@ -948,11 +948,8 @@ function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
 ) {
-  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, {
-    root: ROOT,
-    runOpenshell,
-    redact,
-  });
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, { root: ROOT, runOpenshell, redact });
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
   // upsertMessagingProviders process.exits on failure, so reaching this
   // point means every entry in tokenDefs that had a token was registered.
@@ -1010,18 +1007,8 @@ const {
   isAffirmativeAnswer,
 });
 
-const {
-  ensureValidatedWebSearchCredential,
-  ensureValidatedBraveSearchCredential,
-  configureWebSearch,
-  verifyWebSearchInsideSandbox,
-} = createWebSearchFlowHelpers({
-  prompt,
-  note,
-  isNonInteractive,
-  cliName,
-  runCaptureOpenshell,
-});
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 

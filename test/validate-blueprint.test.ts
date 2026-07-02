@@ -575,7 +575,12 @@ describe("Tavily Search provider profile", () => {
       protocol: "rest",
       enforcement: "enforce",
       request_body_credential_rewrite: true,
+      rules: [
+        { allow: { method: "POST", path: "/search" } },
+        { allow: { method: "POST", path: "/extract" } },
+      ],
     });
+    expect(endpoint).not.toHaveProperty("access");
   });
 
   it("preserves Tavily credential rewriting when agent shields are down", () => {
@@ -594,6 +599,8 @@ describe("Tavily Search provider profile", () => {
         access: "full",
         request_body_credential_rewrite: true,
       });
+      expect(endpoint?.rules).toBeUndefined();
+      expect(policy.network_policies?.tavily?.binaries).toEqual([{ path: "/**" }]);
     }
   });
 });

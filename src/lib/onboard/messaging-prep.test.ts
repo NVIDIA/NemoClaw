@@ -84,7 +84,6 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(true);
     expect(result.missingWebSearchCredentialEnv).toBe(BRAVE_API_KEY_ENV);
     expect(result.extraPlaceholderKeys).toEqual([]);
     expect(result.messagingTokenDefs.some(({ envKey }) => envKey === BRAVE_API_KEY_ENV)).toBe(
@@ -101,7 +100,6 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(false);
     expect(result.missingWebSearchCredentialEnv).toBe(TAVILY_API_KEY_ENV);
     expect(result.messagingTokenDefs.some(({ envKey }) => envKey === TAVILY_API_KEY_ENV)).toBe(
       false,
@@ -120,7 +118,6 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(false);
     expect(result.missingWebSearchCredentialEnv).toBeNull();
     expect(result.hasMessagingTokens).toBe(true);
     expect(result.messagingTokenDefs).toContainEqual({
@@ -215,7 +212,6 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.missingBraveApiKey).toBe(false);
     expect(result.messagingTokenDefs).toContainEqual({
       name: "demo-brave-search",
       envKey: BRAVE_API_KEY_ENV,

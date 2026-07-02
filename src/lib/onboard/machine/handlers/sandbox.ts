@@ -46,6 +46,7 @@ export interface SandboxStateOptions<
   hermesToolGateways: string[];
   controlUiPort: number | null;
   rootDir: string;
+  env: NodeJS.ProcessEnv;
   deps: {
     resolvePath(value: string): string;
     agentSupportsWebSearch(
@@ -172,8 +173,9 @@ interface SandboxStepState<WebSearchConfig> {
 
 function resolveRequestedWebSearchConfig<WebSearchConfig>(
   current: WebSearchConfig | null,
+  env: NodeJS.ProcessEnv,
 ): WebSearchConfig | null {
-  const explicit = parseExplicitWebSearchProvider(process.env[WEB_SEARCH_PROVIDER_ENV]);
+  const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
   if (!explicit.specified) return current;
   if (!explicit.provider) return null;
   return { fetchEnabled: true, provider: explicit.provider } as WebSearchConfig;
@@ -240,7 +242,10 @@ class SandboxStateFlow<
       probePath,
       this.options.rootDir,
     );
-    const requestedWebSearchConfig = resolveRequestedWebSearchConfig(this.options.webSearchConfig);
+    const requestedWebSearchConfig = resolveRequestedWebSearchConfig(
+      this.options.webSearchConfig,
+      this.options.env,
+    );
     const webSearchConfigChanged = !webSearchConfigsEqual(
       this.options.session?.webSearchConfig,
       requestedWebSearchConfig as unknown as SharedWebSearchConfig | null,
@@ -513,7 +518,7 @@ class SandboxStateFlow<
       !hermesToolGateways.includes("nous-web")
     ) {
       this.deps.note(
-        "  Tavily Search replaces Hermes managed Web search/extract; keeping the other selected Nous tools.",
+        "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
       );
     }
     return {

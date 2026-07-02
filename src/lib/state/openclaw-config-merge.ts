@@ -129,11 +129,11 @@ function mergeOpenClawEntryMap(
 
 function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
   if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
-  if (!isPlainJsonObject(currentTools)) return cloneJson(backupTools);
+  const current = isPlainJsonObject(currentTools) ? currentTools : {};
 
-  const merged = mergeJsonObjects(currentTools, backupTools);
+  const merged = mergeJsonObjects(current, backupTools);
   const backupWeb = isPlainJsonObject(backupTools.web) ? backupTools.web : {};
-  const currentWeb = isPlainJsonObject(currentTools.web) ? currentTools.web : {};
+  const currentWeb = isPlainJsonObject(current.web) ? current.web : {};
   const mergedWeb = mergeJsonObjects(currentWeb, backupWeb);
 
   // The fresh generator owns tools.web.search, including omission when web
@@ -261,10 +261,10 @@ function mergeOpenClawModels(backupModels: unknown, currentModels: unknown): unk
 
 function mergeOpenClawPlugins(backupPlugins: unknown, currentPlugins: unknown): unknown {
   if (!isPlainJsonObject(backupPlugins)) return cloneJson(currentPlugins);
-  if (!isPlainJsonObject(currentPlugins)) return cloneJson(backupPlugins);
+  const current = isPlainJsonObject(currentPlugins) ? currentPlugins : {};
 
-  const merged = mergeJsonObjects(currentPlugins, backupPlugins);
-  const entries = mergeOpenClawEntryMap(backupPlugins.entries, currentPlugins.entries);
+  const merged = mergeJsonObjects(current, backupPlugins);
+  const entries = mergeOpenClawEntryMap(backupPlugins.entries, current.entries);
   if (entries) merged.entries = entries;
   return merged;
 }

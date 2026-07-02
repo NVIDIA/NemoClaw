@@ -282,7 +282,8 @@ Configure `TAVILY_API_KEY` during that onboarding run.
 
 </AgentOnly>
 
-The `tavily` preset enables request-body credential rewriting because Hermes sends its resolver placeholder in the JSON `api_key` field.
+The `tavily` preset permits only `POST /search` and `POST /extract` to `api.tavily.com`.
+It enables request-body credential rewriting because Hermes sends its resolver placeholder in the JSON `api_key` field.
 OpenShell replaces that placeholder at egress, so the raw key is not written into the sandbox configuration.
 
 ## Weather and Public Reference Lookups

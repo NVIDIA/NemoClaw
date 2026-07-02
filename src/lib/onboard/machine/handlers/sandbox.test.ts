@@ -222,6 +222,7 @@ function baseOptions(
     hermesToolGateways: [],
     controlUiPort: null,
     rootDir: "/repo",
+    env: {},
     deps,
   };
 }
@@ -312,7 +313,7 @@ describe("handleSandboxState", () => {
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
-      "  Tavily Search replaces Hermes managed Web search/extract; keeping the other selected Nous tools.",
+      "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
     );
     expect(calls.complete).toHaveBeenCalledWith(
       "sandbox",
@@ -482,14 +483,13 @@ describe("handleSandboxState", () => {
       agentSupportsWebSearchProvider: () => true,
     });
 
-    const result = await withEnv("NEMOCLAW_WEB_SEARCH_PROVIDER", "tavily", () =>
-      handleSandboxState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "saved",
-        webSearchConfig: { fetchEnabled: true, provider: "brave" },
-      }),
-    );
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+      env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
+    });
 
     expect(calls.note).toHaveBeenCalledWith(
       "  [resume] Web Search configuration changed; recreating sandbox.",
@@ -532,14 +532,13 @@ describe("handleSandboxState", () => {
     });
 
     await expect(
-      withEnv("NEMOCLAW_WEB_SEARCH_PROVIDER", "tavily", () =>
-        handleSandboxState({
-          ...baseOptions(deps, session),
-          resume: true,
-          sandboxName: "saved",
-          webSearchConfig: { fetchEnabled: true, provider: "brave" },
-        }),
-      ),
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+        env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
+      }),
     ).rejects.toThrow("Tavily credential rejected");
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();

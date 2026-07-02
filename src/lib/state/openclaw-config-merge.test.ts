@@ -352,4 +352,37 @@ describe("mergeOpenClawRestoredConfig", () => {
     expect(merged.plugins.entries.tavily).toBeUndefined();
     expect(merged.plugins.entries.customPlugin).toEqual({ enabled: true });
   });
+
+  it("does not restore managed search state when fresh config omits whole sections", () => {
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        tools: {
+          customTool: { enabled: true },
+          web: {
+            search: { enabled: true, provider: "tavily" },
+            fetch: { enabled: false },
+          },
+        },
+        plugins: {
+          entries: {
+            tavily: {
+              enabled: true,
+              config: { webSearch: { apiKey: "openshell:resolve:env:TAVILY_API_KEY" } },
+            },
+            customPlugin: { enabled: true },
+          },
+        },
+      },
+      { gateway: { auth: { token: "fresh-token" } } },
+    ) as {
+      tools: { customTool: unknown; web: Record<string, unknown> };
+      plugins: { entries: Record<string, unknown> };
+    };
+
+    expect(merged.tools.web.search).toBeUndefined();
+    expect(merged.tools.web.fetch).toEqual({ enabled: false });
+    expect(merged.tools.customTool).toEqual({ enabled: true });
+    expect(merged.plugins.entries.tavily).toBeUndefined();
+    expect(merged.plugins.entries.customPlugin).toEqual({ enabled: true });
+  });
 });

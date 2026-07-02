@@ -16,15 +16,16 @@ network_policies:
         # Hermes sends the resolver placeholder as the JSON `api_key` field.
         request_body_credential_rewrite: true
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
     binaries:
-      # OpenShell attributes Tavily requests to each agent's managed Python
-      # interpreter. Keep both paths exact so unrelated Python runtimes remain
-      # outside the Tavily egress boundary.
+      # Agent runtimes: Deep Agents Code's managed Python (including versioned
+      # python3 names), Hermes' exact venv Python, and OpenClaw's Node paths.
       - { path: /opt/venv/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+      # Exact curl paths are used only by onboarding's post-create verifier;
+      # requests remain constrained by the two POST rules above.
       - { path: /usr/local/bin/curl }
       - { path: /usr/bin/curl }

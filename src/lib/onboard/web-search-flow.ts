@@ -258,7 +258,6 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     const envKey = webSearchEnvFor(provider);
     persistCredential(envKey, apiKey);
     env[envKey] = apiKey;
-    process.env[envKey] = apiKey;
   }
 
   async function ensureValidatedWebSearchCredential(

@@ -10,6 +10,7 @@ type TavilyEndpoint = {
   port: number;
   protocol: string;
   enforcement: string;
+  access?: string;
   request_body_credential_rewrite?: boolean;
   rules: Array<{ allow: { method: string; path: string } }>;
   tls?: string;
@@ -18,7 +19,6 @@ type TavilyEndpoint = {
 type TavilyPolicy = {
   endpoints?: TavilyEndpoint[];
   binaries?: Array<{ path: string }>;
-  access?: string;
 };
 
 describe("tavily opt-in preset", () => {
@@ -41,8 +41,8 @@ describe("tavily opt-in preset", () => {
         enforcement: "enforce",
         request_body_credential_rewrite: true,
         rules: [
-          { allow: { method: "GET", path: "/**" } },
-          { allow: { method: "POST", path: "/**" } },
+          { allow: { method: "POST", path: "/search" } },
+          { allow: { method: "POST", path: "/extract" } },
         ],
       },
     ]);
@@ -54,7 +54,7 @@ describe("tavily opt-in preset", () => {
       { path: "/usr/local/bin/curl" },
       { path: "/usr/bin/curl" },
     ]);
-    expect(policy).not.toHaveProperty("access", "full");
+    expect(policy?.endpoints?.[0]).not.toHaveProperty("access");
     expect(policy?.endpoints?.[0]).not.toHaveProperty("tls", "skip");
   });
 });

@@ -118,6 +118,7 @@ export function createCoreOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       controlUiPort: options.sandbox.controlUiPort,
       rootDir: options.sandbox.rootDir,
+      env: options.env,
       deps: options.sandboxDeps,
     });
 
