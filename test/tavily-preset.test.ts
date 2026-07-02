@@ -10,6 +10,7 @@ type TavilyEndpoint = {
   port: number;
   protocol: string;
   enforcement: string;
+  request_body_credential_rewrite?: boolean;
   rules: Array<{ allow: { method: string; path: string } }>;
   tls?: string;
 };
@@ -38,6 +39,7 @@ describe("tavily opt-in preset", () => {
         port: 443,
         protocol: "rest",
         enforcement: "enforce",
+        request_body_credential_rewrite: true,
         rules: [
           { allow: { method: "GET", path: "/**" } },
           { allow: { method: "POST", path: "/**" } },
@@ -46,6 +48,7 @@ describe("tavily opt-in preset", () => {
     ]);
     expect(policy?.binaries).toEqual([
       { path: "/opt/venv/bin/python3*" },
+      { path: "/opt/hermes/.venv/bin/python" },
       { path: "/usr/local/bin/node" },
       { path: "/usr/bin/node" },
       { path: "/usr/local/bin/curl" },

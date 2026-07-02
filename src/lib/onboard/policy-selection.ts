@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WebSearchConfig } from "../inference/web-search";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -56,6 +56,7 @@ export type SetupPresetSuggestionOptions = {
   knownPresetNames?: string[] | null;
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
+  customPresetNames?: ReadonlySet<string> | null;
   env?: NodeJS.ProcessEnv;
 };
 
@@ -114,14 +115,23 @@ export function mergeRequiredSetupPolicyPresets(
     knownPresetNames?: string[] | Set<string> | null;
     env?: NodeJS.ProcessEnv;
     tierName?: string | null;
+    webSearchConfig?: WebSearchConfig | null;
+    customPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): string[] {
   const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(policyPresets, options.agent);
+  const effectiveHermesToolGateways = (options.hermesToolGateways ?? []).filter(
+    (name) =>
+      !isStaleBuiltinWebSearchPolicyPreset(name, {
+        webSearchConfig: options.webSearchConfig,
+        customPresetNames: options.customPresetNames,
+      }),
+  );
   const mergedPresets = mergeRequiredOpenclawOtelPolicyPresets(
     mergeRequiredMessagingChannelPolicyPresets(
       mergeRequiredHermesToolGatewayPolicyPresets(
         agentFilteredPresets,
-        options.hermesToolGateways,
+        effectiveHermesToolGateways,
         options.knownPresetNames,
       ),
       options.enabledChannels,
@@ -144,7 +154,25 @@ export function isStaleBuiltinBravePolicyPreset(
     customPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): boolean {
-  return name === "brave" && !options.webSearchConfig && !options.customPresetNames?.has(name);
+  return isStaleBuiltinWebSearchPolicyPreset(name, options);
+}
+
+export function isStaleBuiltinWebSearchPolicyPreset(
+  name: string,
+  options: {
+    webSearchConfig?: WebSearchConfig | null;
+    customPresetNames?: ReadonlySet<string> | null;
+  } = {},
+): boolean {
+  if (options.customPresetNames?.has(name)) return false;
+  if (name === "nous-web") {
+    return Boolean(
+      options.webSearchConfig && webSearchProviderForConfig(options.webSearchConfig) === "tavily",
+    );
+  }
+  if (name !== "brave" && name !== "tavily") return false;
+  if (!options.webSearchConfig) return true;
+  return name !== webSearchProviderForConfig(options.webSearchConfig);
 }
 
 export function computeSetupPresetSuggestions(
@@ -170,17 +198,31 @@ export function computeSetupPresetSuggestions(
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
     .filter((name) => setupPolicyPresetAppliesToAgent(name, agent))
-    .filter((name) => !isStaleBuiltinBravePolicyPreset(name, { webSearchConfig }))
+    .filter(
+      (name) =>
+        !isStaleBuiltinWebSearchPolicyPreset(name, {
+          webSearchConfig,
+          customPresetNames: options.customPresetNames,
+        }),
+    )
     .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
     .filter((name) => !known || known.has(name));
   const add = (name: string) => {
     if (!setupPolicyPresetAppliesToAgent(name, agent)) return;
+    if (
+      isStaleBuiltinWebSearchPolicyPreset(name, {
+        webSearchConfig,
+        customPresetNames: options.customPresetNames,
+      })
+    ) {
+      return;
+    }
     if (!deps.policies.setupPolicyPresetSupported(name, supportOptions)) return;
     if (suggestions.includes(name)) return;
     if (known && !known.has(name)) return;
     suggestions.push(name);
   };
-  if (webSearchConfig) add("brave");
+  if (webSearchConfig) add(webSearchProviderForConfig(webSearchConfig));
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
   if (tierName !== RESTRICTED_TIER_NAME) {
     for (const preset of agentRequiredPresetAdditions(agent, env)) add(preset);
@@ -256,12 +298,12 @@ async function setupPoliciesWithSelectionInner(
     supportOptions,
     customPresetNames,
   );
-  const isStaleBuiltinBrave = (name: string) =>
-    isStaleBuiltinBravePolicyPreset(name, { webSearchConfig, customPresetNames });
+  const isStaleBuiltinWebSearch = (name: string) =>
+    isStaleBuiltinWebSearchPolicyPreset(name, { webSearchConfig, customPresetNames });
   const appliedForPreservation = pruneDisabledMessagingPolicyPresets(
     applied,
     disabledChannels,
-  ).filter((name) => !isStaleBuiltinBrave(name));
+  ).filter((name) => !isStaleBuiltinWebSearch(name));
   const pruneDisabledPresets = (presetNames: string[]) =>
     pruneDisabledMessagingPolicyPresets(presetNames, disabledChannels);
   const filterSupportedPresetNames = (presetNames: string[]) =>
@@ -284,6 +326,7 @@ async function setupPoliciesWithSelectionInner(
   // below uses the newly-selected `tierName` from `selectPolicyTier()`.
   const recordedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
   if (chosen !== null) {
+    chosen = chosen.filter((name) => !isStaleBuiltinWebSearch(name));
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
       enabledChannels,
@@ -292,6 +335,8 @@ async function setupPoliciesWithSelectionInner(
       knownPresetNames: knownSelectablePresets,
       env: deps.env,
       tierName: recordedTierName,
+      webSearchConfig,
+      customPresetNames,
     });
     chosen = pruneDisabledPresets(chosen);
   }
@@ -314,6 +359,7 @@ async function setupPoliciesWithSelectionInner(
     computeSetupPresetSuggestions(deps, tierName, {
       enabledChannels,
       webSearchConfig,
+      customPresetNames,
       provider,
       agent,
       knownPresetNames: allPresets.map((preset) => preset.name),
@@ -344,7 +390,11 @@ async function setupPoliciesWithSelectionInner(
       isAuthoritative = true;
     } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
       const envPresets = deps.parsePolicyPresetEnv(deps.env?.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length > 0) chosen = filterSupportedPresetNames(envPresets);
+      if (envPresets.length > 0) {
+        chosen = filterSupportedPresetNames(envPresets).filter(
+          (name) => !isStaleBuiltinWebSearch(name),
+        );
+      }
     } else {
       console.warn(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
       console.warn(
@@ -365,6 +415,8 @@ async function setupPoliciesWithSelectionInner(
       knownPresetNames: knownPresets,
       env: deps.env,
       tierName,
+      webSearchConfig,
+      customPresetNames,
     });
     chosen = pruneDisabledPresets(chosen);
 
@@ -384,7 +436,7 @@ async function setupPoliciesWithSelectionInner(
       const kept: string[] = [];
       for (const name of appliedForPreservation) {
         if (chosenSet.has(name)) continue;
-        if (isStaleBuiltinBrave(name)) continue;
+        if (isStaleBuiltinWebSearch(name)) continue;
         if (suppressedNames.has(name)) continue;
         chosen.push(name);
         chosenSet.add(name);
@@ -425,6 +477,8 @@ async function setupPoliciesWithSelectionInner(
         knownPresetNames: knownNames,
         env: deps.env,
         tierName,
+        webSearchConfig,
+        customPresetNames,
       },
     ),
   );

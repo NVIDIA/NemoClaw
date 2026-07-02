@@ -22,6 +22,7 @@ function createResult(overrides = {}) {
     hasMessagingTokens: false,
     reusableMessagingProviders: [],
     reusableMessagingChannels: [],
+    missingWebSearchCredentialEnv: null,
     missingBraveApiKey: false,
     ...overrides,
   };
@@ -245,14 +246,34 @@ describe("prepareSandboxMessagingPreflight", () => {
 
   it("fails before recreate/delete when Brave search has no API key", async () => {
     const deps = createDeps({
-      prepareCreateSandboxMessaging: vi.fn(() => createResult({ missingBraveApiKey: true })),
+      prepareCreateSandboxMessaging: vi.fn(() =>
+        createResult({
+          missingWebSearchCredentialEnv: "BRAVE_API_KEY",
+          missingBraveApiKey: true,
+        }),
+      ),
     });
 
     await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
       code: 1,
     });
     expect(deps.error).toHaveBeenCalledWith(
-      "  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.",
+      "  Web search is enabled, but BRAVE_API_KEY is not available in this process.",
+    );
+  });
+
+  it("names the selected Tavily credential when recreate preflight fails", async () => {
+    const deps = createDeps({
+      prepareCreateSandboxMessaging: vi.fn(() =>
+        createResult({ missingWebSearchCredentialEnv: "TAVILY_API_KEY" }),
+      ),
+    });
+
+    await expect(prepareSandboxMessagingPreflight(baseInput, deps)).rejects.toMatchObject({
+      code: 1,
+    });
+    expect(deps.error).toHaveBeenCalledWith(
+      "  Web search is enabled, but TAVILY_API_KEY is not available in this process.",
     );
   });
 });

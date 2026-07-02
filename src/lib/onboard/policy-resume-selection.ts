@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { WebSearchConfig } from "../inference/web-search";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import {
   filterSetupPolicyPresetNamesForAgent,
   filterSetupPolicyPresetsForAgent,
@@ -12,7 +12,7 @@ import {
   pruneDisabledMessagingPolicyPresets,
 } from "./messaging-policy-presets";
 import {
-  isStaleBuiltinBravePolicyPreset,
+  isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
   type PreparedPolicyResumeSelection,
 } from "./policy-selection";
@@ -49,6 +49,7 @@ export function preparePolicyPresetResumeSelection(
     hermesToolGateways?: string[] | null;
     agent?: string | null;
     webSearchConfig?: WebSearchConfig | null;
+    webSearchConfigChanged?: boolean;
     webSearchSupported?: boolean | null;
     env?: NodeJS.ProcessEnv;
     tierName?: string | null;
@@ -74,18 +75,18 @@ export function preparePolicyPresetResumeSelection(
     supportOptions,
     customPolicyPresetNames,
   );
-  const isStaleBuiltinBrave = (name: string) =>
-    isStaleBuiltinBravePolicyPreset(name, {
+  const isStaleBuiltinWebSearch = (name: string) =>
+    isStaleBuiltinWebSearchPolicyPreset(name, {
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
     });
+  const recordedBuiltinWebSearchProviderChanged = clampedRecordedPolicyPresets.some(
+    (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
+  );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinBrave(name)),
+    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinWebSearch(name)),
     options.disabledChannels,
   );
-  const recordedPolicyPresetsNeedReconcile =
-    Array.isArray(options.recordedPolicyPresets) &&
-    policyPresets.length !== options.recordedPolicyPresets.length;
   const appliedPolicyPresetsForSupport = deps.policies
     .clampSetupPolicyPresetNames(
       appliedPolicyPresets,
@@ -93,7 +94,7 @@ export function preparePolicyPresetResumeSelection(
       supportOptions,
       customPolicyPresetNames,
     )
-    .filter((name) => !isStaleBuiltinBrave(name));
+    .filter((name) => !isStaleBuiltinWebSearch(name));
   const disabledMessagingPolicyPresetApplied = hasDisabledMessagingPolicyPreset(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
@@ -111,8 +112,34 @@ export function preparePolicyPresetResumeSelection(
       knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
       env: options.env,
       tierName: options.tierName,
+      webSearchConfig: options.webSearchConfig,
+      customPresetNames: customPolicyPresetNames,
     });
+
+    // Provider switches are build-time changes, but their matching egress
+    // preset is runtime state. Resume must add the newly active provider after
+    // pruning the stale one or the replacement sandbox cannot reach search.
+    const activeWebSearchPreset = options.webSearchConfig
+      ? webSearchProviderForConfig(options.webSearchConfig)
+      : null;
+    const selectablePolicyPresetNames = new Set(
+      selectablePolicyPresets.map((preset) => preset.name),
+    );
+    if (
+      activeWebSearchPreset &&
+      options.webSearchSupported !== false &&
+      (options.webSearchConfigChanged === true || recordedBuiltinWebSearchProviderChanged) &&
+      selectablePolicyPresetNames.has(activeWebSearchPreset) &&
+      !policyPresets.includes(activeWebSearchPreset)
+    ) {
+      policyPresets.push(activeWebSearchPreset);
+    }
   }
+  const recordedPolicyPresetsNeedReconcile =
+    Array.isArray(options.recordedPolicyPresets) &&
+    (policyPresets.length !== options.recordedPolicyPresets.length ||
+      policyPresets.some((name) => !options.recordedPolicyPresets?.includes(name)) ||
+      options.recordedPolicyPresets.some((name) => !policyPresets.includes(name)));
   const suppressedForTier = options.tierName
     ? new Set(suppressedAgentRequiredPresets(options.tierName, options.agent))
     : null;

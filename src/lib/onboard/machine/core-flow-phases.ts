@@ -126,6 +126,8 @@ export function createCoreOnboardFlowPhases<
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
         webSearchConfig: sandboxStateResult.webSearchConfig,
+        webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
+        hermesToolGateways: sandboxStateResult.hermesToolGateways,
         selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
         webSearchSupported: sandboxStateResult.webSearchSupported,
       }),
