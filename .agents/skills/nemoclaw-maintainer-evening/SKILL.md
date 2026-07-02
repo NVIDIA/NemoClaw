@@ -61,7 +61,7 @@ Load `cut-release-tag`. The version is already known. Default to patch bump, but
 After the tag is cut and announcement notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
-- **Release docs**: merged, pending, or waived with reason
+- **Release docs**: merged or waived with reason
 - **Announcement draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Bumped to v0.0.9**: 1 item (#1238 — still needs CI fix)
