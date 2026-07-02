@@ -184,9 +184,6 @@ navigation:
               - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
-              - page: "Install Readiness"
-                path: _build/agent-variants/resources/agent-install-readiness.openclaw.generated.mdx
-                slug: agent-install-readiness
               - link: "Community Examples"
                 href: https://github.com/NVIDIA/nemoclaw-community
               - link: "Discord"
@@ -342,9 +339,6 @@ navigation:
               - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
-              - page: "Install Readiness"
-                path: _build/agent-variants/resources/agent-install-readiness.hermes.generated.mdx
-                slug: agent-install-readiness
               - link: "Community Examples"
                 href: https://github.com/NVIDIA/nemoclaw-community
               - link: "Report Vulnerabilities"
