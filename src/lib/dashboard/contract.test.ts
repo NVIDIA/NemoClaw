@@ -36,11 +36,11 @@ describe("buildChain", () => {
     expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 
-  it("uses WSL host address and binds to 0.0.0.0", () => {
+  it("binds to 0.0.0.0 for WSL but keeps the loopback access URL", () => {
     const c = buildChain({ isWsl: true, wslHostAddress: "172.24.240.1" });
     expect(c.forwardTarget).toBe("0.0.0.0:18789");
-    expect(c.accessUrl).toBe("http://172.24.240.1:18789");
-    expect(c.corsOrigins).toContain("http://172.24.240.1:18789");
+    expect(c.accessUrl).toBe("http://127.0.0.1:18789");
+    expect(c.corsOrigins).toEqual(["http://127.0.0.1:18789"]);
     expect(c.shouldDisableDeviceAuth).toBe(true);
   });
 

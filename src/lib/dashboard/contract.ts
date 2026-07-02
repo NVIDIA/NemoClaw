@@ -93,8 +93,6 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   let accessUrl: string;
   if (hasNonLoopbackUrl) {
     accessUrl = ensureScheme(chatUiUrl);
-  } else if (h.isWsl && h.wslHostAddress) {
-    accessUrl = `http://${h.wslHostAddress}:${port}`;
   } else {
     accessUrl = `http://127.0.0.1:${port}`;
   }
