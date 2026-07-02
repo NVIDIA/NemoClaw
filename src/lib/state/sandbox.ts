@@ -39,6 +39,7 @@ import {
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
 import type { CustomPolicyEntry } from "./registry.js";
+import { isSshTransportFailure } from "./ssh-transport.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
@@ -1035,10 +1036,10 @@ function restoreStateFile(
  * Uses the agent manifest to determine which directories contain state.
  */
 
-// isSshTransportFailure is re-exported here for backwards compatibility with
-// callers that imported it from this module before it moved to ./ssh-transport.
-// Prefer importing directly from ./ssh-transport in new code.
-export { isSshTransportFailure } from "./ssh-transport";
+// isSshTransportFailure lives in ./ssh-transport now. Re-exported here for
+// backwards compatibility with callers that used to import it from this
+// module. Prefer importing directly from ./ssh-transport in new code.
+export { isSshTransportFailure };
 
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
