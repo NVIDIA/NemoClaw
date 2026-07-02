@@ -64,6 +64,10 @@ exit 0
     currentCli,
     `#!/usr/bin/env bash
 printf 'current:%s\\n' "$*" >> "${cliLog}"
+# Record the skip env var so the installer-integration test can prove the
+# installer propagates NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP into the
+# current-CLI child. See #6188 / PRA-9.
+printf 'skip-env=%s\\n' "\${NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP:-}" >> "${cliLog}"
 if [ "$1" = "--version" ]; then
   printf 'nemoclaw v0.1.0\\n'
   exit 0
@@ -210,12 +214,49 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain(
-      "Fix the OpenShell gateway state, rerun 'nemoclaw backup-all', then rerun the installer.",
+      "If the failures are running sandboxes whose in-sandbox SSH endpoint is unreachable, rerun the installer with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 to continue and recover them after the upgrade (any uncommitted state since the last successful backup will be lost); otherwise restore the affected sandbox or stop its container, then rerun 'nemoclaw backup-all'.",
     );
     expect(cliLog.split(/\r?\n/)).toContain("old:backup-all");
     expect(cliLog).not.toContain("--help");
-    expect(cliLog).not.toContain("prepare-current");
+    expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
     expect(openshellLog).toBe("");
+  });
+
+  it("retries current-gateway backup with the current CLI when the old CLI fails", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+      },
+      { backupSucceeds: false, fallbackAvailable: true, openshellVersion: "0.0.37" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout + result.stderr).toContain("Retrying with the current NemoClaw CLI");
+    expect(result.stdout).toContain("RESTORE=1");
+    expect(cliLog).toMatch(/old:backup-all[\s\S]*prepare-current[\s\S]*current:backup-all/);
+    expect(openshellLog).toBe("");
+  });
+
+  it("propagates NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP into the current-CLI backup retry (#6188)", () => {
+    // The skip flag is consumed by the CLI's backup-all path (maintenance.ts's
+    // shouldSkipUnreachableSandboxBackup). The installer's job is to pass the
+    // env var through unchanged when it retries with the current CLI so the
+    // skip logic can actually activate. This asserts the env var reaches the
+    // current-CLI child process — verified via the current-mock, which echoes
+    // it into cli.log. See advisor PRA-9.
+    const { result, cliLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+        NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1",
+      },
+      { backupSucceeds: false, fallbackAvailable: true, openshellVersion: "0.0.37" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("RESTORE=1");
+    // The current-CLI child must see the skip env var. Empty value (unset) or
+    // a truthy value that's not exactly "1" would defeat the CLI-side check.
+    expect(cliLog).toMatch(/current:backup-all[\s\S]*skip-env=1/);
   });
 
   it("continues after the user manually prepared the old gateway state", () => {
