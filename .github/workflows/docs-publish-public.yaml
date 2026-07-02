@@ -28,19 +28,7 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: "24"
-
-      - name: Install docs dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Generate doc variants and validate Fern docs
-        run: |
-          npm run docs:sync-agent-variants
-          npm run docs
+          persist-credentials: false
 
       - name: Verify release tag commit is on main
         run: |
@@ -49,6 +37,20 @@ jobs:
             echo "::error::Public docs publishing only runs for release tags whose commits are reachable from origin/main."
             exit 1
           fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install docs dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Generate doc variants and validate Fern docs
+        run: |
+          npm run docs:sync-agent-variants
+          npm run docs
 
       - name: Publish public docs
         env:
