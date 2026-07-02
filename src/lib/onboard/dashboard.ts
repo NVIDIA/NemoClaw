@@ -168,6 +168,15 @@ function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string
   return dashboardAccess.dashboardUrlForDisplay(url, deps.redact);
 }
 
+function printWslFallback(fallbackDashboardUrls: string[], indent: string): void {
+  if (fallbackDashboardUrls.length === 0) return;
+  console.log("");
+  console.log(`${indent}Browser (WSL fallback, if 127.0.0.1 is unreachable from Windows):`);
+  for (const fallbackUrl of fallbackDashboardUrls) {
+    console.log(`${indent}  ${fallbackUrl}`);
+  }
+}
+
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
   const runCapture = deps.runCapture ?? defaultRunCapture;
 
@@ -452,14 +461,6 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         deps,
       ),
     );
-    const printWslFallback = (indent: string): void => {
-      if (fallbackDashboardUrls.length === 0) return;
-      console.log("");
-      console.log(`${indent}Browser (WSL fallback, if 127.0.0.1 is unreachable from Windows):`);
-      for (const fallbackUrl of fallbackDashboardUrls) {
-        console.log(`${indent}  ${fallbackUrl}`);
-      }
-    };
 
     console.log("");
     console.log(`  ${"─".repeat(50)}`);
@@ -490,7 +491,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
-      printWslFallback("    ");
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
@@ -504,7 +505,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
-      printWslFallback("    ");
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
