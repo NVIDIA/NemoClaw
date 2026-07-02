@@ -17,6 +17,7 @@ export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
   chatUiUrl: string;
   createArgs: readonly string[];
+  sandboxName?: string;
   env?: NodeJS.ProcessEnv;
   extraPlaceholderKeys: readonly string[];
   getDashboardForwardPort(chatUiUrl: string): string;
@@ -32,11 +33,6 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
-}
-
-function readCreateArgValue(createArgs: readonly string[], flag: string): string | undefined {
-  const flagIndex = createArgs.indexOf(flag);
-  return flagIndex === -1 ? undefined : createArgs[flagIndex + 1];
 }
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -80,7 +76,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   }
 
   if (input.agent?.name === "langchain-deepagents-code") {
-    const sandboxName = readCreateArgValue(input.createArgs, "--name");
+    const sandboxName = input.sandboxName;
     if (sandboxName) {
       envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
     }

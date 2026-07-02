@@ -3025,6 +3025,7 @@ async function createSandbox(
       agent,
       chatUiUrl,
       createArgs,
+      sandboxName,
       env: process.env,
       extraPlaceholderKeys,
       getDashboardForwardPort,
