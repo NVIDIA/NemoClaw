@@ -478,9 +478,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
-          const primary = buildControlUiUrls(tokenValue, port, chain.accessUrl);
-          const fallbacks = buildFallbackControlUiUrls(tokenValue, port, chain.fallbackUrls);
-          return [...new Set([...primary, ...fallbacks])];
+          const primary = buildControlUiUrls(tokenValue, port);
+          const alternates = buildFallbackControlUiUrls(tokenValue, port, [
+            chain.accessUrl,
+            ...chain.fallbackUrls,
+          ]);
+          return [...new Set([...primary, ...alternates])];
         },
       });
       console.log("");

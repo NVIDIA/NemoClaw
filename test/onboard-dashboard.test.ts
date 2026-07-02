@@ -263,6 +263,38 @@ describe("onboard dashboard helpers", () => {
     expect(output).not.toMatch(/secret[-_]?token/);
   });
 
+  it("gives the agent dashboard both primary and port-rewritten WSL fallback URLs", () => {
+    const runOpenshell = createTokenDownloadRunOpenshell();
+    const printAgentDashboardUi = vi.fn();
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      runCapture: vi.fn(() => "172.22.1.1 10.0.0.2\n"),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      nimStatus: vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" })),
+      shouldShowNimLine: vi.fn(() => false),
+      note: vi.fn(),
+      isWsl: () => true,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi,
+      listSandboxes: () => ({ sandboxes: [] }),
+    });
+    const agent = { dashboard: { auth: "url_token" } } as never;
+
+    helpers.printDashboard("my-hermes", "gpt-oss:20b", "ollama", null, agent);
+
+    const [, , , agentDeps] = printAgentDashboardUi.mock.calls[0];
+    const urls: string[] = agentDeps.buildControlUiUrls("secret-token", 8642);
+
+    expect(urls).toContain("http://127.0.0.1:8642/#token=secret-token");
+    expect(urls.some((url) => url.startsWith("http://172.22.1.1:8642/"))).toBe(true);
+    expect(urls.some((url) => url.includes(":18789"))).toBe(false);
+  });
+
   it("prints a token-free browser URL when the dashboard token is unavailable", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const note = vi.fn();
