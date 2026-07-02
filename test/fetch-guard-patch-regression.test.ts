@@ -301,6 +301,7 @@ function runDockerfilePatchBlock(
     scriptPath,
     [
       "#!/usr/bin/env bash",
+      "set -euo pipefail",
       `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'OpenClaw ${version}\\n'; else return 127; fi; }`,
       command,
     ].join("\n"),

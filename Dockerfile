@@ -536,7 +536,7 @@ RUN set -eu; \
         audit_pattern="auditContext[[:space:]]*:[[:space:]]*(\"cron-model-provider-preflight\"|'cron-model-provider-preflight')"; \
         patched_pattern="mode[[:space:]]*:[[:space:]]*(\"trusted_env_proxy\"|'trusted_env_proxy')[[:space:]]*,[[:space:]]*${audit_pattern}"; \
         for f in $preflight_files; do \
-            audit_count="$(grep -Eo "$audit_pattern" "$f" | awk 'END { print NR }')"; \
+            audit_count="$( { grep -Eo "$audit_pattern" "$f" || true; } | awk 'END { print NR }')"; \
             [ "${audit_count:-0}" -ge 1 ] \
                 || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
             [ "${audit_count:-0}" -eq 1 ] \
@@ -545,12 +545,12 @@ RUN set -eu; \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
             grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
                 || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
-            patched_count="$(grep -Eo "$patched_pattern" "$f" | awk 'END { print NR }')"; \
+            patched_count="$( { grep -Eo "$patched_pattern" "$f" || true; } | awk 'END { print NR }')"; \
             if [ "${patched_count:-0}" -eq 1 ]; then \
                 echo "INFO: Patch 6 already present in $f"; \
             elif [ "${patched_count:-0}" -eq 0 ]; then \
                 sed -i -E "s#${audit_pattern}#mode: \"trusted_env_proxy\", &#g" "$f"; \
-                new_patched_count="$(grep -Eo "$patched_pattern" "$f" | awk 'END { print NR }')"; \
+                new_patched_count="$( { grep -Eo "$patched_pattern" "$f" || true; } | awk 'END { print NR }')"; \
                 [ "${new_patched_count:-0}" -eq 1 ] \
                     || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
                 patched_preflight=1; \
