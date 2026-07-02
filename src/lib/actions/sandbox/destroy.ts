@@ -432,11 +432,14 @@ export async function destroySandbox(
   }
 
   // Forced local cleanup removes the registry entry/local artifacts but cannot
-  // confirm the gateway-side delete, so it must not trigger gateway teardown.
+  // confirm the gateway-side delete, so it must not trigger shared host-service
+  // or gateway teardown: the sandbox may still exist on the (unreachable)
+  // gateway. Gate that teardown on the *confirmed* delete state only — never on
+  // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
+  // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
-  const proceedWithLocalCleanup = deleteSucceededOrAlreadyGone || forcedLocalCleanup;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
-    deleteSucceededOrAlreadyGone: proceedWithLocalCleanup,
+    deleteSucceededOrAlreadyGone,
     registeredSandboxCount: registry.listSandboxes().sandboxes.length,
     sandboxStillRegistered: !!registry.getSandbox(sandboxName),
   });
