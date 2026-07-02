@@ -33,9 +33,77 @@ const FUNCTION_LOCAL_PATTERN = /^local release_tag\s*=\s*\$1 asset\s*=\s*\$2$/u;
 const LITERAL_PIN_PATTERN = /^v([0-9]+\.[0-9]+\.[0-9]+):([A-Za-z0-9._+-]+)$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const FUNCTION_SELECTOR_VALUES = new Set(["${release_tag}:${asset}", "$release_tag:$asset"]);
+const MAX_INSTALLER_INPUT_BYTES = 1024 * 1024;
 
 function fail(message: string): never {
   throw new Error(`Installer pin extraction failed: ${message}`);
+}
+
+// Pull-request CI executes this parser from a trusted checkout while these
+// paths point into the mutable PR tree. Reject links and special files before
+// reading, verify that the opened file is still the one inspected, and cap the
+// bytes consumed so PR-authored input cannot redirect or exhaust the verifier.
+// Regression coverage lives in test/installer-hash-check.test.ts.
+function readInstallerInput(inputPath: string, sourceLabel: string): string {
+  let parentStats: fs.Stats;
+  try {
+    parentStats = fs.lstatSync(path.dirname(inputPath));
+  } catch {
+    fail(`${sourceLabel} input parent directory is unavailable`);
+  }
+  if (parentStats.isSymbolicLink() || !parentStats.isDirectory()) {
+    fail(`${sourceLabel} input parent must be a real directory and not a symbolic link`);
+  }
+
+  let pathStats: fs.Stats;
+  try {
+    pathStats = fs.lstatSync(inputPath);
+  } catch {
+    fail(`${sourceLabel} input is unavailable`);
+  }
+  if (pathStats.isSymbolicLink() || !pathStats.isFile()) {
+    fail(`${sourceLabel} input must be a regular file and not a symbolic link`);
+  }
+
+  let descriptor: number;
+  try {
+    descriptor = fs.openSync(
+      inputPath,
+      fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW,
+    );
+  } catch {
+    fail(`${sourceLabel} input must be a regular file and not a symbolic link`);
+  }
+
+  try {
+    const openedStats = fs.fstatSync(descriptor);
+    if (
+      !openedStats.isFile() ||
+      openedStats.dev !== pathStats.dev ||
+      openedStats.ino !== pathStats.ino
+    ) {
+      fail(`${sourceLabel} input changed during validation or is not a regular file`);
+    }
+    if (openedStats.size > MAX_INSTALLER_INPUT_BYTES) {
+      fail(`${sourceLabel} input exceeds the ${MAX_INSTALLER_INPUT_BYTES}-byte limit`);
+    }
+
+    const buffer = Buffer.allocUnsafe(MAX_INSTALLER_INPUT_BYTES + 1);
+    let bytesRead = 0;
+    while (bytesRead < buffer.length) {
+      const chunkSize = fs.readSync(descriptor, buffer, bytesRead, buffer.length - bytesRead, null);
+      if (chunkSize === 0) {
+        break;
+      }
+      bytesRead += chunkSize;
+    }
+    if (bytesRead > MAX_INSTALLER_INPUT_BYTES) {
+      fail(`${sourceLabel} input exceeds the ${MAX_INSTALLER_INPUT_BYTES}-byte limit`);
+    }
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    fs.closeSync(descriptor);
+  }
 }
 
 function isOperatorStart(character: string): boolean {
@@ -373,12 +441,12 @@ function parseCliOptions(argv: string[]): CliOptions {
 function runCli(): void {
   const options = parseCliOptions(process.argv.slice(2));
   const pins = [
-    ...extractInstallerPins(fs.readFileSync(options.installer, "utf8"), {
+    ...extractInstallerPins(readInstallerInput(options.installer, "installer"), {
       functionName: "openshell_pinned_sha256",
       releaseVersion: options.releaseVersion,
       sourceLabel: "installer",
     }),
-    ...extractInstallerPins(fs.readFileSync(options.brevInstaller, "utf8"), {
+    ...extractInstallerPins(readInstallerInput(options.brevInstaller, "Brev launchable"), {
       functionName: "openshell_cli_pinned_sha256",
       releaseVersion: options.releaseVersion,
       sourceLabel: "Brev launchable",

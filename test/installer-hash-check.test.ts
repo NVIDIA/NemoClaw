@@ -45,17 +45,22 @@ const ASSET_DIGESTS = new Map([
 ]);
 const ASSETS = [...ASSET_DIGESTS.keys()];
 const UNPUBLISHED_ASSET = "openshell-sandbox-aarch64-unknown-linux-gnu-unpublished.tar.gz";
+const SYMLINK_INPUT_MARKER = "LEAK565";
 type FixtureMode =
   | "brev-mismatch"
   | "complete"
   | "duplicate-brev-pin"
   | "failure"
   | "missing-brev-pin"
+  | "non-regular-brev-input"
+  | "oversized-installer-input"
   | "partial"
   | "partial-asset-missing"
   | "partial-manifest-missing"
   | "pr-checker-bypass"
-  | "pr-parser-bypass";
+  | "pr-parser-bypass"
+  | "symlink-installer-input"
+  | "symlink-scripts-parent";
 type PinFormatting =
   | "canonical"
   | "comments"
@@ -291,6 +296,17 @@ function runFixture(
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   const mutateBrev = BREV_MUTATIONS[mode] ?? ((source: string) => source);
   fs.writeFileSync(brevInstaller, mutateBrev(brevSource));
+  if (mode === "symlink-installer-input") {
+    const symlinkTarget = path.join(fixtureRoot, "valid-installer-target.sh");
+    fs.renameSync(installer, symlinkTarget);
+    fs.writeFileSync(symlinkTarget, `""\n${SYMLINK_INPUT_MARKER}\n`);
+    fs.symlinkSync(symlinkTarget, installer);
+  } else if (mode === "non-regular-brev-input") {
+    fs.rmSync(brevInstaller);
+    fs.mkdirSync(brevInstaller);
+  } else if (mode === "oversized-installer-input") {
+    fs.appendFileSync(installer, `\n# ${"x".repeat(1024 * 1024)}\n`);
+  }
   const targetParser = path.join(fixtureRoot, "scripts", "checks", "extract-installer-pins.mts");
   fs.writeFileSync(
     targetParser,
@@ -298,6 +314,16 @@ function runFixture(
       ? 'process.stdout.write("PR_PARSER_EXECUTED\\n");\n'
       : fs.readFileSync(targetParser, "utf8"),
   );
+  if (mode === "symlink-scripts-parent") {
+    const candidateScriptsDir = path.join(fixtureRoot, "scripts");
+    const scriptsTarget = path.join(fixtureRoot, "candidate-scripts-target");
+    fs.renameSync(candidateScriptsDir, scriptsTarget);
+    fs.writeFileSync(
+      path.join(scriptsTarget, "install-openshell.sh"),
+      `""\n${SYMLINK_INPUT_MARKER}\n`,
+    );
+    fs.symlinkSync(scriptsTarget, candidateScriptsDir, "dir");
+  }
   return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -382,6 +408,28 @@ describe("installer hash verification", () => {
     );
     expect(result.stdout).not.toContain("PR_PARSER_EXECUTED");
     expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it.each([
+    ["symlink-installer-input", "installer input must be a regular file and not a symbolic link"],
+    [
+      "non-regular-brev-input",
+      "Brev launchable input must be a regular file and not a symbolic link",
+    ],
+    ["oversized-installer-input", "installer input exceeds the 1048576-byte limit"],
+    [
+      "symlink-scripts-parent",
+      "installer input parent must be a real directory and not a symbolic link",
+    ],
+  ] as const)("fails closed for %s", (mode, diagnostic) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("unable to extract the OpenShell installer pin tables");
+    expect(result.stdout).toContain(diagnostic);
+    expect(result.stdout).not.toContain("All installer hashes are current");
+    expect(result.stdout).not.toContain(SYMLINK_INPUT_MARKER);
+    expect(result.stderr).not.toContain(SYMLINK_INPUT_MARKER);
   });
 
   it("fails closed when the OpenShell checksum release assets are unreachable", () => {

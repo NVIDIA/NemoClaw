@@ -83,17 +83,17 @@ jobs:
       # introducing PR merges, so the bootstrap must name immutable code once.
       # regressionTest: test/pr-workflow-contract.test.ts rejects mutable
       # checker execution, non-immutable refs, and a mismatched reviewed tree.
-      # manualReviewEvidence: on 2026-07-01, independent Git object inspection
-      # confirmed commit ea9dc63bb1f68347967130fb9bff40c71ddc4848 has
-      # tree 5a3cafa3d36b6a4c2d7332604b3c474c32d703f5. The reviewed bootstrap
-      # script SHA-256 is 11c5becfd97e541751c5874c893d0d780529e23a899477d54df2f5fe932a2a73;
+      # manualReviewEvidence: on 2026-07-02, independent Git object inspection
+      # confirmed commit cb5e9aefab2b16fedc0995149fc3520da0d5e0c7 has
+      # tree 1fdf59efe40b78c407e222fd42043b23a61e199a. The reviewed bootstrap
+      # script SHA-256 is 179e1572932eedc1a8ed974d534e9f2a5c34db7ebe971000dc20b77ed9d9feb3;
       # its parser SHA-256 is
-      # fdb807ffab52f2f8375be41636dc3413263d78ba815a2b96e4000b81f1506366;
+      # e1d6b63a7b0378a3d28ee71d347ade2da75b3fcf2ff55aa55a9b54d2bc2fc13a;
       # and its composite-action SHA-256 is
       # 9c48c64cc934032c99a0aa9aa08b1164757988dc2842e1df88d1b7252ce1183f.
       # removalCondition: remove the bootstrap checkout after this workflow has
       # landed on every supported PR base. The fallback is refused after the
-      # explicit 180-day review window ending 2026-12-28T07:42:43Z.
+      # explicit 180-day review window ending 2026-12-29T19:35:41Z.
       - name: Enforce immutable installer hash bootstrap expiry
         if: >-
           github.event_name == 'pull_request' &&
@@ -102,8 +102,8 @@ jobs:
         run: |
           set -euo pipefail
           node <<'NODE'
-          const commit = "ea9dc63bb1f68347967130fb9bff40c71ddc4848";
-          const expiresAt = "2026-12-28T07:42:43Z";
+          const commit = "cb5e9aefab2b16fedc0995149fc3520da0d5e0c7";
+          const expiresAt = "2026-12-29T19:35:41Z";
           const expiresAtMs = Date.parse(expiresAt);
           const canonicalExpiresAt =
             Number.isFinite(expiresAtMs) && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/u.test(expiresAt)
@@ -139,7 +139,7 @@ jobs:
           steps.trusted-installer-hash.outputs.available != 'true'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: ea9dc63bb1f68347967130fb9bff40c71ddc4848
+          ref: cb5e9aefab2b16fedc0995149fc3520da0d5e0c7
           path: .bootstrap-installer-hash
           persist-credentials: false
           sparse-checkout: |
@@ -155,8 +155,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          readonly expected_commit="ea9dc63bb1f68347967130fb9bff40c71ddc4848"
-          readonly expected_tree="5a3cafa3d36b6a4c2d7332604b3c474c32d703f5"
+          readonly expected_commit="cb5e9aefab2b16fedc0995149fc3520da0d5e0c7"
+          readonly expected_tree="1fdf59efe40b78c407e222fd42043b23a61e199a"
           actual_commit="$(git -C .bootstrap-installer-hash rev-parse HEAD)"
           actual_tree="$(git -C .bootstrap-installer-hash rev-parse 'HEAD^{tree}')"
           if [[ "${actual_commit}" != "${expected_commit}" ]]; then
