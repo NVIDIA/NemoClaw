@@ -365,6 +365,8 @@ network_policies:
     binaries:
       - { path: "/**" }
 
+  # Shields-down policies intentionally keep full host and binary scope. The
+  # maintained Tavily preset and provider profiles constrain normal access.
   tavily:
     name: tavily
     endpoints:

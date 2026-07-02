@@ -128,6 +128,8 @@ type ProviderProfileEndpoint = {
   protocol?: string;
   access?: string;
   enforcement?: string;
+  request_body_credential_rewrite?: boolean;
+  rules?: Rule[];
 };
 
 type ProviderProfile = {
@@ -518,16 +520,27 @@ describe("Tavily Search provider profile", () => {
     ]);
   });
 
-  it("matches the Tavily Search API endpoint used by the policy preset", () => {
-    expect(profile.endpoints).toEqual([
-      expect.objectContaining({
-        host: "api.tavily.com",
-        port: 443,
-        protocol: "rest",
-        access: "read-write",
-        enforcement: "enforce",
-      }),
-    ]);
+  it("keeps both provider policy layers aligned with the least-privilege preset", () => {
+    const presetEndpoint = preset.network_policies?.tavily?.endpoints?.[0];
+    const expectedRules = [
+      { allow: { method: "POST", path: "/search" } },
+      { allow: { method: "POST", path: "/extract" } },
+    ];
+
+    expect(presetEndpoint?.rules).toEqual(expectedRules);
+    for (const candidate of [profile, hermesProfile]) {
+      expect(candidate.endpoints).toEqual([
+        {
+          host: "api.tavily.com",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          request_body_credential_rewrite: true,
+          rules: expectedRules,
+        },
+      ]);
+      expect(candidate.endpoints?.[0]).not.toHaveProperty("access");
+    }
   });
 
   it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {

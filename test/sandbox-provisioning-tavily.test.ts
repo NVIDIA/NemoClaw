@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -16,19 +17,17 @@ function dockerRunCommandBetween(
 ): string {
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
-  }
+  assert(
+    start !== -1 && end !== -1 && end > start,
+    `Expected Dockerfile block between ${startMarker} and ${endMarker}`,
+  );
   const runIndex = dockerfile.indexOf("RUN ", start);
-  if (runIndex === -1 || runIndex > end) {
-    throw new Error(`Expected RUN instruction after ${startMarker}`);
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) break;
-  }
+  assert(runIndex !== -1 && runIndex <= end, `Expected RUN instruction after ${startMarker}`);
+  const runLines = dockerfile.slice(runIndex, end).split("\n");
+  const finalLine = runLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
+  assert(finalLine !== -1, `Expected terminated RUN instruction after ${startMarker}`);
   return runLines
+    .slice(0, finalLine + 1)
     .join("\n")
     .trim()
     .replace(/^RUN\s+/, "")

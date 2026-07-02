@@ -10,6 +10,9 @@ credentials:
     env_vars:
       - TAVILY_API_KEY
     required: true
+    # OpenShell stores static placement as profile metadata, while runtime
+    # injection resolves env placeholders. The Tavily policy independently
+    # enables JSON-body rewriting for Hermes' native `api_key` field.
     auth_style: bearer
     header_name: authorization
     query_param: ''
@@ -17,8 +20,11 @@ endpoints:
   - host: api.tavily.com
     port: 443
     protocol: rest
-    access: read-write
     enforcement: enforce
+    request_body_credential_rewrite: true
+    rules:
+      - allow: { method: POST, path: "/search" }
+      - allow: { method: POST, path: "/extract" }
 binaries:
   - /opt/hermes/.venv/bin/python
   - /usr/local/bin/curl
