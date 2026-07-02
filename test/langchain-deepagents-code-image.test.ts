@@ -1107,36 +1107,30 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it.each([
-    { label: "malformed JSON", content: "{not valid json at all", expectReject: true },
-    {
-      label: "present but unreadable",
-      content: '{"credentials": null}',
-      unreadable: true,
-      expectReject: true,
-    },
-    { label: "absent (fresh sandbox)", content: null, expectReject: false },
-  ])("handles auth.json $label correctly (fail-closed)", ({
-    content,
-    unreadable,
-    expectReject,
-  }) => {
+    { label: "malformed JSON", content: "{not valid json at all" },
+    { label: "present but unreadable", content: '{"credentials": null}', unreadable: true },
+  ])("refuses to launch when auth.json is $label (fail-closed)", ({ content, unreadable }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-edge-"));
     const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
-    if (content !== null) fs.writeFileSync(authFile, content, "utf8");
-    if (unreadable) fs.chmodSync(authFile, 0o000);
+    fs.writeFileSync(authFile, content, "utf8");
+    fs.chmodSync(authFile, unreadable ? 0o000 : 0o644);
     const result = runWrapper(wrapperPath, ["-n", "hi"], {});
-    if (expectReject) {
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("auth.json");
-      expect(result.stderr).toContain("stored Deep Agents Code credentials");
-      expect(result.stdout).not.toContain("dcode-stub-ran");
-      expect(fs.existsSync(ranMarker)).toBe(false);
-    } else {
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain("dcode-stub-ran");
-      expect(fs.existsSync(ranMarker)).toBe(true);
-    }
-    if (content !== null) fs.chmodSync(authFile, 0o644);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("auth.json");
+    expect(result.stderr).toContain("stored Deep Agents Code credentials");
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+    fs.chmodSync(authFile, 0o644);
+  });
+
+  it("allows launch when auth.json is absent (fresh sandbox)", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-auth-absent-"));
+    const { wrapperPath, ranMarker, authFile } = makeWrapperFixture(tempDir);
+    expect(fs.existsSync(authFile)).toBe(false);
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
   it.each([
