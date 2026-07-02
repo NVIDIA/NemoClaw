@@ -26,4 +26,17 @@ describe("isSshTransportFailure", () => {
   it("does not treat a successful probe as unreachable", () => {
     expect(isSshTransportFailure({ status: 0 })).toBe(false);
   });
+
+  it("treats SIGHUP/SIGPIPE terminated probes as transport failures", () => {
+    // spawnSync surfaces signal-killed processes with status=null + signal set.
+    // Match connect.ts by naming the transport-level signals explicitly.
+    expect(isSshTransportFailure({ status: null, signal: "SIGHUP" })).toBe(true);
+    expect(isSshTransportFailure({ status: null, signal: "SIGPIPE" })).toBe(true);
+  });
+
+  it("does not treat a reachable exit accompanied by a benign signal as unreachable", () => {
+    // A remote exit-1 with a stale/benign signal field must still be classified
+    // by exit code, not by the signal field.
+    expect(isSshTransportFailure({ status: 1, signal: "SIGINT" })).toBe(false);
+  });
 });

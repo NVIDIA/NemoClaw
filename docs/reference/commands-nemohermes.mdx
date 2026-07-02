@@ -1400,7 +1400,8 @@ nemohermes backup-all
 The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
 
 A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run.
-Set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` to skip such sandboxes and continue the upgrade; they are recovered from their latest validated backup during onboarding.
+Set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` (exactly — other values like `true`, `yes`, or `0` are not accepted) to skip such sandboxes and continue the upgrade.
+Skipped sandboxes are recovered from their latest validated backup during onboarding; any uncommitted state since that backup will be lost.
 
 ### `nemohermes <name> snapshot create`
 
