@@ -16,7 +16,7 @@ const headlessCheckPath = path.join(
   "07-deepagents-code-headless-inference.sh",
 );
 
-type RuntimeEnvTrustCase =
+type RuntimeEnvMetadataCase =
   | "valid"
   | "symlink"
   | "writable"
@@ -39,7 +39,7 @@ function validateLoginProxyContract(
   proxyUrl: string,
   noProxy: string,
   lowerProxy = proxyUrl,
-  runtimeEnvTrust: RuntimeEnvTrustCase = "valid",
+  runtimeEnvMetadata: RuntimeEnvMetadataCase = "valid",
 ): string {
   const loginHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-"));
   const hostFile = path.join(loginHome, "trusted-proxy-host");
@@ -50,17 +50,27 @@ function validateLoginProxyContract(
   fs.writeFileSync(portFile, "3128\n", "utf8");
   fs.chmodSync(hostFile, 0o444);
   fs.chmodSync(portFile, 0o444);
-  switch (runtimeEnvTrust) {
+  const runtimeEnvText = [
+    "export HOME=/sandbox",
+    `export HTTP_PROXY=${JSON.stringify(proxyUrl)}`,
+    `export HTTPS_PROXY=${JSON.stringify(proxyUrl)}`,
+    `export http_proxy=${JSON.stringify(lowerProxy)}`,
+    `export https_proxy=${JSON.stringify(lowerProxy)}`,
+    `export NO_PROXY=${JSON.stringify(noProxy)}`,
+    `export no_proxy=${JSON.stringify(noProxy)}`,
+    "",
+  ].join("\n");
+  switch (runtimeEnvMetadata) {
     case "symlink": {
       const runtimeEnvTarget = path.join(loginHome, "proxy-env-target.sh");
-      fs.writeFileSync(runtimeEnvTarget, "export HOME=/sandbox\n", "utf8");
+      fs.writeFileSync(runtimeEnvTarget, runtimeEnvText, "utf8");
       fs.chmodSync(runtimeEnvTarget, 0o444);
       fs.symlinkSync(runtimeEnvTarget, runtimeEnvFile);
       break;
     }
     default:
-      fs.writeFileSync(runtimeEnvFile, "export HOME=/sandbox\n", "utf8");
-      fs.chmodSync(runtimeEnvFile, runtimeEnvTrust === "writable" ? 0o644 : 0o444);
+      fs.writeFileSync(runtimeEnvFile, runtimeEnvText, "utf8");
+      fs.chmodSync(runtimeEnvFile, runtimeEnvMetadata === "writable" ? 0o644 : 0o444);
   }
   let checkSource = fs
     .readFileSync(headlessCheckPath, "utf8")
@@ -69,7 +79,7 @@ function validateLoginProxyContract(
     .replaceAll("/tmp/nemoclaw-proxy-env.sh", runtimeEnvFile)
     .replace('= "0:444"', `= "${process.getuid?.() ?? 0}:444"`)
     .replace('sandbox_uid="$(id -u sandbox)"', 'sandbox_uid="$(id -u)"');
-  switch (runtimeEnvTrust) {
+  switch (runtimeEnvMetadata) {
     case "wrong-user":
       checkSource = checkSource.replace('sandbox_uid="$(id -u)"', "sandbox_uid=99999");
       break;
@@ -87,16 +97,7 @@ function validateLoginProxyContract(
   fs.writeFileSync(checkFixture, checkSource, "utf8");
   fs.writeFileSync(
     path.join(loginHome, ".profile"),
-    [
-      "export HOME=/sandbox",
-      `export HTTP_PROXY=${JSON.stringify(proxyUrl)}`,
-      `export HTTPS_PROXY=${JSON.stringify(proxyUrl)}`,
-      `export http_proxy=${JSON.stringify(lowerProxy)}`,
-      `export https_proxy=${JSON.stringify(lowerProxy)}`,
-      `export NO_PROXY=${JSON.stringify(noProxy)}`,
-      `export no_proxy=${JSON.stringify(noProxy)}`,
-      "",
-    ].join("\n"),
+    ["export HOME=/sandbox", `. ${JSON.stringify(runtimeEnvFile)}`, ""].join("\n"),
     "utf8",
   );
   try {
@@ -117,11 +118,11 @@ function validateLoginProxyContract(
 }
 
 describe("Deep Agents Code login-shell proxy contract", () => {
-  it("accepts only normalized proxy values and a trusted non-root runtime file (#6191)", () => {
+  it("sources normalized proxy values and rejects runtime metadata drift (#6191)", () => {
     const managedProxy = "http://10.200.0.1:3128";
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
     expect(validateLoginProxyContract(managedProxy, managedNoProxy)).toBe("pass");
-    for (const runtimeEnvTrust of [
+    for (const runtimeEnvMetadata of [
       "symlink",
       "writable",
       "wrong-user",
@@ -129,7 +130,7 @@ describe("Deep Agents Code login-shell proxy contract", () => {
       "root-user",
     ] as const) {
       expect(
-        validateLoginProxyContract(managedProxy, managedNoProxy, managedProxy, runtimeEnvTrust),
+        validateLoginProxyContract(managedProxy, managedNoProxy, managedProxy, runtimeEnvMetadata),
       ).toBe("fail");
     }
     expect(validateLoginProxyContract(managedProxy, `${managedNoProxy},inference.local`)).toBe(
@@ -143,6 +144,12 @@ describe("Deep Agents Code login-shell proxy contract", () => {
     ).toBe("fail");
     expect(
       validateLoginProxyContract(managedProxy, managedNoProxy, "http://other-proxy.example:3128"),
+    ).toBe("fail");
+    expect(
+      validateLoginProxyContract(
+        "http://attacker-proxy.internal:9999",
+        "localhost,127.0.0.1,::1,attacker-proxy.internal",
+      ),
     ).toBe("fail");
   });
 });

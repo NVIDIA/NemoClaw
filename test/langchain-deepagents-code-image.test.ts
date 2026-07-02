@@ -219,6 +219,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
+    expect(dockerfile.trimEnd()).toMatch(
+      /USER sandbox\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
+    );
   });
 
   it("does not wire unsupported messaging artifacts into the DeepAgents image", () => {
@@ -637,6 +640,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
       'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
     );
     expect(headlessCheck).toContain("classify_headless_output");
+    expect(headlessCheck).toContain("NEMOCLAW_DCODE_DNS_PROBE_MISSING_GETENT");
+    expect(headlessCheck).toContain("required DNS diagnostic tool getent is unavailable");
+    expect(headlessCheck).toContain("NEMOCLAW_DCODE_DNS_PROBE_MISSING_TIMEOUT");
+    expect(headlessCheck).toContain("required DNS diagnostic tool timeout is unavailable");
     expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
     expect(headlessCheck).toContain("DEEPAGENTS_HEADLESS_TIMEOUT must be a positive integer");
     expect(headlessCheck).toContain("nvapi-");
