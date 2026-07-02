@@ -490,11 +490,13 @@ interface SandboxBridgeVerifierOptions {
   retryDelayMs?: number;
   sleepMsImpl?: (ms: number) => Promise<void>;
   /**
-   * Invoked once, just before aborting, when the probe proves the gateway is
-   * genuinely unreachable, including after an opted-in UFW auto-apply re-probe
-   * still fails. Not called for a skipped probe, a soft `probe_unavailable`, or
-   * a successful probe. Onboard uses this to tear down a gateway it started
-   * this run so onboarding does not leave it orphaned and bound (#5513).
+   * Invoked once, after the fatal probe message is printed but before aborting,
+   * when the probe proves the gateway is genuinely unreachable, including after
+   * an opted-in UFW auto-apply re-probe still fails. Not called for a skipped
+   * probe, a soft `probe_unavailable`, or a successful probe. Onboard uses this
+   * to tear down a gateway it started this run so onboarding does not leave it
+   * orphaned and bound (#5513). Cleanup errors become the cause of the primary
+   * failure.
    */
   onUnreachable?: () => Promise<void> | void;
 }

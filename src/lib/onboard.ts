@@ -68,6 +68,7 @@ const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inferen
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
+const dockerDriverGatewayCleanup: typeof import("./onboard/docker-driver-gateway-cleanup") = require("./onboard/docker-driver-gateway-cleanup");
 const {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
@@ -1211,7 +1212,6 @@ function stopDockerDriverGatewayProcess(): boolean {
   }
 
   const stopped = terminateDockerDriverGatewayProcess(pid);
-  if (!stopped) console.warn("  ⚠ Docker-driver gateway cleanup did not stop the process.");
   clearDockerDriverGatewayRuntimeFiles();
   return stopped;
 }
@@ -2176,7 +2176,8 @@ async function startDockerDriverGateway({
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
   const sandboxBridgeProbeOptions = {
     skip: skipSandboxBridgeReachability,
-    onUnreachable: () => void stopDockerDriverGatewayProcess(),
+    onUnreachable: () =>
+      dockerDriverGatewayCleanup.warnIfCleanupFailed(stopDockerDriverGatewayProcess),
   };
   if (
     await dockerDriverGatewayEnv.startPackageManagedDockerDriverGatewayWithEnvOverride({

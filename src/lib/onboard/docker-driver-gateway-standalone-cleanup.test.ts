@@ -14,7 +14,9 @@ describe("startDockerDriverGateway sandbox-bridge cleanup callsites", () => {
     expect(end).toBeGreaterThan(start);
 
     const body = source.slice(start, end);
-    expect(body).toContain("onUnreachable: () => void stopDockerDriverGatewayProcess()");
+    expect(body).toMatch(
+      /onUnreachable:\s*\(\) =>\s*dockerDriverGatewayCleanup\.warnIfCleanupFailed\(\s*stopDockerDriverGatewayProcess/s,
+    );
     expect(
       body.match(
         /verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure, sandboxBridgeProbeOptions\)/g,
