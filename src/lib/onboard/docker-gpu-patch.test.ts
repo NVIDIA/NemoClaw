@@ -931,7 +931,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
   });
 
-  it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
+  it("short-circuits the readiness wait when the sandbox enters Error phase (K=1 opt-out)", () => {
     const outputs = ["my-sandbox   Provisioning   1s ago", "my-sandbox   Error          3s ago"];
     let i = 0;
     const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
@@ -940,11 +940,13 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     const ready = waitForCreatedSandboxReadyWithTrace({
       sandboxName: "my-sandbox",
       // 600 / 2 = 300 readyAttempts. Without short-circuit we'd loop 300
-      // times. With short-circuit we should bail out after the 2nd poll.
+      // times. With the K=1 (no-debounce) opt-out we bail out after the 2nd
+      // poll, preserving the original fast-fail intent.
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
+      errorPhaseDebouncePolls: 1,
       sleep,
     });
 
@@ -956,6 +958,58 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
     // Should not sleep after detecting the terminal phase.
     expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers when a transient Error flips to Ready within the debounce window (#6043)", () => {
+    // DGX Spark repro: the gateway re-registers the just-created sandbox and
+    // `sandbox list` briefly reports Error before flipping to Ready. The
+    // default debounce must tolerate the transient rather than fast-failing.
+    const outputs = [
+      "my-sandbox   Provisioning   1s ago",
+      "my-sandbox   Error          3s ago",
+      "my-sandbox   Error          5s ago",
+      "my-sandbox   Ready          7s ago",
+    ];
+    let i = 0;
+    const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
+    const sleep = vi.fn();
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: "my-sandbox",
+      timeoutSecs: 600,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      sleep,
+    });
+
+    expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+  });
+
+  it("still fails terminally after sustained Error exceeds the debounce window (#6043)", () => {
+    const runCaptureOpenshell = vi.fn(() => "my-sandbox   Error   3s ago");
+    const sleep = vi.fn();
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: "my-sandbox",
+      timeoutSecs: 600,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      errorPhaseDebouncePolls: 3,
+      sleep,
+    });
+
+    expect(ready).toEqual({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Error",
+    });
+    // 3 consecutive Error polls trigger the terminal failure; the wait sleeps
+    // twice between the first three polls and stops before the full timeout.
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
   });
 
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {

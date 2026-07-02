@@ -1,9 +1,41 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { envInt } from "./env";
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
+
+export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE";
+
+// Consecutive Error-phase polls required before the create/readiness wait
+// treats the phase as terminal. The readiness loop polls `openshell sandbox
+// list` every 2 seconds, so the default of 30 tolerates ~60s of sustained
+// Error before failing.
+//
+// Why debounce at all: on a fresh onboard the gateway may (re)start its
+// supervisor session and re-register the just-created sandbox (observed on
+// DGX Spark, where the dashboard port fallback + supervisor restart race the
+// sandbox bootstrap — #6043). During that window `sandbox list` can briefly
+// report the sandbox in Error phase before it flips to Ready. Fast-failing on
+// the first Error poll turns that transient into a terminal onboard failure.
+// The debounce mirrors the Docker GPU supervisor-reconnect path
+// (docker-gpu-supervisor-reconnect.ts), which tolerates the same transient
+// while the recreated GPU container reconnects.
+//
+// This does NOT hide terminal failures: a sandbox that stays in Error still
+// fast-fails after the bounded debounce window (well before the full readiness
+// timeout), and the caller still captures full failure diagnostics.
+const SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 30;
+
+export function getSandboxReadyErrorDebouncePolls(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  return Math.max(
+    1,
+    envInt(SANDBOX_READY_ERROR_DEBOUNCE_ENV, SANDBOX_READY_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS, env),
+  );
+}
 
 export type CreatedSandboxReadinessResult =
   | { ready: true; reason: "ready"; failurePhase: null }
@@ -81,6 +113,13 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * timeout window before reporting "did not become ready" (#4316).
    */
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
+  /**
+   * Consecutive Error-phase polls required before the wait treats the phase as
+   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls}. Pass 1 to
+   * restore the original fast-fail-on-first-Error behavior (used by callers
+   * that have already ruled out the transient supervisor-reconnect race).
+   */
+  errorPhaseDebouncePolls?: number;
   sleep: (seconds: number) => void;
 }): CreatedSandboxReadinessResult {
   const {
@@ -91,8 +130,14 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     getSandboxFailurePhase,
     sleep,
   } = options;
+  const errorPhaseDebouncePolls =
+    options.errorPhaseDebouncePolls == null || !Number.isFinite(options.errorPhaseDebouncePolls)
+      ? getSandboxReadyErrorDebouncePolls()
+      : Math.max(1, Math.trunc(options.errorPhaseDebouncePolls));
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
     const readyAttempts = Math.max(1, Math.ceil(timeoutSecs / 2));
+    let consecutiveFailurePolls = 0;
+    let lastFailurePhase: string | null = null;
     for (let i = 0; i < readyAttempts; i++) {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) {
@@ -101,12 +146,30 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       }
       const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
       if (failurePhase) {
-        addTraceEvent("terminal_failure_phase", { attempt: i + 1, failure_phase: failurePhase });
-        return { ready: false, reason: "terminal_failure_phase", failurePhase };
+        consecutiveFailurePolls += 1;
+        lastFailurePhase = failurePhase;
+        // Sustained Error is terminal; a transient Error while the gateway
+        // re-registers the sandbox recovers on a later poll (#6043).
+        if (consecutiveFailurePolls >= errorPhaseDebouncePolls) {
+          addTraceEvent("terminal_failure_phase", {
+            attempt: i + 1,
+            failure_phase: failurePhase,
+            consecutive_polls: consecutiveFailurePolls,
+          });
+          return { ready: false, reason: "terminal_failure_phase", failurePhase };
+        }
+        addTraceEvent("transient_failure_phase", {
+          attempt: i + 1,
+          failure_phase: failurePhase,
+          consecutive_polls: consecutiveFailurePolls,
+          debounce_polls: errorPhaseDebouncePolls,
+        });
+      } else {
+        consecutiveFailurePolls = 0;
       }
       if (i < readyAttempts - 1) sleep(2);
     }
-    addTraceEvent("not_ready", { attempts: readyAttempts });
+    addTraceEvent("not_ready", { attempts: readyAttempts, last_failure_phase: lastFailurePhase });
     return { ready: false, reason: "timeout", failurePhase: null };
   });
 }
