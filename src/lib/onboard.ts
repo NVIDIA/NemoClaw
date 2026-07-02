@@ -4651,6 +4651,10 @@ function skippedStepMessage(
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  // Propagate the --non-interactive flag to the env so env-based consumers
+  // (phase-progress heartbeats, sandbox-create-plan, policy presets, …) honor
+  // the flag, not just the env var (#6002 review).
+  if (NON_INTERACTIVE) process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
   _preflightDashboardPort =
