@@ -27,6 +27,8 @@ const CRASH_CYCLES = positiveInteger(process.env.NEMOCLAW_E2E_CRASH_CYCLES, 5);
 const SOAK_SECONDS = positiveInteger(process.env.NEMOCLAW_E2E_SOAK_SECONDS, 300);
 const COMPATIBLE_MODEL = process.env.NEMOCLAW_COMPAT_MODEL ?? "test-model";
 const COMPATIBLE_AUTH_VALUE = ["nemoclaw", "e2e", "compatible", "mock"].join("-");
+const PROXY_ENV_PATH = "/tmp/nemoclaw-proxy-env.sh";
+const PROXY_ENV_BACKUP_PATH = "/tmp/.issue-2478-proxy-env.sh.backup";
 const ONBOARD_ARGS = [
   "onboard",
   "--non-interactive",
@@ -290,36 +292,7 @@ async function killOpenclawTreeForRecovery(
   expect(result.exitCode, result.stderr).toBe(0);
 }
 
-async function snapshotProxyEnv(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  sandboxName: string,
-): Promise<{ b64: string; size: number }> {
-  const result = await sandbox.exec(
-    sandboxName,
-    [
-      "sh",
-      "-c",
-      "base64 < /tmp/nemoclaw-proxy-env.sh && printf '\\nSIZE=' && wc -c < /tmp/nemoclaw-proxy-env.sh",
-    ],
-    { artifactName: "snapshot-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
-  );
-  expect(result.exitCode, result.stderr).toBe(0);
-  const match = result.stdout.match(/([A-Za-z0-9+/=\n]+)\nSIZE=(\d+)/);
-  expect(match, `unexpected proxy-env snapshot output: ${result.stdout}`).not.toBeNull();
-  const b64 = match?.[1]?.replace(/\s+/g, "") ?? "";
-  const size = Number(match?.[2] ?? 0);
-  expect(b64.length, "proxy-env snapshot must not be empty").toBeGreaterThan(0);
-  expect(size, "proxy-env snapshot size must be positive").toBeGreaterThan(0);
-  return { b64, size };
-}
-
-async function removeProxyEnv(
+async function moveProxyEnvToBackup(
   sandbox: {
     exec(
       name: string,
@@ -329,15 +302,17 @@ async function removeProxyEnv(
   },
   sandboxName: string,
 ): Promise<void> {
-  const result = await sandbox.exec(sandboxName, ["rm", "-f", "/tmp/nemoclaw-proxy-env.sh"], {
-    artifactName: "remove-proxy-env",
-    env: probeEnv(),
-    timeoutMs: 30_000,
-  });
+  // This scenario restarts only the process tree, so a same-directory rename
+  // survives the recovery phase while preserving the file bytes and metadata.
+  const result = await sandbox.exec(
+    sandboxName,
+    ["mv", "-f", PROXY_ENV_PATH, PROXY_ENV_BACKUP_PATH],
+    { artifactName: "backup-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
+  );
   expect(result.exitCode, result.stderr).toBe(0);
 }
 
-async function proxyEnvHasGuardMarkers(
+async function restoreProxyEnvFromBackup(
   sandbox: {
     exec(
       name: string,
@@ -346,78 +321,13 @@ async function proxyEnvHasGuardMarkers(
     ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
   },
   sandboxName: string,
-  artifactName: string,
-): Promise<boolean> {
-  const result = await sandbox.exec(
-    sandboxName,
-    ["sh", "-c", "cat /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true"],
-    { artifactName, env: probeEnv(), timeoutMs: 30_000 },
-  );
-  return (
-    result.stdout.includes("nemoclaw-sandbox-safety-net") &&
-    result.stdout.includes("nemoclaw-ciao-network-guard")
-  );
-}
-
-async function restoreProxyEnv(
-  sandbox: {
-    exec(
-      name: string,
-      command: string[],
-      options?: Record<string, unknown>,
-    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
-  },
-  sandboxName: string,
-  snapshot: { b64: string; size: number },
 ): Promise<void> {
-  const encodedPath = "/tmp/nemoclaw-proxy-env.sh.b64";
-  const targetPath = "/tmp/nemoclaw-proxy-env.sh";
-  const init = await sandbox.exec(
-    sandboxName,
-    ["sh", "-c", `rm -f ${targetPath} ${encodedPath} 2>/dev/null || true; : > ${encodedPath}`],
-    { artifactName: "restore-proxy-env-init", env: probeEnv(), timeoutMs: 30_000 },
-  );
-  expect(init.exitCode, init.stderr).toBe(0);
-
-  // OpenShell 0.0.72 limits each sandbox-exec argument to 32,768 bytes. The
-  // proxy environment can exceed that after its guard chain is embedded, so
-  // write bounded base64 chunks before decoding instead of placing the whole
-  // snapshot in one shell argument. Keep the chunk size aligned to base64's
-  // four-character blocks.
-  const chunkSize = 16 * 1024;
-  for (let offset = 0, index = 0; offset < snapshot.b64.length; offset += chunkSize, index += 1) {
-    const chunk = snapshot.b64.slice(offset, offset + chunkSize);
-    const append = await sandbox.exec(
-      sandboxName,
-      ["sh", "-c", `printf '%s' '${chunk}' >> ${encodedPath}`],
-      {
-        artifactName: `restore-proxy-env-chunk-${index}`,
-        env: probeEnv(),
-        timeoutMs: 30_000,
-      },
-    );
-    expect(append.exitCode, append.stderr).toBe(0);
-  }
-
   const result = await sandbox.exec(
     sandboxName,
-    [
-      "sh",
-      "-c",
-      `(base64 -d ${encodedPath} > ${targetPath} 2>/dev/null && chmod 444 ${targetPath}) || true; rm -f ${encodedPath}; wc -c < ${targetPath} 2>/dev/null || true`,
-    ],
+    ["mv", "-f", PROXY_ENV_BACKUP_PATH, PROXY_ENV_PATH],
     { artifactName: "restore-proxy-env", env: probeEnv(), timeoutMs: 30_000 },
   );
   expect(result.exitCode, result.stderr).toBe(0);
-
-  const restoredSize = Number(result.stdout.trim() || 0);
-  if (restoredSize === snapshot.size) return;
-  if (await proxyEnvHasGuardMarkers(sandbox, sandboxName, "restore-proxy-env-guard-markers"))
-    return;
-
-  expect(restoredSize, "restored proxy-env byte size or recovered guard markers").toBe(
-    snapshot.size,
-  );
 }
 
 async function waitForRecoveryWarning(
@@ -561,8 +471,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     previousPid = nextPid!;
   }
 
-  const snapshot = await snapshotProxyEnv(sandbox, instance.sandboxName);
-  await removeProxyEnv(sandbox, instance.sandboxName);
+  await moveProxyEnvToBackup(sandbox, instance.sandboxName);
   await killOpenclawTreeForRecovery(
     sandbox,
     instance.sandboxName,
@@ -574,7 +483,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
   expect(negativePid, "missing proxy-env warning path should still respawn gateway").not.toBeNull();
   await gateway.expectGuardChainActive(instance);
 
-  await restoreProxyEnv(sandbox, instance.sandboxName, snapshot);
+  await restoreProxyEnvFromBackup(sandbox, instance.sandboxName);
   await killOpenclawTreeForRecovery(
     sandbox,
     instance.sandboxName,
