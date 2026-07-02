@@ -506,7 +506,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       fakeOpenclaw,
       [
         "#!/usr/bin/env node",
-        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
+        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}|ignore-scripts=${process.env.NPM_CONFIG_IGNORE_SCRIPTS || ''}/${process.env.npm_config_ignore_scripts || ''}\\n`);",
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -582,6 +582,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(trace).toContain("npm|pack|@openclaw/discord@2026.6.9|--pack-destination");
       expect(trace).toContain("plugins|install|");
       expect(trace).toContain("discord-2026.6.9.tgz|--pin");
+      expect(trace).toContain("ignore-scripts=true/true");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -94,6 +94,31 @@ The SRI-verified `openclaw@2026.6.9` artifact's `package/skills/weather/SKILL.md
 
 Invalid state: `npm view` returns the reviewed SRI but the downloaded artifact used for install has different bytes, or `npm pack --json` reports a filename such as `../package.tgz`, `/tmp/package.tgz`, or a name containing path separators so the later install consumes a path outside the fresh pack directory. Source boundary: Dockerfile npm install blocks, `Dockerfile.base`, optional plugin install blocks, and `src/lib/messaging/applier/build/messaging-build-applier.mts`. Source-fix constraint: npm package installation must stay artifact-bound for reviewed pins rather than reverting to a later floating package-spec transaction, and local archive path validation must be enforced at NemoClaw's install boundary because npm's JSON filename is untrusted input. Regression test: `test/openclaw-integrity-pin.test.ts` exercises registry drift, reviewed tarball URL drift, local archive install behavior, and unsafe reported archive filenames for Dockerfile core, codex-acp, base, and optional plugin pack helpers; `test/messaging-build-applier.test.ts` verifies messaging plugins run through `npm pack --json` and install the verified archive path; `test/messaging-build-applier-integrity.test.ts` verifies the messaging plugin install fails closed when packed archive integrity drifts or the reported archive filename escapes the pack directory. Removal condition: keep this archive verification until the repo moves the OpenClaw/plugin dependency set to a lockfile path where npm enforces the committed SRI directly and no installer code consumes raw `npm pack --json` filenames.
 
+#### Reviewed npm Lifecycle Boundary
+
+Every reviewed archive install now suppresses npm lifecycle scripts.
+The Codex ACP and OpenClaw core `npm install -g` transactions pass `--ignore-scripts`; optional and messaging plugin calls set both `NPM_CONFIG_IGNORE_SCRIPTS=true` and `npm_config_ignore_scripts=true` before invoking the SRI-reviewed OpenClaw plugin installer.
+The first-party local `openclaw plugins install /opt/nemoclaw` boundary receives the same environment even though its source is the image's checked-in NemoClaw tree rather than a registry archive.
+The reviewed `openclaw@2026.6.9` plugin installer also builds its internal npm command with `--ignore-scripts`, so the outer environment is a caller-owned fail-closed contract rather than the only protection.
+
+`ci/reviewed-npm-lifecycle-allowlist.json` records the default-deny review policy and names every reviewed top-level registry archive identity accepted by these boundaries.
+The Docker build contains matching closed version cases for the policy's only executable exceptions: the manifest-declared `node scripts/postinstall-bundled-plugins.mjs` for `openclaw@2026.6.9` and the retained SRI-pinned `openclaw@2026.4.24` stale-upgrade fixture.
+After installing either core archive with scripts disabled, the Docker build invokes that one fixed installed path directly.
+The retained `openclaw@2026.3.11` fixture declares no install lifecycle and therefore receives no explicit invocation.
+OpenClaw's warning-only `preinstall`, package `prepare`, and every dependency/plugin lifecycle remain suppressed.
+
+The reviewed current graph contains three transitive install-hook families: `@google/genai@2.7.0` declares a no-op preinstall, `protobufjs@7.6.3` declares its package postinstall, and `tree-sitter-bash@0.25.1` declares `node-gyp-build`.
+The WhatsApp plugin additionally contains Baileys' engine-requirement preinstall.
+None is allowlisted.
+For the native parser case, the reviewed `tree-sitter-bash@0.25.1` tarball already contains native prebuilds for both production architectures (`prebuilds/linux-x64/tree-sitter-bash.node` and `prebuilds/linux-arm64/tree-sitter-bash.node`), as well as Darwin and Windows prebuilds.
+Isolated `node:22-trixie-slim` containers globally installed the reviewed OpenClaw archive with `--ignore-scripts`, ran the one explicit OpenClaw postinstall successfully, and loaded its nested `tree-sitter-bash` `bash` binding on both `linux/amd64` and `linux/arm64` without creating a package build directory; an isolated direct check also passed on the local Darwin arm64 host.
+
+Invalid state: any reviewed archive install can run package-controlled install hooks, a package other than an exact allowlisted OpenClaw version receives an explicit lifecycle invocation, or the allowed manifest command/path changes without review.
+Source boundary: the five Docker install transactions, `installOpenClawMessagingPlugins`, and `ci/reviewed-npm-lifecycle-allowlist.json`.
+Source-fix constraint: lifecycle suppression must remain caller-controlled even while OpenClaw's plugin installer independently applies the same policy; do not replace the fixed postinstall command with `npm rebuild`, `npm run` against an unverified package spec, or a blanket script enablement.
+Regression tests: `test/openclaw-lifecycle-policy.test.ts` pins the complete reviewed package set and the two exact exceptions; `test/openclaw-integrity-pin.test.ts`, `test/fetch-guard-patch-regression.test.ts`, and `test/messaging-build-applier.test.ts` pin script suppression and the fixed postinstall command at the execution boundaries.
+Removal condition: re-audit manifests, shrinkwrap `hasInstallScript` entries, and native prebuild coverage on every OpenClaw/plugin bump; remove an exception when the reviewed package no longer needs it, and never carry an exception to a new version implicitly.
+
 #### Deferred #5896 Archive Consolidation Contract
 
 The four Docker shell transactions (Codex ACP, runtime OpenClaw, base-image OpenClaw, and optional plugins) and the two-stage Node verifier shared by every messaging-plugin install deliberately keep the same security matrix at their caller boundaries: exact reviewed package identity, registry SRI, packed-byte SRI, a nonempty basename contained in a fresh pack directory, install from the resolved local archive only, cleanup, and failure before install on any mismatch. The Docker transactions additionally bind a reviewed registry tarball URL; messaging manifests currently bind an exact package spec and SRI but do not carry a separate reviewed URL. That is an intentional policy difference, not a missing integrity or containment check.

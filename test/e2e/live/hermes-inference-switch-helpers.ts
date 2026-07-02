@@ -15,6 +15,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
   inferenceSetAttemptCount,
@@ -57,6 +58,20 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
     (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === "compatible-anthropic-endpoint" &&
     (runtimeEnv.NEMOCLAW_SWITCH_INFERENCE_API ?? SWITCH_API) === "anthropic-messages" &&
     runtimeEnv.NEMOCLAW_SWITCH_MOCK_ANTHROPIC === "1"
+  );
+}
+
+export function expectAuthenticatedBaselineRequest(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+  model: string,
+): void {
+  if (!baseline) return;
+  expect(baseline.requests()).toContainEqual(
+    expect.objectContaining({
+      auth: "ok",
+      model,
+      path: "/v1/chat/completions",
+    }),
   );
 }
 

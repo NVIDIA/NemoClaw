@@ -147,6 +147,19 @@ function mockBaselineInference(endpointUrl: string): BaselineInferenceConfig {
   };
 }
 
+function expectMockBaselineAuthentication(
+  baseline: Pick<FakeOpenAiCompatibleServer, "requests"> | undefined,
+): void {
+  const expectedRequest = expect.objectContaining({
+    auth: "ok",
+    model: MOCK_BASELINE_MODEL,
+    path: "/v1/chat/completions",
+  });
+  baseline
+    ? expect(baseline.requests()).toContainEqual(expectedRequest)
+    : expect(baseline).toBeUndefined();
+}
+
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -951,7 +964,6 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
 
     const useMockBaseline =
       SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1";
-    const hosted = useMockBaseline ? undefined : requireHostedInferenceConfig(secrets);
     const baselineProvider: FakeOpenAiCompatibleServer | undefined = useMockBaseline
       ? await startFakeOpenAiCompatibleServer({
           apiKey: MOCK_BASELINE_API_KEY,
@@ -959,15 +971,16 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
           requireAuth: true,
         })
       : undefined;
-    const baseline = baselineProvider ? mockBaselineInference(baselineProvider.baseUrl) : hosted;
-    if (!baseline) throw new Error("baseline inference configuration is unavailable");
+    const baseline = baselineProvider
+      ? mockBaselineInference(baselineProvider.baseUrl)
+      : requireHostedInferenceConfig(secrets);
     const apiKey = baseline.apiKey;
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
     let mockProvider: MockAnthropicProvider | undefined;
     cleanup.add(`destroy OpenClaw inference switch sandbox ${SANDBOX_NAME}`, async () => {
       await cleanupOpenClawInferenceSwitchState(host, sandbox, home, "cleanup");
-      if (baselineProvider) await baselineProvider.close();
+      await baselineProvider?.close();
       if (mockProvider) await mockProvider.close();
       fs.rmSync(home, { recursive: true, force: true });
     });
@@ -999,15 +1012,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       skip("NVIDIA endpoint validation was unavailable/rate-limited during onboarding");
     }
     expect(install.exitCode, installText).toBe(0);
-    if (baselineProvider) {
-      expect(baselineProvider.requests()).toContainEqual(
-        expect.objectContaining({
-          auth: "ok",
-          model: MOCK_BASELINE_MODEL,
-          path: "/v1/chat/completions",
-        }),
-      );
-    }
+    expectMockBaselineAuthentication(baselineProvider);
 
     if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
       mockProvider = await startMockAnthropicProvider();

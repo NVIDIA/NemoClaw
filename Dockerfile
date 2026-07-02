@@ -179,7 +179,7 @@ RUN set -eu; \
     fi; \
     CODEX_ACP_PACK_DIR="$(mktemp -d)"; \
     CODEX_ACP_PACK_PATH="$(pack_reviewed_npm_tarball "$CODEX_ACP_TARBALL" "$CODEX_ACP_0_11_1_INTEGRITY" "$CODEX_ACP_PACK_DIR" "$CODEX_ACP_SPEC")"; \
-    npm install -g --no-audit --no-fund --no-progress \
+    npm install -g --no-audit --no-fund --no-progress --ignore-scripts \
         "$CODEX_ACP_PACK_PATH"; \
     rm -rf "$CODEX_ACP_PACK_DIR"; \
     command -v codex-acp >/dev/null
@@ -261,7 +261,12 @@ RUN set -eu; \
     # install spans image layers. Removing it first also prevents unreviewed
     # files from surviving a same-version reinstall.
     rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-    npm install -g --no-audit --no-fund --no-progress "$OPENCLAW_PACK_PATH"; \
+    npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
+    case "$OPENCLAW_VERSION" in \
+        2026.4.24|2026.6.9) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+        2026.3.11) ;; \
+        *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
+    esac; \
     rm -rf "$OPENCLAW_PACK_DIR"
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
@@ -892,7 +897,8 @@ RUN set -eu; \
     install_reviewed_openclaw_plugin() { \
         plugin_spec="${1}@${OPENCLAW_VERSION}"; \
         plugin_archive="$(verify_openclaw_plugin_integrity "$plugin_spec")"; \
-        openclaw plugins install "$plugin_archive" --pin; \
+        NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+            openclaw plugins install "$plugin_archive" --pin; \
     }; \
     NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR="$(mktemp -d)"; \
     if [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ] || [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
@@ -931,7 +937,8 @@ ENV NPM_CONFIG_OFFLINE=true \
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
-RUN openclaw plugins install /opt/nemoclaw \
+RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
+    openclaw plugins install /opt/nemoclaw \
     && openclaw plugins enable nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \

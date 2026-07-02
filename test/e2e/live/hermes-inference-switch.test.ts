@@ -14,6 +14,7 @@ import {
   ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
+  expectAuthenticatedBaselineRequest,
   expectedApiMode,
   expectedBaseUrl,
   hashCheck,
@@ -72,15 +73,13 @@ test.skipIf(!shouldRunLiveE2E())(
           requireAuth: true,
         })
       : undefined;
-    if (mockBaseline) {
-      cleanup.add("close Hermes inference switch baseline fixture", async () => {
-        await artifacts.writeJson(
-          "baseline-openai-compatible-requests.json",
-          mockBaseline.requests(),
-        );
-        await mockBaseline.close();
-      });
-    }
+    cleanup.add("close Hermes inference switch baseline fixture", async () => {
+      await artifacts.writeJson(
+        "baseline-openai-compatible-requests.json",
+        mockBaseline?.requests() ?? [],
+      );
+      await mockBaseline?.close();
+    });
     const apiKey = mockBaseline
       ? MOCK_BASELINE_API_KEY
       : secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -97,15 +96,7 @@ test.skipIf(!shouldRunLiveE2E())(
 
     const install = await installHermes(host, apiKey, installEnv);
     expect(install.exitCode, resultText(install)).toBe(0);
-    if (mockBaseline) {
-      expect(mockBaseline.requests()).toContainEqual(
-        expect.objectContaining({
-          auth: "ok",
-          model: MOCK_BASELINE_MODEL,
-          path: "/v1/chat/completions",
-        }),
-      );
-    }
+    expectAuthenticatedBaselineRequest(mockBaseline, MOCK_BASELINE_MODEL);
     const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");

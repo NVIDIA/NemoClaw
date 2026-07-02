@@ -283,7 +283,12 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     }; \
     OPENCLAW_PACK_DIR="$(mktemp -d)"; \
     OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
-    npm install -g "$OPENCLAW_PACK_PATH" \
+    npm install -g --ignore-scripts "$OPENCLAW_PACK_PATH" \
+    && case "$OPENCLAW_VERSION" in \
+        2026.4.24|2026.6.9) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+        2026.3.11) ;; \
+        *) echo "Error: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy"; exit 1 ;; \
+    esac \
     && rm -rf "$OPENCLAW_PACK_DIR" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 

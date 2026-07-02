@@ -203,9 +203,15 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
+    `real_node=${JSON.stringify(process.execPath)}`,
+    `postinstall_path=${JSON.stringify(path.join(openclawInstall, "scripts/postinstall-bundled-plugins.mjs"))}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
     `OPENCLAW_2026_6_9_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `OPENCLAW_2026_6_9_TARBALL=${JSON.stringify(openclawTarball)}`,
+    "node() {",
+    '  if [ "${1:-}" = "$postinstall_path" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  "$real_node" "$@"',
+    "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${currentVersion}\\n'; else return 127; fi; }`,
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
@@ -402,7 +408,11 @@ describe("fetch-guard patch regression guard", () => {
     );
     const script = [
       "openclaw() {",
-      '  if [ "${1:-} ${2:-} ${3:-}" = "plugins install /opt/nemoclaw" ]; then return 42; fi',
+      '  if [ "${1:-} ${2:-} ${3:-}" = "plugins install /opt/nemoclaw" ]; then',
+      '    [ "${NPM_CONFIG_IGNORE_SCRIPTS:-}" = "true" ] || return 43',
+      '    [ "${npm_config_ignore_scripts:-}" = "true" ] || return 44',
+      "    return 42",
+      "  fi",
       "  return 0",
       "}",
       command,
@@ -420,7 +430,10 @@ describe("fetch-guard patch regression guard", () => {
     expect(stale.calls).toContain(
       `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
     );
-    expect(stale.calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(stale.calls).toContain(
+      "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
+    );
+    expect(stale.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(stale.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );
@@ -433,7 +446,10 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.calls).toContain(
       `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
     );
-    expect(current.calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(current.calls).toContain(
+      "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
+    );
+    expect(current.calls).toContain("postinstall-bundled-plugins.mjs");
     expect(current.calls).toContain(
       `openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz`,
     );

@@ -57,6 +57,7 @@ const LEGACY_REBUILD_OPENCLAW_INTEGRITY =
   "sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==";
 const LEGACY_REBUILD_OPENCLAW_TARBALL =
   "https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz";
+const LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION = "2026.4.24";
 const LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY =
   "sha512-W6u4XeIIP4+uG4DYV9G3JeS6QNuKwfhQIej1GIoL4BdcnUFgrnB8kHYNXL3MxiHRKuhZB9OYwUMGs8jKFZR/Vg==";
 const LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL =
@@ -122,6 +123,7 @@ function runInstallBlock(
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
+    `real_node=${JSON.stringify(process.execPath)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
     `OPENCLAW_2026_6_9_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
     `OPENCLAW_2026_6_9_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
@@ -131,6 +133,10 @@ function runInstallBlock(
     `OPENCLAW_2026_4_24_INTEGRITY=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_4_24_TARBALL=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL)}`,
     `CODEX_ACP_0_11_1_INTEGRITY=${JSON.stringify(codexAcpCommittedIntegrity)}`,
+    "node() {",
+    '  if [ "${1:-}" = "/usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
+    '  "$real_node" "$@"',
+    "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' ${JSON.stringify(installedOpenClawVersion)}; else return 127; fi; }`,
     "codex-acp() { :; }",
     "npm() {",
@@ -219,7 +225,7 @@ function runOptionalOpenClawPluginBlock(
     `OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
     `NEMOCLAW_OPENCLAW_OTEL=${otel ? "1" : "0"}`,
     `NEMOCLAW_WEB_SEARCH_ENABLED=${webSearch ? "1" : "0"}`,
-    'openclaw() { printf \'openclaw %s\\n\' "$*" >> "$call_log"; }',
+    'openclaw() { printf \'openclaw %s\\nopenclaw-env %s %s\\n\' "$*" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$call_log"; }',
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "pack" ]; then',
@@ -401,6 +407,7 @@ describe("OpenClaw npm integrity pins", () => {
       "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz --pack-destination",
     );
     expect(calls).toContain("brave-plugin-2026.6.9.tgz --pin");
+    expect(calls).toContain("openclaw-env true true");
   });
 
   it("fails closed before optional OpenClaw plugin install when registry integrity drifts", () => {
@@ -512,15 +519,25 @@ describe("OpenClaw npm integrity pins", () => {
       `npm view @zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION} dist.tarball`,
     );
     expect(codexAcp.calls).toContain(`npm pack ${PINNED_CODEX_ACP_TARBALL} --pack-destination`);
-    expect(production.calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(production.calls).toContain(
+      "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
+    );
+    expect(production.calls).toContain(
+      "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
+    );
     expect(production.calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
-    expect(codexAcp.calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(codexAcp.calls).toContain(
+      "npm install -g --no-audit --no-fund --no-progress --ignore-scripts ",
+    );
     expect(codexAcp.calls).toContain(`codex-acp-${PINNED_CODEX_ACP_VERSION}.tgz`);
     expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} version`);
     expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.integrity`);
     expect(base.calls).toContain(`npm view openclaw@${PINNED_OPENCLAW_VERSION} dist.tarball`);
     expect(base.calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
-    expect(base.calls).toContain("npm install -g ");
+    expect(base.calls).toContain("npm install -g --ignore-scripts ");
+    expect(base.calls).toContain(
+      "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
+    );
     expect(base.calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
   });
 
@@ -544,7 +561,10 @@ describe("OpenClaw npm integrity pins", () => {
       `Base image OpenClaw ${PINNED_OPENCLAW_VERSION} matches reviewed target ${PINNED_OPENCLAW_VERSION}; reinstalling reviewed archive`,
     );
     expect(calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
-    expect(calls).toContain("npm install -g --no-audit --no-fund --no-progress ");
+    expect(calls).toContain("npm install -g --no-audit --no-fund --no-progress --ignore-scripts ");
+    expect(calls).toContain(
+      "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
+    );
     expect(calls).toContain(`openclaw-${PINNED_OPENCLAW_VERSION}.tgz`);
   });
 
@@ -668,6 +688,20 @@ describe("OpenClaw npm integrity pins", () => {
         allowLegacyFixture: true,
       },
     );
+    const gatewayFixtureBase = runInstallBlock(
+      extractRunBlock(
+        DOCKERFILE_BASE,
+        "# Install OpenClaw CLI + PyYAML.",
+        "# Baseline health check.",
+      ),
+      {
+        openclawVersion: LEGACY_GATEWAY_UPGRADE_OPENCLAW_VERSION,
+        registryIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
+        registryTarball: LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL,
+        packIntegrity: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY,
+        allowLegacyFixture: true,
+      },
+    );
 
     for (const rejected of [production, base]) {
       expect(rejected.result.status).not.toBe(0);
@@ -690,6 +724,13 @@ describe("OpenClaw npm integrity pins", () => {
       `npm pack ${LEGACY_REBUILD_OPENCLAW_TARBALL} --pack-destination`,
     );
     expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
+    expect(fixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+    expect(fixtureBase.calls).not.toContain("postinstall-bundled-plugins.mjs");
+    expect(gatewayFixtureBase.result.status).toBe(0);
+    expect(gatewayFixtureBase.calls).toContain("npm install -g --ignore-scripts ");
+    expect(gatewayFixtureBase.calls).toContain(
+      "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
+    );
   });
 
   it("guards production Docker build args from legacy OpenClaw fixture inputs", () => {

@@ -625,7 +625,11 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
     try {
       runCommand(
         ["openclaw", "plugins", "install", packed.archivePath, ...(install.pin ? ["--pin"] : [])],
-        env,
+        {
+          ...env,
+          NPM_CONFIG_IGNORE_SCRIPTS: "true",
+          npm_config_ignore_scripts: "true",
+        },
       );
     } finally {
       rmSync(packed.rootDir, { recursive: true, force: true });
