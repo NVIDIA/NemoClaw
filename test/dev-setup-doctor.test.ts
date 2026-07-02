@@ -97,6 +97,8 @@ fi
     "npm",
     `if [ "\${1:-}" = "root" ] && [ "\${2:-}" = "-g" ]; then
   echo "${globalRoot}"
+elif [ "\${FAKE_NPM_PLUGIN_INSTALL_FAIL:-}" = "1" ] && [ "$*" = "--prefix nemoclaw install --ignore-scripts" ]; then
+  exit 1
 else
   echo "10.9.0"
 fi`,
@@ -153,10 +155,19 @@ fi`,
   exit 1
 fi
 if [ "\${1:-}" = "info" ]; then
-  echo "29.6.1|\${FAKE_DOCKER_CPUS:-4}|\${FAKE_DOCKER_MEMORY:-17179869184}|overlay2"
+  echo "29.6.1|\${FAKE_DOCKER_CPUS:-4}|\${FAKE_DOCKER_MEMORY:-17179869184}|\${FAKE_DOCKER_DRIVER:-overlay2}"
 else
   echo "Docker version 29.6.1"
 fi`,
+  );
+  writeTool(
+    fakeBin,
+    "uname",
+    `case "\${1:-}" in
+  -s) printf '%s\\n' "\${FAKE_HOST_OS:-Darwin}" ;;
+  -m) printf '%s\\n' "\${FAKE_HOST_ARCH:-arm64}" ;;
+  *) exit 1 ;;
+esac`,
   );
   writeTool(
     fakeBin,
@@ -203,6 +214,7 @@ function runDoctor(
 function runSetup(
   fixture: Fixture,
   args: string[] = [],
+  env: NodeJS.ProcessEnv = {},
 ): {
   output: string;
   status: number;
@@ -210,7 +222,7 @@ function runSetup(
   const result = spawnSync("/bin/bash", [scriptUnderTest, ...args], {
     cwd: fixture.repo,
     encoding: "utf-8",
-    env: fixture.env,
+    env: { ...fixture.env, ...env },
   });
   return {
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
@@ -375,6 +387,27 @@ describe("contributor environment doctor", () => {
     );
   });
 
+  it("escapes every JSON control character emitted by a check", () => {
+    const fixture = createFixture();
+    const escapedRepo = path.join(path.dirname(fixture.repo), 'quoted"\\path\b\f\n\r\t\u0001');
+    fs.symlinkSync(fixture.repo, escapedRepo, "dir");
+    writeTool(
+      fixture.fakeBin,
+      "nemoclaw",
+      `# Managed checkout launcher: ${escapedRepo}/bin/nemoclaw.js
+echo "nemoclaw v0.1.0"`,
+    );
+    const result = spawnSync("/bin/bash", [scriptUnderTest, "--doctor", "--json"], {
+      cwd: fixture.repo,
+      encoding: "utf-8",
+      env: { ...fixture.env, NEMOCLAW_DEV_DOCTOR_REPO_ROOT: escapedRepo },
+    });
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.repo).toBe(escapedRepo);
+  });
+
   it("rejects unsupported modes with usage and exit status 2", () => {
     const fixture = createFixture();
     const result = spawnSync("/bin/bash", [scriptUnderTest, "--unknown"], {
@@ -397,8 +430,8 @@ describe("contributor repository setup", () => {
     expect(result.status).toBe(0);
     expect(result.output).toContain("Ready to create a feature branch.");
     const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).toContain("npm install");
-    expect(commands).toContain("npm --prefix nemoclaw install");
+    expect(commands).toContain("npm install --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw install --ignore-scripts");
     expect(commands).toContain("uv sync --python 3.11");
     expect(commands).toContain("prek install");
     expect(commands).toContain("npm-link-or-shim");
@@ -427,6 +460,32 @@ describe("contributor repository setup", () => {
       ? fs.readFileSync(fixture.commandLog, "utf-8")
       : "";
     expect(commands).not.toContain("npm install");
+  });
+
+  it("stops before repository changes on an unsupported host", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], {
+      FAKE_HOST_ARCH: "mips64",
+      FAKE_HOST_OS: "Plan9",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Unsupported host: Plan9 mips64");
+    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
+    expect(commands).not.toContain("npm install");
+  });
+
+  it("stops after a failed setup step without running later mutations", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], { FAKE_NPM_PLUGIN_INSTALL_FAIL: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Setup stopped while attempting: Install plugin dependencies");
+    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
+    expect(commands).toContain("npm --prefix nemoclaw install --ignore-scripts");
+    expect(commands).not.toContain("uv sync --python 3.11");
   });
 
   it("delegates runtime creation to interactive onboard only when requested", () => {

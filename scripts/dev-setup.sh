@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${NEMOCLAW_DEV_DOCTOR_REPO_ROOT:-$(cd -- "${SCRIPT_DIR}/.." && pwd)}"
 CLI_BUILD_ARTIFACT="${NEMOCLAW_DEV_DOCTOR_CLI_ARTIFACT:-${REPO_ROOT}/dist/nemoclaw.js}"
 PLUGIN_BUILD_ARTIFACT="${NEMOCLAW_DEV_DOCTOR_PLUGIN_ARTIFACT:-${REPO_ROOT}/nemoclaw/dist/index.js}"
+HOST_OS="$(uname -s 2>/dev/null || printf unknown)"
+HOST_ARCH="$(uname -m 2>/dev/null || printf unknown)"
 
 PASS_COUNT=0
 WARN_COUNT=0
@@ -34,7 +36,33 @@ EOF
 }
 
 json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+  local input="$1"
+  local output=""
+  local char code escaped i
+  local LC_ALL=C
+
+  for ((i = 0; i < ${#input}; i++)); do
+    char="${input:i:1}"
+    case "${char}" in
+      '"') output+='\"' ;;
+      $'\\') output="${output}\\\\" ;;
+      $'\b') output+='\b' ;;
+      $'\f') output+='\f' ;;
+      $'\n') output+='\n' ;;
+      $'\r') output+='\r' ;;
+      $'\t') output+='\t' ;;
+      *)
+        printf -v code '%d' "'${char}"
+        if ((code < 32)); then
+          printf -v escaped '\\u%04x' "${code}"
+          output+="${escaped}"
+        else
+          output+="${char}"
+        fi
+        ;;
+    esac
+  done
+  printf '%s' "${output}"
 }
 
 record_json_result() {
@@ -223,6 +251,13 @@ setup_requirement() {
   return 1
 }
 
+is_supported_host() {
+  case "${HOST_OS}:${HOST_ARCH}" in
+    Darwin:arm64 | Darwin:x86_64 | Linux:aarch64 | Linux:x86_64) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 run_setup_step() {
   local label="$1"
   shift
@@ -242,6 +277,12 @@ repair_repository() {
   printf 'Repository: %s\n' "${REPO_ROOT}"
   printf 'This workflow changes repository-local dependencies, builds, hooks, and CLI exposure only.\n'
 
+  if ! is_supported_host; then
+    printf 'Unsupported host: %s %s\n' "${HOST_OS}" "${HOST_ARCH}" >&2
+    printf 'Next: Use a supported macOS or Linux host on arm64/aarch64 or x86_64.\n' >&2
+    return 1
+  fi
+
   setup_requirement node "Install Node.js 22.16 or newer, then rerun this command." || setup_failed=1
   setup_requirement npm "Install npm 10 or newer, then rerun this command." || setup_failed=1
   setup_requirement uv "Install uv from https://docs.astral.sh/uv/, then rerun this command." || setup_failed=1
@@ -256,8 +297,8 @@ repair_repository() {
     run_setup_step "Remove the obsolete repository-local Git hooks override" \
       git config --local --unset-all core.hooksPath || return 1
   fi
-  run_setup_step "Install root dependencies" npm install || return 1
-  run_setup_step "Install plugin dependencies" npm --prefix nemoclaw install || return 1
+  run_setup_step "Install root dependencies" npm install --ignore-scripts || return 1
+  run_setup_step "Install plugin dependencies" npm --prefix nemoclaw install --ignore-scripts || return 1
   run_setup_step "Synchronize the repository Python environment" uv sync --python 3.11 || return 1
   run_setup_step "Build the CLI" npm run build:cli || return 1
   run_setup_step "Build and type-check the plugin" npm --prefix nemoclaw run build || return 1
@@ -375,30 +416,24 @@ check_local_cli() {
 }
 
 run_doctor() {
-  local host_os host_arch ready_json
+  local ready_json
 
   PASS_COUNT=0
   WARN_COUNT=0
   FAIL_COUNT=0
   JSON_RESULTS=""
-  host_os="$(uname -s 2>/dev/null || printf unknown)"
-  host_arch="$(uname -m 2>/dev/null || printf unknown)"
-
   if [ "${OUTPUT_FORMAT}" = "human" ]; then
     printf '\nNemoClaw contributor environment\n\n'
-    printf '  Host: %s %s\n' "${host_os}" "${host_arch}"
+    printf '  Host: %s %s\n' "${HOST_OS}" "${HOST_ARCH}"
     printf '  Repo: %s\n\n' "${REPO_ROOT}"
   fi
 
-  case "${host_os}:${host_arch}" in
-    Darwin:arm64 | Darwin:x86_64 | Linux:aarch64 | Linux:x86_64)
-      pass "Supported host ${host_os} ${host_arch}"
-      ;;
-    *)
-      fail "Unsupported host ${host_os} ${host_arch}" \
-        "Use a supported macOS or Linux host on arm64/aarch64 or x86_64."
-      ;;
-  esac
+  if is_supported_host; then
+    pass "Supported host ${HOST_OS} ${HOST_ARCH}"
+  else
+    fail "Unsupported host ${HOST_OS} ${HOST_ARCH}" \
+      "Use a supported macOS or Linux host on arm64/aarch64 or x86_64."
+  fi
 
   if [ -f "${REPO_ROOT}/package.json" ] && [ -f "${REPO_ROOT}/AGENTS.md" ]; then
     pass "NemoClaw source checkout"
@@ -448,7 +483,7 @@ run_doctor() {
 
   if [ "${OUTPUT_FORMAT}" = "json" ]; then
     printf '{"schemaVersion":1,"ready":%s,"host":{"os":"%s","arch":"%s"},"repo":"%s","summary":{"passed":%d,"warnings":%d,"failed":%d},"checks":[%s]}\n' \
-      "${ready_json}" "$(json_escape "${host_os}")" "$(json_escape "${host_arch}")" \
+      "${ready_json}" "$(json_escape "${HOST_OS}")" "$(json_escape "${HOST_ARCH}")" \
       "$(json_escape "${REPO_ROOT}")" "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}" "${JSON_RESULTS}"
   else
     printf '\n  Summary: %d passed, %d warning(s), %d failed\n\n' "${PASS_COUNT}" "${WARN_COUNT}" "${FAIL_COUNT}"

@@ -124,6 +124,7 @@ describe("repo skill markdown files", () => {
     expect(skill).toContain("Never print tokens");
     expect(skill).toContain("Signed-off-by:");
     expect(skill).toContain("Verified");
+    expect(skill).toContain("Trigger keywords - contributor setup");
   });
 
   it("preserves the single NVSkills catalog skill copy", () => {

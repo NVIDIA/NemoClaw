@@ -3,6 +3,9 @@ name: nemoclaw-contributor-onboard
 description: Prepare a NemoClaw source checkout for compliant contribution through the repository's one-command setup and readiness doctor. Use when a new contributor asks to set up a development machine, prepare a checkout for a first PR, repair local contributor tooling, verify contributor readiness, launch the pinned coding agent, or decide whether optional runtime onboarding is needed. Trigger keywords - contributor setup, developer onboarding, first PR, dev setup, dev doctor, repair checkout, prepare development machine.
 ---
 
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Onboard a NemoClaw Contributor
 
 Use the repository setup script as the executable source of truth.

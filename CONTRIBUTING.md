@@ -110,8 +110,8 @@ That mode delegates to the interactive `nemoclaw onboard` workflow so you retain
 Use these commands when troubleshooting an individual setup step:
 
 ```bash
-npm install
-npm --prefix nemoclaw install
+npm install --ignore-scripts
+npm --prefix nemoclaw install --ignore-scripts
 uv sync --python 3.11
 npm run build:cli
 npm --prefix nemoclaw run build
