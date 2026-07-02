@@ -162,6 +162,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
+              - page: "Host Files and State"
+                path: reference/host-files-and-state.mdx
+                slug: host-files-and-state
               - page: "CLI Commands Reference"
                 path: _build/agent-variants/reference/commands.openclaw.generated.mdx
                 slug: commands
@@ -314,6 +317,9 @@ navigation:
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.hermes.generated.mdx
                 slug: architecture
+              - page: "Host Files and State"
+                path: reference/host-files-and-state.mdx
+                slug: host-files-and-state
               - page: "CLI Commands Reference"
                 path: reference/commands-nemohermes.mdx
                 slug: commands
