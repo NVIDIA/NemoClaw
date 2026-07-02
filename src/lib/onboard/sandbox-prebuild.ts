@@ -62,10 +62,15 @@ export interface SandboxPrebuildInput {
 
 function defaultStreamBuild(command: string): Promise<StreamBuildResult> {
   // Run the build under the sanitized subprocess allowlist (PATH/HOME/DOCKER_HOST
-  // etc.) — the same env the openshell create uses — rather than raw process.env,
-  // so host secrets (e.g. NVIDIA_API_KEY) never enter the build subprocess.
-  // DOCKER_BUILDKIT is set inline in the command, so BuildKit is still used.
-  return streamSandboxCreate(command, buildSubprocessEnv(), {
+  // etc.) rather than raw process.env, so host secrets (e.g. NVIDIA_API_KEY)
+  // never enter the build subprocess. Then drop the host-infrastructure
+  // credentials the openshell create also strips (KUBECONFIG, SSH_AUTH_SOCK) —
+  // a `docker build` needs neither. DOCKER_BUILDKIT is set inline in the
+  // command, so BuildKit is still used.
+  const env = buildSubprocessEnv();
+  delete env.KUBECONFIG;
+  delete env.SSH_AUTH_SOCK;
+  return streamSandboxCreate(command, env, {
     initialPhase: "build",
     traceEvent: addTraceEvent,
   });
