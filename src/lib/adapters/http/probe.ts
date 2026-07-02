@@ -11,10 +11,11 @@ import os from "node:os";
 import path from "node:path";
 import { isErrnoException } from "../../core/errno";
 import { compactText } from "../../core/url-utils";
-import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 import type { ProbeResult } from "../../onboard/types";
+import { buildScrubbedCurlProbeEnv, scrubCredentialEnv } from "../../security/credential-env";
 import { ROOT } from "../../state/paths";
 import { addTraceEvent, withTraceSpan } from "../../trace";
+import { buildCurlProbeSpawnArgs, validateCurlProbeArgs } from "./curl-args";
 
 export type CurlProbeResult = ProbeResult;
 
@@ -40,6 +41,11 @@ export interface StreamingProbeResult {
 
 const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
 const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
+
+function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {
+  if (opts.replaceEnv) return scrubCredentialEnv(opts.env ?? {});
+  return buildScrubbedCurlProbeEnv(opts.env ?? {});
+}
 
 function validateTempPrefix(prefix: string): string {
   if (
@@ -230,7 +236,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: opts.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts.env },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
@@ -339,10 +345,7 @@ function runChatCompletionsStreamingProbeImpl(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: {
-          ...process.env,
-          ...opts.env,
-        },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
 
@@ -460,10 +463,7 @@ function runStreamingEventProbeImpl(
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout,
-        env: {
-          ...process.env,
-          ...opts.env,
-        },
+        env: resolveCurlProbeSpawnEnv(opts),
       },
     );
 

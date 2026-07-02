@@ -107,7 +107,7 @@ function traceGithubFixture(options: {
       listWorkflowRunArtifacts,
       (args) => {
         const artifactId = artifactIdsByRunId.get(Number(args.run_id));
-        return artifactId === undefined ? [] : [{ id: artifactId, name: "cloud-onboard-traces" }];
+        return artifactId === undefined ? [] : [{ id: artifactId, name: "e2e-cloud-onboard" }];
       },
     ],
     [
@@ -181,7 +181,7 @@ describe("cloud onboard scorecard trace timing", () => {
     ).toEqual([]);
     expect(summaryLines).toContain("## Cloud Onboard Trace Timing");
     expect(summaryLines).toContain("| Phase | Current | Previous | Delta |");
-    expect(summaryLines.join("\n")).toContain("Baseline: latest completed `nightly-e2e.yaml` run");
+    expect(summaryLines.join("\n")).toContain("Baseline: latest completed `e2e.yaml` run");
   });
 
   it("evaluates cloud onboard timing against the advisory performance budget", () => {
@@ -447,7 +447,7 @@ describe("cloud onboard scorecard trace timing", () => {
         github: traceGithubFixture({}),
       }),
     ).resolves.toMatchObject({
-      traceTimingLine: "Trace: ⊘ cloud-onboard-traces artifact not found for this run",
+      traceTimingLine: "Trace: ⊘ e2e-cloud-onboard timing summary not found",
     });
 
     await expect(
@@ -471,7 +471,7 @@ describe("cloud onboard scorecard trace timing", () => {
       }),
     ).resolves.toMatchObject({
       traceTimingLine: expect.stringContaining(
-        "Trace: cloud-onboard total 1.0s (no nightly-e2e run found for v0.0.1)",
+        "Trace: cloud-onboard total 1.0s (no e2e.yaml run found for v0.0.1)",
       ),
     });
 
@@ -486,7 +486,7 @@ describe("cloud onboard scorecard trace timing", () => {
       }),
     ).resolves.toMatchObject({
       traceTimingLine: expect.stringContaining(
-        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+        "Trace: cloud-onboard total 1.0s (no timing summary found for v0.0.1)",
       ),
     });
 
@@ -501,7 +501,7 @@ describe("cloud onboard scorecard trace timing", () => {
       }),
     ).resolves.toMatchObject({
       traceTimingLine: expect.stringContaining(
-        "Trace: cloud-onboard total 1.0s (no cloud-onboard-traces artifact found for v0.0.1)",
+        "Trace: cloud-onboard total 1.0s (no timing summary found for v0.0.1)",
       ),
     });
   });

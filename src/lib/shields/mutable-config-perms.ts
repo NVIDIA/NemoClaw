@@ -35,15 +35,17 @@ export interface MutableConfigTarget {
   configDir: string;
   configPath: string;
   configFile: string;
-  // Files re-permissioned alongside the main config by unlockAgentConfig
-  // (e.g. .config-hash, .env). Listed here so inspect surfaces drift on the
-  // same set that repair will touch — otherwise the user-facing "Config
+  // Files normalized alongside the main config by the descriptor-safe repair
+  // helper (e.g. .config-hash, .env). Listed here so inspect surfaces drift on
+  // the same set that repair will touch — otherwise the user-facing "Config
   // permissions" check would silently underreport.
   sensitiveFiles?: string[];
 }
 
+export type MutableConfigInspectionSkipReason = "agent" | "locked" | "unreadable" | "unavailable";
+
 export type MutableConfigPermsInspection =
-  | { applies: false; reason: string }
+  | { applies: false; skipReason: MutableConfigInspectionSkipReason; reason: string }
   | {
       applies: true;
       ok: boolean;
@@ -118,6 +120,7 @@ export function inspectMutableConfigPerms(
   if (target.agentName !== "openclaw") {
     return {
       applies: false,
+      skipReason: "agent",
       reason: `agent ${target.agentName} does not use the mutable OpenClaw config contract`,
     };
   }
@@ -125,6 +128,7 @@ export function inspectMutableConfigPerms(
   if (blocked) {
     return {
       applies: false,
+      skipReason: postureMode === "locked" ? "locked" : "unreadable",
       reason:
         postureMode === "locked"
           ? "shields up (config intentionally locked)"
@@ -138,7 +142,11 @@ export function inspectMutableConfigPerms(
     file = parseStatModeOwner(statModeOwner(target.configPath));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { applies: false, reason: `could not stat config (${message})` };
+    return {
+      applies: false,
+      skipReason: "unavailable",
+      reason: `could not stat config (${message})`,
+    };
   }
   const issues: string[] = [];
   if (!dirSatisfiesMutableContract(dir.mode)) {
@@ -157,9 +165,9 @@ export function inspectMutableConfigPerms(
   if (file.owner !== MUTABLE_OPENCLAW_OWNER) {
     issues.push(`${target.configFile} owner ${file.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`);
   }
-  // Mirror the file contract over the sensitive-file set that unlockAgentConfig
-  // touches. Missing files are tolerated (e.g. .config-hash is only created
-  // after the first shields-up cycle); we only flag actual drift.
+  // Mirror the file contract over the sensitive-file set that the descriptor-
+  // safe normalizer touches. Missing files are tolerated (e.g. .config-hash is
+  // only created after the first shields-up cycle); we only flag actual drift.
   for (const sensitivePath of target.sensitiveFiles || []) {
     let sensitive: { mode: string; owner: string };
     try {
@@ -193,9 +201,8 @@ export function inspectMutableConfigPerms(
  * Restore the OpenClaw mutable config permission contract. No-op for non-
  * OpenClaw agents and for shields-up/corrupt sandboxes (where weakening the
  * lock would be a regression). `applyMutableContract` performs the privileged
- * chown/chmod (in ./index.ts this delegates to unlockAgentConfig so the applied
- * modes/ownership match the shields-down path) and throws if it cannot verify
- * the result.
+ * normalization (in ./index.ts this invokes the same descriptor-safe helper as
+ * sandbox startup) and throws if it cannot apply the contract.
  */
 export function repairMutableConfigPerms(
   target: MutableConfigTarget,

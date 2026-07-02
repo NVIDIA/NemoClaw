@@ -47,9 +47,17 @@ type TraceTimingResult = {
   budgetStatus: string;
 };
 type GitHubDeps = { github: any; context: any; core?: { warning?: (message: string) => void } };
+type TraceTimingServices = {
+  findLatestCompletedE2eRunForReleaseTag: (
+    deps: GitHubDeps,
+    tag: SemverTag,
+  ) => Promise<any | null>;
+  readTraceSummaryFromRun: (deps: GitHubDeps, runId: number) => Promise<OnboardTrace | null>;
+  resolvePriorReleaseTag: (deps: GitHubDeps) => Promise<SemverTag | null>;
+};
 
-const WORKFLOW_FILE = "nightly-e2e.yaml";
-const TRACE_ARTIFACT_NAME = "cloud-onboard-traces";
+const WORKFLOW_FILE = "e2e.yaml";
+const TRACE_ARTIFACT_NAME = "e2e-cloud-onboard";
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const ONBOARD_PERFORMANCE_BUDGET_FILE = "ci/onboard-performance-budget.json";
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
@@ -92,10 +100,13 @@ function formatDuration(ms: number): string {
 
 function formatTraceDelta(currentMs: number, priorMs: number): string {
   const deltaMs = currentMs - priorMs;
-  const pct = priorMs > 0 ? (deltaMs / priorMs) * 100 : 0;
   if (Math.abs(deltaMs) < 1) return "unchanged";
   const direction = deltaMs > 0 ? "increased" : "decreased";
   const sign = deltaMs > 0 ? "+" : "-";
+  if (priorMs <= 0) {
+    return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (n/a)`;
+  }
+  const pct = (deltaMs / priorMs) * 100;
   return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (${sign}${Math.abs(pct).toFixed(1)}%)`;
 }
 
@@ -495,7 +506,7 @@ async function resolvePriorReleaseTag({ github, context }: GitHubDeps): Promise<
   return index >= 0 ? (semverTags[index + 1] ?? null) : semverTags[0];
 }
 
-async function findLatestCompletedNightlyRunForReleaseTag(
+async function findLatestCompletedE2eRunForReleaseTag(
   { github, context }: GitHubDeps,
   tag: SemverTag,
 ): Promise<any | null> {
@@ -576,16 +587,23 @@ async function readTraceSummaryFromRun(
   }
 }
 
-async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResult> {
+async function buildTraceTimingResult(
+  deps: GitHubDeps,
+  services: TraceTimingServices = {
+    findLatestCompletedE2eRunForReleaseTag,
+    readTraceSummaryFromRun,
+    resolvePriorReleaseTag,
+  },
+): Promise<TraceTimingResult> {
   const { context } = deps;
   try {
-    const currentTrace = await readTraceSummaryFromRun(deps, context.runId);
+    const currentTrace = await services.readTraceSummaryFromRun(deps, context.runId);
     if (currentTrace === null) {
-      return traceTimingResult(`Trace: ⊘ ${TRACE_ARTIFACT_NAME} artifact not found for this run`);
+      return traceTimingResult(`Trace: ⊘ ${TRACE_ARTIFACT_NAME} timing summary not found`);
     }
     const budget = readOnboardPerformanceBudget();
 
-    const priorTag = await resolvePriorReleaseTag(deps);
+    const priorTag = await services.resolvePriorReleaseTag(deps);
     if (!priorTag) {
       const budgetEvaluation = evaluateOnboardPerformanceBudget({ budget, currentTrace });
       return traceTimingResult(
@@ -604,14 +622,14 @@ async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResu
       );
     }
 
-    const priorRun = await findLatestCompletedNightlyRunForReleaseTag(deps, priorTag);
+    const priorRun = await services.findLatestCompletedE2eRunForReleaseTag(deps, priorTag);
     if (!priorRun) {
       const budgetEvaluation = evaluateOnboardPerformanceBudget({ budget, currentTrace });
       return traceTimingResult(
         [
           `Trace: cloud-onboard total ${formatDuration(
             currentTrace.totalMs,
-          )} (no nightly-e2e run found for ${priorTag.name})`,
+          )} (no e2e.yaml run found for ${priorTag.name})`,
           budgetEvaluation?.summary,
         ]
           .filter(Boolean)
@@ -623,14 +641,14 @@ async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResu
       );
     }
 
-    const priorTrace = await readTraceSummaryFromRun(deps, priorRun.id);
+    const priorTrace = await services.readTraceSummaryFromRun(deps, priorRun.id);
     if (priorTrace === null) {
       const budgetEvaluation = evaluateOnboardPerformanceBudget({ budget, currentTrace });
       return traceTimingResult(
         [
           `Trace: cloud-onboard total ${formatDuration(
             currentTrace.totalMs,
-          )} (no ${TRACE_ARTIFACT_NAME} artifact found for ${priorTag.name})`,
+          )} (no timing summary found for ${priorTag.name})`,
           budgetEvaluation?.summary,
         ]
           .filter(Boolean)
@@ -684,6 +702,7 @@ async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResu
 module.exports = {
   ONBOARD_PHASE_ORDER,
   ONBOARD_PERFORMANCE_BUDGET_FILE,
+  TRACE_ARTIFACT_NAME,
   TRACE_SUMMARY_FILE,
   buildPhaseRows,
   buildTraceTimingResult,
@@ -691,6 +710,7 @@ module.exports = {
   evaluateOnboardPerformanceBudget,
   exceedsThreshold,
   extractPhaseDurations,
+  findLatestCompletedE2eRunForReleaseTag,
   formatTraceDelta,
   formatTopPhaseChanges,
   readOnboardPerformanceBudget,

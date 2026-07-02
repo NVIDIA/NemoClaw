@@ -35,16 +35,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 
 # Minimum version required for native messaging credential rewrite:
 # WebSocket text frames plus provider-shaped aliases and REST request bodies.
-MIN_VERSION="0.0.44"
+MIN_VERSION="0.0.71"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.44"
+MAX_VERSION="0.0.71"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.44"
+DEV_MIN_VERSION="0.0.71"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -56,6 +56,13 @@ if [ "$CHANNEL" = "auto" ]; then
   RESOLVED_CHANNEL="stable"
 else
   RESOLVED_CHANNEL="$CHANNEL"
+fi
+
+if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+  if [ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  fi
+  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
 
 # Honour the TS installer's blueprint-derived env overrides only on the stable
@@ -101,6 +108,44 @@ if [ "$RESOLVED_CHANNEL" = "dev" ]; then
 else
   RELEASE_TAG="v${PIN_VERSION}"
 fi
+
+openshell_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.71:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716"
+      ;;
+    v0.0.71:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "b86b33d9e7c960cd04bc99a9539964f1cb84ae4a9886dd437c0566b64e093390"
+      ;;
+    v0.0.71:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "1ef9a2b447a35391a6a0f417f4383d99f3e928e443cf86ed190002ec937a8871"
+      ;;
+    v0.0.71:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d"
+      ;;
+    v0.0.71:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "e9b258b3fb38fd68ffc37675efe8a027750087f630cf19ad248e94eff5464091"
+      ;;
+    v0.0.71:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "26fa5b4dcb6d2631f7212639d087f37d8b0fc50c6f6cec856e019c22847e5bc9"
+      ;;
+    v0.0.71:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d"
+      ;;
+    v0.0.71:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "e60dc50524c56460faa8c37617725280a6e1205e73e5cc888b4fd0d148ccb71c"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openshell_checksum_line() {
+  local checksum_file="$1" asset="$2"
+  awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
@@ -383,7 +428,16 @@ fi
 for i in "${!ASSETS[@]}"; do
   asset_name="${ASSETS[$i]}"
   checksum_file="${CHECKSUM_FILES[$i]}"
-  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | $SHA_CMD -c -) \
+  checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset_name")" \
+    || fail "OpenShell checksum file $checksum_file does not list $asset_name"
+  if [ "$RELEASE_TAG" != "dev" ]; then
+    expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name")" \
+      || fail "No NemoClaw-pinned SHA-256 for OpenShell $RELEASE_TAG asset $asset_name"
+    release_sha="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+    [ "$release_sha" = "$expected_sha" ] \
+      || fail "OpenShell release checksum for $asset_name does not match NemoClaw-pinned $RELEASE_TAG digest"
+  fi
+  (cd "$tmpdir" && printf '%s\n' "$checksum_line" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
 done
 

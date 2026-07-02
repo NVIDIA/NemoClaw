@@ -20,17 +20,63 @@ Use after loading `SKILL.md` to choose an issue and establish its reported NemoC
 
 ```bash
 gh issue view <number> --repo NVIDIA/NemoClaw \
-  --json number,title,body,labels,url,author,createdAt,comments
+  --json number,title,body,labels,url,author,createdAt
 ```
+
+Also fetch the native Issue Type and current Project 199 fields with GraphQL. Resolve fields by their live names rather than hardcoding mutable IDs:
+
+```bash
+gh api graphql -F number=<number> -f query='query($number: Int!) {
+  repository(owner: "NVIDIA", name: "NemoClaw") {
+    issue(number: $number) {
+      issueType { name }
+      projectItems(first: 20) {
+        nodes {
+          project { number }
+          fieldValues(first: 50) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+A candidate must have native Issue Type `Bug`; labels never substitute for this check. From the Project 199 item, read the `Priority` and `Status` single-select values.
 
 **Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap exists because batch is sequential (Step 7 reuse-or-provision keeps it on 1–2 Brev boxes total) and the wallclock budget is ~2–3 hours per 15-issue run; running larger forces the maintainer to either drop the per-plan approval gate or spread the batch across multiple sessions.
 
-The discovery query needs to see the entire open-bug pool — the per-run processing cap is downstream. Use `--limit 1000` so the skill doesn't silently drop issues beyond the page (the candidate triage run found 129 open bugs; an earlier `--limit 100` would have missed 29 of them).
+The discovery query needs to see the entire open-issue pool because native Issue Type, not a `bug` label, identifies bug reports. Use paginated GraphQL and retain only nodes whose `issueType.name` is `Bug`:
 
 ```bash
-gh issue list --repo NVIDIA/NemoClaw --state open --limit 1000 \
-  --label bug \
-  --json number,title,body,labels,url,author,createdAt,comments
+gh api graphql --paginate -f query='query($endCursor: String) {
+  repository(owner: "NVIDIA", name: "NemoClaw") {
+    issues(first: 100, after: $endCursor, states: OPEN) {
+      nodes {
+        number title body url createdAt
+        author { login }
+        issueType { name }
+        labels(first: 100) { nodes { name } }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}' --jq '.data.repository.issues.nodes[] | select(.issueType.name == "Bug")'
+```
+
+Read Project Priority and Status from live Project 199 data. Do not infer either field from labels.
+
+Before applying the idempotency or active-discussion filters to each candidate, fetch its complete comment history through the paginated REST endpoint. Nested GraphQL comment connections are not paginated by the outer issue query and can silently truncate old markers:
+
+```bash
+COMMENTS=$(gh api "repos/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER/comments?per_page=100" \
+  --paginate --jq '.[]' | jq -s '.')
 ```
 
 In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev provisioning.
@@ -61,46 +107,66 @@ This is the version the skill will verify against. Record it — every comment m
 
 Apply these rules in order. Drop any issue that fails a rule.
 
-**Issue-type allowlist:** must have `bug` label.
-**Issue-type skip:** drop if any label exactly matches `documentation`, `status: wont-fix`, `status: needs-info`, `security`, OR is `enhancement` / starts with the prefix `enhancement:` (the repo carries several prefixed variants — `enhancement: feature`, `enhancement: MCP`, `enhancement: testing`, `enhancement: ui`, `enhancement: provider`, `enhancement: platform`, `enhancement: policy`, `enhancement: inference`, `enhancement: integration`, `enhancement: performance`, `enhancement: skill` — and exact-match misses them all; surfaced from #1752; enumerate via `gh label list -L 200 --search enhancement` if you need the live set). Use the canonical repo label names — bare `wontfix` / `needs-info` are NOT the repo's labels (verified via `gh label list`); the actual labels carry a `status:` prefix and a hyphen.
+**Issue-type allowlist:** native Issue Type must be `Bug`.
 
-**Platform skip (Brev-reproducible only in v1):** drop if any of `Platform: Windows/WSL`, `Platform: MacOS`, `Platform: macOS`, `Platform: Jetson AGX Thor/Orin`. Brev has no equivalent hardware for Jetson (embedded/edge ARM with integrated GPU is not in the Brev SKU catalog), so any Brev verification of a Jetson-only bug would produce a misleading "fixed-on-x86" verdict. Keep `Platform: Ubuntu`, `Platform: DGX Spark`, `Platform: GB10`, `Platform: All`, or no platform label. `Platform: DGX Spark` and `Platform: GB10` stay in scope but Step 10 requires a "Hardware substitution" caveat in the comment naming the Brev SKU we used as a substitute (Brev x86 GPU SKUs are not faithful to GB10 / Grace Hopper silicon for performance-shape or memory-architecture-shape bugs).
+**Project Status skip:** drop items already in `Done`, `Won't Fix`, or `Duplicate`. These are Project Status values, not labels.
+
+**Security skip:** drop items carrying the canonical `security` label. Potential vulnerability reports require the dedicated security workflow and neutral handling, not public stale-verification commentary.
+
+**Platform skip (Brev-reproducible only in v1):** drop `platform: windows`, `platform: wsl`, `platform: macos`, and `platform: jetson`. Brev has no equivalent hardware for those targets, so verification would produce a misleading cross-platform verdict. Keep `platform: ubuntu`, `platform: dgx-spark`, `platform: gb10`, or no platform label. DGX Spark and GB10 remain in scope only with the Step 10 hardware-substitution caveat.
 
 **TUI / interactive-UI skip:** drop if the issue title contains `TUI`, `dashboard UI`, `chat UI`, `keystroke`, or `key press`, OR if the body describes interactive UI behavior (key sequences, mouse interactions, browser-side UI state) without a non-interactive reproducer (no `NEMOCLAW_NON_INTERACTIVE=1` or equivalent env var pattern). `brev exec` does not allocate a real TTY by default, so TUI reproducers hang or silently fail at the first prompt; v1 documents this as out-of-scope rather than emitting a wrong verdict. v1.1 may add a `script(1)` / `expect` / `tmux send-keys` harness to lift this skip.
 
-**Integration skip (deferred to v2):** drop if any of `Integration: Slack`, `Integration: Discord`, `Integration: Telegram`, `Integration: Hermes`, `Integration: OpenClaw`, `Integration: WeChat`. These need third-party credentials a fresh Brev box cannot provide.
+**Integration skip (deferred to v2):** drop `integration: slack`, `integration: discord`, `integration: telegram`, `integration: hermes`, `integration: openclaw`, and `integration: wechat`. These need third-party credentials a fresh Brev box cannot provide.
 
-**Component allowlist (must have at least one):** `NemoClaw CLI`, `Sandbox`, `OpenShell`, `Docker`, `Getting Started`, or any `Platform:` label that survived the platform skip.
+Do not require retired component labels. Native Issue Type, version evidence, canonical routing labels, and reproducer suitability determine eligibility.
 
 **Idempotency:** drop if **either** of these is true:
 
-- The issue carries a `fixed-on-latest` or `verify-inconclusive` label. These labels are persistent; rerun verification only when a maintainer explicitly targets the issue or removes the label. The by-design path uses the existing repo `status: wont-fix` label, which is already covered by the issue-type skip rule above — no separate idempotency clause needed for that path.
-- A comment matching `<!-- nemoclaw-verify-stale v\d+ YYYY-MM-DD -->` was posted **within the last 7 days**. The regex matches any marker version (`v1`, `v2`, …) so future skill versions can re-verify older-marked issues by tightening the regex (e.g. require a specific marker version). The marker carries a date so the candidate filter can apply a TTL — useful for the still-reproduces case (Step 9), where no label is applied and we want next week's run to re-verify rather than skip forever.
+- Any comment contains a final marker for `fixed-on-latest`, `verify-inconclusive`, or `by-design`. These markers are durable; rerun only when a maintainer explicitly targets the issue.
+- A `still-reproduces` marker was posted within the last seven days. Its TTL allows a later weekly run to catch a newly landed fix.
 
-Implementation — match the marker against each comment's `createdAt`. Use `gh issue view --json comments` (single-issue mode already fetches this; batch mode's `gh issue list` also returns the comment array per issue):
+Use markers shaped like:
+
+```text
+<!-- nemoclaw-verify-stale v1 verdict=fixed-on-latest YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=verify-inconclusive YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=by-design YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->
+```
+
+Implementation — match markers against each comment's body and creation time:
 
 ```bash
 # Cutoff for the 7-day TTL. macOS and Linux date(1) syntax differ; try both.
 SEVEN_DAYS_AGO=$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
 
-# Returns the timestamp of the most recent marker comment within the TTL, or empty.
-RECENT_MARKER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq --arg cutoff "$SEVEN_DAYS_AGO" '
-    .comments[]
-    | select(.body | test("<!-- nemoclaw-verify-stale v\\d+ \\d{4}-\\d{2}-\\d{2} -->"))
-    | select(.createdAt > $cutoff)
-    | .createdAt' \
+# Final markers do not expire.
+FINAL_MARKER=$(printf '%s' "$COMMENTS" \
+  | jq -r '
+    .[]
+    | select(.body | test("<!-- nemoclaw-verify-stale v\\d+ verdict=(fixed-on-latest|verify-inconclusive|by-design) \\d{4}-\\d{2}-\\d{2} -->"))
+    | .created_at' \
   | head -1)
 
-if [ -n "$RECENT_MARKER" ]; then
-  echo "Skip: marker posted $RECENT_MARKER (within 7-day TTL)"
+# still-reproduces markers expire after seven days.
+RECENT_STILL_REPRODUCES=$(printf '%s' "$COMMENTS" \
+  | jq -r --arg cutoff "$SEVEN_DAYS_AGO" '
+    .[]
+    | select(.body | test("<!-- nemoclaw-verify-stale v\\d+ verdict=still-reproduces \\d{4}-\\d{2}-\\d{2} -->"))
+    | select(.created_at > $cutoff)
+    | .created_at' \
+  | head -1)
+
+if [ -n "$FINAL_MARKER" ] || [ -n "$RECENT_STILL_REPRODUCES" ]; then
+  echo "Skip: prior final verdict or recent still-reproduces verification found"
   # In single-issue mode: exit 0 with a friendly message.
   # In batch mode: continue to the next candidate.
 fi
 ```
 
-Run this check for every candidate that survived the label-based filters above; drop those whose `RECENT_MARKER` is non-empty.
+Run this check for every candidate that survived the canonical field and label filters above.
 
 **Unanswered-maintainer-question handling.** Find the most recent maintainer (`MEMBER`, `OWNER`, `COLLABORATOR`) comment that **looks like a question** (`?`, polite imperative like "please confirm/share/clarify", or starter like "could you / can you / do you") AND that the reporter has not replied to since. Pure triage acknowledgments (`"✨ Thanks for reporting…"`) are skipped. The age of the qualifying comment determines skip-or-proceed:
 
@@ -114,26 +180,26 @@ REPORTER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json author --
 # Question-detection patterns are chained as separate test() calls so each
 # heuristic is independently readable and a future addition (e.g. "what about",
 # "why does") is a one-line append rather than a regex-alternation patch.
-UNANSWERED_MAINT=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
-    (.comments
-     | map(select((.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR")
+UNANSWERED_MAINT=$(printf '%s' "$COMMENTS" \
+  | jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
+    (.
+     | map(select((.author_association == "MEMBER" or .author_association == "OWNER" or .author_association == "COLLABORATOR")
          and (.body | test("\\?")                                                                       # literal "?"
                    or test("(?i)\\bplease (confirm|share|provide|clarify|tell|verify|check|let me know|let us know)")  # polite imperative
                    or test("(?i)\\b(could|can|would) you\\b")                                            # modal interrogative
                    or test("(?i)\\bdo you (have|know|see|use)\\b"))))                                    # "do you ..."
-     | sort_by(.createdAt) | last) as $maint
+     | sort_by(.created_at) | last) as $maint
     | if $maint == null then null
       else
-        ((.comments
-          | map(select(.author.login == $reporter and .createdAt > $maint.createdAt))
+        ((.
+          | map(select(.user.login == $reporter and .created_at > $maint.created_at))
           | length) as $replies
          | if $replies > 0 then null
            else {
-             createdAt: $maint.createdAt,
-             url: $maint.url,
-             login: $maint.author.login,
-             recent: ($maint.createdAt > $cutoff)
+             createdAt: $maint.created_at,
+             url: $maint.html_url,
+             login: $maint.user.login,
+             recent: ($maint.created_at > $cutoff)
            }
            end)
       end')
@@ -206,7 +272,7 @@ If no version survives, drop the issue from the candidate set — we cannot esta
 
 **Variable format for downstream steps.** Set `REPORTED_VERSION` to the **full tag string** (e.g., `REPORTED_VERSION="v0.0.32"`), not just the patch number. Step 8a's installer expects the full tag via the `NEMOCLAW_INSTALL_TAG` env var.
 
-**Batch cap enforcement.** In batch mode, after Step 3 label filters and the Step 4 version+candidate-rule filters narrow the pool, sort surviving candidates by `(-versions_behind, -age_days)` so the most stale come first, then **slice to the top 15**:
+**Batch cap enforcement.** In batch mode, after Step 3 field/label filters and the Step 4 version+candidate-rule filters narrow the pool, sort surviving candidates by `(-versions_behind, -age_days)` so the most stale come first, then **slice to the top 15**:
 
 ```bash
 # Each candidate has at minimum: number, reported, behind, age_days

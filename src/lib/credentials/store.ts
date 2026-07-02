@@ -40,6 +40,7 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
   "GITHUB_TOKEN",
   "HF_TOKEN",
   "HUGGING_FACE_HUB_TOKEN",
@@ -679,6 +680,16 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
       const error = Object.assign(new Error("Prompt interrupted"), { code: "SIGINT" });
       rejectPrompt(error);
       process.kill(process.pid, "SIGINT");
+    });
+    // Treat readline closing before the question is answered as cancellation.
+    // When stdin reaches EOF (e.g. `nemoclaw onboard ... < /dev/null`), the
+    // `question` callback never fires; without this the prompt promise would
+    // hang or the process would exit 0 silently. resolvePrompt/rejectPrompt set
+    // `finished` before calling cleanup() (which itself closes rl), so the
+    // post-answer close is ignored and only a premature EOF rejects here.
+    rl.on("close", () => {
+      if (finished) return;
+      rejectPrompt(Object.assign(new Error("Prompt closed before input"), { code: "EOF" }));
     });
     rl.question(question, (answer) => {
       resolvePrompt(answer.trim());

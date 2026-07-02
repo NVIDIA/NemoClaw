@@ -26,6 +26,7 @@ const {
 const {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
+  createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
   requireProviderChoice,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
@@ -1969,10 +1970,10 @@ async function startGatewayWithOptions(
   if (isLinuxDockerDriverGatewayEnabled()) {
     return startDockerDriverGateway({
       exitOnFailure,
-      skipSandboxBridgeReachability:
-        gpuPassthrough &&
-        process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" &&
-        dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host",
+      skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+        gpuPassthrough,
+        _gpu?.platform,
+      ),
     });
   }
 
@@ -2150,9 +2151,7 @@ async function startDockerDriverGateway({
   skipSandboxBridgeReachability?: boolean;
 } = {}): Promise<void> {
   const gatewayBin = resolveOpenShellGatewayBinary();
-  const openshellVersionOutput = runCaptureOpenshell(["--version"], {
-    ignoreError: true,
-  });
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
   const stateDir = getDockerDriverGatewayStateDir();
   const runtimeIdentity = gatewayBin
@@ -2162,6 +2161,7 @@ async function startDockerDriverGateway({
         stateDir,
         sandboxBin: resolveOpenShellSandboxBinary(),
         compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+        ensureLocalTlsBundle: true,
       })
     : null;
   const gatewayLaunch = runtimeIdentity?.launch ?? null;
@@ -2937,7 +2937,6 @@ async function createSandbox(
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
   process.on("exit", cleanupBuildCtx);
-
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -2962,6 +2961,7 @@ async function createSandbox(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
+    extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
@@ -3368,7 +3368,6 @@ async function selectAndValidateOllamaModel(
 
 type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
-
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 type RemoteProviderSelectionArgs = {
@@ -3775,14 +3774,12 @@ async function handleRemoteProviderSelection(
     } else {
       await ensureApiKey();
     }
-    const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
-    state.model =
-      requestedModel ||
-      (recoveredFromSandbox && recoveredModel) ||
-      (isNonInteractive()
-        ? DEFAULT_CLOUD_MODEL
-        : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
-      DEFAULT_CLOUD_MODEL;
+    state.model = await state.nvidiaFeaturedModels!.select(
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+      isNonInteractive(),
+      process.env.NEMOCLAW_MODEL,
+    );
     if (isBackToSelection(state.model)) {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -3942,6 +3939,7 @@ async function setupNim(
   let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
+  const nvidiaFeaturedModels = createNvidiaFeaturedModelSession();
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4075,6 +4073,7 @@ async function setupNim(
           compatibleEndpointReasoning,
           nimContainer,
           allowToolsIncompatible,
+          nvidiaFeaturedModels,
         };
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
@@ -4572,8 +4571,8 @@ async function setupPoliciesWithSelection(
       waitForSandboxReady,
       syncPresetSelection,
       selectPolicyTier,
-      setPolicyTier: (sandbox, tierName) =>
-        registry.updateSandbox(sandbox, { policyTier: tierName }),
+      setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
+      getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
       selectTierPresetsAndAccess,
       parsePolicyPresetEnv,
       env: process.env,

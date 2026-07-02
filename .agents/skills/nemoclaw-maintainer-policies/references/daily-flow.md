@@ -68,5 +68,5 @@ Agents may recommend labels, assignments, Project field changes, comments, merge
 - A PR daily version label activates daily release work; it is not a readiness claim.
 - Release inclusion requires a PR to be both merged and carrying the relevant daily version label at release cutoff.
 - Issue daily version labels are tracking or coordination signals only.
-- Open PRs with daily version labels carry forward until the label is removed.
+- Open PRs and issues that miss a tagged release carry forward by automatically moving from the released version label to the next patch label after the tag and `latest` are verified.
 - Durable release history belongs in releases, release notes, or manifests, not in long-lived labels.

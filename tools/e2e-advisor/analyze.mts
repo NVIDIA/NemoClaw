@@ -36,12 +36,12 @@ const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 const CLOUD_ONBOARD_E2E_RECOMMENDATION: AdvisorTest = {
-  id: "cloud-onboard-e2e",
-  workflow: "nightly-e2e.yaml",
-  job: "cloud-onboard-e2e",
-  script: "test/e2e/test-cloud-onboard-e2e.sh",
+  id: "cloud-onboard",
+  workflow: "e2e.yaml",
+  job: "cloud-onboard",
+  script: "test/e2e/live/cloud-onboard.test.ts",
   cost: "high",
-  runner: "ubuntu-latest via reusable e2e-script workflow",
+  runner: "ubuntu-latest",
   reason:
     "Changed onboard, trace timing, scorecard, or E2E workflow code can affect cloud onboard wall-clock behavior and should refresh the trusted cloud-onboard trace timing signal.",
 };
@@ -50,10 +50,10 @@ const CLOUD_ONBOARD_E2E_PATTERNS: readonly RegExp[] = [
   /^src\/lib\/trace\.ts$/,
   /^scripts\/scorecard\/analyze-trace-timing\.ts$/,
   /^ci\/onboard-performance-budget\.json$/,
-  /^\.github\/actions\/run-e2e-script\//,
-  /^\.github\/workflows\/nightly-e2e\.yaml$/,
-  /^test\/e2e\/test-cloud-onboard-e2e\.sh$/,
-  /^test\/e2e-scenario\/live\/cloud-onboard\.test\.ts$/,
+  /^scripts\/e2e\/sanitize-trace-timing\.py$/,
+  /^\.github\/actions\/(?:prepare-e2e|upload-e2e-artifacts)\//,
+  /^\.github\/workflows\/e2e\.yaml$/,
+  /^test\/e2e\/live\/cloud-onboard\.test\.ts$/,
 ];
 
 type ArtifactPaths = AdvisorArtifactPaths;
@@ -250,13 +250,13 @@ export function buildSystemPrompt(): string {
     "- a Node/TypeScript CLI for install, onboarding, credentials, policy, inference, and sandbox lifecycle;",
     "- an OpenClaw plugin and TypeScript blueprint runner;",
     "- YAML blueprint/network-policy assets;",
-    "- scenario-based and workflow-dispatched E2E tests for real user flows.",
+    "- live and workflow-dispatched E2E tests for real user flows.",
     "",
     "Recommend which existing E2E jobs should run for a PR. Use the synthetic advisor-context tool results and inspect nearby repository files as needed, especially .github/workflows, test/e2e, touched source files, and related tests.",
     "",
     "Decision policy:",
     "- Required E2E: changes that can affect installer/onboarding, sandbox lifecycle, credentials, security boundaries, network policy, inference routing, deployment, or real assistant user flows.",
-    "- Onboarding resume compatibility rule: changes to src/lib/onboard/machine live slice orchestration, resume compatibility states, resume repair policy, session bootstrap, or onboarding state transitions MUST require both `onboard-resume-e2e` and `onboard-repair-e2e` unless the PR is tests-only. If the change can also affect full hosted onboarding, require `cloud-onboard-e2e`. Do not rely only on unit/runtime-boundary tests for these state-machine resume paths.",
+    "- Onboarding resume rule: changes to src/lib/onboard/machine live slice orchestration, resume state handling, resume repair policy, session bootstrap, or onboarding state transitions MUST require both `onboard-resume` and `onboard-repair` unless the PR is tests-only. If the change can also affect full hosted onboarding, require `cloud-onboard`. Do not rely only on unit/runtime-boundary tests for these state-machine resume paths.",
     "- Optional E2E: useful confidence checks for adjacent behavior, but not merge-blocking.",
     "- No E2E: safe docs, tests-only, comments, refactors, or tooling changes that cannot affect runtime/user flows; explain in noE2eReason.",
     "- Missing coverage: use newE2eRecommendations. Do not invent existing test names.",
