@@ -3,7 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { prepareSandboxCreatePlan } from "./sandbox-create-plan";
+import {
+  materializeSandboxCreatePlan,
+  prepareSandboxCreatePlan,
+  resolveSandboxCreateIntent,
+  resolveSandboxCreateMessagingProviderRequests,
+} from "./sandbox-create-plan";
 import type { SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 const sandboxGpuConfig: SandboxGpuCreateConfig = {
@@ -36,6 +41,236 @@ const channels = [
   },
 ];
 
+describe("resolveSandboxCreateIntent", () => {
+  it("turns credential-bearing inputs into secretless provider requests", () => {
+    const requests = resolveSandboxCreateMessagingProviderRequests(
+      [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram-super-secret",
+        },
+        {
+          name: "sandbox-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: null,
+          providerType: "brave-search",
+        },
+      ],
+      (envKey) => (envKey === "TELEGRAM_BOT_TOKEN" ? "telegram" : null),
+    );
+
+    expect(requests).toEqual([
+      {
+        name: "sandbox-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        credentialConfigured: true,
+        channel: "telegram",
+      },
+      {
+        name: "sandbox-brave-search",
+        envKey: "BRAVE_API_KEY",
+        providerType: "brave-search",
+        credentialConfigured: false,
+        channel: null,
+      },
+    ]);
+    expect(JSON.stringify(requests)).not.toContain("telegram-super-secret");
+  });
+
+  it("resolves deterministic serializable intent without execution artifacts", () => {
+    const input = {
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["telegram", "slack", "whatsapp"],
+      disabledChannelNames: new Set(["slack"]),
+      messagingProviderRequests: [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          credentialConfigured: true,
+          channel: "telegram",
+        },
+        {
+          name: "sandbox-slack-bridge",
+          envKey: "SLACK_BOT_TOKEN",
+          credentialConfigured: true,
+          channel: "slack",
+        },
+      ],
+      primaryMessagingCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN", "SLACK_BOT_TOKEN"],
+      reusableMessagingChannels: ["discord", "slack"],
+      reusableMessagingProviders: ["sandbox-existing-discord", "sandbox-slack-bridge"],
+      extraProviders: ["custom-provider", "custom-provider", ""],
+      hermesToolGateways: ["github"],
+      sandboxGpuConfig,
+      gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
+      useDockerGpuPatch: false,
+      sandboxGpuLogMessage: "gpu note",
+      agentName: "hermes",
+      policyTier: "balanced",
+    };
+
+    const first = resolveSandboxCreateIntent(input);
+    const second = resolveSandboxCreateIntent(input);
+
+    expect(first).toEqual(second);
+    expect(first.activeMessagingChannels).toEqual(["telegram", "discord", "whatsapp"]);
+    expect(first.messagingProviderRequests.map(({ name }) => name)).toEqual([
+      "sandbox-telegram-bridge",
+      "sandbox-slack-bridge",
+    ]);
+    expect(first.reusableMessagingProviders).toEqual(["sandbox-existing-discord"]);
+    expect(first.extraProviders).toEqual(["custom-provider"]);
+    expect(first.policy).toEqual({
+      basePolicyPath: "/repo/policy.yaml",
+      activeMessagingChannels: ["telegram", "discord", "whatsapp"],
+      options: {
+        directGpu: true,
+        dockerGpuPatch: false,
+        additionalPresets: ["github"],
+        agentName: "hermes",
+        policyTier: "balanced",
+      },
+    });
+    expect(JSON.parse(JSON.stringify(first))).toEqual(first);
+    expect(JSON.stringify(first)).not.toContain("/tmp/");
+  });
+
+  it("materializes policy and provider effects after resolving intent", () => {
+    const tokenDefs = [
+      {
+        name: "sandbox-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: "telegram-super-secret",
+      },
+    ];
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
+        tokenDefs,
+        () => "telegram",
+      ),
+      primaryMessagingCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN"],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: ["sandbox-existing-discord"],
+      extraProviders: ["custom-provider"],
+      hermesToolGateways: ["github"],
+      sandboxGpuConfig,
+      gpuCreateArgs: ["--gpu"],
+      useDockerGpuPatch: false,
+      sandboxGpuLogMessage: null,
+      agentName: "hermes",
+      policyTier: "balanced",
+    });
+    const serializedIntent = JSON.stringify(intent);
+    const events: string[] = [];
+
+    const result = materializeSandboxCreatePlan({
+      intent,
+      buildCtx: "/tmp/nemoclaw-build-1",
+      messagingTokenDefs: tokenDefs,
+      prepareInitialSandboxCreatePolicy: vi.fn(() => {
+        events.push("policy");
+        return { policyPath: "/tmp/policy.yaml", appliedPresets: ["telegram"] };
+      }),
+      appendResourceFlags: (args) => {
+        events.push("resources");
+        args.push("--memory", "16g");
+      },
+      runProviderPreDeleteCleanup: () => events.push("cleanup"),
+      upsertMessagingProviders: vi.fn((receivedTokenDefs) => {
+        events.push("upsert");
+        expect(receivedTokenDefs).toEqual(tokenDefs);
+        return ["sandbox-telegram-bridge"];
+      }),
+      getHermesToolGatewayProviderName: (sandboxName) => {
+        events.push("hermes");
+        return `${sandboxName}-hermes-tools`;
+      },
+    });
+
+    expect(events).toEqual(["policy", "resources", "cleanup", "upsert", "hermes"]);
+    expect(result.createArgs).toEqual([
+      "--from",
+      "/tmp/nemoclaw-build-1/Dockerfile",
+      "--name",
+      "sandbox",
+      "--policy",
+      "/tmp/policy.yaml",
+      "--gpu",
+      "--memory",
+      "16g",
+      "--provider",
+      "sandbox-telegram-bridge",
+      "--provider",
+      "sandbox-existing-discord",
+      "--provider",
+      "sandbox-hermes-tools",
+      "--provider",
+      "custom-provider",
+    ]);
+    expect(serializedIntent).not.toContain("telegram-super-secret");
+    expect(JSON.stringify(intent)).toBe(serializedIntent);
+  });
+
+  it("rejects changed credential availability before running effects", () => {
+    const originalTokenDefs = [
+      {
+        name: "sandbox-telegram-bridge",
+        envKey: "TELEGRAM_BOT_TOKEN",
+        token: null,
+      },
+    ];
+    const intent = resolveSandboxCreateIntent({
+      basePolicyPath: "/repo/policy.yaml",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["telegram"],
+      disabledChannelNames: new Set(),
+      messagingProviderRequests: resolveSandboxCreateMessagingProviderRequests(
+        originalTokenDefs,
+        () => "telegram",
+      ),
+      primaryMessagingCredentialEnvKeys: ["TELEGRAM_BOT_TOKEN"],
+      reusableMessagingChannels: [],
+      reusableMessagingProviders: [],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      gpuCreateArgs: [],
+      useDockerGpuPatch: false,
+      sandboxGpuLogMessage: null,
+      policyTier: null,
+    });
+    const preparePolicy = vi.fn(() => ({ policyPath: "/tmp/policy.yaml", appliedPresets: [] }));
+    const appendResources = vi.fn();
+    const cleanupProviders = vi.fn();
+    const upsertProviders = vi.fn(() => []);
+
+    expect(() =>
+      materializeSandboxCreatePlan({
+        intent,
+        buildCtx: "/tmp/nemoclaw-build-1",
+        messagingTokenDefs: [{ ...originalTokenDefs[0], token: "new-secret" }],
+        prepareInitialSandboxCreatePolicy: preparePolicy,
+        appendResourceFlags: appendResources,
+        runProviderPreDeleteCleanup: cleanupProviders,
+        upsertMessagingProviders: upsertProviders,
+        getHermesToolGatewayProviderName: vi.fn(),
+      }),
+    ).toThrow("credential availability changed");
+    expect(preparePolicy).not.toHaveBeenCalled();
+    expect(appendResources).not.toHaveBeenCalled();
+    expect(cleanupProviders).not.toHaveBeenCalled();
+    expect(upsertProviders).not.toHaveBeenCalled();
+  });
+});
+
 describe("prepareSandboxCreatePlan", () => {
   it("builds create args, policy, providers, and active channels in onboard order", () => {
     const events: string[] = [];
@@ -62,9 +297,21 @@ describe("prepareSandboxCreatePlan", () => {
       enabledChannels: ["telegram", "whatsapp"],
       disabledChannelNames: new Set(),
       messagingTokenDefs: [
-        { envKey: "TELEGRAM_BOT_TOKEN", token: "telegram-token" },
-        { envKey: "SLACK_APP_TOKEN", token: "slack-app-token" },
-        { envKey: "SLACK_BOT_TOKEN", token: "slack-bot-token" },
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram-token",
+        },
+        {
+          name: "sandbox-slack-app-bridge",
+          envKey: "SLACK_APP_TOKEN",
+          token: "slack-app-token",
+        },
+        {
+          name: "sandbox-slack-bridge",
+          envKey: "SLACK_BOT_TOKEN",
+          token: "slack-bot-token",
+        },
       ],
       reusableMessagingChannels: ["discord"],
       reusableMessagingProviders: ["sandbox-existing-discord"],
@@ -200,7 +447,13 @@ describe("prepareSandboxCreatePlan", () => {
       channels,
       enabledChannels: ["slack", "whatsapp"],
       disabledChannelNames: new Set(["whatsapp"]),
-      messagingTokenDefs: [{ envKey: "SLACK_APP_TOKEN", token: "slack-app-token" }],
+      messagingTokenDefs: [
+        {
+          name: "sandbox-slack-app-bridge",
+          envKey: "SLACK_APP_TOKEN",
+          token: "slack-app-token",
+        },
+      ],
       reusableMessagingChannels: [],
       reusableMessagingProviders: [],
       hermesToolGateways: [],
@@ -283,7 +536,13 @@ describe("prepareSandboxCreatePlan", () => {
       channels,
       enabledChannels: ["telegram"],
       disabledChannelNames: new Set(),
-      messagingTokenDefs: [{ envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" }],
+      messagingTokenDefs: [
+        {
+          name: "sandbox-telegram-bridge",
+          envKey: "TELEGRAM_BOT_TOKEN",
+          token: "telegram",
+        },
+      ],
       reusableMessagingChannels: [],
       reusableMessagingProviders: [],
       extraProviders: ["sandbox-telegram-bridge", "tavily-search"],
