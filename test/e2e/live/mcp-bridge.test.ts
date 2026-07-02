@@ -408,7 +408,7 @@ async function assertConcurrentAddSerialized(
     mcpUrl: string;
     expectedAdapter: McpAdapter;
     artifactPrefix: string;
-    concurrentAddTimeoutMs: number;
+    mutationTimeoutMs: number;
   },
 ): Promise<void> {
   cleanup.add(`remove ${options.artifactPrefix} concurrent MCP bridge`, () =>
@@ -439,7 +439,7 @@ async function assertConcurrentAddSerialized(
         // reload (300s). Keep both concurrent clients alive through that
         // bounded recovery; the loser then acquires the lifecycle lock and
         // rejects the committed duplicate.
-        timeoutMs: options.concurrentAddTimeoutMs,
+        timeoutMs: options.mutationTimeoutMs,
       }),
     ),
   );
@@ -481,7 +481,8 @@ async function assertConcurrentAddSerialized(
     {
       artifactName: `${options.artifactPrefix}-mcp-concurrent-add-remove`,
       env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
+      // Adapter removal performs the same acknowledged config reload as add.
+      timeoutMs: options.mutationTimeoutMs,
     },
   );
   expectExitZero(remove, `${options.artifactPrefix} removes concurrent MCP bridge`);
@@ -937,7 +938,7 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
     mcpUrl,
     expectedAdapter: "mcporter",
     artifactPrefix: "openclaw",
-    concurrentAddTimeoutMs: 3 * 60_000,
+    mutationTimeoutMs: 3 * 60_000,
   });
 
   const providerName = await addBridgeAndReadStatus(host, {
@@ -1257,7 +1258,7 @@ liveAgentMatrixTest(
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
-      concurrentAddTimeoutMs: 12 * 60_000,
+      mutationTimeoutMs: 12 * 60_000,
     });
 
     const initialDiscoveryOffset = fakeMcp.requests.length;
@@ -1403,7 +1404,7 @@ liveAgentMatrixTest(
       mcpUrl,
       expectedAdapter: "deepagents-config",
       artifactPrefix: "deepagents",
-      concurrentAddTimeoutMs: 3 * 60_000,
+      mutationTimeoutMs: 3 * 60_000,
     });
 
     const providerName = await addBridgeAndReadStatus(host, {
