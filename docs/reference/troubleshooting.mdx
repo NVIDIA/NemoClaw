@@ -1380,6 +1380,16 @@ Sandboxes created with OpenShell versions older than 0.0.24 can become unreachab
 Running `$$nemoclaw onboard` automatically upgrades OpenShell to 0.0.24 or later during the preflight check.
 After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
 
+### DNS-backed HTTPS endpoint is not supported
+
+NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
+This can appear during a direct blueprint run, Hermes Provider custom-endpoint setup, `$$nemoclaw inference set`, or a host-side `config set` write.
+
+Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
+If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address.
+Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly.
+For the full endpoint rules, refer to [Inference Options](../inference/inference-options#custom-endpoint-url-validation).
+
 ### Agent cannot reach external hosts through a proxy
 
 NemoClaw uses a default proxy address of `10.200.0.1:3128` (the OpenShell-injected gateway).
