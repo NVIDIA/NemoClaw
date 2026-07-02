@@ -2,20 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // CLI coverage for the #4710 post-recovery settle-confirm: a wedged gateway
-// serves the first probe after relaunch and then drops its HTTP listener, so
+// passes the controller's initial recovery proof and then drops its listener, so
 // `connect --probe-only` must fail and surface the wedge signature instead of
 // declaring a recovery that is already dying. Split from
 // connect-recovery.test.ts, which is at the default size budget.
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
+const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
+  "decode_sandbox_exec_cmd() {",
+  `  ${JSON.stringify(process.execPath)} -e "const s=process.argv[1]||'';const m=s.match(/printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d \\| sh/);process.stdout.write(m?Buffer.from(m[1],'base64').toString('utf8'):s);" "$1"`,
+  "}",
+];
+
 describe("CLI dispatch", () => {
-  it("fails probe-only when a wedged gateway serves once and then drops its listener (#4710)", () => {
+  it("fails probe-only when the authenticated settle probe detects a listener wedge (#4710)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-wedge-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
@@ -28,6 +34,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
@@ -43,6 +50,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
         '    *"OPENCLAW="*)',
         '      echo recovered > "$state_file"',
@@ -53,9 +61,9 @@ describe("CLI dispatch", () => {
         "    *'curl -so'*)",
         "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '      if [ "$(cat "$state_file")" != recovered ]; then echo STOPPED; exit 0; fi',
-        // The wedge shape: the relaunched gateway answers the first
-        // post-recovery probe, then drops its listener — every later probe
-        // refuses.
+        // Any outer-namespace post-recovery health check would be invalid in
+        // the OpenShell topology. Keep a counter so the assertion below proves
+        // the authenticated controller probe was used instead.
         '      count=$(cat "$ready_count_file" 2>/dev/null || echo 0)',
         "      count=$((count + 1))",
         '      echo "$count" > "$ready_count_file"',
@@ -74,6 +82,38 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        `state_file=${JSON.stringify(stateFile)}`,
+        'printf \'docker %s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
+        'if [ "$1" = "ps" ] && [ "$2" = "--format" ]; then',
+        "  echo openshell-alpha",
+        "  exit 0",
+        "fi",
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
+        '  nonce="${!#}"',
+        '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
+        '  [ "${#nonce}" -eq 64 ] || exit 64',
+        '  echo recovered > "$state_file"',
+        "  echo 'GATEWAY_PID=123'",
+        "  exit 0",
+        "fi",
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control probe "* ]]; then',
+        '  nonce="${!#}"',
+        '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
+        '  [ "${#nonce}" -eq 64 ] || exit 64',
+        "  echo 'GATEWAY_HEALTH_TIMEOUT' >&2",
+        "  exit 1",
+        "fi",
+        "exit 65",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
 
     const r = runWithEnv("alpha connect --probe-only", {
       HOME: home,
@@ -89,7 +129,18 @@ describe("CLI dispatch", () => {
     );
     expect(r.out).toContain("#4710 wedge signature");
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");
-    // First probe succeeded, settle confirm observed the dropped listener.
-    expect(fs.readFileSync(readyCountFile, "utf8").trim()).toBe("2");
+    const calls = fs.readFileSync(markerFile, "utf8");
+    expect(calls).toMatch(
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
+    );
+    expect(calls).toMatch(
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control probe [0-9a-f]{64}$/m,
+    );
+    expect(calls).toContain("--env LD_PRELOAD=");
+    expect(calls).toContain("--env PYTHONPATH=");
+    expect(calls).toContain("--env PYTHONUSERBASE=");
+    expect(calls).toContain("--env PYTHONNOUSERSITE=1");
+    expect(calls).not.toContain("OPENCLAW=");
+    expect(fs.existsSync(readyCountFile)).toBe(false);
   });
 });

@@ -159,26 +159,21 @@ reviews:
     - path: "nemoclaw-blueprint/policies/**"
       instructions: *security-boundary
 
-    - path: "test/{e2e,e2e-scenario}/**"
+    - path: "test/e2e/**"
       instructions: &e2e-migration |
-        Review against the active migration guide in the matching E2E tree. Vitest
-        is the one E2E execution path, and fixtures are support code rather than
-        another runner.
+        Review against the E2E guide in `test/e2e/`. Vitest is the one E2E
+        execution path, and fixtures are support code rather than another runner.
 
         - Preserve real shell, process, installer, platform, and full-journey
           boundaries by invoking them from Vitest when they are the contract.
-        - A bounded dual-run confidence window is allowed when the Vitest path is
-          authoritative and dispatchable, the legacy lane is frozen, and a linked
-          GitHub retirement issue or PR names the exact deletions and evidence-based
-          exit criteria. Do not describe the overall migration as complete yet.
-        - Once those exit criteria are met, require the retirement PR to delete the
-          legacy scripts, workflow references, and obsolete helpers together.
+        - Flag any new top-level `test/e2e/test-*.sh` entry point, parallel E2E
+          workflow, or wrapper that recreates a second execution lane.
         - Keep migration status and ownership in GitHub issues and PRs. Do not add a
           repository-local inventory, checklist, or parallel status model.
         - Flag new runners, compilers, fixture frameworks, or generalized registries
           when a focused Vitest test and local helper would express the behavior.
 
-    - path: ".github/workflows/{e2e,nightly-e2e,e2e-vitest-scenarios}.yaml"
+    - path: ".github/workflows/e2e.yaml"
       instructions: *e2e-migration
 
     - path: "**/*.test.{ts,js,mts,mjs,cts,cjs}"

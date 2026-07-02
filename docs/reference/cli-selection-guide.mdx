@@ -183,7 +183,8 @@ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
 ### Check Health or Logs
 
 Use `$$nemoclaw <name> status` and `$$nemoclaw <name> logs` first.
-They combine NemoClaw registry data, OpenShell state, OpenClaw process health, inference health, policy details, and messaging-channel warnings.
+They combine NemoClaw registry data, OpenShell state, OpenClaw process health, inference health, policy details, and messaging-channel warnings for that sandbox.
+Use `$$nemoclaw status` only for the global all-sandbox and host-service overview.
 
 Use `openshell sandbox list`, `openshell sandbox get`, `openshell logs <name> -n 20`, or `openshell doctor check` when debugging lower-level OpenShell behavior.
 When using `openshell logs` directly, `-n <lines>` controls the line count; use `--tail` only when you want live OpenShell log streaming.

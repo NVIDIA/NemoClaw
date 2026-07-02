@@ -7,15 +7,24 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const TAVILY_PROFILE_PATH = path.join(
+  REPO_ROOT,
+  "nemoclaw-blueprint",
+  "provider-profiles",
+  "tavily.yaml",
+);
 const COMMAND_PATHS = {
   common: path.join(REPO_ROOT, "dist", "lib", "credentials", "command-support.js"),
   credentials: path.join(REPO_ROOT, "dist", "commands", "credentials.js"),
+  add: path.join(REPO_ROOT, "dist", "commands", "credentials", "add.js"),
   list: path.join(REPO_ROOT, "dist", "commands", "credentials", "list.js"),
   reset: path.join(REPO_ROOT, "dist", "commands", "credentials", "reset.js"),
+  action: path.join(REPO_ROOT, "dist", "lib", "actions", "credentials-add.js"),
 };
 const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
 type CredentialsCommandClasses = {
   CredentialsCommand: typeof import("../../../src/commands/credentials.js").default;
+  CredentialsAddCommand: typeof import("../../../src/commands/credentials/add.js").default;
   CredentialsListCommand: typeof import("../../../src/commands/credentials/list.js").default;
   CredentialsResetCommand: typeof import("../../../src/commands/credentials/reset.js").default;
 };
@@ -36,6 +45,8 @@ type RuntimeBridgeRunOptions = {
 type RuntimeBridge = {
   recoverNamedGatewayRuntime: () => Promise<RuntimeRecovery>;
   runOpenshell: (args: string[], opts?: RuntimeBridgeRunOptions) => SpawnLikeResult;
+  recordExtraProvider: (name: string) => boolean;
+  forgetExtraProvider: (name: string) => boolean;
 };
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
@@ -45,6 +56,7 @@ function loadCommands(): CredentialsCommandClasses {
   }
   return {
     CredentialsCommand: require(COMMAND_PATHS.credentials).default,
+    CredentialsAddCommand: require(COMMAND_PATHS.add).default,
     CredentialsListCommand: require(COMMAND_PATHS.list).default,
     CredentialsResetCommand: require(COMMAND_PATHS.reset).default,
   } as CredentialsCommandClasses;
@@ -58,6 +70,8 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
       calls.push({ args, opts });
       return { status: 0, stdout: "", stderr: "" };
     },
+    recordExtraProvider: () => true,
+    forgetExtraProvider: () => true,
     ...bridge,
   };
   const globalActions = require(GLOBAL_ACTIONS_PATH) as {
@@ -135,7 +149,8 @@ describe("credentials oclif commands", () => {
     const output = await captureOutput(() => CredentialsCommand.run([]));
 
     expect(output.stdout).toContain("Usage: nemoclaw credentials <subcommand>");
-    expect(output.stdout).toContain("list                  List provider credentials");
+    expect(output.stdout).toMatch(/list\s+List provider credentials/);
+    expect(output.stdout).toMatch(/add <PROVIDER> --type <TYPE>\s+Register a provider credential/);
     expect(output.stdout).toContain("reset <PROVIDER> [--yes]");
   });
 
@@ -262,5 +277,492 @@ describe("credentials oclif commands", () => {
     expect(output.stderr).toContain("Could not remove provider 'NVIDIA_INFERENCE_API_KEY'.");
     expect(output.stderr).toContain("looks like a credential env variable name");
     expect(output.stderr).toContain("provider not found");
+  });
+
+  it("credentials add rejects inline KEY=VALUE credentials and never echoes the value", async () => {
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(
+        () =>
+          CredentialsAddCommand.run([
+            "tavily-search",
+            "--type",
+            "tavily",
+            "--credential",
+            "TAVILY_API_KEY=tvly-secret-12345",
+          ]),
+        1,
+      ),
+    );
+
+    expect(output.stderr).toContain("--credential expects an env variable name, not 'KEY=VALUE'");
+    expect(output.stderr).not.toContain("tvly-secret-12345");
+    expect(output.stdout).not.toContain("tvly-secret-12345");
+  });
+
+  it("credentials add forwards env-key-only --credential to OpenShell provider create", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const extraProviderCalls: string[] = [];
+    const calls = installRuntimeBridge({
+      runOpenshell: (args, opts) => {
+        calls.push({ args, opts });
+        return { status: 0, stdout: "" };
+      },
+      recordExtraProvider: (name) => {
+        extraProviderCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        CredentialsAddCommand.run([
+          "tavily-search",
+          "--type",
+          "tavily",
+          "--credential",
+          "TAVILY_API_KEY",
+        ]),
+      );
+
+      expect(calls).toEqual([
+        {
+          args: ["provider", "profile", "import", "--file", TAVILY_PROFILE_PATH],
+          opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+        },
+        {
+          args: [
+            "provider",
+            "create",
+            "--name",
+            "tavily-search",
+            "--type",
+            "tavily",
+            "--credential",
+            "TAVILY_API_KEY",
+          ],
+          opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+        },
+      ]);
+      expect(extraProviderCalls).toEqual(["tavily-search"]);
+      expect(output.stdout).toContain("Registered provider 'tavily-search'");
+      expect(output.stdout).toContain("rebuild");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add does not record an extra provider when the gateway rejects the call", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const extraProviderCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : { status: 1, stderr: "gateway unavailable" },
+      recordExtraProvider: (name) => {
+        extraProviderCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(extraProviderCalls).toEqual([]);
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add redacts credential-shaped stderr on failure", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const leakedTavilyValue = `tvly-${"leaked-secret"}-9999`;
+    installRuntimeBridge({
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : {
+              status: 1,
+              stderr: `auth failed: TAVILY_API_KEY=${leakedTavilyValue} rejected`,
+            },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("Could not register provider 'tavily-search'");
+      expect(output.stderr).not.toContain(leakedTavilyValue);
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add reports an already-exists hint pointing at credentials reset", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge({
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : { status: 1, stderr: "provider 'tavily-search' already exists" },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("is already registered");
+      expect(output.stderr).toContain("credentials reset tavily-search --yes");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add stops before provider create when bundled profile import fails", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const leakedTavilyValue = `tvly-${"leaked"}-9999`;
+    const calls: OpenshellCall[] = [];
+    installRuntimeBridge({
+      runOpenshell: (args, opts) => {
+        calls.push({ args, opts });
+        return { status: 2, stderr: `schema rejected TAVILY_API_KEY=${leakedTavilyValue}` };
+      },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toEqual([
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        TAVILY_PROFILE_PATH,
+      ]);
+      expect(output.stderr).toContain("Could not import bundled provider profile 'tavily'");
+      expect(output.stderr).not.toContain(leakedTavilyValue);
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add rejects per-sandbox messaging bridge provider names", async () => {
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(
+        () =>
+          CredentialsAddCommand.run([
+            "alpha-telegram-bridge",
+            "--type",
+            "telegram",
+            "--credential",
+            "TELEGRAM_BOT_TOKEN",
+          ]),
+        1,
+      ),
+    );
+
+    expect(output.stderr).toContain("per-sandbox messaging bridge");
+    expect(output.stderr).toContain("channels add");
+  });
+
+  it("credentials add fails when the requested env variable is not exported", async () => {
+    delete process.env.UNSET_PROVIDER_KEY;
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(
+        () =>
+          CredentialsAddCommand.run([
+            "demo-provider",
+            "--type",
+            "generic",
+            "--credential",
+            "UNSET_PROVIDER_KEY",
+          ]),
+        1,
+      ),
+    );
+
+    expect(output.stderr).toContain("UNSET_PROVIDER_KEY");
+    expect(output.stderr).toContain("is not set in the current shell");
+  });
+
+  it("credentials add rejects --config keys that look credential-shaped", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "api_key=tvly-leaked-12345",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("looks credential-shaped");
+      expect(output.stderr).not.toContain("tvly-leaked-12345");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add rejects --config entries missing the KEY=VALUE form", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "region-without-equals",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--config must be in KEY=VALUE form");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add rejects provider names outside the OpenShell grammar", async () => {
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(
+        () =>
+          CredentialsAddCommand.run([
+            "bad name/with*chars",
+            "--type",
+            "tavily",
+            "--credential",
+            "TAVILY_API_KEY",
+          ]),
+        1,
+      ),
+    );
+
+    expect(output.stderr).toContain("Provider name must be");
+  });
+
+  it("credentials add rejects --credential env names longer than 256 chars", async () => {
+    const longName = `A${"X".repeat(260)}`;
+    process.env[longName] = "v";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              longName,
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--credential must be a valid env variable name");
+    } finally {
+      delete process.env[longName];
+    }
+  });
+
+  it("credentials add rejects --config entries longer than the per-entry limit", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const longEntry = `region=${"x".repeat(5000)}`;
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              longEntry,
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--config entry exceeds");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials reset redacts credential-shaped stderr from OpenShell failures", async () => {
+    installRuntimeBridge({
+      runOpenshell: () => ({
+        status: 1,
+        stderr: "delete failed: leaked nvapi-abcdefghijklmnopqrstuv from gateway",
+      }),
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsResetCommand.run(["tavily-search", "--yes"]), 1),
+    );
+
+    expect(output.stderr).not.toContain("nvapi-abcdefghijklmnopqrstuv");
+    expect(output.stderr).toContain("delete failed");
+  });
+
+  it("credentials add rejects --config values that look secret-shaped", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "region=tvly-secret-shaped-12345",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("looks secret-shaped");
+      expect(output.stderr).not.toContain("tvly-secret-shaped-12345");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials reset cleans local state when the gateway provider is already absent", async () => {
+    const forgetCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: () => ({ status: 1, stderr: "provider not found" }),
+      forgetExtraProvider: (name) => {
+        forgetCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      CredentialsResetCommand.run(["tavily-search", "--yes"]),
+    );
+
+    expect(forgetCalls).toEqual(["tavily-search"]);
+    expect(output.stdout).toContain("already absent");
+    expect(output.stdout).toContain("Local state was cleaned up");
+  });
+
+  it("credentials reset cleans uppercase provider names when the gateway provider is already absent", async () => {
+    const forgetCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: () => ({ status: 1, stderr: "provider not found" }),
+      forgetExtraProvider: (name) => {
+        forgetCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      CredentialsResetCommand.run(["TAVILY_SEARCH", "--yes"]),
+    );
+
+    expect(forgetCalls).toEqual(["TAVILY_SEARCH"]);
+    expect(output.stdout).toContain("already absent");
+    expect(output.stdout).toContain("Local state was cleaned up");
   });
 });
