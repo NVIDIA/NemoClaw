@@ -58,9 +58,10 @@ PROXY_HOST="$(read_managed_proxy_value "$MANAGED_PROXY_HOST_FILE" "host")"
 PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
-# This mirrors the host-side TypeScript validator, including underscore support
-# for existing internal/container aliases. Cross-boundary parity tests prevent
-# the standalone direct-exec boundary from drifting from start.sh or onboard.
+# This mirrors the host-side TypeScript validator. Underscores remain accepted
+# for controlled internal/container aliases such as proxy_name; public DNS
+# hostnames should remain RFC 1123 names without underscores. Cross-boundary
+# parity tests prevent this standalone boundary from drifting from start.sh.
 is_valid_proxy_host() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]

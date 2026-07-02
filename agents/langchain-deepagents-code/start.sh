@@ -69,8 +69,9 @@ PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 
 # Keep this validator behavior identical to the host-side TypeScript boundary.
-# Underscores remain accepted for existing internal/container proxy aliases;
-# schemes, credentials, separators, and whitespace are still rejected.
+# Underscores remain accepted for controlled internal/container aliases such as
+# proxy_name; public DNS hostnames should remain RFC 1123 names without them.
+# Schemes, credentials, separators, and whitespace are still rejected.
 is_valid_proxy_host() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9._-]+$ ]]

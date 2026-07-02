@@ -25,6 +25,10 @@ export function buildSandboxInferenceRouteProbeArgs(
   const command =
     agent?.name === "langchain-deepagents-code"
       ? [
+          // Clear the inherited sandbox-create proxy seed before bash starts.
+          // The login shell then sources /sandbox/.profile, whose single source
+          // of truth is /tmp/nemoclaw-proxy-env.sh; this TypeScript boundary
+          // intentionally does not reconstruct NO_PROXY independently.
           "env",
           ...PROXY_ENV_KEYS.flatMap((key) => ["-u", key]),
           "HOME=/sandbox",

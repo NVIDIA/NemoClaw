@@ -205,6 +205,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(launcherResult.status, launcherResult.stderr).toBe(0);
     expect(startResult.status, startResult.stderr).toBe(0);
     const envFileText = fs.readFileSync(envFile, "utf8");
+    const launcherNoProxy = launcherResult.stdout.match(/^LAUNCHER_NO_PROXY=(.*)$/m)?.[1];
+    const startNoProxy = startResult.stdout.match(/^START_PROXY=[^|]*\|([^|]*)\|/m)?.[1];
     expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(startResult.stdout).toContain(
       "START_PROXY=http://trusted-proxy.internal:3129|localhost,127.0.0.1,::1,trusted-proxy.internal|__unset__|__unset__",
@@ -213,6 +215,10 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );
+    // Both standalone shell boundaries construct the same exclusion list. The
+    // TypeScript connect probe deliberately sources this persisted value.
+    expect(launcherNoProxy).toBe("localhost,127.0.0.1,::1,trusted-proxy.internal");
+    expect(startNoProxy).toBe(launcherNoProxy);
     const combined = `${launcherResult.stdout}\n${launcherResult.stderr}\n${startResult.stdout}\n${startResult.stderr}\n${envFileText}`;
     expect(combined).toContain("http://trusted-proxy.internal:3129");
     expect(combined).toContain("localhost,127.0.0.1,::1,trusted-proxy.internal");

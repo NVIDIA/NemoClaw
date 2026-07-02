@@ -52,6 +52,12 @@ sandbox_direct_dcode() {
   openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
 }
 
+sandbox_dcode_wrapper_contract() {
+  # Keep the remote argv on one line: OpenShell rejects newline-bearing args.
+  # shellcheck disable=SC2016
+  sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
+}
+
 nemoclaw_connect_probe() {
   "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only 2>&1
 }
@@ -64,7 +70,7 @@ sandbox_login_proxy_contract() {
   # inference.local here would bypass that proxy and force a direct DNS lookup.
   local contract_command
   # shellcheck disable=SC2016
-  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "$(id -u):444" ] || contract_fail proxy-env-file-trust; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; proxy_host="${proxy_url#http://}"; proxy_host="${proxy_host%:*}"; expected_no_proxy="localhost,127.0.0.1,::1,${proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
+  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; runtime_uid="$(id -u)" || contract_fail runtime-user; sandbox_uid="$(id -u sandbox)" || contract_fail runtime-user; [ "$runtime_uid" != 0 ] && [ "$runtime_uid" = "$sandbox_uid" ] || contract_fail runtime-user; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "${runtime_uid}:444" ] || contract_fail proxy-env-file-trust; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; proxy_host="${proxy_url#http://}"; proxy_host="${proxy_host%:*}"; expected_no_proxy="localhost,127.0.0.1,::1,${proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
   sandbox_login_exec "$contract_command"
 }
 
@@ -107,6 +113,10 @@ is_local_execution_failure() {
   grep -Eiq '(^|[[:space:]])(usage:|Traceback|SyntaxError|ImportError|ModuleNotFoundError|No module named|command not found|No such file or directory|Permission denied|invalid option)([[:space:]]|$)|DCODE_EXIT:12[67]'
 }
 
+is_dcode_wrapper_failure() {
+  grep -Eiq "(dcode|dcode-launcher\\.sh|dcode-wrapper\\.sh).*(command not found|No such file or directory|Permission denied)|No module named ['\\\"]?deepagents_code"
+}
+
 is_inference_connection_failure() {
   grep -Eiq 'APIConnectionError|APITimeoutError|ConnectError|ConnectTimeout|ReadTimeout|Could not resolve host|Name or service not known|Temporary failure in name resolution|getaddrinfo.*(ENOTFOUND|EAI_AGAIN|failed|error)|nodename nor servname provided|DNS (lookup|resolution) (failed|error)|connection (timed out|refused)|request timed out'
 }
@@ -127,6 +137,11 @@ classify_headless_output() {
 
   if [ "$dcode_exit" = "124" ]; then
     printf '%s\n' "timeout"
+    return 1
+  fi
+
+  if printf '%s' "$payload" | is_dcode_wrapper_failure; then
+    printf '%s\n' "wrapper-missing"
     return 1
   fi
 
@@ -155,7 +170,7 @@ classify_headless_output() {
     return 1
   fi
 
-  if printf '%s' "$payload" | grep -Eiq '(^|[^[:alnum:]_])PONG([^[:alnum:]_]|$)'; then
+  if printf '%s\n' "$payload" | tr -d '\r' | grep -Eiq '^[[:space:]]*PONG[[:space:]]*$'; then
     printf '%s\n' "pong"
     return 0
   fi
@@ -171,12 +186,19 @@ main() {
     exit 1
   fi
 
-  if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
+  if ! sandbox_exec "test -d /sandbox/.deepagents" >/dev/null; then
     info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
     exit 0
   fi
 
   info "Running Deep Agents Code headless inference checks in sandbox: $SANDBOX_NAME"
+
+  wrapper_contract_output="$(sandbox_dcode_wrapper_contract || true)"
+  if printf '%s\n' "$wrapper_contract_output" | grep -Fxq "NEMOCLAW_DCODE_WRAPPER_CHAIN_OK"; then
+    pass "managed dcode launcher, wrapper, and Python module are installed"
+  else
+    fail_test "managed dcode wrapper chain is missing or incomplete"
+  fi
 
   # 1. config.toml points at the managed inference route, not a real provider host.
   config_output="$(sandbox_exec "cat /sandbox/.deepagents/config.toml 2>/dev/null" || true)"
