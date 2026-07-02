@@ -139,7 +139,13 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   /**
    * Consecutive Error-phase polls required before the wait treats the phase as
-   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls}. Pass 1 to
+   * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls /
+   * ~60s at the 2s poll interval). Trade-off: a genuinely stuck Error is
+   * reported ~60s later than a fast-fail; the window is intentionally bounded
+   * (and far below the readiness timeout) so it never masks a terminal failure.
+   * Fractional values are truncated toward zero (Math.trunc), matching the
+   * override contract in docker-gpu-supervisor-reconnect.ts; the env-var path
+   * ({@link getSandboxReadyErrorDebouncePolls}) rounds via envInt. Pass 1 to
    * restore the original fast-fail-on-first-Error behavior (used by callers
    * that have already ruled out the transient supervisor-reconnect race).
    */
@@ -200,6 +206,22 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         consecutiveFailurePolls = 0;
       }
       if (i < readyAttempts - 1) sleep(2);
+    }
+    // If the sandbox is still in Error on the final poll, surface the terminal
+    // phase instead of a generic timeout. This happens when the configured
+    // debounce window is larger than the readiness timeout allows (e.g. a low
+    // NEMOCLAW_SANDBOX_READY_TIMEOUT with the default 30-poll debounce), so a
+    // genuinely stuck Error would otherwise be misreported as "did not become
+    // ready" and drop the phase (#6043 review).
+    if (consecutiveFailurePolls > 0 && lastFailurePhase) {
+      addTraceEvent("terminal_failure_phase", {
+        attempts: readyAttempts,
+        failure_phase: lastFailurePhase,
+        consecutive_polls: consecutiveFailurePolls,
+        debounce_polls: errorPhaseDebouncePolls,
+        note: "debounce_window_exceeded_timeout",
+      });
+      return { ready: false, reason: "terminal_failure_phase", failurePhase: lastFailurePhase };
     }
     addTraceEvent("not_ready", { attempts: readyAttempts, last_failure_phase: lastFailurePhase });
     return { ready: false, reason: "timeout", failurePhase: null };

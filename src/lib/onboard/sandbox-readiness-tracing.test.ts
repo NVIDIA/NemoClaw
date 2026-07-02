@@ -120,6 +120,28 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("reports the Error phase (not a generic timeout) when the debounce outlasts the timeout", () => {
+    // Small readiness timeout (1 poll) with the default debounce (30): a stuck
+    // Error can never reach the debounce threshold, but it must still surface
+    // the terminal phase rather than a phase-less timeout (#6043 review PRA-1).
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Error   3s ago`]);
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 2, // -> readyAttempts = 1, far below the default 30-poll debounce
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      sleep,
+    });
+
+    expect(ready).toEqual({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Error",
+    });
+  });
+
   it.each([
     "Failed",
     "CrashLoopBackOff",
@@ -279,5 +301,26 @@ describe("DGX Spark fresh-onboard readiness replay (#6043)", () => {
     });
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
+  });
+
+  // Follow-up: when DGX Spark (or an equivalent ARM64 GPU) CI runner becomes
+  // available, replace/augment this replay with a live fresh-onboard E2E on
+  // that hardware (tracked on #6043). A real worktree-CLI onboard on a healthy
+  // non-DGX host was validated for the happy path, but cannot force the
+  // transient Error branch this replay exercises.
+
+  // Removal signal for the debounce workaround (see the source-of-truth block
+  // in sandbox-readiness-tracing.ts). A maintainer enables this once OpenShell
+  // guarantees `sandbox list` no longer reports a transient Error while the
+  // gateway re-registers a just-created sandbox: if the raw upstream sequence
+  // contains no Error rows, the debounce in waitForCreatedSandboxReadyWithTrace
+  // can be deleted.
+  it.skip("upstream_openshell_sandbox_list_error_transient_fixed", () => {
+    // Replace `reporterSequence` with a captured `sandbox list` trace from a
+    // fixed OpenShell during a fresh GPU onboard, then assert no Error rows.
+    const hasTransientError = reporterSequence.some(
+      (row) => getSandboxFailurePhase(row, NAME) === "Error",
+    );
+    expect(hasTransientError).toBe(false);
   });
 });
