@@ -67,7 +67,8 @@ export const TOKEN_PREFIX_PATTERNS: RegExp[] = [
   // Tavily
   /tvly-[A-Za-z0-9_-]{10,}/g,
   // LangSmith (personal access tokens: lsv2_pt_<hash>; service keys: lsv2_sk_<hash>)
-  /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}/g,
+  // Match every underscore-delimited segment so redaction cannot expose a key tail.
+  /lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*/g,
 ];
 
 export const CONTEXT_PATTERNS: RegExp[] = [

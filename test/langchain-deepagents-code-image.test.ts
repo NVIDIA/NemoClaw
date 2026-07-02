@@ -273,7 +273,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const inheritedSecrets = {
       NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
       OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
-      LANGSMITH_API_KEY: `lsv2_${"C".repeat(30)}`,
+      LANGSMITH_API_KEY: `lsv2_pt_${"C".repeat(36)}_${"D".repeat(10)}`,
     };
 
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
@@ -309,6 +309,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect.arrayContaining([expect.stringContaining("inference.local")]),
     );
     const combined = `${output}\n${envFileText}`;
+    expect(containsTokenShapedSecret(inheritedSecrets.LANGSMITH_API_KEY)).toBe(true);
     expect(containsTokenShapedSecret(envFileText)).toBe(false);
     for (const secret of Object.values(inheritedSecrets)) {
       expect(envFileText).not.toContain(secret);
@@ -654,6 +655,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).toContain("sk-ant-");
     expect(headlessCheck).toContain("xapp");
     expect(headlessCheck).toContain("A(K|S)IA");
+    expect(headlessCheck).toContain("lsv2_(pt|sk)");
     expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
     expect(headlessCheck).toContain("sandbox_artifact_scan_command");
     expect(headlessCheck).toContain('cat /sandbox/.deepagents/config.toml 2>/dev/null" || true');
@@ -863,6 +865,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", value: "xapp-ghp_abcdefghijklmnopqr" },
+      {
+        name: "SLACK_BOT_TOKEN",
+        value: `xoxb-lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
     ];
 
     for (const { name, value } of cases) {
@@ -881,6 +887,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-nvapi-abcdefghijklmnop" },
       { name: "SLACK_APP_TOKEN", value: "xapp-pypi-abcdefghijklmnop" },
+      {
+        name: "SLACK_APP_TOKEN",
+        value: `xapp-lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
     ];
 
     for (const { name, value } of cases) {
@@ -1335,7 +1345,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
       "\\b[A-Za-z0-9]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}\\b::g",
       "tvly-[A-Za-z0-9_-]{10,}::g",
-      "lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}::g",
+      "lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*::g",
     ]);
   });
 
@@ -1371,6 +1381,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
       {
         name: "discord",
         sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      },
+      {
+        name: "langsmith_pt",
+        sample: `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
+      {
+        name: "langsmith_sk",
+        sample: `lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
       },
     ];
     for (const { name, sample } of cases) {

@@ -90,7 +90,7 @@ has_non_slack_secret_shape() {
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,} ]]; then
+  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
     return 0
   fi
   return 1
@@ -181,7 +181,7 @@ is_secret_shaped_value() {
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,} ]]; then
+  if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
     return 0
   fi
   return 1
