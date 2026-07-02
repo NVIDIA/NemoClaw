@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
+import { getDefaultPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
 import type { OnboardMachineRunnerOptions, OnboardStateHandlerResult } from "./runner";
 import {
   type OnboardMachineRunnerRuntime,
@@ -50,7 +50,7 @@ export class DuplicateOnboardSequencePhaseError extends Error {
 export function buildOnboardSequenceHandlers<Context>(
   phases: readonly OnboardSequencePhase<Context>[],
   setPendingContext: (context: Context) => void,
-  phaseProgress: PhaseProgressReporter = createPhaseProgressReporter(),
+  phaseProgress: PhaseProgressReporter = getDefaultPhaseProgressReporter(),
 ): OnboardStateHandlers<Context> {
   const handlers: OnboardStateHandlers<Context> = {};
   for (const rawPhase of phases) {

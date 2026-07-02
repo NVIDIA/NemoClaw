@@ -249,3 +249,20 @@ export function createPhaseProgressReporter(
 
   return { wrap };
 }
+
+// One reporter per process, shared by every onboarding seam (the initial/core/
+// final strict runs and the resume-compatibility path) so a run does not create
+// several independent reporters and every phase — including resume-repair — is
+// wrapped consistently. Env is read once at first use, which is fine for a
+// single onboard invocation.
+let sharedReporter: PhaseProgressReporter | null = null;
+
+export function getDefaultPhaseProgressReporter(): PhaseProgressReporter {
+  if (!sharedReporter) sharedReporter = createPhaseProgressReporter();
+  return sharedReporter;
+}
+
+/** Test hook: drop the memoized shared reporter so the next call rebuilds it. */
+export function resetDefaultPhaseProgressReporter(): void {
+  sharedReporter = null;
+}
