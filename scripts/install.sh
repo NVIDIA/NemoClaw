@@ -1722,18 +1722,14 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
-  local old_cli_runner="$1" old_openshell_version="$2"
+  local old_cli_runner="$1"
 
   if "$old_cli_runner" backup-all 2>&1; then
     return 0
   fi
 
-  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-    return 1
-  fi
-
   warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
-  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
+  warn "Retrying with the current ${_CLI_DISPLAY} CLI, which supports NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP."
   if ! prepare_current_cli_for_preupgrade_backup; then
     warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
     return 1
@@ -1907,7 +1903,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
+  if ! run_preupgrade_backup "$old_cli_runner"; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi

@@ -210,11 +210,28 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout + result.stderr).toContain(
-      "Fix the OpenShell gateway state, rerun 'nemoclaw backup-all', then rerun the installer.",
+      "If the failures are running sandboxes whose in-sandbox SSH endpoint is unreachable, rerun the installer with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 to continue and recover them after the upgrade; otherwise restore the affected sandbox or stop its container, then rerun 'nemoclaw backup-all'.",
     );
     expect(cliLog.split(/\r?\n/)).toContain("old:backup-all");
     expect(cliLog).not.toContain("--help");
-    expect(cliLog).not.toContain("prepare-current");
+    expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
+    expect(openshellLog).toBe("");
+  });
+
+  it("retries current-gateway backup with the current CLI when the old CLI fails", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+      },
+      { backupSucceeds: false, fallbackAvailable: true, openshellVersion: "0.0.37" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout + result.stderr).toContain("Retrying with the current NemoClaw CLI");
+    expect(result.stdout).toContain("RESTORE=1");
+    expect(cliLog.split(/\r?\n/)).toContain("old:backup-all");
+    expect(cliLog.split(/\r?\n/)).toContain("prepare-current");
+    expect(cliLog.split(/\r?\n/)).toContain("current:backup-all");
     expect(openshellLog).toBe("");
   });
 
