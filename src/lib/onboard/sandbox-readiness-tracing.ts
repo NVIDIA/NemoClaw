@@ -47,8 +47,9 @@ export const SANDBOX_READY_ERROR_DEBOUNCE_ENV = "NEMOCLAW_SANDBOX_READY_ERROR_DE
  * `sandbox list` replay in sandbox-readiness-tracing.test.ts) showing a
  * transient create-time Error that recovers to Ready.
  *
- * Tracking mechanism: removal is tracked on NemoClaw #6043 (which owns the
- * pending OpenShell `sandbox list` fix). The maintainer-enabled removal-signal
+ * Tracking mechanism: removal is tracked on NemoClaw #6043
+ * (https://github.com/NVIDIA/NemoClaw/issues/6043), which owns the pending
+ * OpenShell `sandbox list` fix. The maintainer-enabled removal-signal
  * test `upstream_openshell_sandbox_list_error_transient_fixed`
  * (sandbox-readiness-tracing.test.ts, currently `it.skip`) is the executable
  * checkpoint — point it at a captured `sandbox list` trace from a fixed
