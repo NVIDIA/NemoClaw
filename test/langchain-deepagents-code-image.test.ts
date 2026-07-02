@@ -10,6 +10,7 @@ import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
+import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -109,48 +110,6 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
     );
     return entry.path as string;
   });
-}
-
-function makeStartScriptFixture(tempDir: string): {
-  envFile: string;
-  scriptPath: string;
-} {
-  const envFile = path.join(tempDir, "proxy-env.sh");
-  const scriptPath = path.join(tempDir, "start.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const original = readAgentFile("start.sh");
-  expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  const fixture = original
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
-    .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
-    .replace(
-      'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
-  expect(fixture).toContain(`local target="${envFile}"`);
-  expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
-  expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-  fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.writeFileSync(scriptPath, fixture, "utf8");
-  fs.chmodSync(scriptPath, 0o755);
-  return { envFile, scriptPath };
 }
 
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
