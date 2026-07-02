@@ -36,9 +36,19 @@ vi.mock("execa", () => ({
   execa: (...args: unknown[]) => mockExeca(...args),
 }));
 
-vi.mock("./ssrf.js", () => ({
-  validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
-}));
+vi.mock("./ssrf.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ssrf.js")>();
+  return {
+    ...actual,
+    validateEndpointUrl: vi.fn(async (url: string) => ({
+      url,
+      pinnedUrl: url,
+      protocol: url.startsWith("http:") ? "http:" : "https:",
+      hostname: new URL(url).hostname,
+      dnsResolved: false,
+    })),
+  };
+});
 
 const { actionApply } = await import("./runner.js");
 
