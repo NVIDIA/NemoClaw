@@ -1316,8 +1316,8 @@ liveAgentMatrixTest(
       [HOST_SECRET, ROTATED_HOST_SECRET],
       "hermes-assert-secrets-absent-after-rotation",
     );
-    await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     const rebuildDiscoveryOffset = fakeMcp.requests.length;
+    await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
     await assertAuthenticatedMcpDiscovery(fakeMcp, {
       requestOffset: rebuildDiscoveryOffset,
       expectedSecret: ROTATED_HOST_SECRET,
