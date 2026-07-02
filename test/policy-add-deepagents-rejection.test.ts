@@ -12,10 +12,16 @@ const repoRoot = path.join(import.meta.dirname, "..");
 
 const MESSAGING_CHANNELS = ["telegram", "discord", "slack", "wechat", "whatsapp"] as const;
 
-function runScript(scriptBody: string): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  extraFiles: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-6185-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
+  for (const [name, content] of Object.entries(extraFiles)) {
+    fs.writeFileSync(path.join(tmpDir, name), content);
+  }
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf-8",
@@ -129,6 +135,76 @@ const ctx = module.exports;
     unexpectedError: { message: string; stack: string } | null;
   }>(result);
 }
+
+const MESSAGING_POLICY_KEYS = [
+  ["telegram_bot", "api.telegram.org"],
+  ["discord", "discord.com"],
+  ["slack", "api.slack.com"],
+  ["wechat_bridge", "api.weixin.qq.com"],
+  ["whatsapp", "graph.facebook.com"],
+  ["teams", "graph.microsoft.com"],
+] as const;
+
+function runPolicyAddFromFile(agentName: string, presetYamlContent: string) {
+  const script = `${buildPreamble(agentName)}
+const path = require("node:path");
+const ctx = module.exports;
+(async () => {
+  let caught = null;
+  try {
+    const filePath = path.join(process.env.HOME, "custom-preset.yaml");
+    await ctx.policyModule.addSandboxPolicy("test-sb", { fromFile: filePath, yes: true });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__INTERCEPTED_EXIT__")) {
+      caught = { message: String(err && err.message), stack: err && err.stack };
+    }
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    exitCode: ctx.getExitCode(),
+    logs: ctx.logs,
+    errors: ctx.errors,
+    policyCalls: ctx.policyCalls,
+    promptCalls: ctx.promptCalls,
+    unexpectedError: caught,
+  }) + "\\n");
+})();
+`;
+  const result = runScript(script, { "custom-preset.yaml": presetYamlContent });
+  assert.equal(result.status, 0, `script crashed: ${result.stderr}\n${result.stdout}`);
+  return parseResultPayload<{
+    exitCode: number;
+    logs: string[];
+    errors: string[];
+    policyCalls: { loadPreset: string[]; applyPreset: unknown[] };
+    promptCalls: string[];
+    unexpectedError: { message: string; stack: string } | null;
+  }>(result);
+}
+
+describe("addSandboxPolicy custom preset (--from-file) channel/agent gate (behaviour)", () => {
+  it.each(
+    MESSAGING_POLICY_KEYS,
+  )("DeepAgents policy-add --from-file with a '%s' policy key exits nonzero before any disclosure, prompt, or apply", (policyKey, host) => {
+    const presetYaml = `preset:\n  name: my-custom-${policyKey.replace(/_/g, "-")}\nnetwork_policies:\n  ${policyKey}:\n    host: ${host}\n`;
+    const payload = runPolicyAddFromFile("langchain-deepagents-code", presetYaml);
+
+    assert.equal(
+      payload.unexpectedError,
+      null,
+      `unexpected exception: ${payload.unexpectedError?.stack}`,
+    );
+    assert.equal(payload.exitCode, 1, "expected addSandboxPolicy to exit with code 1");
+    assert.ok(
+      payload.errors.some((msg) => /does not support agent 'langchain-deepagents-code'/.test(msg)),
+      `missing unsupported channel-agent error in stderr: ${JSON.stringify(payload.errors)}`,
+    );
+    assert.ok(
+      payload.logs.every((msg) => !/Endpoints that would be opened/.test(msg)),
+      `endpoint disclosure must not print before the gate: ${JSON.stringify(payload.logs)}`,
+    );
+    assert.deepEqual(payload.promptCalls, [], "prompt must not run before the gate");
+  });
+});
 
 describe("addSandboxPolicy channel/agent gate (behaviour)", () => {
   it.each(

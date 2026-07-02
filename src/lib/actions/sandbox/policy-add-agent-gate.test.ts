@@ -18,9 +18,25 @@ const contextRefresh = D("actions/sandbox/policy-context-refresh.js");
 const { addSandboxPolicy } = D("actions/sandbox/policy-channel.js") as {
   addSandboxPolicy: (
     name: string,
-    options?: { preset?: string; dryRun?: boolean; yes?: boolean; force?: boolean },
+    options?: {
+      preset?: string;
+      dryRun?: boolean;
+      yes?: boolean;
+      force?: boolean;
+      fromFile?: string;
+      fromDir?: string;
+    },
   ) => Promise<void>;
 };
+
+const MESSAGING_POLICY_KEYS = [
+  ["telegram_bot", "api.telegram.org"],
+  ["discord", "discord.com"],
+  ["slack", "api.slack.com"],
+  ["wechat_bridge", "api.weixin.qq.com"],
+  ["whatsapp", "graph.facebook.com"],
+  ["teams", "graph.microsoft.com"],
+] as const;
 
 const MESSAGING_CHANNELS = ["telegram", "discord", "slack", "wechat", "whatsapp"] as const;
 
@@ -155,5 +171,48 @@ describe("addSandboxPolicy channel-agent gate", () => {
     for (const channel of MESSAGING_CHANNELS) {
       expect(offered).not.toContain(channel);
     }
+  });
+});
+
+describe("addSandboxPolicy custom preset (--from-file) agent gate", () => {
+  it.each(
+    MESSAGING_POLICY_KEYS,
+  )("rejects a custom preset with a '%s' policy key on a terminal-runtime agent before any disclosure, prompt, or apply", async (policyKey, host) => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "langchain-deepagents-code" });
+    vi.spyOn(policy, "loadPresetFromFile").mockReturnValue({
+      presetName: "my-custom",
+      content: `preset:\n  name: my-custom\nnetwork_policies:\n  ${policyKey}:\n    host: ${host}\n`,
+    });
+    const applyPresetContentMock = vi.spyOn(policy, "applyPresetContent");
+
+    const code = await captureExit(() =>
+      addSandboxPolicy("da-test", { fromFile: "/tmp/my-custom.yaml", yes: true }),
+    );
+
+    expect(code).toBe(1);
+    expect(errorText()).toMatch(/does not support agent 'langchain-deepagents-code'/);
+    expect(logText()).not.toContain("Endpoints that would be opened");
+    expect(promptMock).not.toHaveBeenCalled();
+    expect(applyPresetContentMock).not.toHaveBeenCalled();
+  });
+
+  it("still applies a non-messaging custom preset on a terminal-runtime agent", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({ name: "langchain-deepagents-code" });
+    vi.spyOn(policy, "loadPresetFromFile").mockReturnValue({
+      presetName: "my-pypi-mirror",
+      content:
+        "preset:\n  name: my-pypi-mirror\nnetwork_policies:\n  pypi_mirror:\n    host: pypi.example.com\n",
+    });
+    const applyPresetContentMock = vi.spyOn(policy, "applyPresetContent").mockReturnValue(true);
+
+    await addSandboxPolicy("da-test", { fromFile: "/tmp/my-pypi-mirror.yaml", yes: true });
+
+    expect(errorText()).not.toMatch(/does not support agent/);
+    expect(applyPresetContentMock).toHaveBeenCalledWith(
+      "da-test",
+      "my-pypi-mirror",
+      expect.stringContaining("pypi_mirror"),
+      { custom: { sourcePath: expect.stringContaining("my-pypi-mirror.yaml") } },
+    );
   });
 });

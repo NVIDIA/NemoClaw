@@ -18,6 +18,7 @@ import {
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
+  listMessagingPolicyPresetMetadata,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -241,6 +242,21 @@ async function applyExternalPreset(
   }
   if (!loaded) return false;
 
+  const agent = resolveAgentForSandbox(sandboxName);
+  const unsupportedChannel = unsupportedMessagingChannelForPresetContent(loaded.content, agent);
+  if (unsupportedChannel) {
+    console.error(
+      `  Preset '${loaded.presetName}' targets the '${unsupportedChannel.id}' channel, which does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
+    );
+    console.error(
+      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(unsupportedChannel.supportedAgents)}.`,
+    );
+    console.error(
+      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+    );
+    return false;
+  }
+
   const endpoints = policies.getPresetEndpoints(loaded.content);
   if (endpoints.length > 0) {
     console.log(`  [${loaded.presetName}] Endpoints that would be opened: ${endpoints.join(", ")}`);
@@ -352,6 +368,29 @@ function availableManifestChannelsForAgent(agent: AgentDefinition): ChannelManif
 
 function channelSupportedByAgent(manifest: ChannelManifest, agent: AgentDefinition): boolean {
   return isMessagingChannelSupportedByAgent(manifest, agent);
+}
+
+// Custom presets (--from-file / --from-dir) have no channel identity of
+// their own, so the built-in name-based gate above cannot see them. Detect
+// a messaging channel by content instead: match the preset's network_policies
+// keys against every channel's known policy keys, then apply the same
+// agent-support gate as the built-in path.
+function unsupportedMessagingChannelForPresetContent(
+  content: string,
+  agent: AgentDefinition,
+): ChannelManifest | null {
+  const policyKeys = new Set(policies.parsePresetPolicyKeys(content));
+  if (policyKeys.size === 0) return null;
+  for (const preset of listMessagingPolicyPresetMetadata()) {
+    const channelPolicyKeys = [
+      ...preset.policyKeys,
+      ...Object.values(preset.agentPolicyKeys).flatMap((keys) => keys ?? []),
+    ];
+    if (!channelPolicyKeys.some((key) => policyKeys.has(key))) continue;
+    const manifest = resolveChannelManifest(preset.channelId);
+    if (manifest && !channelSupportedByAgent(manifest, agent)) return manifest;
+  }
+  return null;
 }
 
 export function listSandboxChannels(sandboxName: string) {
