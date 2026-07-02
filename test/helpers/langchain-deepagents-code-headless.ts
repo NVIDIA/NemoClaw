@@ -27,6 +27,7 @@ export const PROXY_URL_ENV_NAMES = [
   "https_proxy",
 ] as const;
 export const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
 
 export function makeStartScriptFixture(
   tempDir: string,
@@ -121,12 +122,14 @@ export function runStartScriptProxyProbe(
   env: NodeJS.ProcessEnv,
 ): { envFileText: string; output: string } {
   const probe = [
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
-    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy",
+    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
+    "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
+    "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
   ].join("\n");
@@ -168,8 +171,12 @@ export function runHeadlessCheckSnippet(
   env: NodeJS.ProcessEnv = {},
   sourcePath = headlessCheckPath,
 ): string {
-  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", sourcePath], {
+  const source = fs
+    .readFileSync(sourcePath, "utf8")
+    .replace("${BASH_SOURCE[0]}", "${BASH_SOURCE[0]-}");
+  return execFileSync("/bin/bash", ["-s"], {
     encoding: "utf8",
     env: { ...process.env, ...env },
+    input: `${source}\n${snippet}\n`,
   });
 }
