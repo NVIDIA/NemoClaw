@@ -326,10 +326,6 @@ function inferenceRouteCheck(sandboxName: string, route: InferenceRoute): Doctor
   };
 }
 
-function isLocalInferenceProvider(provider: string): boolean {
-  return provider === "ollama-local" || provider === "vllm-local";
-}
-
 function skippedInferenceGatewayProbe(): ProviderHealthStatus {
   return {
     ok: false,
@@ -343,11 +339,15 @@ function skippedInferenceGatewayProbe(): ProviderHealthStatus {
 
 async function collectInferenceSubprobes(
   sandboxName: string,
-  provider: string,
   sandboxReachable: boolean,
   existing: ProviderHealthStatus[],
 ): Promise<ProviderHealthStatus[]> {
-  if (!isLocalInferenceProvider(provider)) return existing;
+  // #6192: probe the `inference.local` gateway chain for every provider, not
+  // just local ones. `inference.local` is the route the agent actually uses
+  // (openclaw gateway -> auth proxy -> backend) regardless of whether the
+  // backend is a local runtime or a cloud/managed endpoint. Gating this to
+  // local providers let cloud sandboxes report "healthy" off the upstream
+  // probe while the real in-sandbox route was broken, contradicting `connect`.
   if (!sandboxReachable) return [...existing, skippedInferenceGatewayProbe()];
   const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
   if (!gateway) return existing;
@@ -385,7 +385,6 @@ async function collectInferenceChecks(
 
   const subprobes = await collectInferenceSubprobes(
     sandboxName,
-    route.provider,
     sandboxReachable,
     health.subprobes ?? [],
   );

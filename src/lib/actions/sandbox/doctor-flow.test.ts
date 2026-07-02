@@ -11,7 +11,7 @@ type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "./doctor.js";
 
-function createDoctorHarness(): {
+function createDoctorHarness(overrides: { provider?: string; gatewayChainOk?: boolean } = {}): {
   buildToolScopeChecksSpy: MockInstance;
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
@@ -29,6 +29,8 @@ function createDoctorHarness(): {
   resolveOpenShellSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
 } {
+  const provider = overrides.provider ?? "ollama-local";
+  const gatewayChainOk = overrides.gatewayChainOk ?? false;
   delete require.cache[requireDist.resolve(doctorModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -56,7 +58,7 @@ function createDoctorHarness(): {
     name: "alpha",
     agent: "openclaw",
     model: "registry-model",
-    provider: "ollama-local",
+    provider,
     openshellDriver: "docker",
     gatewayName: "nemoclaw-19080",
     gatewayPort: 19080,
@@ -95,7 +97,7 @@ function createDoctorHarness(): {
         return { status: 0, output: "alpha Ready" };
       }
       if (argv[0] === "inference" && argv[1] === "get") {
-        return { status: 0, output: "Provider: ollama-local\nModel: live-model\n" };
+        return { status: 0, output: `Provider: ${provider}\nModel: live-model\n` };
       }
       return { status: 0, output: "" };
     });
@@ -118,9 +120,12 @@ function createDoctorHarness(): {
   const probeSandboxInferenceGatewayHealthSpy = vi
     .spyOn(processRecovery, "probeSandboxInferenceGatewayHealth")
     .mockResolvedValue({
-      ok: false,
-      endpoint: "http://127.0.0.1:19000/v1/chat/completions",
-      detail: "gateway refused connection",
+      ok: gatewayChainOk,
+      endpoint: "https://inference.local/v1/models",
+      httpStatus: gatewayChainOk ? 200 : 0,
+      detail: gatewayChainOk
+        ? "Inference gateway responded HTTP 200 on https://inference.local/v1/models (full chain reachable)."
+        : "Inference gateway unreachable on https://inference.local/v1/models from inside the sandbox.",
     });
   const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
@@ -248,6 +253,59 @@ describe("runSandboxDoctor flow", () => {
       );
       expect(exitSpy).not.toHaveBeenCalled();
       expect(harness.logSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    "probes the inference.local route for cloud providers, not just local ones (#6192)",
+    testTimeoutOptions(30_000),
+    async () => {
+      // Regression: doctor appended the `inference.local` gateway-chain subprobe
+      // only for ollama-local/vllm-local. A cloud sandbox whose upstream endpoint
+      // was reachable but whose in-sandbox inference.local route was broken
+      // reported "healthy" (exit 0), contradicting `connect`.
+      const harness = createDoctorHarness({ provider: "nvidia-prod", gatewayChainOk: false });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      // Upstream probe stays green (negative control — we did not break it)...
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ group: "Inference", label: "Provider health", status: "ok" }),
+        ]),
+      );
+      // ...but the real inference.local route is now probed and reported broken,
+      // flipping the overall verdict to fail.
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health (gateway)",
+            status: "fail",
+          }),
+        ]),
+      );
+      expect(report?.status).toBe("fail");
+    },
+  );
+
+  it(
+    "keeps cloud-provider doctor green when inference.local is reachable (#6192)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const harness = createDoctorHarness({ provider: "nvidia-prod", gatewayChainOk: true });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health (gateway)",
+            status: "ok",
+          }),
+        ]),
+      );
     },
   );
 
