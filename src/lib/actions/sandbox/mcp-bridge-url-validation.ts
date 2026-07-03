@@ -114,14 +114,14 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
     throw new McpBridgeError("MCP server URL port must be between 1 and 65535.", 2);
   }
   if (
-    /%[0-9a-f]{2}/i.test(rawUrl) ||
-    /%[0-9a-f]{2}/i.test(parsed.pathname) ||
+    rawUrl.includes("%") ||
+    parsed.pathname.includes("%") ||
     rawUrl.includes("\\") ||
     /\/{2,}/.test(parsed.pathname) ||
     /[\*\[\]\{\};]/.test(parsed.pathname)
   ) {
     throw new McpBridgeError(
-      "MCP server URL paths must be literal and canonical; percent escapes, backslashes, semicolons, and glob metacharacters are not supported.",
+      "MCP server URL paths must be literal and canonical; percent characters, backslashes, semicolons, and glob metacharacters are not supported.",
       2,
     );
   }

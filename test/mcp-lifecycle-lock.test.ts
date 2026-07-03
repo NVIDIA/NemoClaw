@@ -327,7 +327,7 @@ const releasePath = process.argv[3];
 
     await expect(
       lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
-    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("foreign-host-token");
   });
 
@@ -358,7 +358,7 @@ const releasePath = process.argv[3];
 
     await expect(
       lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
-    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("untrusted-owner-token");
   });
 
@@ -432,7 +432,7 @@ const releasePath = process.argv[3];
         () => undefined,
         options({ timeoutMs: 30, corruptLockGraceMs: 100 }),
       ),
-    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(fs.readFileSync(lockPath, "utf8")).toContain('"sandboxName":"alpha"');
 
     const future = new Date(Date.now() + 24 * 60 * 60_000);
@@ -522,7 +522,7 @@ const releasePath = process.argv[3];
     try {
       await expect(
         lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 50 })),
-      ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     } finally {
       renameSpy.mockRestore();
     }
@@ -571,7 +571,7 @@ const releasePath = process.argv[3];
     try {
       await expect(
         lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 50 })),
-      ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+      ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     } finally {
       renameSpy.mockRestore();
     }
@@ -625,7 +625,7 @@ const releasePath = process.argv[3];
 
     await expect(
       lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
-    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    ).rejects.toThrow("Timed out waiting for the sandbox mutation lock");
     expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("active-token");
   });
 

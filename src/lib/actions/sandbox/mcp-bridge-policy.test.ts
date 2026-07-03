@@ -130,7 +130,7 @@ describe("MCP OpenShell policy", () => {
     const [, , generatedContent, options] = applyPresetContent.mock.calls[0];
     expect(generatedContent).toContain("allowed_ips:");
     expect(options).toEqual({
-      allowedExistingNetworkPolicyKeys: [],
+      expectedExistingNetworkPolicyContent: null,
       nonFatal: true,
       skipRegistryUpdate: true,
     });

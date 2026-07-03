@@ -4,6 +4,7 @@
 export {
   type McpLifecycleLockOptions,
   withMcpLifecycleLock,
+  withMcpLifecycleLock as withSandboxMutationLock,
 } from "./mcp-lifecycle-lock-acquisition";
 export {
   classifyMcpLifecycleLock,

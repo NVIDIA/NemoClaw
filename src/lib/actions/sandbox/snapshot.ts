@@ -24,6 +24,7 @@ import * as shields from "../../shields";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import { isSandboxReady } from "../../state/gateway";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -641,6 +642,16 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  return withSandboxMutationLock(targetSandbox, () =>
+    runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox),
+  );
+}
+
+async function runSnapshotRestoreUnlocked(
+  sandboxName: string,
+  request: Extract<SnapshotRequest, { kind: "restore" }>,
+  targetSandbox: string,
+): Promise<void> {
   const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",

@@ -132,6 +132,17 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
+  const isRevisionObservation = proof.includes("printf '%s\\\\n' absent");
+  const observedCredential = proof.includes("openshell:resolve:env:GITHUB_TOKEN")
+    ? "GITHUB_TOKEN"
+    : proof.includes("openshell:resolve:env:SLACK_TOKEN")
+      ? "SLACK_TOKEN"
+      : null;
+  const credentialAttached =
+    observedCredential !== null &&
+    [...attachedProviders].some(
+      (providerName) => providers.get(providerName)?.credential === observedCredential,
+    );
   return {
     status:
     proof.includes("allow_all_known_mcp_methods") ||
@@ -140,7 +151,7 @@ processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
     proof.includes("openshell:resolve:env:SLACK_TOKEN")
       ? 0
       : 1,
-    stdout: "",
+    stdout: isRevisionObservation ? (credentialAttached ? "canonical" : "absent") : "",
     stderr: "",
   };
 };
@@ -209,6 +220,55 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       expect(payload.sandbox.mcp).toBeUndefined();
       expect(payload.sandbox.customPolicies).toBeUndefined();
     });
+  }
+
+  for (const method of [
+    "prepareMcpBridgesForRebuild",
+    "prepareMcpBridgesForAbsentSandboxRebuild",
+  ] as const) {
+    for (const marker of ["destroyPreparedAt", "destroyPendingAt"] as const) {
+      it(`rejects ${method} while ${marker} is durable`, () => {
+        const result = runDestroyLifecycleScenario(`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: {
+    bridges: { github: bridgeEntries.github },
+    ${marker}: "2026-07-02T22:49:42.000Z",
+  },
+});
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  let message = "";
+  try {
+    await bridge.${method}("alpha");
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({
+    message,
+    sandbox: registry.getSandbox("alpha"),
+    calls,
+    adapterCalls,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const payload = JSON.parse(result.stdout) as {
+          message: string;
+          sandbox: { mcp: Record<string, unknown> };
+          calls: string[];
+          adapterCalls: string[];
+        };
+        expect(payload.message).toContain("incomplete MCP destroy transaction");
+        expect(payload.sandbox.mcp).toHaveProperty(marker);
+        expect(payload.calls).toEqual([]);
+        expect(payload.adapterCalls).toEqual([]);
+      });
+    }
   }
 
   it("prepares an absent-sandbox rebuild without adapter exec or provider detach", () => {

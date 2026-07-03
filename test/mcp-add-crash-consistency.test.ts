@@ -19,7 +19,7 @@ type CrashBoundary =
   | "attach-race"
   | "race"
   | "late-race"
-  | "snapshot-forbidden"
+  | "preupdate-observation-forbidden"
   | "";
 
 function runAddProcess(home: string, crashAfter: CrashBoundary, includeSecret = true) {
@@ -33,10 +33,12 @@ const crashAfter = ${JSON.stringify(crashAfter)};
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const mark = (name) => fs.writeFileSync(marker(name), "yes\n", { mode: 0o600 });
 const marked = (name) => fs.existsSync(marker(name));
+const providerPresentAtStart = marked("provider");
 const providerId = "11111111-2222-4333-8444-555555555555";
 const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
 let observedProviderName = null;
+let attachmentAttemptedThisProcess = false;
 
 const registry = require("./src/lib/state/registry.js");
 const globalActions = require("./src/lib/actions/global.js");
@@ -104,6 +106,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach") {
     observedProviderName = args[4];
+    attachmentAttemptedThisProcess = true;
     mark("attached");
     return { status: 0, stdout: "attached", stderr: "" };
   }
@@ -137,11 +140,16 @@ policies.removePreset = () => {
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
   const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
   const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
-  const isSnapshot = proof.includes('exec 3>"$snapshot"');
-  isSnapshot && mark("snapshot");
+  const isObservation = proof.includes("printf '%s\\n' absent");
+  const isPreupdateObservation =
+    isObservation &&
+    providerPresentAtStart &&
+    !marked("updated") &&
+    !attachmentAttemptedThisProcess;
+  isPreupdateObservation && mark("observation");
   return {
-    status: crashAfter === "snapshot-forbidden" && isSnapshot ? 1 : 0,
-    stdout: "",
+    status: crashAfter === "preupdate-observation-forbidden" && isPreupdateObservation ? 1 : 0,
+    stdout: isObservation ? (marked("updated") ? "v2" : marked("provider") ? "v1" : "absent") : "",
     stderr: "",
   };
 };
@@ -379,7 +387,7 @@ describe("MCP add crash consistency", () => {
       expect(result.stderr).toContain("Host environment variable 'FAKE_MCP_SECRET' is required");
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       const registry = JSON.parse(
         fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
       ) as { sandboxes: { "crash-test": { mcp?: unknown } } };
@@ -389,13 +397,13 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  it("creates a fresh provider without an update-only revision snapshot", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-no-snapshot-"));
+  it("creates a fresh provider without an update-only prior revision observation", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-no-prior-observation-"));
     try {
-      const result = runAddProcess(home, "snapshot-forbidden");
+      const result = runAddProcess(home, "preupdate-observation-forbidden");
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(true);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
@@ -405,16 +413,16 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  it("resumes an exact provider without a host credential or revision snapshot", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-reuse-no-snapshot-"));
+  it("resumes an exact provider without a host credential or prior revision observation", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-reuse-no-observation-"));
     try {
       const interrupted = runAddProcess(home, "adapter");
       expect(interrupted.status, `${interrupted.stdout}\n${interrupted.stderr}`).toBe(86);
-      expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
 
       const resumed = runAddProcess(home, "", false);
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
-      expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(readBridge(home).addState).toBeUndefined();
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -435,7 +443,7 @@ describe("MCP add crash consistency", () => {
       expect(resumed.stderr).toContain("is missing. Export host environment variable");
       expect(fs.readFileSync(policyApplyLog, "utf8").trim().split("\n")).toHaveLength(1);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
-      expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
 
@@ -591,7 +599,7 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  for (const [boundary, expectedProviderId, expectedProviderMarker, expectedSnapshotMarker] of [
+  for (const [boundary, expectedProviderId, expectedProviderMarker, expectedObservationMarker] of [
     ["policy", undefined, false, false],
     ["adapter", "11111111-2222-4333-8444-555555555555", true, true],
   ] as const) {
@@ -620,7 +628,9 @@ describe("MCP add crash consistency", () => {
         expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
         expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
         expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
-        expect(fs.existsSync(path.join(home, "snapshot.marker"))).toBe(expectedSnapshotMarker);
+        expect(fs.existsSync(path.join(home, "observation.marker"))).toBe(
+          expectedObservationMarker,
+        );
       } finally {
         fs.rmSync(home, { recursive: true, force: true });
       }

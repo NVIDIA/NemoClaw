@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import crypto from "node:crypto";
-
 import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -14,13 +12,9 @@ import {
 } from "./mcp-bridge-validation";
 import { executeSandboxExecCommand } from "./process-recovery";
 
-const MCP_CREDENTIAL_SNAPSHOT_PATH_RE = /^\/tmp\/nemoclaw-mcp-provider-sync-[0-9a-f-]{36}$/;
+const MCP_CREDENTIAL_REVISION_OBSERVATION_RE = /^(?:absent|canonical|v[0-9]{1,20})$/;
 
-function validateMcpCredentialSnapshotPath(snapshotPath: string): void {
-  if (!MCP_CREDENTIAL_SNAPSHOT_PATH_RE.test(snapshotPath)) {
-    throw new McpBridgeError("Invalid MCP credential revision snapshot path.");
-  }
-}
+export type McpCredentialRevisionObservation = "absent" | "canonical" | `v${number}`;
 
 /**
  * Provider synchronization proofs must observe a fresh OpenShell-mediated exec
@@ -63,104 +57,100 @@ function mcpCredentialPlaceholderValidatorShell(envName: string): string[] {
     '  revision="${versioned%"$suffix"}"',
     '  [ "$revision" != "$versioned" ] || return 1',
     '  [ "$versioned" = "$revision$suffix" ] || return 1',
-    '  case "$revision" in ""|*[!0-9]*) return 1 ;; *) return 0 ;; esac',
+    '  case "$revision" in ""|*[!0-9]*) return 1 ;; esac',
+    '  [ "${#revision}" -le 20 ] || return 1',
     "}",
   ];
 }
 
 /**
- * Capture only a validated OpenShell placeholder in a descriptor opened with
- * noclobber. Raw environment values are never written or printed. The file is
- * used solely to compare the supervisor's provider revision across fresh execs.
+ * Emit only a bounded classification of the OpenShell placeholder observed by
+ * a fresh exec. Raw environment values are never written or printed. Keeping
+ * the observation on stdout lets the trusted host compare revisions without
+ * relying on sandbox-writable state.
  */
-export function buildMcpCredentialRevisionSnapshotCommand(
-  envName: string,
-  snapshotPath: string,
-): string {
-  validateMcpCredentialSnapshotPath(snapshotPath);
+export function buildMcpCredentialRevisionObservationCommand(envName: string): string {
   return [
     ...mcpCredentialPlaceholderValidatorShell(envName),
-    `snapshot=${shellQuote(snapshotPath)}`,
-    "umask 077",
-    "set -C",
-    'exec 3>"$snapshot" || exit 1',
-    "set +C",
-    `value="\${${envName}-}"`,
-    'if [ -n "$value" ]; then',
-    '  valid_placeholder "$value" || exit 1',
-    '  printf "%s" "$value" >&3',
+    `if [ -z "\${${envName}+x}" ]; then`,
+    "  printf '%s\\n' absent",
+    "  exit 0",
     "fi",
-  ].join("\n");
-}
-
-export function buildMcpCredentialReadinessCommand(
-  envName: string,
-  previousRevisionSnapshotPath?: string,
-): string {
-  if (previousRevisionSnapshotPath) {
-    validateMcpCredentialSnapshotPath(previousRevisionSnapshotPath);
-  }
-  return [
-    ...mcpCredentialPlaceholderValidatorShell(envName),
-    `value="\${${envName}-}"`,
+    `value="\${${envName}}"`,
     'valid_placeholder "$value" || exit 1',
-    ...(previousRevisionSnapshotPath
-      ? [
-          `snapshot=${shellQuote(previousRevisionSnapshotPath)}`,
-          '[ -f "$snapshot" ] && [ ! -L "$snapshot" ] || exit 1',
-          'prior="$(cat -- "$snapshot")" || exit 1',
-          '[ -z "$prior" ] || valid_placeholder "$prior" || exit 1',
-          '[ -z "$prior" ] || [ "$value" != "$prior" ] || exit 1',
-        ]
-      : []),
+    'if [ "$value" = "$canonical" ]; then',
+    "  printf '%s\\n' canonical",
+    "  exit 0",
+    "fi",
+    'versioned="${value#"$prefix"}"',
+    'revision="${versioned%"$suffix"}"',
+    "printf 'v%s\\n' \"$revision\"",
   ].join("\n");
 }
 
-export function snapshotMcpCredentialRevision(sandboxName: string, entry: McpBridgeEntry): string {
-  assertAuthenticatedBridgeEntry(entry);
-  const snapshotPath = `/tmp/nemoclaw-mcp-provider-sync-${crypto.randomUUID()}`;
+function parseMcpCredentialRevisionObservation(
+  output: string,
+): McpCredentialRevisionObservation | null {
+  const observation = output.trim();
+  return MCP_CREDENTIAL_REVISION_OBSERVATION_RE.test(observation)
+    ? (observation as McpCredentialRevisionObservation)
+    : null;
+}
+
+function tryObserveMcpCredentialRevision(
+  sandboxName: string,
+  envName: string,
+): McpCredentialRevisionObservation | null {
   const result = executeMcpCredentialProofCommand(
     sandboxName,
-    buildMcpCredentialRevisionSnapshotCommand(entry.env[0], snapshotPath),
+    buildMcpCredentialRevisionObservationCommand(envName),
   );
-  if (!result || result.status !== 0) {
-    throw new McpBridgeError(
-      `Could not capture the current OpenShell credential revision for sandbox '${sandboxName}'.`,
-    );
-  }
-  return snapshotPath;
+  if (!result || result.status !== 0) return null;
+  return parseMcpCredentialRevisionObservation(result.stdout);
 }
 
-export function removeMcpCredentialRevisionSnapshot(
+export function observeMcpCredentialRevision(
   sandboxName: string,
-  snapshotPath: string | undefined,
-): void {
-  if (!snapshotPath) return;
-  validateMcpCredentialSnapshotPath(snapshotPath);
-  executeSandboxExecCommand(sandboxName, `rm -f -- ${shellQuote(snapshotPath)}`);
+  entry: McpBridgeEntry,
+): McpCredentialRevisionObservation {
+  assertAuthenticatedBridgeEntry(entry);
+  const observation = tryObserveMcpCredentialRevision(sandboxName, entry.env[0]);
+  if (observation === null) {
+    throw new McpBridgeError(
+      `Could not observe the current OpenShell credential revision for sandbox '${sandboxName}'.`,
+    );
+  }
+  return observation;
 }
 
 export function waitForAttachedMcpCredential(
   sandboxName: string,
   entry: McpBridgeEntry,
-  options: { previousRevisionSnapshotPath?: string } = {},
+  options: { previousRevision?: McpCredentialRevisionObservation } = {},
 ): void {
   assertAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
+  if (
+    options.previousRevision !== undefined &&
+    !MCP_CREDENTIAL_REVISION_OBSERVATION_RE.test(options.previousRevision)
+  ) {
+    throw new McpBridgeError("Invalid prior MCP credential revision observation.");
+  }
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,
   );
   const ready = waitUntil(
     () => {
-      // Each exec is a fresh OpenShell process. A status-zero comparison proves
-      // the supervisor has consumed the provider_env_revision without ever
-      // printing either a placeholder or a credential value.
-      const probe = executeMcpCredentialProofCommand(
-        sandboxName,
-        buildMcpCredentialReadinessCommand(envName, options.previousRevisionSnapshotPath),
+      // Each exec is a fresh OpenShell process. Only the bounded placeholder
+      // classification crosses back to the host, where the comparison cannot
+      // be influenced by a same-UID sandbox process rewriting a snapshot file.
+      const observation = tryObserveMcpCredentialRevision(sandboxName, envName);
+      return (
+        observation !== null &&
+        observation !== "absent" &&
+        (options.previousRevision === undefined || observation !== options.previousRevision)
       );
-      return probe?.status === 0;
     },
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,

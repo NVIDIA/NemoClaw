@@ -63,6 +63,24 @@ describe("MCP URL target validation", () => {
     }
   });
 
+  it("rejects malformed percent paths before DNS or sandbox side effects", async () => {
+    const lookup = vi.spyOn(dns, "lookup");
+    try {
+      for (const path of ["%", "%GG", "%2"]) {
+        await expect(
+          addMcpBridge("missing-sandbox", {
+            server: "malformed",
+            url: `https://mcp.example.test/${path}`,
+            env: [{ name: "SAFE_MCP_TOKEN", value: "host-only-secret" }],
+          }),
+        ).rejects.toThrow(/percent characters/);
+      }
+      expect(lookup).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("rejects local, private, and OpenShell host-alias URL targets", () => {
     expect(() => normalizeMcpServerUrl("https://localhost:31337/mcp")).toThrow(
       /private, local, or special-use IP/,

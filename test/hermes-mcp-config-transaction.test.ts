@@ -86,6 +86,9 @@ if len(errors) != len(bad):
       { url: "https://mcp.example.com//mcp", accepted: false },
       { url: "https://mcp.example.com/mcp\\child", accepted: false },
       { url: "https://mcp.example.com/%2f", accepted: false },
+      { url: "https://mcp.example.com/%", accepted: false },
+      { url: "https://mcp.example.com/%GG", accepted: false },
+      { url: "https://mcp.example.com/%2", accepted: false },
       { url: "https://mcp.example.com/mcp?token=x", accepted: false },
       { url: "https://mcp.example.com/mcp#fragment", accepted: false },
       { url: "wss://mcp.example.com/mcp", accepted: false },
@@ -360,6 +363,75 @@ print(json.dumps({"exit_code": module.main()}))
     } finally {
       fs.rmSync(temp, { recursive: true, force: true });
     }
+  });
+
+  it("preserves falsey non-map YAML roots across mutation and reload transactions", () => {
+    const result = runPython(`
+import importlib.util, json, sys, types
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+payload = {
+    "server": "safe",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+    "replace_existing": False,
+}
+snapshot = types.SimpleNamespace(mode=0o600)
+module.os.geteuid = lambda: 1000
+module._assert_mutable_snapshot = lambda received: None
+module._managed_hash_paths = lambda privileged: []
+module._refresh_and_verify_hashes = lambda guard, privileged: None
+module.reload_gateway = lambda: True
+
+def run(method_name, original):
+    state = {"text": original, "writes": []}
+    def read_text(path):
+        return state["text"], snapshot
+    def write_existing(path, text, received_snapshot, mode):
+        state["writes"].append(text)
+        state["text"] = text
+    module._load_guard = lambda: types.SimpleNamespace(
+        _read_text=read_text,
+        _write_existing=write_existing,
+    )
+    error = ""
+    try:
+        getattr(module, method_name)("add", payload)
+    except (TypeError, ValueError) as caught:
+        error = str(caught)
+    return {
+        "error": error,
+        "preserved": state["text"] == original,
+        "writes": len(state["writes"]),
+    }
+
+falsey_roots = ["[]\\n", "false\\n", "0\\n", '""\\n']
+results = {
+    method: [run(method, original) for original in falsey_roots]
+    for method in ("apply_transaction", "apply_transaction_and_reload")
+}
+null_result = run("apply_transaction", "null\\n")
+print(json.dumps({"results": results, "null_result": null_result}))
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      results: Record<string, Array<{ error: string; preserved: boolean; writes: number }>>;
+      null_result: { error: string; preserved: boolean; writes: number };
+    };
+    for (const outcomes of Object.values(payload.results)) {
+      expect(outcomes).toHaveLength(4);
+      for (const outcome of outcomes) {
+        expect(outcome.error).toContain("expected a YAML object");
+        expect(outcome.preserved).toBe(true);
+        expect(outcome.writes).toBe(0);
+      }
+    }
+    expect(payload.null_result.error).toBe("");
+    expect(payload.null_result.preserved).toBe(false);
+    expect(payload.null_result.writes).toBe(1);
   });
 
   it("emits bounded one-line errors with payload and runtime secrets redacted", () => {

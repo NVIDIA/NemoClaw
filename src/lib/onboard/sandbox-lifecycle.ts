@@ -47,6 +47,11 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
 
   function reconcileSandboxForCreate(sandboxName: string) {
     const existingEntry = registry.getSandbox(sandboxName);
+    if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
+      throw new Error(
+        `Sandbox '${sandboxName}' has an incomplete MCP destroy transaction. Re-run the sandbox destroy command to finish cleanup before recreating it.`,
+      );
+    }
     const preservedMcpState =
       existingEntry?.mcp && Object.keys(existingEntry.mcp.bridges).length > 0
         ? existingEntry.mcp

@@ -31,7 +31,7 @@ import {
   stripProviderComposedPolicies,
   withoutProviderComposedPolicies,
 } from "./merge";
-import { findUnownedExistingPolicyKey } from "./preset-ownership";
+import { findUnexpectedExistingPolicyKey } from "./preset-ownership";
 import {
   isPolicyDocument,
   isPolicyObject,
@@ -778,7 +778,7 @@ function applyPresetContent(
   presetContent: string,
   options: {
     custom?: { sourcePath?: string };
-    allowedExistingNetworkPolicyKeys?: readonly string[];
+    expectedExistingNetworkPolicyContent?: string | null;
     nonFatal?: boolean;
     skipRegistryUpdate?: boolean;
   } = {},
@@ -827,13 +827,13 @@ function applyPresetContent(
     );
     return false;
   }
-  if (options.allowedExistingNetworkPolicyKeys) {
+  if (Object.prototype.hasOwnProperty.call(options, "expectedExistingNetworkPolicyContent")) {
     let collision: string | null = null;
     try {
-      collision = findUnownedExistingPolicyKey(
+      collision = findUnexpectedExistingPolicyKey(
         currentPolicy,
         presetEntries,
-        options.allowedExistingNetworkPolicyKeys,
+        options.expectedExistingNetworkPolicyContent ?? null,
       );
     } catch {
       console.error(
@@ -843,7 +843,7 @@ function applyPresetContent(
     }
     if (collision) {
       console.error(
-        `  Network policy key '${collision}' already exists and is not owned by '${presetName}'; refusing to replace it.`,
+        `  Network policy key '${collision}' does not match the exact state owned by '${presetName}'; refusing to replace it.`,
       );
       return false;
     }

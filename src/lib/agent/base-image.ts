@@ -70,11 +70,15 @@ function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: stri
   } catch {
     return false;
   }
-  const tracked = dockerfile.match(
-    /^ARG NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST=(sha256:[0-9a-f]{64})$/m,
-  )?.[1];
+  const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
+    (match) => match[1],
+  );
   return (
-    tracked !== undefined && imageRef === `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${tracked}`
+    declarations.length === 1 &&
+    /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(
+      declarations[0] ?? "",
+    ) &&
+    imageRef === declarations[0]
   );
 }
 

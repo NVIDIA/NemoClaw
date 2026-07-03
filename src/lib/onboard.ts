@@ -343,6 +343,8 @@ const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
 const registry: typeof import("./state/registry") = require("./state/registry");
+const sandboxMutationLock: typeof import("./state/mcp-lifecycle-lock") =
+  require("./state/mcp-lifecycle-lock");
 const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
@@ -4485,25 +4487,27 @@ async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ) {
-  return setupPoliciesWithSelectionImpl(
-    {
-      policies,
-      tiers,
-      localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
-      step,
-      note,
-      isNonInteractive,
-      waitForSandboxReady,
-      syncPresetSelection,
-      selectPolicyTier,
-      setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
-      getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
-      selectTierPresetsAndAccess,
-      parsePolicyPresetEnv,
-      env: process.env,
-    },
-    sandboxName,
-    options,
+  return sandboxMutationLock.withSandboxMutationLock(sandboxName, () =>
+    setupPoliciesWithSelectionImpl(
+      {
+        policies,
+        tiers,
+        localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
+        step,
+        note,
+        isNonInteractive,
+        waitForSandboxReady,
+        syncPresetSelection,
+        selectPolicyTier,
+        setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
+        getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
+        selectTierPresetsAndAccess,
+        parsePolicyPresetEnv,
+        env: process.env,
+      },
+      sandboxName,
+      options,
+    ),
   );
 }
 

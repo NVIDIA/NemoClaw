@@ -14,6 +14,7 @@ import { isRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
 import { resolveAgentConfig } from "../sandbox/config";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import * as shields from "./index";
@@ -226,14 +227,16 @@ function rebuildLeaseOwnerIsCurrent(args: TimerArgs): boolean {
   );
 }
 
-function runRestoreTimer(args: TimerArgs): void {
+async function runRestoreTimer(args: TimerArgs): Promise<void> {
   const now = new Date().toISOString();
   let exitCode = 0;
   let retryScheduled = false;
   const scheduleRetry = (): boolean => {
     if (!markerMatchesCurrentTimer(args)) return false;
     retryScheduled = true;
-    setTimeout(() => runRestoreTimer(args), AUTO_RESTORE_RETRY_MS);
+    setTimeout(() => {
+      void runRestoreTimer(args);
+    }, AUTO_RESTORE_RETRY_MS);
     return true;
   };
 
@@ -264,120 +267,88 @@ function runRestoreTimer(args: TimerArgs): void {
       args.snapshotPath,
     );
 
-    withShieldsTransitionLock(
-      args.sandboxName,
-      "shields auto-restore",
-      () => {
-        // A manual hardening command may have completed while this timer waited
-        // for the host mutation lock. The marker is the timer's authority, so
-        // re-check it only after serialization is established.
-        if (!markerMatchesCurrentTimer(args)) return;
+    await withSandboxMutationLock(args.sandboxName, () =>
+      withShieldsTransitionLock(
+        args.sandboxName,
+        "shields auto-restore",
+        () => {
+          // A manual hardening command may have completed while this timer waited
+          // for the host mutation lock. The marker is the timer's authority, so
+          // re-check it only after serialization is established.
+          if (!markerMatchesCurrentTimer(args)) return;
 
-        if (!fs.existsSync(args.snapshotPath)) {
-          appendAudit({
-            action: "shields_up_failed",
-            sandbox: args.sandboxName,
-            timestamp: now,
-            restored_by: "auto_timer",
-            error: "Policy snapshot file missing",
-          });
-          exitCode = 1;
-          scheduleRetry();
-          return;
-        }
-
-        // Restore policy (slow — openshell policy set --wait blocks)
-        const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
-          ignoreError: true,
-        });
-        const status = typeof result.status === "number" ? result.status : 1;
-
-        if (status !== 0) {
-          appendAudit({
-            action: "shields_up_failed",
-            sandbox: args.sandboxName,
-            timestamp: now,
-            restored_by: "auto_timer",
-            error: `Policy restore exited with status ${String(status)}`,
-          });
-          exitCode = 1;
-          scheduleRetry();
-          return;
-        }
-
-        // Destroy and force-restore can revoke this marker while a slow
-        // policy restore is already in flight. Stop before the next sandbox
-        // mutation if this timer generation no longer owns recovery.
-        if (!markerMatchesCurrentTimer(args)) return;
-
-        // Re-lock config file using the shared lockAgentConfig from shields.ts.
-        // lockAgentConfig runs each operation independently and verifies the
-        // on-disk state — it throws if verification fails.
-        //
-        // NC-2227-03: Resolve the full agent config target (including sensitive
-        // files like .config-hash, .env) so the timer re-locks the same scope
-        // that interactive `shields up` uses. Fall back to the bare configPath/
-        // configDir from argv if resolution fails (e.g., registry unavailable).
-        let lockVerified = true;
-        let lockedChattr: boolean | null = null;
-        let lockedHashes: { [path: string]: string } | null = null;
-        if (args.configPath) {
-          let lockTarget: {
-            agentName?: string;
-            configPath: string;
-            configDir: string;
-            sensitiveFiles?: string[];
-          } | null = null;
-          try {
-            // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
-            // carries the OpenClaw sensitiveFiles (.config-hash) that
-            // shields-up locks and that the content seal hashes. Dropping
-            // them here would persist a partial fileHashes map and the next
-            // `shields status` would flag the missing entries as drift.
-            lockTarget = resolveAgentConfig(args.sandboxName);
-          } catch {
-            // Resolver itself threw (registry unavailable). Fall back to
-            // argv-supplied paths, but still infer sensitiveFiles from
-            // configDir so the locked set matches what shields-up uses.
-            if (args.configDir) {
-              lockTarget = {
-                configPath: args.configPath,
-                configDir: args.configDir,
-                sensitiveFiles: [`${args.configDir}/.config-hash`],
-              };
-            } else {
-              lockVerified = false;
-              appendAudit({
-                action: "shields_auto_restore_lock_warning",
-                sandbox: args.sandboxName,
-                timestamp: now,
-                restored_by: "auto_timer",
-                warning: "Missing config directory for auto-restore re-lock verification",
-                lock_verified: false,
-              });
-            }
+          if (!fs.existsSync(args.snapshotPath)) {
+            appendAudit({
+              action: "shields_up_failed",
+              sandbox: args.sandboxName,
+              timestamp: now,
+              restored_by: "auto_timer",
+              error: "Policy snapshot file missing",
+            });
+            exitCode = 1;
+            scheduleRetry();
+            return;
           }
-          if (lockTarget) {
+
+          // Restore policy (slow — openshell policy set --wait blocks)
+          const result = run(buildPolicySetCommand(args.snapshotPath, args.sandboxName), {
+            ignoreError: true,
+          });
+          const status = typeof result.status === "number" ? result.status : 1;
+
+          if (status !== 0) {
+            appendAudit({
+              action: "shields_up_failed",
+              sandbox: args.sandboxName,
+              timestamp: now,
+              restored_by: "auto_timer",
+              error: `Policy restore exited with status ${String(status)}`,
+            });
+            exitCode = 1;
+            scheduleRetry();
+            return;
+          }
+
+          // Destroy and force-restore can revoke this marker while a slow
+          // policy restore is already in flight. Stop before the next sandbox
+          // mutation if this timer generation no longer owns recovery.
+          if (!markerMatchesCurrentTimer(args)) return;
+
+          // Re-lock config file using the shared lockAgentConfig from shields.ts.
+          // lockAgentConfig runs each operation independently and verifies the
+          // on-disk state — it throws if verification fails.
+          //
+          // NC-2227-03: Resolve the full agent config target (including sensitive
+          // files like .config-hash, .env) so the timer re-locks the same scope
+          // that interactive `shields up` uses. Fall back to the bare configPath/
+          // configDir from argv if resolution fails (e.g., registry unavailable).
+          let lockVerified = true;
+          let lockedChattr: boolean | null = null;
+          let lockedHashes: { [path: string]: string } | null = null;
+          if (args.configPath) {
+            let lockTarget: {
+              agentName?: string;
+              configPath: string;
+              configDir: string;
+              sensitiveFiles?: string[];
+            } | null = null;
             try {
-              if (!markerMatchesCurrentTimer(args)) return;
-              const lockAgentConfig = resolveLockAgentConfig();
-              // #4663: a single instantaneous lock+verify cannot prove an
-              // in-sandbox reconciler didn't re-permission .config-hash after the
-              // verified lock returned. Re-confirm the lock held once the gateway
-              // has settled, re-applying if it drifted. This narrows (does not
-              // close) the revert window; fail closed (leave shields DOWN + audit)
-              // when the lock will not re-confirm within the retry budget.
-              const relock = relockAndReconfirm(() =>
-                lockAgentConfig(
-                  args.sandboxName,
-                  lockTarget,
-                  false,
-                  args.allowLegacyHermesProtocol,
-                ),
-              );
-              if (relock.ok && relock.lastResult) {
-                lockedChattr = relock.lastResult.chattrApplied;
-                lockedHashes = relock.lastResult.fileHashes;
+              // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
+              // carries the OpenClaw sensitiveFiles (.config-hash) that
+              // shields-up locks and that the content seal hashes. Dropping
+              // them here would persist a partial fileHashes map and the next
+              // `shields status` would flag the missing entries as drift.
+              lockTarget = resolveAgentConfig(args.sandboxName);
+            } catch {
+              // Resolver itself threw (registry unavailable). Fall back to
+              // argv-supplied paths, but still infer sensitiveFiles from
+              // configDir so the locked set matches what shields-up uses.
+              if (args.configDir) {
+                lockTarget = {
+                  configPath: args.configPath,
+                  configDir: args.configDir,
+                  sensitiveFiles: [`${args.configDir}/.config-hash`],
+                };
               } else {
                 lockVerified = false;
                 appendAudit({
@@ -385,68 +356,103 @@ function runRestoreTimer(args: TimerArgs): void {
                   sandbox: args.sandboxName,
                   timestamp: now,
                   restored_by: "auto_timer",
-                  warning: relock.error ?? "Config re-lock did not re-confirm after settle window",
+                  warning: "Missing config directory for auto-restore re-lock verification",
                   lock_verified: false,
                 });
               }
-            } catch (error: unknown) {
-              lockVerified = false;
-              appendAudit({
-                action: "shields_auto_restore_lock_warning",
-                sandbox: args.sandboxName,
-                timestamp: now,
-                restored_by: "auto_timer",
-                warning: error instanceof Error ? error.message : String(error),
-                lock_verified: false,
-              });
+            }
+            if (lockTarget) {
+              try {
+                if (!markerMatchesCurrentTimer(args)) return;
+                const lockAgentConfig = resolveLockAgentConfig();
+                // #4663: a single instantaneous lock+verify cannot prove an
+                // in-sandbox reconciler didn't re-permission .config-hash after the
+                // verified lock returned. Re-confirm the lock held once the gateway
+                // has settled, re-applying if it drifted. This narrows (does not
+                // close) the revert window; fail closed (leave shields DOWN + audit)
+                // when the lock will not re-confirm within the retry budget.
+                const relock = relockAndReconfirm(() =>
+                  lockAgentConfig(
+                    args.sandboxName,
+                    lockTarget,
+                    false,
+                    args.allowLegacyHermesProtocol,
+                  ),
+                );
+                if (relock.ok && relock.lastResult) {
+                  lockedChattr = relock.lastResult.chattrApplied;
+                  lockedHashes = relock.lastResult.fileHashes;
+                } else {
+                  lockVerified = false;
+                  appendAudit({
+                    action: "shields_auto_restore_lock_warning",
+                    sandbox: args.sandboxName,
+                    timestamp: now,
+                    restored_by: "auto_timer",
+                    warning:
+                      relock.error ?? "Config re-lock did not re-confirm after settle window",
+                    lock_verified: false,
+                  });
+                }
+              } catch (error: unknown) {
+                lockVerified = false;
+                appendAudit({
+                  action: "shields_auto_restore_lock_warning",
+                  sandbox: args.sandboxName,
+                  timestamp: now,
+                  restored_by: "auto_timer",
+                  warning: error instanceof Error ? error.message : String(error),
+                  lock_verified: false,
+                });
+              }
             }
           }
-        }
 
-        // Re-lock verification includes a settle window. Do not rewrite state
-        // or remove a replacement marker if authority changed while it ran.
-        if (!markerMatchesCurrentTimer(args)) return;
+          // Re-lock verification includes a settle window. Do not rewrite state
+          // or remove a replacement marker if authority changed while it ran.
+          if (!markerMatchesCurrentTimer(args)) return;
 
-        // Only mark shields as UP if the lock was verified (or no config path).
-        if (lockVerified) {
-          const patch: ShieldsStatePatch = {
-            shieldsDown: false,
-            shieldsDownAt: null,
-            shieldsDownTimeout: null,
-            shieldsDownReason: null,
-            shieldsDownPolicy: null,
-          };
-          if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
-          if (lockedHashes !== null) patch.fileHashes = lockedHashes;
-          updateState(args.stateFile, patch);
+          // Only mark shields as UP if the lock was verified (or no config path).
+          if (lockVerified) {
+            const patch: ShieldsStatePatch = {
+              shieldsDown: false,
+              shieldsDownAt: null,
+              shieldsDownTimeout: null,
+              shieldsDownReason: null,
+              shieldsDownPolicy: null,
+            };
+            if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
+            if (lockedHashes !== null) patch.fileHashes = lockedHashes;
+            updateState(args.stateFile, patch);
 
+            appendAudit({
+              action: "shields_auto_restore",
+              sandbox: args.sandboxName,
+              timestamp: now,
+              restored_by: "auto_timer",
+              policy_snapshot: args.snapshotPath,
+              scheduled_restore_at: args.restoreAtIso,
+            });
+            cleanupOwnedTimerMarker(args);
+            return;
+          }
+
+          // Explicitly ensure state reflects shields are still DOWN.
+          // shieldsDown() already wrote shieldsDown: true, but be explicit rather
+          // than relying on the absence of an update.
+          updateState(args.stateFile, { shieldsDown: true });
           appendAudit({
-            action: "shields_auto_restore",
+            action: "shields_up_failed",
             sandbox: args.sandboxName,
             timestamp: now,
             restored_by: "auto_timer",
-            policy_snapshot: args.snapshotPath,
-            scheduled_restore_at: args.restoreAtIso,
+            error: "Config re-lock verification failed — shields remain DOWN",
           });
-          cleanupOwnedTimerMarker(args);
-          return;
-        }
-
-        // Explicitly ensure state reflects shields are still DOWN.
-        // shieldsDown() already wrote shieldsDown: true, but be explicit rather
-        // than relying on the absence of an update.
-        updateState(args.stateFile, { shieldsDown: true });
-        appendAudit({
-          action: "shields_up_failed",
-          sandbox: args.sandboxName,
-          timestamp: now,
-          restored_by: "auto_timer",
-          error: "Config re-lock verification failed — shields remain DOWN",
-        });
-        exitCode = 1;
-        scheduleRetry();
-      },
-      { takeoverToken: args.processToken },
+          exitCode = 1;
+          scheduleRetry();
+        },
+        { takeoverToken: args.processToken },
+      ),
     );
   } catch (error: unknown) {
     appendAudit({
@@ -475,7 +481,7 @@ function main(): void {
     scheduled = true;
     setTimeout(
       () => {
-        runRestoreTimer(args);
+        void runRestoreTimer(args);
       },
       Math.max(0, args.restoreAtMs - Date.now()),
     );

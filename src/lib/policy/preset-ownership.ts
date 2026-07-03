@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import YAML from "yaml";
 
 function policyMap(content: string): Record<string, unknown> {
@@ -8,18 +10,27 @@ function policyMap(content: string): Record<string, unknown> {
   return policies && typeof policies === "object" && !Array.isArray(policies) ? policies : {};
 }
 
-/** Return the first incoming policy key that is present but not explicitly owned. */
-export function findUnownedExistingPolicyKey(
+/**
+ * Return the first incoming key whose live value is not exactly the value the
+ * caller previously proved it owned. A null expected document owns no keys.
+ */
+export function findUnexpectedExistingPolicyKey(
   currentPolicy: string,
   presetEntries: string,
-  allowedExistingKeys: readonly string[],
+  expectedPolicyContent: string | null,
 ): string | null {
   const current = policyMap(currentPolicy);
   const incoming = policyMap(`network_policies:\n${presetEntries}`);
-  const allowed = new Set(allowedExistingKeys);
+  const expected = expectedPolicyContent === null ? {} : policyMap(expectedPolicyContent);
   return (
-    Object.keys(incoming).find(
-      (key) => Object.prototype.hasOwnProperty.call(current, key) && !allowed.has(key),
-    ) ?? null
+    Object.keys(incoming).find((key) => {
+      const currentHasKey = Object.prototype.hasOwnProperty.call(current, key);
+      if (expectedPolicyContent === null) return currentHasKey;
+      return (
+        !currentHasKey ||
+        !Object.prototype.hasOwnProperty.call(expected, key) ||
+        !isDeepStrictEqual(current[key], expected[key])
+      );
+    }) ?? null
   );
 }

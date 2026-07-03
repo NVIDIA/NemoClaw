@@ -31,10 +31,10 @@ import {
   detachMissingProviderReference,
   detachProvider,
   inspectMcpProvider,
+  type McpCredentialRevisionObservation,
+  observeMcpCredentialRevision,
   providerMatchesCredential,
   providerShapeDetail,
-  removeMcpCredentialRevisionSnapshot,
-  snapshotMcpCredentialRevision,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -223,7 +223,7 @@ async function addMcpBridgeUnlocked(
   let providerAttachAttempted = false;
   let policyApplied = false;
   let adapterMutationAttempted = false;
-  let credentialRevisionSnapshotPath: string | undefined;
+  let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
   try {
     await ensureSandboxGatewaySelected(sandboxName);
     let detachedMissingProviderReference = false;
@@ -299,11 +299,11 @@ async function addMcpBridgeUnlocked(
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
       prepareMutation: (action) => {
-        // A fresh create has no prior revision to compare. Capture an opaque
-        // placeholder only for an actual update, after the running supervisor
-        // has accepted the authenticated MCP policy.
+        // A fresh create has no prior revision to compare. Observe only the
+        // bounded placeholder classification for an actual update, after the
+        // running supervisor has accepted the authenticated MCP policy.
         if (action === "update") {
-          credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
+          previousCredentialRevision = observeMcpCredentialRevision(sandboxName, entry);
         }
       },
     });
@@ -322,12 +322,17 @@ async function addMcpBridgeUnlocked(
       writeBridgeEntry(sandboxName, entry);
     }
     assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
+      throw new McpBridgeError(
+        `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
+      );
+    }
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     waitForAttachedMcpCredential(sandboxName, entry, {
       ...(providerResult.action === "updated"
         ? {
-            previousRevisionSnapshotPath: credentialRevisionSnapshotPath,
+            previousRevision: previousCredentialRevision,
           }
         : {}),
     });
@@ -382,7 +387,5 @@ async function addMcpBridgeUnlocked(
     // Keep the durable add manifest until a retry converges or `mcp remove`
     // proves and cleans each exact resource.
     throw error;
-  } finally {
-    removeMcpCredentialRevisionSnapshot(sandboxName, credentialRevisionSnapshotPath);
   }
 }

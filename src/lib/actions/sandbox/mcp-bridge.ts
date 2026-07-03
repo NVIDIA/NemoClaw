@@ -58,8 +58,7 @@ export {
 } from "./mcp-bridge-policy";
 export {
   buildMcpBridgeProviderArgs,
-  buildMcpCredentialReadinessCommand,
-  buildMcpCredentialRevisionSnapshotCommand,
+  buildMcpCredentialRevisionObservationCommand,
   detachMissingProviderReference,
   parseMcpProviderAttachmentNames,
   parseMcpProviderMetadata,

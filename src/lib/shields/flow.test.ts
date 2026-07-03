@@ -883,7 +883,7 @@ describe("shields command flow", () => {
     ).toBe(true);
   });
 
-  it("shieldsStatus restores an expired dead timer through the same lock path as shields up", () => {
+  it("shieldsStatus restores an expired dead timer under the shared sandbox lock", async () => {
     const configPath = "/sandbox/.openclaw/openclaw.json";
     const configDir = "/sandbox/.openclaw";
     const hashPath = `${configDir}/.config-hash`;
@@ -901,7 +901,14 @@ describe("shields command flow", () => {
       [` sha256sum ${hashPath}`, `${hashHash}  ${hashPath}\n`],
       [` sha256sum ${configPath}`, `${configHash}  ${configPath}\n`],
     ]);
+    const lifecycleLock = requireDist("../state/mcp-lifecycle-lock.js");
+    const sandboxMutationLockPath = lifecycleLock.getMcpLifecycleLockPath("openclaw");
+    let policySetSawSandboxLock = false;
     const harness = createHarness({
+      run: () => {
+        policySetSawSandboxLock = fs.existsSync(sandboxMutationLockPath);
+        return { status: 0 };
+      },
       dockerExecFileSync: (argv: unknown) => {
         const args = Array.isArray(argv) ? argv.map(String) : [];
         const cmd = args.join(" ");
@@ -958,7 +965,9 @@ describe("shields command flow", () => {
       return true;
     });
 
-    harness.shieldsStatus("openclaw");
+    await lifecycleLock.withSandboxMutationLock("openclaw", () =>
+      harness.shieldsStatus("openclaw"),
+    );
 
     const state = JSON.parse(
       fs.readFileSync(path.join(stateDir, "shields-openclaw.json"), "utf-8"),
@@ -971,6 +980,8 @@ describe("shields command flow", () => {
     });
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
     expect(fs.existsSync(lockPath)).toBe(false);
+    expect(policySetSawSandboxLock).toBe(true);
+    expect(fs.existsSync(sandboxMutationLockPath)).toBe(false);
     expect(harness.auditSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         action: "shields_auto_restore",

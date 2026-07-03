@@ -144,7 +144,7 @@ async function acquireMcpLifecycleLock(
     if (performance.now() - startedAt >= timeoutMs) {
       const ownerSuffix = lastOwnerPid ? ` (owner pid ${lastOwnerPid})` : "";
       throw new Error(
-        `Timed out waiting for MCP lifecycle lock for sandbox '${sandboxName}'${ownerSuffix}. Another add, restart, remove, rebuild, or destroy operation is still running.`,
+        `Timed out waiting for the sandbox mutation lock for '${sandboxName}'${ownerSuffix}. Another lifecycle, policy, channel, shields, or snapshot operation is still running.`,
       );
     }
 

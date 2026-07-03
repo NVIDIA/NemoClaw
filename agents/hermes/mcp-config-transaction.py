@@ -276,6 +276,15 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     server = payload.get("server")
     if not isinstance(server, str) or not SERVER_NAME_RE.fullmatch(server):
         raise ValueError("MCP mutation payload has an invalid server name")
+    flag_name = "replace_existing" if action == "add" else "force"
+    if not isinstance(payload.get(flag_name), bool):
+        raise ValueError(f"MCP mutation payload {flag_name} must be boolean")
+    # Forced cleanup is server-name scoped: _mutate removes only this exact
+    # mapping key and deliberately skips ownership matching. Do not strand a
+    # legacy entry merely because its persisted URL or header shape is no
+    # longer accepted for add/non-force mutation.
+    if action == "remove" and payload["force"] is True:
+        return
     raw_url = payload.get("url")
     if not isinstance(raw_url, str) or len(raw_url) > 2048:
         raise ValueError("MCP mutation payload has an invalid URL")
@@ -344,9 +353,6 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     canonical = f"{parsed.scheme}://{authority}{path}"
     if raw_url != canonical:
         raise ValueError("MCP mutation payload URL must be canonical")
-    flag_name = "replace_existing" if action == "add" else "force"
-    if not isinstance(payload.get(flag_name), bool):
-        raise ValueError(f"MCP mutation payload {flag_name} must be boolean")
     headers = payload.get("headers")
     if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
         raise ValueError("MCP mutation payload must contain one Authorization header")
@@ -412,12 +418,12 @@ def _mutate(data: object, action: str, payload: dict[str, object]) -> tuple[dict
         raise ValueError(f"Unsupported MCP config action '{action}'")
     if server_name not in servers:
         return data, False
-    current = servers.get(server_name)
-    managed = current == _managed_candidate(payload)
-    if not managed and payload.get("force") is not True:
-        raise ValueError(
-            f"Refusing to remove modified Hermes MCP server '{server_name}'. Use --force to remove it."
-        )
+    if payload.get("force") is not True:
+        current = servers.get(server_name)
+        if current != _managed_candidate(payload):
+            raise ValueError(
+                f"Refusing to remove modified Hermes MCP server '{server_name}'. Use --force to remove it."
+            )
     servers.pop(server_name, None)
     if not servers:
         data.pop("mcp_servers", None)
@@ -473,7 +479,9 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     hash_originals = {
         path: guard._read_text(path) for path in _managed_hash_paths(privileged)
     }
-    parsed = yaml.safe_load(original_text) or {}
+    parsed = yaml.safe_load(original_text)
+    if parsed is None:
+        parsed = {}
     updated, changed = _mutate(parsed, action, payload)
     if not changed:
         try:
@@ -530,7 +538,9 @@ def apply_transaction_and_reload(
     hash_originals = {
         path: guard._read_text(path) for path in _managed_hash_paths(privileged)
     }
-    parsed = yaml.safe_load(original_text) or {}
+    parsed = yaml.safe_load(original_text)
+    if parsed is None:
+        parsed = {}
     expected_data, expected_changed = _mutate(parsed, action, payload)
     expected_text = (
         yaml.safe_dump(expected_data, sort_keys=False)

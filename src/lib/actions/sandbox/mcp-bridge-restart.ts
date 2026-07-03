@@ -12,10 +12,10 @@ import {
   assertNoAttachedProviderCredentialCollision,
   attachProvider,
   detachMissingProviderReference,
+  type McpCredentialRevisionObservation,
   type McpProviderInspection,
+  observeMcpCredentialRevision,
   preflightMcpEntryTargets,
-  removeMcpCredentialRevisionSnapshot,
-  snapshotMcpCredentialRevision,
   upsertMcpProvider,
   waitForAttachedMcpCredential,
   waitForDetachedMcpCredential,
@@ -119,52 +119,53 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const resolvedAddresses = resolvedTargetPins(resolvedByServer, entry);
-    let credentialRevisionSnapshotPath: string | undefined;
-    try {
-      assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-      // Revalidate the actual running supervisor before rotating, recreating,
-      // attaching, or re-registering an authenticated provider.
-      applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
-      const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
-        allowExisting: true,
-        expectedProviderId: entry.providerId,
-        prepareMutation: (action) => {
-          if (action === "update") {
-            credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
-          }
-        },
-      });
-      const providerId = providerResult.inspection.id;
-      if (!providerId) {
-        throw new McpBridgeError(
-          `OpenShell did not return a stable provider ID for '${entry.providerName}'. Refusing later MCP side effects.`,
-        );
-      }
-      const refreshedEntry =
-        providerId === entry.providerId ? entry : { ...entry, providerId, updatedAt: nowIso() };
-      if (refreshedEntry !== entry) {
-        // A missing owned provider may be recreated during restart. Record the
-        // replacement object's immutable ID before policy/attach/adapter work.
-        writeBridgeEntry(sandboxName, refreshedEntry);
-        entry = refreshedEntry;
-      }
-      assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-      attachProvider(sandboxName, entry);
-      waitForAttachedMcpCredential(sandboxName, entry, {
-        ...(providerResult.action === "updated"
-          ? { previousRevisionSnapshotPath: credentialRevisionSnapshotPath }
-          : {}),
-      });
-      registerAgentAdapter(
-        sandboxName,
-        (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
-        entry,
-        adapterEnvValues,
-        { replaceExisting: true },
+    let previousCredentialRevision: McpCredentialRevisionObservation | undefined;
+    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    // Revalidate the actual running supervisor before rotating, recreating,
+    // attaching, or re-registering an authenticated provider.
+    applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
+    const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
+      allowExisting: true,
+      expectedProviderId: entry.providerId,
+      prepareMutation: (action) => {
+        if (action === "update") {
+          previousCredentialRevision = observeMcpCredentialRevision(sandboxName, entry);
+        }
+      },
+    });
+    const providerId = providerResult.inspection.id;
+    if (!providerId) {
+      throw new McpBridgeError(
+        `OpenShell did not return a stable provider ID for '${entry.providerName}'. Refusing later MCP side effects.`,
       );
-    } finally {
-      removeMcpCredentialRevisionSnapshot(sandboxName, credentialRevisionSnapshotPath);
     }
+    const refreshedEntry =
+      providerId === entry.providerId ? entry : { ...entry, providerId, updatedAt: nowIso() };
+    if (refreshedEntry !== entry) {
+      // A missing owned provider may be recreated during restart. Record the
+      // replacement object's immutable ID before policy/attach/adapter work.
+      writeBridgeEntry(sandboxName, refreshedEntry);
+      entry = refreshedEntry;
+    }
+    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    if (providerResult.action === "updated" && previousCredentialRevision === undefined) {
+      throw new McpBridgeError(
+        `Could not retain the prior OpenShell credential revision for provider '${entry.providerName}'.`,
+      );
+    }
+    attachProvider(sandboxName, entry);
+    waitForAttachedMcpCredential(sandboxName, entry, {
+      ...(providerResult.action === "updated"
+        ? { previousRevision: previousCredentialRevision }
+        : {}),
+    });
+    registerAgentAdapter(
+      sandboxName,
+      (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
+      entry,
+      adapterEnvValues,
+      { replaceExisting: true },
+    );
     writeBridgeEntry(sandboxName, {
       ...entry,
       adapter: (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,

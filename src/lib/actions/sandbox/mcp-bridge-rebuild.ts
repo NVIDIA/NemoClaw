@@ -27,6 +27,7 @@ import {
   assertMcpAdapterTeardownRuntimeCapabilities,
 } from "./mcp-bridge-runtime-capabilities";
 import {
+  assertMcpDestroyNotPending,
   bridgeState,
   ensureSandboxGatewaySelected,
   getBridgeAdapter,
@@ -48,6 +49,7 @@ async function getCompleteMcpRebuildEntries(
 ): Promise<McpBridgeEntry[]> {
   validateSandboxName(sandboxName);
   const currentSandbox = getSandboxOrThrow(sandboxName);
+  assertMcpDestroyNotPending(currentSandbox);
   if (!options.sandboxAbsent) {
     const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
       (entry) => entry.addState !== "prepared",

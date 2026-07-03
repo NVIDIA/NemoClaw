@@ -14,7 +14,10 @@ const PRESET = `network_policies:
     endpoints: []
 `;
 
-function runApply(allowedExistingNetworkPolicyKeys: string[]) {
+function runApply(
+  expectedExistingNetworkPolicyContent: string | null,
+  liveName: string | null = "operator-owned",
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-owner-"));
   const binDir = path.join(home, ".local", "bin");
   const callsPath = path.join(home, "calls.log");
@@ -24,7 +27,11 @@ function runApply(allowedExistingNetworkPolicyKeys: string[]) {
     `#!/bin/sh
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
-  printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: operator-owned\n    endpoints: []\n'
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n${
+    liveName === null
+      ? "network_policies: {}"
+      : `network_policies:\n  example:\n    name: ${liveName}\n    endpoints: []`
+  }\n'
 fi
 exit 0
 `,
@@ -40,7 +47,7 @@ const result = policies.applyPresetContent(
   ${JSON.stringify(PRESET)},
   {
     custom: { sourcePath: "generated:nemoclaw-mcp-bridge" },
-    allowedExistingNetworkPolicyKeys: ${JSON.stringify(allowedExistingNetworkPolicyKeys)},
+    expectedExistingNetworkPolicyContent: ${JSON.stringify(expectedExistingNetworkPolicyContent)},
   },
 );
 process.stdout.write("\\n__RESULT__" + JSON.stringify(result));
@@ -128,7 +135,7 @@ const result = ${
   ${JSON.stringify(PRESET)},
   {
     custom: { sourcePath: "generated:nemoclaw-mcp-bridge" },
-    allowedExistingNetworkPolicyKeys: ["example"],
+    expectedExistingNetworkPolicyContent: ${JSON.stringify(PRESET)},
     nonFatal: true,
   },
 )`
@@ -201,20 +208,38 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
 
 describe("MCP-generated network policy ownership", () => {
   it("refuses to replace a same-key policy the bridge does not own", () => {
-    const { calls, result } = runApply([]);
+    const { calls, result } = runApply(null);
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("__RESULT__false");
-    expect(result.stderr).toContain("already exists and is not owned");
+    expect(result.stderr).toContain("does not match the exact state owned");
     expect(calls).not.toContain("policy set");
   });
 
   it("allows a registered bridge to refresh its owned key", () => {
-    const { calls, result } = runApply(["example"]);
+    const { calls, result } = runApply(PRESET, "generated-policy");
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("__RESULT__true");
     expect(calls).toContain("policy set");
+  });
+
+  it("refuses a same-key value changed after the caller's ownership proof", () => {
+    const { calls, result } = runApply(PRESET, "concurrent-writer");
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("__RESULT__false");
+    expect(result.stderr).toContain("does not match the exact state owned");
+    expect(calls).not.toContain("policy set");
+  });
+
+  it("refuses an owned key removed after the caller's ownership proof", () => {
+    const { calls, result } = runApply(PRESET, null);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("__RESULT__false");
+    expect(result.stderr).toContain("does not match the exact state owned");
+    expect(calls).not.toContain("policy set");
   });
 
   it("detects same-key live policy drift instead of reporting presence", () => {
