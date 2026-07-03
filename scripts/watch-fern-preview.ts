@@ -21,6 +21,7 @@ const fernRoot = path.join(repoRoot, "fern");
 const watchRoots = ["docs", "fern"];
 const ignoredDirectoryNames = new Set([".fern-cache", ".git", "_build", "node_modules"]);
 const debounceMs = 500;
+const defaultFernPreviewInstance = "nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw";
 
 const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
@@ -32,6 +33,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(trimmedFern
 const fernVersion = trimmedFernVersion;
 
 const branchName = currentBranchName();
+const fernPreviewInstance = process.env.FERN_STAGING_INSTANCE?.trim() || defaultFernPreviewInstance;
 let running = false;
 let pending = false;
 let debounceTimer: NodeJS.Timeout | undefined;
@@ -39,6 +41,7 @@ let currentChild: ChildProcess | undefined;
 const watchers = new Map<string, FSWatcher>();
 
 console.log(`Using Fern preview id: ${branchName}`);
+console.log(`Using Fern instance: ${fernPreviewInstance}`);
 console.log(`Watching: ${watchRoots.join(", ")}`);
 
 for (const root of watchRoots) {
@@ -173,6 +176,8 @@ function runFernGenerate(reason: string): void {
     `fern-api@${fernVersion}`,
     "generate",
     "--docs",
+    "--instance",
+    fernPreviewInstance,
     "--preview",
     "--id",
     branchName,
