@@ -34,6 +34,16 @@ vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
 
 const ORIGINAL_ENV = { ...process.env };
 const manifestRegistry = createBuiltInChannelManifestRegistry();
+const BLANK_WHATSAPP_SEED_CASES = [
+  { label: "unset", environment: {} },
+  { label: "empty", environment: { WHATSAPP_ALLOWED_IDS: "" } },
+  { label: "whitespace-only", environment: { WHATSAPP_ALLOWED_IDS: "   " } },
+] as const;
+
+function applyWhatsAppSeedEnvironment(environment: Readonly<Record<string, string>>): void {
+  delete process.env.WHATSAPP_ALLOWED_IDS;
+  Object.assign(process.env, environment);
+}
 
 function manifests(...channelIds: string[]) {
   return channelIds.map((channelId) => {
@@ -491,13 +501,12 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
-  it.each([
-    undefined,
-    "",
-    "   ",
-  ])("keeps credentialless WhatsApp disabled when its optional allowlist is %p", async (allowedIds) => {
-    if (allowedIds === undefined) delete process.env.WHATSAPP_ALLOWED_IDS;
-    else process.env.WHATSAPP_ALLOWED_IDS = allowedIds;
+  it.each(
+    BLANK_WHATSAPP_SEED_CASES,
+  )("keeps credentialless WhatsApp disabled when its optional allowlist is $label", async ({
+    environment,
+  }) => {
+    applyWhatsAppSeedEnvironment(environment);
     process.env[MESSAGING_SETUP_APPLIER_ENV_KEY] = "stale-plan";
     const notes: string[] = [];
 
@@ -689,13 +698,12 @@ describe("detectMessagingChannelsFromEnv", () => {
     expect(detectMessagingChannelsFromEnv(null)).toContain("whatsapp");
   });
 
-  it.each([
-    undefined,
-    "",
-    "   ",
-  ])("does not detect credentialless WhatsApp when its optional allowlist is %p", (allowedIds) => {
-    if (allowedIds === undefined) delete process.env.WHATSAPP_ALLOWED_IDS;
-    else process.env.WHATSAPP_ALLOWED_IDS = allowedIds;
+  it.each(
+    BLANK_WHATSAPP_SEED_CASES,
+  )("does not detect credentialless WhatsApp when its optional allowlist is $label", ({
+    environment,
+  }) => {
+    applyWhatsAppSeedEnvironment(environment);
 
     expect(detectMessagingChannelsFromEnv(null)).not.toContain("whatsapp");
   });
