@@ -74,7 +74,7 @@ describe("OpenShell gateway auth contract workflow boundary", () => {
       E2E_ARTIFACT_DIR:
         "${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract",
       NEMOCLAW_RUN_LIVE_E2E: "1",
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
       DOCKER_GRPC_PROBE_IMAGE:
         "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d",
     });

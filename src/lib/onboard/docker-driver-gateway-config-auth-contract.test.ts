@@ -19,14 +19,50 @@ import {
 } from "../../../test/support/openshell-gateway-config-helpers";
 
 describe("docker-driver-gateway auth contract", () => {
-  it("records the audited OpenShell 0.0.71 source revision", () => {
-    const reviewNote = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
+  it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
+    const compatibilityReview = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
+    const inheritedAuthReview = fs.readFileSync(
+      path.join(path.dirname(GATEWAY_AUTH_REVIEW_NOTE), "openshell-0.0.71-gateway-auth-review.mdx"),
+      "utf-8",
+    );
 
-    expect(reviewNote).toContain("NVIDIA/OpenShell@v0.0.71");
-    expect(reviewNote).toContain("a242f84bb367d6df7d4d133e95a93857406c67f7");
+    expect(compatibilityReview).toContain("NVIDIA/OpenShell@v0.0.72");
+    expect(compatibilityReview).toContain("8cb16de9eae4c44d7d31e1493747d8c10abb5963");
+    expect(compatibilityReview).toContain("OpenShell 0.0.71 gateway authentication review");
+    expect(compatibilityReview).toContain(
+      "https://github.com/NVIDIA/OpenShell/actions/runs/28382086068",
+    );
+    expect(compatibilityReview).toContain(
+      "supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    );
+    expect(compatibilityReview).toContain("openshell-gateway-auth-source-contract.test.ts");
+    expect(compatibilityReview).toContain("OPENSHELL_DISABLE_GATEWAY_AUTH=true");
+    expect(compatibilityReview).toContain("Round-Trippable Policy Boundary");
+    expect(compatibilityReview).toContain("openshell policy get --base <sandbox>");
+    expect(compatibilityReview).toContain("_provider_*");
+    expect(compatibilityReview).toContain("protocol: mcp");
+    expect(compatibilityReview).toContain("protocol: json-rpc");
+
+    expect(inheritedAuthReview).toContain("openshell_server::config_file::load()");
+    expect(inheritedAuthReview).toContain("allow_unauthenticated_users");
+    expect(inheritedAuthReview).toContain("gateway_jwt");
+    expect(inheritedAuthReview).toContain("host-side OpenShell CLI user calls use local mTLS");
+    expect(inheritedAuthReview).toContain(
+      "gateway_listener_addresses_include_driver_address_on_distinct_ip",
+    );
+    expect(inheritedAuthReview).toContain("container_visible_endpoint_rewrites_loopback_hosts");
+    expect(inheritedAuthReview).toContain(
+      "docker_gateway_route_uses_bridge_gateway_for_linux_docker",
+    );
+    expect(inheritedAuthReview).toContain(
+      "NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_BIND_ADDRESS=0.0.0.0` is rejected",
+    );
+    expect(inheritedAuthReview).toContain("reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`");
+    expect(inheritedAuthReview).toContain("OpenShell gateway auth source contract");
+    expect(inheritedAuthReview).toContain("valid sandbox JWT access from Docker origin");
   });
 
-  it("emits an OpenShell 0.0.71-compatible sandbox JWT bundle and TTL contract", () => {
+  it("emits an OpenShell 0.0.72-compatible sandbox JWT bundle and TTL contract", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
@@ -124,7 +160,7 @@ describe("docker-driver-gateway auth contract", () => {
     }
   });
 
-  it("emits the complete OpenShell 0.0.71 gateway auth TOML schema", () => {
+  it("emits the complete OpenShell 0.0.72 gateway auth TOML schema", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-config-"));
     try {
       const env = writeGatewayConfig(stateDir);
