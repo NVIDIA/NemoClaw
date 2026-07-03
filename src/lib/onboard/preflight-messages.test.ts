@@ -17,8 +17,8 @@ function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
 }
 
 function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
-  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
-  const originalColorDepth = Object.getOwnPropertyDescriptor(process.stderr, "getColorDepth");
+  const originalIsTTY = process.stderr.isTTY;
+  const originalGetColorDepth = process.stderr.getColorDepth;
   Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
   Object.defineProperty(process.stderr, "getColorDepth", {
     value: () => colorDepth,
@@ -27,11 +27,14 @@ function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
   try {
     return callback();
   } finally {
-    if (originalIsTTY) Object.defineProperty(process.stderr, "isTTY", originalIsTTY);
-    else Reflect.deleteProperty(process.stderr, "isTTY");
-    if (originalColorDepth)
-      Object.defineProperty(process.stderr, "getColorDepth", originalColorDepth);
-    else Reflect.deleteProperty(process.stderr, "getColorDepth");
+    Object.defineProperty(process.stderr, "isTTY", {
+      value: originalIsTTY,
+      configurable: true,
+    });
+    Object.defineProperty(process.stderr, "getColorDepth", {
+      value: originalGetColorDepth,
+      configurable: true,
+    });
   }
 }
 
