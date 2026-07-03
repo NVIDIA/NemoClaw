@@ -60,17 +60,44 @@ export interface SandboxPrebuildInput {
   log?: (message: string) => void;
 }
 
-function defaultStreamBuild(command: string): Promise<StreamBuildResult> {
-  // Run the build under the sanitized subprocess allowlist (PATH/HOME/DOCKER_HOST
-  // etc.) rather than raw process.env, so host secrets (e.g. NVIDIA_API_KEY)
-  // never enter the build subprocess. Then drop the host-infrastructure
-  // credentials the openshell create also strips (KUBECONFIG, SSH_AUTH_SOCK) —
-  // a `docker build` needs neither. DOCKER_BUILDKIT is set inline in the
-  // command, so BuildKit is still used.
+/**
+ * Environment for the `docker build` subprocess, narrowed to the Docker-build
+ * boundary.
+ *
+ * It starts from the shared subprocess allowlist (`buildSubprocessEnv`, which
+ * already default-denies host secrets like `NVIDIA_INFERENCE_API_KEY`,
+ * `GITHUB_TOKEN`, and `AWS_*` — see subprocess-env.ts / #1874) and then removes
+ * everything a `docker build` provably does not consume, so the build inherits
+ * only what it needs — system, Docker daemon (`DOCKER_HOST` + the `XDG_*` the
+ * docker CLI reads for its config/credential store), proxy, locale, temp, and
+ * TLS CA variables:
+ *   - `KUBECONFIG` / `SSH_AUTH_SOCK`: host-infrastructure credentials the
+ *     openshell create also strips; a `docker build` needs neither.
+ *   - `OPENSHELL_*` / `GRPC_*`: openshell control-plane env forwarded to
+ *     openshell subprocesses; irrelevant to a local `docker build`.
+ *   - `RUST_LOG` / `RUST_BACKTRACE`: openshell/Rust debug knobs with no role in
+ *     a `docker build`.
+ * DOCKER_BUILDKIT is set inline in the build command, so BuildKit is still used.
+ */
+export function dockerBuildSubprocessEnv(): Record<string, string> {
   const env = buildSubprocessEnv();
-  delete env.KUBECONFIG;
-  delete env.SSH_AUTH_SOCK;
-  return streamSandboxCreate(command, env, {
+  for (const key of Object.keys(env)) {
+    if (
+      key === "KUBECONFIG" ||
+      key === "SSH_AUTH_SOCK" ||
+      key === "RUST_LOG" ||
+      key === "RUST_BACKTRACE" ||
+      key.startsWith("OPENSHELL_") ||
+      key.startsWith("GRPC_")
+    ) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+function defaultStreamBuild(command: string): Promise<StreamBuildResult> {
+  return streamSandboxCreate(command, dockerBuildSubprocessEnv(), {
     initialPhase: "build",
     traceEvent: addTraceEvent,
   });

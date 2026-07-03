@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildKitBuildCommand,
+  dockerBuildSubprocessEnv,
   prebuildSandboxImageIfEligible,
   resolveSandboxPrebuildEnabled,
   rewriteCreateArgsWithImage,
@@ -17,6 +18,53 @@ const DF = `${CTX}/Dockerfile`;
 function baseCreateArgs(): string[] {
   return ["--from", DF, "--name", "alpha", "--policy", "/p.yaml"];
 }
+
+describe("dockerBuildSubprocessEnv", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps only the Docker-build boundary env and drops broader host/control-plane vars", () => {
+    // Docker-build boundary: system, Docker daemon (+ XDG the docker CLI reads),
+    // proxy, locale, temp, TLS CA.
+    vi.stubEnv("PATH", "/usr/bin");
+    vi.stubEnv("HOME", "/home/u");
+    vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
+    vi.stubEnv("XDG_CONFIG_HOME", "/home/u/.config");
+    vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
+    vi.stubEnv("LANG", "en_US.UTF-8");
+    vi.stubEnv("TMPDIR", "/tmp");
+    vi.stubEnv("NODE_EXTRA_CA_CERTS", "/etc/ca.pem");
+    // Host secrets — already default-denied by the shared allowlist (#1874).
+    vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
+    vi.stubEnv("GITHUB_TOKEN", "ghs_secret");
+    // Broader-than-needed env a `docker build` must not inherit.
+    vi.stubEnv("KUBECONFIG", "/home/u/.kube/config");
+    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock");
+    vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
+    vi.stubEnv("GRPC_VERBOSITY", "debug");
+    vi.stubEnv("RUST_LOG", "trace");
+
+    const env = dockerBuildSubprocessEnv();
+
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.HOME).toBe("/home/u");
+    expect(env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
+    expect(env.XDG_CONFIG_HOME).toBe("/home/u/.config");
+    expect(env.HTTPS_PROXY).toBe("http://proxy:8080");
+    expect(env.LANG).toBe("en_US.UTF-8");
+    expect(env.TMPDIR).toBe("/tmp");
+    expect(env.NODE_EXTRA_CA_CERTS).toBe("/etc/ca.pem");
+
+    expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(env.GITHUB_TOKEN).toBeUndefined();
+    expect(env.KUBECONFIG).toBeUndefined();
+    expect(env.SSH_AUTH_SOCK).toBeUndefined();
+    expect(env.OPENSHELL_GATEWAY).toBeUndefined();
+    expect(env.GRPC_VERBOSITY).toBeUndefined();
+    expect(env.RUST_LOG).toBeUndefined();
+  });
+});
 
 describe("resolveSandboxPrebuildEnabled", () => {
   it("defaults on for the managed docker-driver path", () => {
