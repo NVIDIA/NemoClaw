@@ -1,21 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   createRebuildFlowHarness,
-  resetRebuildFlowTestEnvironment,
-  restoreRebuildFlowTestEnvironment,
+  installRebuildFlowTestHooks,
   snapshotEnv,
-} from "../../../../test/helpers/rebuild-flow-harness";
+} from "../../../../test/helpers/rebuild-flow-test-harness";
 import {
   SANDBOX_BASE_RESOLUTION_LABEL,
   type SandboxBaseImageResolutionMetadata,
 } from "../../sandbox-base-image";
 
 describe("rebuildSandbox base-image resolution flow", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
-  afterEach(restoreRebuildFlowTestEnvironment);
+  installRebuildFlowTestHooks();
 
   it("passes the recorded Docker base-image hint and refresh env through ordinary preflight (#4680)", async () => {
     const restoreEnv = snapshotEnv(["NEMOCLAW_SANDBOX_BASE_IMAGE_REFRESH"]);
@@ -42,10 +40,10 @@ describe("rebuildSandbox base-image resolution flow", () => {
 
     try {
       const harness = createRebuildFlowHarness({
-        agentName: "hermes",
         sandboxEntry: {
           agent: "hermes",
           imageTag: "nemoclaw-hermes:recorded",
+          nemoclawVersion: "0.1.0",
         },
         sandboxBaseImageLabelsOutput: labelsOutput,
       });
@@ -54,10 +52,10 @@ describe("rebuildSandbox base-image resolution flow", () => {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(harness.ensureAgentBaseImageSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ name: "hermes" }),
+      expect(harness.ensureRebuildAgentBaseImageSpy).toHaveBeenCalledWith(
+        "hermes",
+        expect.any(Function),
         {
-          forceBaseImageRebuild: false,
           resolutionHint,
           forceBaseImageRefresh: true,
         },

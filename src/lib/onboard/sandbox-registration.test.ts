@@ -35,6 +35,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -42,6 +43,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
       appliedPolicies: ["discord", "slack"],
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "api_key",
       plannedMessagingState: plannedMessagingState as any,
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
@@ -62,6 +66,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       policies: ["discord", "slack"],
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "api_key",
       hermesToolGateways: ["filesystem"],
       hermesDashboardEnabled: true,
       hermesDashboardPort: 18790,
@@ -93,6 +100,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "",
         credentialEnv: "",
         preferredInferenceApi: "",
+        compatibleEndpointReasoning: null,
         nimContainer: "",
       },
       runtimeFields,
@@ -129,6 +137,54 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.hermesDashboardPort).toBeUndefined();
     expect(entry.hermesDashboardInternalPort).toBeUndefined();
     expect(entry.hermesDashboardTui).toBeUndefined();
+    expect(entry.webSearchEnabled).toBe(false);
+    expect(entry.fromDockerfile).toBeNull();
+    expect(entry.hermesAuthMethod).toBeNull();
+  });
+
+  it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
+    const preservedMcpState = {
+      bridges: {
+        github: {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "demo-mcp-github",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-27T00:00:00.000Z",
+        },
+      },
+    };
+    const entry = buildCreatedSandboxRegistryEntry({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "llama",
+        provider: "compatible-endpoint",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: "true",
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: "nemoclaw-demo:replacement",
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      preservedMcpState,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+
+    expect(entry.mcp).toBe(preservedMcpState);
+    expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
+    expect(entry.compatibleEndpointReasoning).toBe("true");
   });
 
   it("normalizes invalid preferred inference API values", () => {
@@ -140,6 +196,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -171,6 +228,7 @@ describe("selection", () => {
       model: "llama",
       endpointUrl: "https://wrong.test/v1",
       credentialEnv: "WRONG_KEY",
+      compatibleEndpointReasoning: "true",
       nimContainer: "wrong",
     });
 
@@ -180,6 +238,7 @@ describe("selection", () => {
       endpointUrl: null,
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     });
   });
@@ -191,6 +250,7 @@ describe("selection", () => {
       model: "llama",
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-right",
     });
 
@@ -200,6 +260,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-right",
     });
   });
@@ -217,6 +278,7 @@ describe("registerCreatedSandbox", () => {
         endpointUrl: null,
         credentialEnv: null,
         preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,

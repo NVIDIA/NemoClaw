@@ -131,6 +131,12 @@ export function reuseSandboxBaseImageResolutionHint(
     addTraceEvent("nemoclaw.sandbox_base_image.cache_stale", { reason: validation.reason });
     return null;
   }
+  if (options.validateImage && !options.validateImage(hint.ref)) {
+    addTraceEvent("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "custom_validation_failed",
+    });
+    return null;
+  }
 
   addTraceEvent("nemoclaw.sandbox_base_image.cache_hit", {
     source: hint.source,

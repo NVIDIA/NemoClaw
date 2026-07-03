@@ -69,6 +69,22 @@ describe("sandbox base-image resolution key", () => {
     expect(second).not.toBe(first);
   });
 
+  it("isolates custom runtime validation requirements (#4680)", () => {
+    const root = fixture();
+    const base = options(root);
+
+    const mcpKey = createSandboxBaseImageResolutionKey({
+      ...base,
+      validationDescription: "the native MCP Streamable HTTP runtime",
+    });
+    const legacyKey = createSandboxBaseImageResolutionKey({
+      ...base,
+      validationDescription: "the legacy MCP runtime",
+    });
+
+    expect(legacyKey).not.toBe(mcpKey);
+  });
+
   it("bounds Docker platform detection before using the host fallback (#4680)", () => {
     const root = fixture();
     dockerMocks.infoFormat.mockReturnValue("");

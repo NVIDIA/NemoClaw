@@ -225,11 +225,11 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       );
 
       // Force the approval-pass sandbox-exec to fail with exit status 7
-      // (simulated via the NEMOCLAW_TEST_FAIL_APPROVAL_PASS hook in the
+      // (simulated via the OPENSHELL_TEST_FAIL_APPROVAL_PASS hook in the
       // fake openshell). The connect flow must still reach SSH handoff —
       // the approval pass is best-effort and must not surface failures.
       const result = runConnect(tmpDir, sandboxName, {
-        NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1",
+        OPENSHELL_TEST_FAIL_APPROVAL_PASS: "1",
       });
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
@@ -286,7 +286,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(controlExec?.slice(userIndex, userIndex + 5)).toEqual([
         "--user",
         "root",
-        `openshell-${sandboxName}-fixture`,
+        "sandbox-container-id",
         "/usr/local/bin/nemoclaw-gateway-control",
         "recover",
       ]);
@@ -325,7 +325,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         { gatewaySupervisorRecovery: true },
       );
 
-      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1" }, [
+      const result = runConnect(tmpDir, sandboxName, { OPENSHELL_TEST_FAIL_APPROVAL_PASS: "1" }, [
         "--probe-only",
       ]);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
@@ -356,7 +356,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         "claude-sonnet-4-20250514",
       );
 
-      const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_GATEWAY_DOWN: "1" }, [
+      const result = runConnect(tmpDir, sandboxName, { OPENSHELL_TEST_GATEWAY_DOWN: "1" }, [
         "--probe-only",
       ]);
       expect(result.status).toBe(1);

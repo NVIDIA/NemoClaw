@@ -79,7 +79,11 @@ describe("runner helpers", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -101,7 +105,11 @@ describe("runner helpers", () => {
     const calls: SpawnCall[] = [];
     const originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -180,14 +188,20 @@ describe("runner env merging", () => {
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { run } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
       run(["echo", "test"], {
-        env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
+        env: {
+          OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12",
+        },
       });
     } finally {
       if (originalPath === undefined) {
@@ -212,14 +226,20 @@ describe("runner env merging", () => {
     const originalSpawnSync = childProcess.spawnSync;
     const originalPath = process.env.PATH;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
       const { runFile } = require(runnerPath);
       process.env.PATH = "/usr/local/bin:/usr/bin";
       runFile("bash", ["/tmp/setup.sh"], {
-        env: { OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12" },
+        env: {
+          OPENSHELL_CLUSTER_IMAGE: "ghcr.io/nvidia/openshell/cluster:0.0.12",
+        },
       });
     } finally {
       if (originalPath === undefined) {
@@ -251,7 +271,11 @@ describe("runner env merging", () => {
     const originalNoProxy = process.env.NO_PROXY;
     const originalNoProxyLower = process.env.no_proxy;
     // @ts-expect-error — intentional partial mock for testing
-    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+    childProcess.spawnSync = captureSpawnCall(calls, {
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
 
     try {
       delete require.cache[require.resolve(runnerPath)];
@@ -300,7 +324,9 @@ describe("shellQuote", () => {
     const dangerous = "test; rm -rf /";
     const quoted = shellQuote(dangerous);
     expect(quoted).toBe("'test; rm -rf /'");
-    const result = spawnSync("bash", ["-c", `echo ${quoted}`], { encoding: "utf-8" });
+    const result = spawnSync("bash", ["-c", `echo ${quoted}`], {
+      encoding: "utf-8",
+    });
     expect(result.stdout.trim()).toBe(dangerous);
   });
 
@@ -308,7 +334,9 @@ describe("shellQuote", () => {
     const { shellQuote } = require(runnerPath);
     const payload = "test`whoami`$HOME";
     const quoted = shellQuote(payload);
-    const result = spawnSync("bash", ["-c", `echo ${quoted}`], { encoding: "utf-8" });
+    const result = spawnSync("bash", ["-c", `echo ${quoted}`], {
+      encoding: "utf-8",
+    });
     expect(result.stdout.trim()).toBe(payload);
   });
 });
@@ -667,8 +695,8 @@ describe("regression guards", () => {
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-absent-"));
       const stub = `
         #!/usr/bin/env bash
-        openshell() { echo "openshell 0.0.1"; }
-        export -f openshell
+        printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.1"' > "${tmpBin}/openshell"
+        chmod +x "${tmpBin}/openshell"
         export PATH="${tmpBin}:/usr/bin:/bin"
         command() { if [ "\${1:-}" = "-v" ] && [ "\${2:-}" = "gh" ]; then return 1; fi; builtin command "$@"; }
         curl() {
@@ -710,10 +738,16 @@ describe("regression guards", () => {
         export -f curl
         sha256sum() { cat >/dev/null; echo "checksum OK"; return 0; }
         export -f sha256sum
-        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
-        tar() { return 0; }; export -f tar
-        install() { return 0; }; export -f install
+        tar() {
+          local destination="\${@: -1}"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.72"' > "$destination/openshell"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell-gateway 0.0.72"' > "$destination/openshell-gateway"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell-sandbox 0.0.72"' > "$destination/openshell-sandbox"
+          chmod +x "$destination/openshell" "$destination/openshell-gateway" "$destination/openshell-sandbox"
+        }; export -f tar
+        install() { /usr/bin/install "$@"; }; export -f install
         source "${scriptPath}"
       `;
       try {
@@ -740,8 +774,8 @@ describe("regression guards", () => {
 
       const stub = `
         #!/usr/bin/env bash
-        openshell() { echo "openshell 0.0.1"; }
-        export -f openshell
+        printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.1"' > "${tmpBin}/openshell"
+        chmod +x "${tmpBin}/openshell"
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() {
           echo "CURL_FALLBACK $*"
@@ -782,10 +816,16 @@ describe("regression guards", () => {
         export -f curl
         sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
         export -f sha256sum
-        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
-        tar() { return 0; }; export -f tar
-        install() { return 0; }; export -f install
+        tar() {
+          local destination="\${@: -1}"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell 0.0.72"' > "$destination/openshell"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell-gateway 0.0.72"' > "$destination/openshell-gateway"
+          printf '%s\n' '#!/bin/sh' 'echo "openshell-sandbox 0.0.72"' > "$destination/openshell-sandbox"
+          chmod +x "$destination/openshell" "$destination/openshell-gateway" "$destination/openshell-sandbox"
+        }; export -f tar
+        install() { /usr/bin/install "$@"; }; export -f install
         source "${scriptPath}"
       `;
       try {
@@ -827,7 +867,11 @@ describe("regression guards", () => {
             [path.join(import.meta.dirname, "..", script), "--version"],
             {
               encoding: "utf-8",
-              env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:/usr/bin:/bin` },
+              env: {
+                ...process.env,
+                HOME: tmp,
+                PATH: `${fakeBin}:/usr/bin:/bin`,
+              },
               timeout: 15000,
             },
           );

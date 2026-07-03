@@ -5,26 +5,20 @@
 // non-default agent (e.g. Hermes) is selected via --agent flag or
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
-import fs from "fs";
-import os from "os";
-import path from "path";
-
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
-import { ROOT, redact, run } from "../runner";
-import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
-import { type EnsureAgentBaseImageOptions, ensureAgentBaseImage } from "./base-image";
+import { redact, run } from "../runner";
+import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
-export { ensureAgentBaseImage } from "./base-image";
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
@@ -36,6 +30,35 @@ export interface OnboardContext {
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
+}
+
+// Keep these compatibility exports as ordinary writable functions. Focused
+// onboarding and rebuild harnesses replace them at the facade boundary, while
+// the implementation stays isolated in base-image.ts.
+export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
+}
+
+export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+}
+
+export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
+  return baseImage.hermesBaseImageSupportsMcp(imageRef);
+}
+
+export function ensureAgentBaseImage(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.EnsureAgentBaseImageResult {
+  return baseImage.ensureAgentBaseImage(agent, options);
+}
+
+export function createAgentSandbox(
+  agent: AgentDefinition,
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.CreateAgentSandboxResult {
+  return baseImage.createAgentSandbox(agent, options);
 }
 
 /**
@@ -52,52 +75,6 @@ export function resolveAgent({
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
   return loadAgent(name);
-}
-
-/**
- * Stage build context for an agent-specific sandbox image.
- * Builds the base image if the agent defines one and it's not cached locally.
- */
-export function createAgentSandbox(
-  agent: AgentDefinition,
-  opts: EnsureAgentBaseImageOptions = {},
-): {
-  buildCtx: string;
-  stagedDockerfile: string;
-  baseImageResolutionMetadata: SandboxBaseImageResolutionMetadata | null;
-} {
-  const agentDockerfile = agent.dockerfilePath;
-
-  if (!agentDockerfile) {
-    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
-  }
-
-  const { imageTag: baseImageRef, resolutionMetadata } = ensureAgentBaseImage(agent, opts);
-
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.cpSync(ROOT, buildCtx, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
-    },
-  });
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile, stagedDockerfile);
-  if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
-  }
-  console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
-
-  return {
-    buildCtx,
-    stagedDockerfile,
-    baseImageResolutionMetadata: resolutionMetadata ?? null,
-  };
 }
 
 /**

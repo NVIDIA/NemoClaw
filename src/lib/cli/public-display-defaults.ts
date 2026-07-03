@@ -5,6 +5,7 @@ import type { PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandMetadata } from "./oclif-metadata";
 import { SANDBOX_AGENTS_DISPLAY_LAYOUT } from "./public-display-agents";
 import type { PublicDisplayLayout } from "./public-display-layout";
+import { SANDBOX_MCP_DISPLAY_LAYOUT } from "./public-display-mcp";
 import { SANDBOX_SESSIONS_DISPLAY_LAYOUT } from "./public-display-sessions";
 import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
@@ -197,6 +198,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--channel <channel>] [--json]",
     },
   ],
+  ...SANDBOX_MCP_DISPLAY_LAYOUT,
   "sandbox:config:get": [
     {
       group: "Sandbox Management",

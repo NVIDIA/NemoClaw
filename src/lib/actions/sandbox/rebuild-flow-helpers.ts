@@ -6,10 +6,17 @@ import {
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { loadAgent } from "../../agent/defs";
-import { ensureAgentBaseImage } from "../../agent/onboard";
+import {
+  ensureAgentBaseImage,
+  getAgentSandboxBaseImageEnvVar,
+  pinAgentSandboxBaseImageRef,
+} from "../../agent/onboard";
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import {
+  getNamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime,
+} from "../../gateway-runtime-action";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -40,6 +47,43 @@ export type RebuildAgentBaseImageOptions = {
   forceBaseImageRefresh?: boolean;
 };
 
+export type RebuildAgentBaseImagePreflight = {
+  ok: boolean;
+  imageRef: string | null;
+  overrideEnvVar: string | null;
+};
+
+/**
+ * Select, health-check, and process-pin the gateway recorded for this sandbox
+ * before any provider or credential preflight. OpenShell's global selection is
+ * shared mutable metadata; OPENSHELL_GATEWAY keeps every later subprocess in
+ * this rebuild on the target even if another process selects a sibling gateway.
+ */
+export async function ensureRebuildTargetGatewaySelected(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  log: (message: string) => void,
+  bail: (message: string, code?: number) => never,
+): Promise<boolean> {
+  const gatewayName = resolveSandboxGatewayName(sb);
+  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  if (!recovery.recovered || recovery.after.state !== "healthy_named") {
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} could not select the target gateway '${gatewayName}'.`,
+    );
+    console.error(
+      `  Gateway state before: ${recovery.before.state}; after: ${recovery.after.state}.`,
+    );
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(`Could not select healthy gateway '${gatewayName}' for sandbox '${sandboxName}'`);
+    return false;
+  }
+  process.env.OPENSHELL_GATEWAY = gatewayName;
+  log(`Pinned rebuild subprocesses to target gateway '${gatewayName}'`);
+  return true;
+}
+
 export async function resolveRebuildLiveState(
   sandboxName: string,
   sb: RebuildSandboxEntry,
@@ -55,7 +99,9 @@ export async function resolveRebuildLiveState(
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
-  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
+  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive, {
+    gatewayName: recordedGateway,
+  });
   if (liveListIssue) {
     printOpenShellStateRpcIssue(liveListIssue, {
       action: `rebuilding sandbox '${sandboxName}'`,
@@ -142,9 +188,9 @@ export async function resolveRebuildLiveState(
 
 export function openRebuildShieldsWindowForState(
   sandboxName: string,
-  staleRecovery: boolean,
+  recoveryRecreate: boolean,
 ): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
-  if (staleRecovery) {
+  if (recoveryRecreate) {
     return {
       staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
       rebuildShieldsWindow: { relocked: false, wasLocked: false },
@@ -160,16 +206,24 @@ export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
   options: RebuildAgentBaseImageOptions = {},
-): boolean {
-  if (!rebuildAgent) return true;
+): RebuildAgentBaseImagePreflight {
+  if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
+  const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
+  const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
   try {
-    ensureAgentBaseImage(agentDef, {
-      forceBaseImageRebuild: !options.resolutionHint,
-      resolutionHint: options.resolutionHint,
-      forceBaseImageRefresh: options.forceBaseImageRefresh,
+    const result = ensureAgentBaseImage(agentDef, {
+      forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+      ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+      ...(options.forceBaseImageRefresh !== undefined
+        ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+        : {}),
     });
-    return true;
+    const imageRef =
+      hasExplicitOverride && result.imageTag
+        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag)
+        : result.imageTag;
+    return { ok: true, imageRef, overrideEnvVar };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
@@ -178,8 +232,30 @@ export function ensureRebuildAgentBaseImage(
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(message);
-    return false;
+    return { ok: false, imageRef: null, overrideEnvVar: null };
   }
+}
+
+export function pinRebuildAgentBaseImageForRecreate(
+  preflight: RebuildAgentBaseImagePreflight,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const { imageRef, overrideEnvVar } = preflight;
+  if (!preflight.ok || !imageRef || !overrideEnvVar) return () => undefined;
+
+  const hadPriorValue = Object.hasOwn(env, overrideEnvVar);
+  const priorValue = env[overrideEnvVar];
+  env[overrideEnvVar] = imageRef;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (hadPriorValue && priorValue !== undefined) {
+      env[overrideEnvVar] = priorValue;
+    } else {
+      delete env[overrideEnvVar];
+    }
+  };
 }
 
 export function backupSandboxStateForRebuild(
@@ -232,11 +308,19 @@ export function backupSandboxStateForRebuild(
     );
   }
   console.log(`    Backup: ${backupManifest.backupPath}`);
-  warnUnpreservedUserManagedFiles(sandboxName, log);
   return backupManifest;
 }
 
-function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string) => void): void {
+/**
+ * Warn only after MCP rebuild preparation has scrubbed NemoClaw-owned adapter
+ * entries. In particular, a managed-only Deep Agents `.mcp.json` is removed by
+ * that transaction; if the file still exists at this point it contains
+ * additional user-owned content that the state backup intentionally excludes.
+ */
+export function warnUnpreservedUserManagedFiles(
+  sandboxName: string,
+  log: (msg: string) => void,
+): void {
   let probe: userManagedFilesProbe.UserManagedFilesProbe;
   try {
     probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
@@ -258,7 +342,7 @@ function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string)
     return;
   }
   console.warn(
-    `  ${YW}⚠${R} User-managed files in sandbox not preserved by rebuild: ${probe.existing.join(", ")}`,
+    `  ${YW}⚠${R} User-managed files will not be preserved if rebuild replaces this sandbox: ${probe.existing.join(", ")}`,
   );
-  console.warn("    Re-add them after rebuild, or manage them from the host.");
+  console.warn("    After a successful rebuild, re-add them or manage them from the host.");
 }

@@ -3,7 +3,10 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { WebSearchConfig } from "../inference/web-search";
-import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
+import {
+  SandboxBaseImageResolutionError,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 type DockerRunResult = { status: number | null };
@@ -40,6 +43,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
   forceBaseImageRefresh?: boolean;
+  gatewayPort?: number;
   log?: (message: string) => void;
   warn?: (message: string) => void;
   deps?: SandboxDockerfilePatchDeps;
@@ -102,6 +106,7 @@ export async function prepareSandboxDockerfilePatch({
   resolutionHint = null,
   preResolvedBaseImageMetadata = null,
   forceBaseImageRefresh = false,
+  gatewayPort,
   log = console.log,
   warn = console.warn,
   deps = {},
@@ -121,6 +126,11 @@ export async function prepareSandboxDockerfilePatch({
     log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else if (resolved) {
     log(`  Using sandbox base image ${resolved.ref}`);
+  } else if (shouldResolveBaseImage && dockerDriverGateway) {
+    throw new SandboxBaseImageResolutionError(
+      "No OpenShell ABI-compatible sandbox base image could be resolved. " +
+        "Refusing to fall back to an unvalidated cached :latest image.",
+    );
   } else if (shouldResolveBaseImage) {
     const localCheck = (deps.dockerImageInspect ?? inspectDockerImage)(
       `${sandboxBaseImage}:${sandboxBaseTag}`,
@@ -145,6 +155,7 @@ export async function prepareSandboxDockerfilePatch({
     sandboxGpuConfig,
     {
       dockerDriverGateway,
+      gatewayPort,
       log,
     },
   );

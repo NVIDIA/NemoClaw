@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Dependencies / cloudflared Update Check
+
+on:
+  schedule:
+    - cron: "23 13 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflared-update-check
+  cancel-in-progress: false
+
+jobs:
+  check-cloudflared:
+    name: Check cloudflared release pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Compare reviewed pin with the latest upstream release
+        run: bash scripts/checks/check-cloudflared-update.sh

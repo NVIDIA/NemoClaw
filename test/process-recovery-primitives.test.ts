@@ -13,6 +13,7 @@ const requireSource = createRequire(import.meta.url);
 const {
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
+  executeSandboxCommand,
   executeSandboxExecCommand,
   resolveSandboxDashboardPort,
 } = requireSource(
@@ -256,6 +257,38 @@ describe("classifyForwardHealthWithReachability", () => {
 });
 
 describe("executeSandboxExecCommand", () => {
+  it("does not forward an MCP credential to the OpenShell child process", () => {
+    const childProcess = requireSource("node:child_process");
+    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nREADY\n",
+      stderr: "",
+    } as never);
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    const priorGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
+
+    try {
+      const result = withFakeOpenshellBinary(() =>
+        executeSandboxExecCommand("hermes-box", "printf READY"),
+      );
+      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+
+      expect(result).toEqual({ status: 0, stdout: "READY", stderr: "" });
+      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
+      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+      expect(options.env?.PATH).toBe(process.env.PATH);
+    } finally {
+      priorSecret === undefined
+        ? delete process.env.TEST_MCP_RAW_TOKEN
+        : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+      priorGateway === undefined
+        ? delete process.env.OPENSHELL_GATEWAY
+        : (process.env.OPENSHELL_GATEWAY = priorGateway);
+    }
+  });
+
   it("parses stdout-framed root exec output after the startup marker", () => {
     const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
@@ -347,9 +380,19 @@ describe("executeSandboxExecCommand", () => {
       stderr: "",
     } as never);
 
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    const priorGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
     const result = withFakeOpenshellBinary(() =>
       executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
     );
+    priorSecret === undefined
+      ? delete process.env.TEST_MCP_RAW_TOKEN
+      : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+    priorGateway === undefined
+      ? delete process.env.OPENSHELL_GATEWAY
+      : (process.env.OPENSHELL_GATEWAY = priorGateway);
 
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
     expect(privilegedArgv).toHaveBeenCalledWith("hermes-box", [
@@ -366,5 +409,75 @@ describe("executeSandboxExecCommand", () => {
       "-c",
       "marked-command",
     ]);
+    const dockerOptions = dockerSpawnSync.mock.calls[0]?.[1] as { env?: NodeJS.ProcessEnv };
+    expect(dockerOptions.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
+    expect(dockerOptions.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+    expect(dockerOptions.env?.PATH).toBe(process.env.PATH);
+  });
+
+  it("does not let Docker fallback satisfy a strict provider credential proof", () => {
+    const childProcess = requireSource("node:child_process");
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 1,
+      stdout: "OpenShell transport failed before the child marker\n",
+      stderr: "gateway unavailable\n",
+    } as never);
+    const privilegedArgv = vi.spyOn(privilegedExec, "privilegedSandboxExecArgv");
+    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync");
+
+    const result = withFakeOpenshellBinary(() =>
+      executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
+        allowLocalDockerFallback: false,
+      }),
+    );
+
+    expect(result).toBeNull();
+    expect(privilegedArgv).not.toHaveBeenCalled();
+    expect(dockerSpawnSync).not.toHaveBeenCalled();
+    const args = spawn.mock.calls[0]?.[1] as string[];
+    const shellPayload = args.at(-1) ?? "";
+    expect(shellPayload).not.toMatch(/[\r\n]/);
+    expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
+  });
+});
+
+describe("executeSandboxCommand", () => {
+  it("does not forward an MCP credential to the SSH child process", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const childProcess = requireSource("node:child_process");
+    vi.spyOn(openshellRuntime, "captureSandboxSshConfig").mockReturnValue({
+      status: 0,
+      output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
+    } as never);
+    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "registered\n",
+      stderr: "",
+    } as never);
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    const priorGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
+
+    try {
+      expect(executeSandboxCommand("alpha", "mcporter config get fake --json")).toEqual({
+        status: 0,
+        stdout: "registered",
+        stderr: "",
+      });
+      const options = spawn.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
+      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+      expect(options.env?.PATH).toBe(process.env.PATH);
+    } finally {
+      priorSecret === undefined
+        ? delete process.env.TEST_MCP_RAW_TOKEN
+        : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+      priorGateway === undefined
+        ? delete process.env.OPENSHELL_GATEWAY
+        : (process.env.OPENSHELL_GATEWAY = priorGateway);
+    }
   });
 });

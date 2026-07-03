@@ -149,7 +149,11 @@ export function printDockerBridgeContainerStartFailure(
  * wall (mirroring the [[assertCdiNvidiaGpuSpecPresent]] resume backstop
  * pattern at #3152).
  */
-export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteractive = false): void {
+export function assertDockerBridgeAndContainerDnsHealthy(
+  host: Host,
+  nonInteractive = false,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): void {
   // A minimal bridge-backed container start catches Docker/kernel failures
   // (notably Jetson veth "operation not supported") before longer gateway or
   // sandbox build work starts. Only veth/timeout/killed/daemon-unreachable
@@ -167,7 +171,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     bridgeStart.reason === "docker_daemon_unreachable"
   ) {
     printDockerBridgeContainerStartFailure(bridgeStart, host);
-    process.exit(1);
+    exitProcess(1);
   } else {
     console.warn(
       `  ⚠ Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
@@ -233,7 +237,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
       },
       host,
     );
-    process.exit(1);
+    exitProcess(1);
   }
   if (dns.reason === "docker_daemon_unreachable") {
     printDockerBridgeContainerStartFailure(
@@ -247,7 +251,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
       },
       host,
     );
-    process.exit(1);
+    exitProcess(1);
   }
   if (dns.reason === "timeout" || dns.reason === "killed") {
     console.error("  ✗ Container DNS probe did not complete.");
@@ -276,7 +280,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
   } else {
     printContainerDnsRemediation(host);
   }
-  process.exit(1);
+  exitProcess(1);
 }
 
 /**

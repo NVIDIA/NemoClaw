@@ -269,6 +269,26 @@ describe("translatePublicSandboxArgv", () => {
       ["alpha", "slack"],
     );
     expectNative(
+      translatePublicSandboxArgv("alpha", "mcp", [
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ]),
+      "sandbox:mcp",
+      [
+        "alpha",
+        "add",
+        "github",
+        "--url",
+        "https://api.githubcopilot.com/mcp/",
+        "--env",
+        "GITHUB_TOKEN",
+      ],
+    );
+    expectNative(
       translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
       "sandbox:snapshot:restore",
       ["alpha", "latest"],

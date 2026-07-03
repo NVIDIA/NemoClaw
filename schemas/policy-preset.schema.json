@@ -48,10 +48,12 @@
       "properties": {
         "host": { "type": "string" },
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "protocol": { "type": "string", "enum": ["rest", "websocket"] },
+        "protocol": { "type": "string", "enum": ["rest", "websocket", "json-rpc", "mcp"] },
         "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
         "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
         "access": { "type": "string", "enum": ["full"] },
+        "json_rpc": { "$ref": "#/$defs/jsonRpcOptions" },
+        "mcp": { "$ref": "#/$defs/mcpOptions" },
         "websocket_credential_rewrite": { "type": "boolean" },
         "request_body_credential_rewrite": { "type": "boolean" },
         "allowed_ips": {
@@ -63,43 +65,125 @@
           "type": "array",
           "items": { "$ref": "#/$defs/rule" },
           "minItems": 1
+        },
+        "deny_rules": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/denyRule" },
+          "minItems": 1
         }
       },
-      "if": {
-        "properties": { "protocol": { "enum": ["rest", "websocket"] } },
-        "required": ["protocol"]
-      },
-      "then": { "required": ["rules"] }
+      "allOf": [
+        {
+          "if": {
+            "properties": { "protocol": { "enum": ["rest", "websocket"] } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "anyOf": [
+              { "required": ["rules"] },
+              { "required": ["access"] }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "json-rpc" } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "required": ["rules"],
+            "not": { "required": ["access"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "protocol": { "const": "mcp" } },
+            "required": ["protocol"]
+          },
+          "then": {
+            "not": { "required": ["access"] },
+            "anyOf": [
+              { "required": ["rules"] },
+              {
+                "required": ["mcp"],
+                "properties": {
+                  "mcp": {
+                    "required": ["allow_all_known_mcp_methods"],
+                    "properties": {
+                      "allow_all_known_mcp_methods": { "const": true }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
     },
     "rule": {
       "type": "object",
       "required": ["allow"],
       "additionalProperties": false,
       "properties": {
-        "allow": {
+        "allow": { "$ref": "#/$defs/l7Matcher" }
+      }
+    },
+    "denyRule": {
+      "$ref": "#/$defs/l7Matcher"
+    },
+    "l7Matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "method": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "pattern": "^/" },
+        "tool": { "$ref": "#/$defs/matcher" },
+        "params": {
           "type": "object",
-          "required": ["method", "path"],
+          "additionalProperties": { "$ref": "#/$defs/paramMatcher" }
+        }
+      }
+    },
+    "matcher": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
           "additionalProperties": false,
           "properties": {
-            "method": {
-              "type": "string",
-              "enum": [
-                "GET",
-                "POST",
-                "PUT",
-                "PATCH",
-                "DELETE",
-                "HEAD",
-                "OPTIONS",
-                "WEBSOCKET_TEXT"
-              ]
-            },
-            "path": {
-              "type": "string",
-              "pattern": "^/"
+            "any": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "minItems": 1
             }
-          }
+          },
+          "required": ["any"]
         }
+      ]
+    },
+    "paramMatcher": {
+      "oneOf": [
+        { "$ref": "#/$defs/matcher" },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/paramMatcher" }
+        }
+      ]
+    },
+    "jsonRpcOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_body_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }
+      }
+    },
+    "mcpOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_body_bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "strict_tool_names": { "type": "boolean" },
+        "allow_all_known_mcp_methods": { "type": "boolean" }
       }
     },
     "binary": {

@@ -43,6 +43,8 @@ export type ResolveBaseImageOptions = {
   minGlibcVersion?: string;
   rootDir?: string;
   env?: NodeJS.ProcessEnv;
+  validateImage?: (imageRef: string) => boolean;
+  validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
   forceRefresh?: boolean;
 };

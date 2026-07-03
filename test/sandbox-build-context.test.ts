@@ -31,6 +31,8 @@ describe("sandbox build context staging", () => {
 
     writeFixture("Dockerfile");
     writeFixture("tsconfig.runtime-preloads.json", "{}\n");
+    writeFixture(path.join("agents", "openclaw", "mcporter-runtime", "package.json"), "{}\n");
+    writeFixture(path.join("agents", "openclaw", "mcporter-runtime", "package-lock.json"), "{}\n");
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -143,6 +145,17 @@ describe("sandbox build context staging", () => {
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
   }
 
+  function expectStagedMcporterRuntime(buildCtx: string) {
+    const runtimeDir = path.join(buildCtx, "agents", "openclaw", "mcporter-runtime");
+    expect(fs.readdirSync(runtimeDir).sort()).toEqual(["package-lock.json", "package.json"]);
+    expect((fs.statSync(path.join(runtimeDir, "package.json")).mode & 0o777).toString(8)).toBe(
+      "644",
+    );
+    expect((fs.statSync(path.join(runtimeDir, "package-lock.json")).mode & 0o777).toString(8)).toBe(
+      "644",
+    );
+  }
+
   it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
@@ -183,6 +196,7 @@ describe("sandbox build context staging", () => {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
+      expectStagedMcporterRuntime(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -211,6 +225,7 @@ describe("sandbox build context staging", () => {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
+      expectStagedMcporterRuntime(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -241,6 +256,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
       expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
+      expectStagedMcporterRuntime(buildCtx);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(

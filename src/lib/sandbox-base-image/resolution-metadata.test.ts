@@ -163,4 +163,29 @@ describe("sandbox base-image resolution metadata lifecycle", () => {
       expect.anything(),
     );
   });
+
+  it("revalidates custom runtime requirements before reusing a hint (#4680)", () => {
+    mocks.dockerImageInspectFormat.mockReturnValue(JSON.stringify(inspected));
+    const validateImage = vi.fn(() => false);
+
+    expect(
+      reuseSandboxBaseImageResolutionHint(
+        {
+          ...options,
+          resolutionHint: metadata,
+          validateImage,
+          validationDescription: "the native MCP Streamable HTTP runtime",
+        },
+        KEY,
+      ),
+    ).toBeNull();
+    expect(validateImage).toHaveBeenCalledWith(REF);
+    expect(mocks.addTraceEvent).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "custom_validation_failed",
+    });
+    expect(mocks.addTraceEvent).not.toHaveBeenCalledWith(
+      "nemoclaw.sandbox_base_image.cache_hit",
+      expect.anything(),
+    );
+  });
 });

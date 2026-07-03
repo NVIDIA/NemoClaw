@@ -57,4 +57,28 @@ describe("prepareSandboxDockerfilePatch fail-closed base-image resolution", () =
     expect(dockerImageInspect).not.toHaveBeenCalled();
     expect(patchStagedDockerfile).not.toHaveBeenCalled();
   });
+
+  it("rejects an unproven cached latest image when the OpenShell ABI is required (#4680)", async () => {
+    const dockerImageInspect = vi.fn(() => ({ status: 0 }));
+    const patchStagedDockerfile = vi.fn();
+
+    await expect(
+      prepareSandboxDockerfilePatch({
+        ...baseInput,
+        deps: {
+          isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+          pullAndResolveBaseImageDigest: vi.fn(() => null),
+          dockerImageInspect,
+          enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+          patchStagedDockerfile,
+        },
+      }),
+    ).rejects.toThrow(
+      "No OpenShell ABI-compatible sandbox base image could be resolved. " +
+        "Refusing to fall back to an unvalidated cached :latest image.",
+    );
+
+    expect(dockerImageInspect).not.toHaveBeenCalled();
+    expect(patchStagedDockerfile).not.toHaveBeenCalled();
+  });
 });

@@ -42,11 +42,14 @@ name: E2E / Branch Validation
 #                              isolation, openclaw.json config patching, network reachability,
 #                              and L7 proxy token rewriting for Telegram + Discord. Creates
 #                              its own sandbox (e2e-msg-provider). (~15 min)
+#   messaging-compatible-endpoint — Telegram-enabled OpenClaw through a local
+#                              OpenAI-compatible endpoint. Creates its own sandbox
+#                              (e2e-msg-compat) on a separate fresh instance.
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
 #                              sandbox proof suite from source. (~45 min)
-#   all                      — Runs credential-sanitization + telegram-injection (NOT full,
-#                              which destroys the sandbox the security tests need).
+#   all                      — Runs credential-sanitization + telegram-injection, each with
+#                              its own sandbox lifecycle (NOT the independent full journey).
 #
 # Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_INFERENCE_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
@@ -68,6 +71,7 @@ on:
           - credential-sanitization
           - telegram-injection
           - messaging-providers
+          - messaging-compatible-endpoint
           - dashboard-remote-bind
           - gpu
           - all
@@ -81,10 +85,6 @@ on:
         required: false
         type: boolean
         default: false
-      brev_token:
-        description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
-        required: false
-        default: ""
       brev_provider:
         description: "Brev provider filter for provisioning (blank = Brev default/any)"
         required: false
@@ -122,14 +122,10 @@ on:
         required: false
         type: boolean
         default: true
-      setup_script_url:
-        required: false
-        type: string
-        default: ""
       keep_alive:
         required: false
         type: boolean
-        default: true
+        default: false
       brev_provider:
         required: false
         type: string
@@ -166,46 +162,64 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: e2e-branch-validation-${{ inputs.pr_number || github.run_id }}
+  # A caller may fan this reusable workflow out as a suite matrix. Include the
+  # suite so sibling jobs do not cancel each other while repeat runs of the
+  # same PR/suite still replace stale work.
+  group: e2e-branch-validation-${{ inputs.pr_number || github.run_id }}-${{ inputs.test_suite }}
   cancel-in-progress: true
 
 jobs:
   e2e-branch-validation:
     # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 130
+    # Target-branch code receives Brev/inference secrets, so this job must not
+    # inherit the caller's reporting write grants.
+    permissions:
+      contents: read
+      pull-requests: read
     env:
-      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+    outputs:
+      tested_sha: ${{ steps.tested-ref.outputs.sha }}
     steps:
+      - name: Validate test suite
+        env:
+          TEST_SUITE: ${{ inputs.test_suite }}
+        run: |
+          case "$TEST_SUITE" in
+            full|credential-sanitization|telegram-injection|messaging-providers|messaging-compatible-endpoint|dashboard-remote-bind|gpu|all) ;;
+            *)
+              echo "::error::test_suite is not one of the supported Brev E2E suites"
+              exit 1
+              ;;
+          esac
+
       - name: Resolve branch from PR number
         if: inputs.pr_number != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
-          BRANCH=$(gh pr view ${{ inputs.pr_number }} --repo ${{ github.repository }} --json headRefName -q .headRefName)
-          echo "Resolved PR #${{ inputs.pr_number }} → branch: $BRANCH"
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::pr_number must be a positive integer"
+            exit 1
+          fi
+          BRANCH=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName -q .headRefName)
+          echo "Resolved PR #$PR_NUMBER → branch: $BRANCH"
           echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
       - name: Checkout target branch
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
+          persist-credentials: false
 
-      - name: Create check run (pending)
-        if: inputs.pr_number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - id: tested-ref
+        name: Record exact tested revision
         run: |
-          PR_SHA=$(gh pr view ${{ inputs.pr_number }} --json headRefOid -q .headRefOid)
-          CHECK_RUN_ID=$(gh api repos/${{ github.repository }}/check-runs \
-            -f name="Brev E2E (${{ inputs.test_suite }})" \
-            -f head_sha="$PR_SHA" \
-            -f status="in_progress" \
-            -f "output[title]=Running on ephemeral Brev instance" \
-            -f "output[summary]=Tests in progress..." \
-            --jq '.id')
-          echo "CHECK_RUN_ID=$CHECK_RUN_ID" >> "$GITHUB_ENV"
-          echo "PR_SHA=$PR_SHA" >> "$GITHUB_ENV"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -215,13 +229,17 @@ jobs:
 
       - name: Install Brev CLI
         env:
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
           BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+          BREV_CLI_VERSION: "0.6.324"
+          BREV_CLI_SHA256: "c7056c17d4810134e3fe7194c233619b1b888a640df1929ea7c6f69c0425e58c"
         run: |
+          set -euo pipefail
           # Brev CLI v0.6.324+ — CPU instances use `brev search cpu | brev create`
           # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.324/brev-cli_0.6.324_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v${BREV_CLI_VERSION}/brev-cli_${BREV_CLI_VERSION}_linux_amd64.tar.gz"
+          printf '%s  %s\n' "$BREV_CLI_SHA256" /tmp/brev.tar.gz | sha256sum -c -
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
 
@@ -252,13 +270,13 @@ jobs:
       - name: Run ephemeral Brev E2E
         env:
           NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1"
-          BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE: "1"
+          BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
-          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
           BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
           BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
@@ -267,45 +285,6 @@ jobs:
           NEMOCLAW_GPU_E2E_MODEL: ${{ vars.NEMOCLAW_GPU_E2E_MODEL || 'qwen2.5:7b' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
         run: npx vitest run --project e2e-branch-validation --silent=false --reporter=default
-
-      - name: Update check run (completed)
-        if: always() && inputs.pr_number != '' && env.CHECK_RUN_ID != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          CONCLUSION=${{ job.status == 'success' && 'success' || 'failure' }}
-          gh api repos/${{ github.repository }}/check-runs/${{ env.CHECK_RUN_ID }} \
-            -X PATCH \
-            -f status="completed" \
-            -f conclusion="$CONCLUSION" \
-            -f "output[title]=Brev E2E (${{ inputs.test_suite }}): ${CONCLUSION}" \
-            -f "output[summary]=See workflow run for details."
-
-      - name: Post PR comment
-        if: always() && inputs.pr_number != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ job.status }}" = "success" ]; then
-            EMOJI="✅"
-            STATUS="PASSED"
-          else
-            EMOJI="❌"
-            STATUS="FAILED"
-          fi
-          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
-          BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
-          BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-          if [ "${{ inputs.keep_alive }}" = "true" ]; then
-            BODY="${BODY}
-
-          > **Instance \`${INSTANCE}\` is still running.** To SSH in:
-          > \`\`\`
-          > brev refresh && ssh ${INSTANCE}
-          > \`\`\`
-          > When done, delete it: \`brev delete ${INSTANCE}\`"
-          fi
-          gh pr comment ${{ inputs.pr_number }} --repo ${{ github.repository }} --body "$BODY"
 
       # Collect debugging artifacts from the Brev VM on failure before the
       # instance gets torn down. Captures the onboard log, sandbox list,
@@ -337,7 +316,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: brev-debug-bundle
+          name: brev-debug-bundle-${{ inputs.test_suite }}-${{ github.run_attempt }}
           path: brev-debug-bundle/
           if-no-files-found: ignore
 
@@ -345,6 +324,136 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-branch-validation-logs
+          name: e2e-branch-validation-logs-${{ inputs.test_suite }}-${{ github.run_attempt }}
           path: /tmp/brev-e2e-*.log
           if-no-files-found: ignore
+
+      - name: Delete Brev instance
+        if: always() && !inputs.keep_alive
+        env:
+          INSTANCE: ${{ env.BREV_E2E_INSTANCE_NAME }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v brev >/dev/null 2>&1; then
+            echo "Brev CLI is unavailable; the validation step could not have created ${INSTANCE}."
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            if output="$(timeout 30s brev delete "$INSTANCE" 2>&1)"; then
+              printf '%s\n' "$output"
+              echo "Brev deletion requested for ${INSTANCE}."
+              exit 0
+            else
+              status=$?
+            fi
+
+            if list_json="$(timeout 30s brev ls --json 2>/dev/null)" && \
+               jq -e '
+                 (type == "array" and all(.[]; type == "object")) or
+                 (type == "object" and
+                  ((.workspaces? // null) | type == "array") and
+                  all(.workspaces[]; type == "object"))
+               ' \
+                 <<<"$list_json" >/dev/null; then
+              if ! jq -e --arg name "$INSTANCE" '
+                (if type == "array" then . else .workspaces end)
+                | any(.[];
+                    ((.name // .workspaceName // .instanceName // .Name // "") | tostring)
+                    == $name)
+              ' <<<"$list_json" >/dev/null; then
+                echo "Brev instance ${INSTANCE} is already absent."
+                exit 0
+              fi
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              printf '%s\n' "$output" >&2
+              echo "::error::Failed to delete Brev instance ${INSTANCE} after ${attempt} attempts."
+              exit "$status"
+            fi
+
+            echo "::warning::Brev delete attempt ${attempt} failed; refreshing before retry."
+            timeout 30s brev refresh >/dev/null 2>&1 || true
+            sleep "$((attempt * 5))"
+          done
+
+  report-pr:
+    name: Report Brev E2E result
+    needs: e2e-branch-validation
+    if: always() && inputs.pr_number != ''
+    runs-on: ubuntu-latest
+    # This job receives no Brev/inference secret and checks out no target code,
+    # keeping its write token outside the validation data plane.
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - name: Publish completed check and PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          TEST_SUITE: ${{ inputs.test_suite }}
+          VALIDATION_RESULT: ${{ needs.e2e-branch-validation.result }}
+          TESTED_SHA: ${{ needs.e2e-branch-validation.outputs.tested_sha }}
+          KEEP_ALIVE: ${{ inputs.keep_alive }}
+          INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ inputs.test_suite }}-${{ github.run_id }}-${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::pr_number must be a positive integer"
+            exit 1
+          fi
+          pr_json="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName,headRefOid)"
+          branch="$(jq -r '.headRefName' <<<"$pr_json")"
+          current_sha="$(jq -r '.headRefOid' <<<"$pr_json")"
+          if [[ "$current_sha" != "$TESTED_SHA" ]]; then
+            echo "::error::PR head moved after Brev validation; refusing to report stale evidence"
+            exit 1
+          fi
+          case "$VALIDATION_RESULT" in
+            success)
+              conclusion="success"
+              status="PASSED"
+              emoji="✅"
+              ;;
+            cancelled)
+              conclusion="cancelled"
+              status="CANCELLED"
+              emoji="⚪"
+              ;;
+            skipped)
+              conclusion="skipped"
+              status="SKIPPED"
+              emoji="⚪"
+              ;;
+            *)
+              conclusion="failure"
+              status="FAILED"
+              emoji="❌"
+              ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f "name=Brev E2E ($TEST_SUITE)" \
+            -f "head_sha=$TESTED_SHA" \
+            -f status="completed" \
+            -f "conclusion=$conclusion" \
+            -f "output[title]=Brev E2E ($TEST_SUITE): $conclusion" \
+            -f "output[summary]=See workflow run for details."
+          body_file="$(mktemp)"
+          printf "%s **Brev E2E** (%s): **%s** on branch \`%s\` — [See logs](%s)\n" \
+            "$emoji" "$TEST_SUITE" "$status" "$branch" "$RUN_URL" >"$body_file"
+          if [[ "$KEEP_ALIVE" == "true" ]]; then
+            cat >>"$body_file" <<EOF
+
+          > **Instance \`$INSTANCE_NAME\` is still running.** To SSH in:
+          > \`\`\`
+          > brev refresh && ssh $INSTANCE_NAME
+          > \`\`\`
+          > When done, delete it: \`brev delete $INSTANCE_NAME\`
+          EOF
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$body_file"

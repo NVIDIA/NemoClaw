@@ -57,6 +57,7 @@ export function createSandboxBaseImageResolutionKey(options: ResolveBaseImageOpt
     platform: dockerPlatform(),
     requireOpenshellSandboxAbi: options.requireOpenshellSandboxAbi === true,
     minGlibcVersion: options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC,
+    validationDescription: options.validationDescription || null,
   };
   return crypto.createHash("sha256").update(JSON.stringify(material)).digest("hex");
 }

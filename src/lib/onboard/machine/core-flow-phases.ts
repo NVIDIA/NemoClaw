@@ -26,6 +26,7 @@ export interface CoreOnboardFlowPhaseOptions<
   ResourceProfile = unknown,
 > {
   forceProviderSelection: boolean;
+  authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
   constants: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["constants"];
   providerDeps: ProviderInferenceStateOptions<Context["gpu"], Context["agent"], Host>["deps"];
@@ -61,6 +62,7 @@ export function createCoreOnboardFlowPhases<
       sandboxName: context.sandboxName,
       agent: context.agent,
       forceProviderSelection: options.forceProviderSelection,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
       initial: {
         model: context.model,
         provider: context.provider,
@@ -102,6 +104,7 @@ export function createCoreOnboardFlowPhases<
     const sandboxStateResult = await handleSandboxState({
       resume: context.resume,
       fresh: context.fresh,
+      authoritativeResumeConfig: options.authoritativeResumeConfig,
       resumeAgentChanged: options.sandbox.resumeAgentChanged,
       session: context.session,
       sandboxName: context.sandboxName,
@@ -116,6 +119,7 @@ export function createCoreOnboardFlowPhases<
       preferredInferenceApi: context.preferredInferenceApi,
       sandboxGpuConfig: context.sandboxGpuConfig,
       hermesToolGateways: context.hermesToolGateways,
+      hermesAuthMethod: context.hermesAuthMethod,
       controlUiPort: options.sandbox.controlUiPort,
       rootDir: options.sandbox.rootDir,
       env: options.env,

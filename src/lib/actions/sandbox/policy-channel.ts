@@ -59,6 +59,7 @@ import {
   knownChannelNames,
   persistChannelTokens,
 } from "../../sandbox/channels";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
@@ -94,6 +95,13 @@ const YW = useColor ? "\x1b[1;33m" : "";
 export async function addSandboxPolicy(
   sandboxName: string,
   options: PolicyAddOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () => addSandboxPolicyUnlocked(sandboxName, options));
+}
+
+async function addSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyAddOptions,
 ): Promise<void> {
   const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
 
@@ -917,6 +925,15 @@ export async function addSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    addSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function addSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const force = Boolean(options.force);
   const rawChannelArg = options.channel;
@@ -1291,6 +1308,15 @@ export async function removeSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxChannelUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxChannelUnlocked(
+  sandboxName: string,
+  options: ChannelMutationOptions,
+): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const rawChannelArg = options.channel;
   if (!rawChannelArg) {
@@ -1456,19 +1482,32 @@ export async function stopSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, true);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, true),
+  );
 }
 
 export async function startSandboxChannel(
   sandboxName: string,
   options: ChannelMutationOptions = {},
 ): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, options, false);
+  await withSandboxMutationLock(sandboxName, () =>
+    sandboxChannelsSetEnabled(sandboxName, options, false),
+  );
 }
 
 export async function removeSandboxPolicy(
   sandboxName: string,
   options: PolicyRemoveOptions = {},
+): Promise<void> {
+  return withSandboxMutationLock(sandboxName, () =>
+    removeSandboxPolicyUnlocked(sandboxName, options),
+  );
+}
+
+async function removeSandboxPolicyUnlocked(
+  sandboxName: string,
+  options: PolicyRemoveOptions,
 ): Promise<void> {
   const dryRun = Boolean(options.dryRun);
   const skipConfirm = Boolean(

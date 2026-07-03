@@ -149,6 +149,12 @@ function createDeps(
       getSandboxReuseState: () => "missing",
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
+      getSandboxRegistryEntry: (name: string) => ({
+        name,
+        webSearchEnabled: false,
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
       normalizeHermesToolGatewaySelections: (value: unknown) =>
         Array.isArray(value) ? (value as string[]) : [],
       stringSetsEqual: (left: string[], right: string[]) =>
@@ -220,6 +226,7 @@ function baseOptions(
     preferredInferenceApi: "openai-completions",
     sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
     hermesToolGateways: [],
+    hermesAuthMethod: null,
     controlUiPort: null,
     rootDir: "/repo",
     env: {},
@@ -260,6 +267,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -286,6 +294,21 @@ describe("handleSandboxState", () => {
     });
   });
 
+  it("does not auto-enable web search from ambient credentials during authoritative rebuild", async () => {
+    const configureWebSearch = vi.fn(async () => ({ fetchEnabled: true as const }));
+    const { deps, calls } = createDeps({ configureWebSearch });
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps),
+      authoritativeResumeConfig: true,
+      env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
+    });
+
+    expect(configureWebSearch).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[5]).toBeNull();
+    expect(result.webSearchConfig).toBeNull();
+  });
+
   it("removes the conflicting Hermes nous-web gateway when Tavily is selected", async () => {
     const { deps, calls } = createDeps();
 
@@ -310,6 +333,7 @@ describe("handleSandboxState", () => {
       expect.anything(),
       null,
       ["nous-audio"],
+      null,
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -349,6 +373,34 @@ describe("handleSandboxState", () => {
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
     expect(result.webSearchConfigChanged).toBe(false);
     expect(result.session).toBe(skippedSession);
+  });
+
+  it("backfills absent rebuild fidelity after validated sandbox reuse", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+      hermesAuthMethod: "api_key",
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({ name, nemoclawVersion: "0.1.0" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+      hermesAuthMethod: "api_key",
+    });
+
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      webSearchEnabled: true,
+      webSearchProvider: "brave",
+      fromDockerfile: null,
+      hermesAuthMethod: "api_key",
+    });
   });
 
   it("marks web search changed when recreate implicitly enables Tavily", async () => {
@@ -513,6 +565,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -543,6 +596,50 @@ describe("handleSandboxState", () => {
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.repairSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
+  it("fails before credential or registry mutation when Tavily collides with managed MCP", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      agentSupportsWebSearchProvider: () => true,
+      getSandboxRegistryEntry: (name: string) => ({
+        name,
+        mcp: {
+          bridges: {
+            search: {
+              server: "search",
+              agent: "openclaw",
+              url: "https://mcp.example.com/mcp",
+              env: ["TAVILY_API_KEY"],
+              policyName: "saved-mcp-search",
+              addedAt: "2026-07-03T00:00:00.000Z",
+            },
+          },
+        },
+      }),
+    });
+
+    await expect(
+      handleSandboxState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "saved",
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
+        env: { NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily" },
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("already owns TAVILY_API_KEY"),
+    );
+    expect(calls.validateBrave).not.toHaveBeenCalled();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
@@ -581,6 +678,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(result.webSearchConfig).toBeNull();
   });

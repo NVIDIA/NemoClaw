@@ -47,11 +47,13 @@ export type DcodeRebuildOrchestrator = {
   prepareImage(
     resumeConfig: RebuildResumeConfig,
     skipLiveRoute: boolean,
+    gatewayPort: number,
     baseImageOptions?: RebuildAgentBaseImageOptions,
   ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
     skipLiveRoute: boolean,
+    gatewayPort: number,
   ): Promise<boolean>;
   clearManagedCustomDockerfile(session: Session): void;
   storedDockerfile(sessionMatchesSandbox: boolean, session: Session | null): string | null;
@@ -110,7 +112,7 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, skipLiveRoute, baseImageOptions) =>
+    prepareImage: (resumeConfig, skipLiveRoute, gatewayPort, baseImageOptions) =>
       run(async () => {
         if (!scope.enabled) {
           return deps.ensureAgentBaseImage(rebuildAgent, scope.bail, baseImageOptions);
@@ -120,6 +122,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           skipLiveRoute,
+          gatewayPort,
           log,
           bail: scope.bail,
           checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
@@ -131,7 +134,7 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, skipLiveRoute) =>
+    revalidateBeforeDelete: (resumeConfig, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -141,6 +144,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           skipLiveRoute,
+          gatewayPort,
           log,
           bail: scope.bail,
           checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),

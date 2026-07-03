@@ -29,6 +29,9 @@ const {
   withTimerBoundShieldsMutationLock,
 }: typeof import("../shields/timer-bound-lock") = require("../shields/timer-bound-lock");
 const {
+  withSandboxMutationLock,
+}: typeof import("../state/mcp-lifecycle-lock") = require("../state/mcp-lifecycle-lock");
+const {
   runOpenClawConfigGuard,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
@@ -994,42 +997,44 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
-  // Serialize only the authoritative re-read/CAS write. Interactive approval
-  // and DNS validation above must not hold the shields transition lock across
-  // the auto-restore deadline. If anything changed while the user was
-  // deciding, fail closed and ask them to retry against the new baseline.
-  withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
-    const { isShieldsDown }: typeof import("../shields") = require("../shields");
-    if (
-      (target.agentName === "openclaw" || target.agentName === "hermes") &&
-      !isShieldsDown(sandboxName, true)
-    ) {
-      configFail(
-        `  ${target.agentName} config changes are unavailable while shields are up for '${sandboxName}'. Run 'nemoclaw ${sandboxName} shields down' first.`,
-      );
-    }
-    const currentConfig = readSandboxConfig(sandboxName, target);
-    const currentConfigSha256 = (
-      currentConfig as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string }
-    )[CONFIG_SOURCE_SHA256];
-    if (currentConfigSha256 !== initialConfigSha256) {
-      configFail(
-        `  ${target.agentName} config changed while this update was being validated. Re-run config set against the current value.`,
-      );
-    }
-    setDotpath(currentConfig, opts.key!, safeValue);
+  // Serialize only the authoritative re-read/CAS write under the shared
+  // sandbox lock and then the shields transition lock. Interactive approval
+  // and DNS validation above must not hold either lock across the auto-restore
+  // deadline. If anything changed while the user was deciding, fail closed.
+  await withSandboxMutationLock(sandboxName, () =>
+    withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
+      const { isShieldsDown }: typeof import("../shields") = require("../shields");
+      if (
+        (target.agentName === "openclaw" || target.agentName === "hermes") &&
+        !isShieldsDown(sandboxName, true)
+      ) {
+        configFail(
+          `  ${target.agentName} config changes are unavailable while shields are up for '${sandboxName}'. Run 'nemoclaw ${sandboxName} shields down' first.`,
+        );
+      }
+      const currentConfig = readSandboxConfig(sandboxName, target);
+      const currentConfigSha256 = (
+        currentConfig as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string }
+      )[CONFIG_SOURCE_SHA256];
+      if (currentConfigSha256 !== initialConfigSha256) {
+        configFail(
+          `  ${target.agentName} config changed while this update was being validated. Re-run config set against the current value.`,
+        );
+      }
+      setDotpath(currentConfig, opts.key!, safeValue);
 
-    console.log(`  Writing config to sandbox (${target.configPath})...`);
-    writeSandboxConfig(sandboxName, target, currentConfig);
-    recomputeSandboxConfigHash(sandboxName, target);
+      console.log(`  Writing config to sandbox (${target.configPath})...`);
+      writeSandboxConfig(sandboxName, target, currentConfig);
+      recomputeSandboxConfigHash(sandboxName, target);
 
-    appendAuditEntry({
-      action: "config_set",
-      sandbox: sandboxName,
-      timestamp: new Date().toISOString(),
-      reason: `config set ${target.agentName}:${opts.key}`,
-    });
-  });
+      appendAuditEntry({
+        action: "config_set",
+        sandbox: sandboxName,
+        timestamp: new Date().toISOString(),
+        reason: `config set ${target.agentName}:${opts.key}`,
+      });
+    }),
+  );
 
   console.log(`  ${target.agentName} config updated.`);
 
