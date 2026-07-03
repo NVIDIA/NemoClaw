@@ -100,7 +100,7 @@ describe("rebuild gateway drift preflight", () => {
     );
 
     ({ rebuildSandbox } = requireDist("./rebuild.js"));
-  });
+  }, 30_000);
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();

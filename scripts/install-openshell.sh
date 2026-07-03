@@ -33,18 +33,20 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for native messaging credential rewrite:
-# WebSocket text frames plus provider-shaped aliases and REST request bodies.
-MIN_VERSION="0.0.71"
+# Minimum version required for native messaging credential rewrite and
+# round-trippable base policies: WebSocket text frames, provider-shaped
+# aliases, REST request bodies, and `policy get --base` for MCP/JSON-RPC-safe
+# read-modify-write operations.
+MIN_VERSION="0.0.72"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.71"
+MAX_VERSION="0.0.72"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.71"
+DEV_MIN_VERSION="0.0.72"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -59,8 +61,8 @@ else
 fi
 
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
-  if [ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  if [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
   fi
   warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
@@ -109,32 +111,43 @@ else
   RELEASE_TAG="v${PIN_VERSION}"
 fi
 
+# invalidState: a consumed OpenShell release asset differs from the digest
+# published for the immutable v0.0.72 release, or a mutable registry tag moves.
+# sourceBoundary: NVIDIA/OpenShell owns the release workflow, GitHub release
+# assets, and GHCR manifests; NemoClaw owns which exact artifacts it trusts.
+# whyNotSourceFix: NemoClaw cannot retroactively make an upstream publication
+# immutable, so it independently pins every consumed archive and supervisor.
+# regressionTest: test/install-openshell-version-check.test.ts exercises all
+# eight mappings, and scripts/check-installer-hash.sh compares them with the
+# GitHub release API on every PR, main push, weekly run, and manual dispatch.
+# removalCondition: remove these v0.0.72 entries only when NemoClaw drops that
+# supported release or replaces them with independently verified newer pins.
 openshell_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.71:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716"
+    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
       ;;
-    v0.0.71:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "b86b33d9e7c960cd04bc99a9539964f1cb84ae4a9886dd437c0566b64e093390"
+    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
       ;;
-    v0.0.71:openshell-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "1ef9a2b447a35391a6a0f417f4383d99f3e928e443cf86ed190002ec937a8871"
+    v0.0.72:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d"
       ;;
-    v0.0.71:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d"
+    v0.0.72:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
       ;;
-    v0.0.71:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "e9b258b3fb38fd68ffc37675efe8a027750087f630cf19ad248e94eff5464091"
+    v0.0.72:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108"
       ;;
-    v0.0.71:openshell-gateway-aarch64-apple-darwin.tar.gz)
-      printf '%s\n' "26fa5b4dcb6d2631f7212639d087f37d8b0fc50c6f6cec856e019c22847e5bc9"
+    v0.0.72:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb"
       ;;
-    v0.0.71:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d"
+    v0.0.72:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230"
       ;;
-    v0.0.71:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
-      printf '%s\n' "e60dc50524c56460faa8c37617725280a6e1205e73e5cc888b4fd0d148ccb71c"
+    v0.0.72:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0"
       ;;
     *)
       return 1
@@ -321,7 +334,7 @@ if command -v openshell >/dev/null 2>&1; then
       elif ! openshell_has_required_messaging_features; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, and request-body credential rewrite.}"
       else
-        info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite capable)"
+        info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite and policy --base capable)"
         exit 0
       fi
     else
