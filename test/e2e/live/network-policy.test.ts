@@ -22,6 +22,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
+import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
 import {
   POLICY_ADD_EXPECT_SCRIPT,
   requirePolicyPresetNumber,
@@ -431,7 +432,7 @@ RUN_NETWORK_POLICY_TEST(
       boundary: "live-sandbox-network-policy",
       contracts: [
         "deny-by-default egress",
-        "OpenShell 0.0.71 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
+        "OpenShell 0.0.72 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
         "read-only preset allowlist behavior",
         "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
         "live policy-add and dry-run behavior",
@@ -467,7 +468,7 @@ RUN_NETWORK_POLICY_TEST(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
-    expect(text(openshellVersion)).toContain("0.0.71");
+    expect(text(openshellVersion)).toContain("0.0.72");
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
@@ -838,9 +839,8 @@ printf '\n'
   -d '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":50}'`,
       { artifactName: "tc-net-07-inference-local", timeoutMs: 90_000 },
     );
-    const inferenceContent = JSON.parse(inference.stdout).choices?.[0]?.message?.content;
-    expect(typeof inferenceContent).toBe("string");
-    expect(inferenceContent.trim().length).toBeGreaterThan(0);
+    expect(inference.exitCode, text(inference)).toBe(0);
+    expect(requireInferenceLocalCompletionText(inference.stdout).length).toBeGreaterThan(0);
     const directProvider = await fetchStatus(
       sandbox,
       "https://inference-api.nvidia.com/v1/models",

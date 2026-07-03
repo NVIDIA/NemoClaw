@@ -318,7 +318,7 @@ export function logContainerizedDockerDriverGatewayLaunch(
   log(`  OpenShell gateway compatibility patch active (${launch.reason}).`);
   log("  Running openshell-gateway inside a Docker compatibility container.");
   warn(
-    "  SECURITY NOTICE: compatibility container uses host networking plus Docker API access; enabled only by NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1. Review/removal conditions: docs/security/openshell-0.0.71-gateway-auth-review.mdx#source-of-truth-boundaries.",
+    "  SECURITY NOTICE: compatibility container uses host networking plus Docker API access; enabled only by NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1. Review/removal conditions: docs/security/openshell-0.0.72-compatibility-review.mdx#source-of-truth-boundaries.",
   );
   log(
     "  Compatibility gateway bind: 127.0.0.1 main listener plus OpenShell Docker-driver bridge reachability.",
