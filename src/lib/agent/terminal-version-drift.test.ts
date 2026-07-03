@@ -137,9 +137,18 @@ describe("checkTerminalAgentVersion (#6193)", () => {
         makeAgent({ expectedVersion: "0.17.0", versionScheme: "semver" }),
         vi.fn(() => "dcode 2026.5.27"),
       );
-      expect(result).toMatchObject({ status: "stale", schemeMismatch: true });
-      if (result.status !== "stale") throw new Error("expected stale result");
-      const line = formatTerminalAgentVersionFailure(makeAgent(), result);
+      expect(result).toEqual({
+        status: "stale",
+        installedVersion: "2026.5.27",
+        expectedVersion: "0.17.0",
+        schemeMismatch: true,
+      });
+      const line = formatTerminalAgentVersionFailure(makeAgent(), {
+        status: "stale",
+        installedVersion: "2026.5.27",
+        expectedVersion: "0.17.0",
+        schemeMismatch: true,
+      });
       expect(line).toContain("different version scheme");
       expect(line).not.toContain("below");
     } finally {
