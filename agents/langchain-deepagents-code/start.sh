@@ -137,9 +137,9 @@ prepare_runtime_env() {
     write_export_if_set SSL_CERT_FILE
     write_export_if_set REQUESTS_CA_BUNDLE
     write_export_if_set NODE_EXTRA_CA_CERTS
+    # Project variables are intentionally excluded because they can be
+    # misconfigured with LangSmith tokens and this shared file is readable.
     write_export_if_set LANGSMITH_TRACING
-    write_export_if_set LANGSMITH_PROJECT
-    write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
   } >"$tmp"
   # Dcode intentionally runs as the non-root sandbox user, unlike the
   # root-supervised OpenClaw/Hermes startup path. This atomic, sandbox-user-owned
