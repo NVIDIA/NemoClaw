@@ -8,6 +8,7 @@ import type {
   MutableConfigRepairResult,
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
+import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -373,9 +374,13 @@ function defaultResolveBinary(): string {
 // inject them so the dispatch path stays hermetic without spawning a real
 // process or hitting the process-exiting OpenShell binary lookup.
 export type ExecSandboxDeps = {
+  /** Host lookup and pre-dispatch workdir seams. */
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
+  /** Command execution and post-command observability/cleanup seams. */
   run?: SandboxExecRunner;
+  policyHint?: ExecPolicyHintDeps;
+  cleanupDeps?: SandboxExecCleanupDeps;
 };
 
 export async function execSandbox(
@@ -400,13 +405,14 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
+  const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
     command,
     options,
     deps.run ?? runSandboxExecChild,
-    {
+    deps.cleanupDeps ?? {
       getSandbox: (name) =>
         (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
       inspectMutableConfigPerms: (name) =>
@@ -424,5 +430,6 @@ export async function execSandbox(
   if (completion.cleanupError) {
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
+  await emitPolicyDenialHint(completion);
   process.exit(completion.code);
 }

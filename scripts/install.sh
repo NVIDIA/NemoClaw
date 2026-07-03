@@ -1155,11 +1155,12 @@ EOF
 }
 
 ensure_nemoclaw_shim() {
-  local status=0
+  local cli_bin status=0
   ensure_cli_shim "$_CLI_BIN" || status=$?
-  if [[ "$_CLI_BIN" != "nemoclaw" ]]; then
-    ensure_cli_shim "nemoclaw" || true
-  fi
+  for cli_bin in nemoclaw nemohermes nemo-deepagents; do
+    [[ "$cli_bin" == "$_CLI_BIN" ]] && continue
+    ensure_cli_shim "$cli_bin" || true
+  done
   return "$status"
 }
 
