@@ -4592,7 +4592,7 @@ jobs:
                       : passingStatus;
 
             const lines = [
-              `### Vitest E2E Target Results — ${status}`,
+              `### E2E Target Results — ${status}`,
               '',
               `**Run:** [${context.runId}](${runUrl})`,
               `**Workflow ref:** \`${workflowBranch}\``,
