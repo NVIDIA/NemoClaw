@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
+
 /**
  * Unified secret redaction — single module for all consumers.
  *
@@ -91,7 +93,7 @@ export function redactError(err: unknown): unknown {
 
 export function writeRedactedResult(
   result: { stdout?: Buffer | string | null; stderr?: Buffer | string | null } | null,
-  stdio: string | string[],
+  stdio: StdioOptions | undefined,
 ): void {
   if (!result || stdio === "inherit" || !Array.isArray(stdio)) return;
   if (stdio[1] === "pipe" && result.stdout) {
@@ -132,6 +134,16 @@ export function redactFull(text: string): string {
     result = result.replace(pattern, replacement);
   }
   return result;
+}
+
+/** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
+export function redactStandaloneSecretsFull(text: string): string {
+  let result = text;
+  for (const pattern of [...TOKEN_PREFIX_PATTERNS, ...SECRET_BLOCK_PATTERNS]) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, "<REDACTED>");
+  }
+  return result.replace(/\/bot[^/\s]+\//g, "/bot<REDACTED>/");
 }
 
 // ── Sensitive text redaction (onboard-session.ts style) ─────────

@@ -8,9 +8,20 @@ export type OpenShellInstallResult = {
 };
 
 export type OpenshellInstallVersionResolution =
-  | { kind: "pin"; version: string; latest: string | null; reason: "latest" | "max-cap" }
+  | {
+      kind: "pin";
+      version: string;
+      latest: string | null;
+      reason: "latest" | "max-cap";
+    }
   | { kind: "no-max"; latest: string | null }
-  | { kind: "incompatible"; latest: string | null; max: string; message: string };
+  | {
+      kind: "incompatible";
+      latest: string | null;
+      min: string | null;
+      max: string;
+      message: string;
+    };
 
 const SEMVER_TRIPLE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
 
@@ -35,9 +46,9 @@ export function parseOpenshellReleaseTag(tag: unknown): string | null {
  *
  * - If `options.max` is null, returns `kind: "no-max"` so callers leave the
  *   install path alone (legacy behaviour — script picks its own pin / latest).
- * - Otherwise, picks the highest entry of `available` that is `<= max`.
- *   Returns `kind: "incompatible"` with a message naming both latest and max
- *   when no such release exists.
+ * - Otherwise, picks the highest entry of `available` inside the inclusive
+ *   `[min, max]` range. A missing or malformed min leaves the lower bound open.
+ *   Returns `kind: "incompatible"` when no release is in range.
  *
  * Malformed entries in `available` (empty string, leading `-`, non-semver) are
  * silently dropped. The shipped blueprint guarantees `max` is valid before it
@@ -45,7 +56,7 @@ export function parseOpenshellReleaseTag(tag: unknown): string | null {
  */
 export function resolveOpenshellInstallVersion(
   available: readonly string[],
-  options: { max: string | null },
+  options: { min?: string | null; max: string | null },
   helpers: { versionGte: (a: string, b: string) => boolean },
 ): OpenshellInstallVersionResolution {
   const sanitized = (available ?? [])
@@ -59,22 +70,28 @@ export function resolveOpenshellInstallVersion(
     return { kind: "no-max", latest };
   }
 
-  if (latest && helpers.versionGte(max, latest)) {
-    return { kind: "pin", version: latest, latest, reason: "latest" };
-  }
-
-  const capped = sanitized.find((entry) => helpers.versionGte(max, entry));
-  if (capped) {
-    return { kind: "pin", version: capped, latest, reason: "max-cap" };
+  const min = parseOpenshellReleaseTag(options.min ?? null);
+  const selected = sanitized.find(
+    (entry) => helpers.versionGte(max, entry) && (min === null || helpers.versionGte(entry, min)),
+  );
+  if (selected) {
+    return {
+      kind: "pin",
+      version: selected,
+      latest,
+      reason: selected === latest ? "latest" : "max-cap",
+    };
   }
 
   return {
     kind: "incompatible",
     latest,
+    min,
     max,
     message:
-      `No OpenShell release ≤ ${max} is available (latest published: ${latest ?? "unknown"}). ` +
-      "Upgrade NemoClaw or raise max_openshell_version in nemoclaw-blueprint/blueprint.yaml.",
+      `No OpenShell release in the supported range ${min ?? "0.0.0"} through ${max} is available ` +
+      `(latest published: ${latest ?? "unknown"}). Use an OpenShell build in that range or update ` +
+      "min_openshell_version and max_openshell_version in nemoclaw-blueprint/blueprint.yaml.",
   };
 }
 
@@ -100,6 +117,7 @@ export type OpenShellInstallDeps = {
   shouldUseOpenshellDevChannel: () => boolean;
   isOpenshellDevVersion: (versionOutput: string | null) => boolean;
   versionGte: (a: string, b: string) => boolean;
+  hasRequiredOpenshellMessagingFeatures: () => boolean;
   shouldAllowOpenshellAboveBlueprintMax: (versionOutput: string | null) => boolean;
   cliDisplayName: () => string;
   log: (message: string) => void;
@@ -160,7 +178,9 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
       }
     } else {
       const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion() ?? "0.0.72";
-      const currentVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
+      const currentVersionOutput = deps.runCaptureOpenshell(["--version"], {
+        ignoreError: true,
+      });
       const needsDevChannel =
         deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
         deps.shouldUseOpenshellDevChannel() &&
@@ -168,10 +188,12 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
       const needsDockerDriverBinaries =
         deps.isLinuxDockerDriverGatewayEnabled(platform, arch) &&
         !areRequiredDockerDriverBinariesPresent(deps, platform, {}, arch);
+      const needsMessagingFeatures = !deps.hasRequiredOpenshellMessagingFeatures();
       const needsUpgrade =
         !deps.versionGte(currentVersion, minOpenshellVersion) ||
         needsDevChannel ||
-        needsDockerDriverBinaries;
+        needsDockerDriverBinaries ||
+        needsMessagingFeatures;
       if (needsUpgrade) {
         if (needsDevChannel) {
           deps.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
@@ -179,6 +201,10 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
           const required = platform === "linux" ? "gateway and sandbox" : "gateway";
           deps.log(
             `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
+          );
+        } else if (needsMessagingFeatures) {
+          deps.log(
+            "  OpenShell is missing provider credential rewrite or MCP L7 policy support. Reinstalling...",
           );
         } else {
           deps.log(`  openshell ${currentVersion} is below minimum required version. Upgrading...`);
@@ -193,7 +219,9 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
     }
   }
 
-  const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], { ignoreError: true });
+  const openshellVersionOutput = deps.runCaptureOpenshell(["--version"], {
+    ignoreError: true,
+  });
   deps.log(`  \u2713 openshell CLI: ${openshellVersionOutput || "unknown"}`);
   const installedOpenshellVersion = deps.getInstalledOpenshellVersion(openshellVersionOutput);
   const minOpenshellVersion = deps.getBlueprintMinOpenshellVersion();
@@ -212,6 +240,18 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
     deps.error("      https://github.com/NVIDIA/OpenShell/releases");
     deps.error("    Or remove the existing binary so the installer can re-fetch a current build:");
     deps.error('      command -v openshell && rm -f "$(command -v openshell)"');
+    deps.error("");
+    deps.exit(1);
+  }
+
+  if (!deps.hasRequiredOpenshellMessagingFeatures()) {
+    deps.error("");
+    deps.error(
+      "  \u2717 openshell is missing provider credential rewrite or MCP L7 policy support.",
+    );
+    deps.error("");
+    deps.error("    Install a supported OpenShell build and retry:");
+    deps.error("      https://github.com/NVIDIA/OpenShell/releases");
     deps.error("");
     deps.exit(1);
   }

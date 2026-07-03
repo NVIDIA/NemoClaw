@@ -527,6 +527,25 @@ echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_saf
 });
 
 describe("Hermes supervised auxiliary recovery", () => {
+  it("rejects public health from a relay that loses its tracked identity during the probe", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "CHECKS=0",
+      'hermes_socat_bridge_healthy() { CHECKS=$((CHECKS + 1)); trace "identity-check:$CHECKS"; [ "$CHECKS" -eq 1 ]; }',
+      'curl() { printf "200"; }',
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
+      "if hermes_api_socat_bridge_healthy 101 8642; then trace unsafe-success; else trace refused; fi",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "identity-check:1",
+      "identity-check:2",
+      "refused",
+    ]);
+  });
+
   it("re-prepares runtime inputs and retries a refused non-root gateway respawn", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
@@ -886,6 +905,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_role_identity_value() { printf "777"; }',
       "hermes_tracked_role_is_current() { return 0; }",
       'gateway_control_stop_tracked_pid() { trace "stop:$1:$2"; }',
+      'kill() { [ "$1" = "-0" ] && return 1; trace "unexpected-signal:$*"; }',
       'hermes_set_role_identity() { trace "clear:$1:$2"; }',
       extractShellFunction(source, "hermes_stop_tracked_role"),
       "hermes_stop_tracked_role gateway 4242 gateway 18642",
@@ -1082,11 +1102,13 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; [ "$1:$2" = "101:8642" ] || [ "$1:$2" = "303:18789" ]; }',
       'hermes_tracked_service_owns_listener() { trace "service-listener:$1:$2:$3"; return 1; }',
+      'curl() { printf "200"; }',
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "start-forward:$*"; return 0; }',
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
       "PUBLIC_PORT=8642",
@@ -1104,6 +1126,8 @@ describe("Hermes supervised auxiliary recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
+      "live:101",
+      "listener:101:8642",
       "live:101",
       "listener:101:8642",
       "live:202",
@@ -1133,6 +1157,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "start_hermes_dashboard_sandbox_user() { trace unexpected-dashboard-start; return 1; }",
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
       "PUBLIC_PORT=8642",
@@ -1153,11 +1178,104 @@ describe("Hermes supervised auxiliary recovery", () => {
       "listener:101:8642",
       "stop:101",
       "start-forward:8642 18642 API SOCAT_PID 4242 gateway",
+      "live:111",
+      "listener:111:8642",
+      "live:111",
+      "listener:111:8642",
       "live:202",
       "live:303",
       "listener:303:18789",
       "gateway-log",
       "success",
+      "final-api-bridge:111",
+    ]);
+  });
+
+  it("replaces a listener-owning API bridge that fails public HTTP health", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n"; }',
+      'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
+      'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
+      'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
+      'curl() { if [ "$PUBLIC_HEALTH" = "stale" ]; then printf "503"; else printf "200"; fi; }',
+      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
+      'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; PUBLIC_HEALTH=ready; return 0; }',
+      "hermes_dashboard_healthy() { trace dashboard-healthy; return 0; }",
+      "ensure_gateway_log_stream() { trace gateway-log; }",
+      extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
+      extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
+      "PUBLIC_PORT=8642",
+      "INTERNAL_PORT=18642",
+      "DASHBOARD_PUBLIC_PORT=18789",
+      "DASHBOARD_INTERNAL_PORT=19119",
+      "PUBLIC_HEALTH=stale",
+      "SOCAT_PID=101",
+      "DASHBOARD_PID=202",
+      "DASHBOARD_SOCAT_PID=303",
+      "GATEWAY_PID=4242",
+      'if ensure_hermes_supervised_auxiliaries; then trace success; else trace "failure:$?"; fi',
+      'trace "final-api-bridge:$SOCAT_PID"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "live:101",
+      "listener:101:8642",
+      "stop:101",
+      "start-forward:8642 18642 API SOCAT_PID 4242 current",
+      "live:111",
+      "listener:111:8642",
+      "live:111",
+      "listener:111:8642",
+      "dashboard-healthy",
+      "live:303",
+      "listener:303:18789",
+      "gateway-log",
+      "success",
+      "final-api-bridge:111",
+    ]);
+  });
+
+  it("fails closed when a replacement API bridge still cannot serve public health", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n"; }',
+      'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
+      'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
+      'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
+      'curl() { printf "503"; }',
+      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
+      'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; return 0; }',
+      "hermes_dashboard_healthy() { trace unexpected-dashboard-health; return 0; }",
+      "ensure_gateway_log_stream() { trace unexpected-gateway-log; }",
+      extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
+      extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
+      "PUBLIC_PORT=8642",
+      "INTERNAL_PORT=18642",
+      "DASHBOARD_PUBLIC_PORT=18789",
+      "DASHBOARD_INTERNAL_PORT=19119",
+      "SOCAT_PID=101",
+      "DASHBOARD_PID=202",
+      "DASHBOARD_SOCAT_PID=303",
+      "GATEWAY_PID=4242",
+      'if ensure_hermes_supervised_auxiliaries; then trace success; else trace "failure:$?"; fi',
+      'trace "final-api-bridge:$SOCAT_PID"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "live:101",
+      "listener:101:8642",
+      "stop:101",
+      "start-forward:8642 18642 API SOCAT_PID 4242 current",
+      "live:111",
+      "listener:111:8642",
+      "failure:1",
       "final-api-bridge:111",
     ]);
   });
@@ -1171,12 +1289,13 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
       'hermes_tracked_service_owns_listener() { trace "service-listener:$1:$2:$3"; return 0; }',
-      'curl() { trace dashboard-http; printf "500"; }',
+      'curl() { case "$*" in *:8642/health*) printf "200" ;; *) trace dashboard-http; printf "500" ;; esac; }',
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "unexpected-forward:$*"; return 1; }',
       "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
       "PUBLIC_PORT=8642",
@@ -1192,6 +1311,8 @@ describe("Hermes supervised auxiliary recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
+      "live:101",
+      "listener:101:8642",
       "live:101",
       "listener:101:8642",
       "live:202",
@@ -1217,6 +1338,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "ensure_gateway_log_stream() { trace unexpected-gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
+      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",

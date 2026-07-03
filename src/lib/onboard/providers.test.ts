@@ -32,8 +32,14 @@ const {
     credentialEnv: string,
     baseUrl: string | null,
   ) => string[];
-  getRequestedModelHint: (nonInteractive: boolean) => string | null;
-  getRequestedProviderHint: (nonInteractive: boolean) => string | null;
+  getRequestedModelHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
+  getRequestedProviderHint: (
+    nonInteractive: boolean,
+    allowHostedInferenceStaging?: boolean,
+  ) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
@@ -314,6 +320,21 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not synthesize hosted selection when authoritative resume disables staging", () => {
+    withProviderEnv(
+      {
+        NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(getRequestedProviderHint(true, false)).toBeNull();
+        expect(getRequestedModelHint(true, false)).toBeNull();
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.NEMOCLAW_MODEL).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
       },
     );
   });

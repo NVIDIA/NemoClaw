@@ -54,6 +54,8 @@ export type DcodeReplacementPreflightInput = {
   entry: RebuildSandboxEntry;
   resumeConfig: RebuildResumeConfig;
   skipLiveRoute: boolean;
+  /** Authoritative persisted gateway port carried by the rebuild target. */
+  gatewayPort?: number;
   log(message: string): void;
   bail: DcodeRebuildPreflightBail;
   checkGatewaySchema(): boolean;
@@ -178,9 +180,10 @@ function resolveTarget(
   entry: RebuildSandboxEntry,
   resumeConfig: RebuildResumeConfig,
   bail: DcodeRebuildPreflightBail,
+  gatewayPort?: number,
 ): ResolvedDcodeRebuildTarget {
   try {
-    return resolveDcodeRebuildTarget(entry, resumeConfig);
+    return resolveDcodeRebuildTarget(entry, resumeConfig, gatewayPort);
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error), bail);
   }
@@ -222,12 +225,13 @@ function requireCurrentTarget(
   target: ResolvedDcodeRebuildTarget,
   resumeConfig: RebuildResumeConfig,
   bail: DcodeRebuildPreflightBail,
+  gatewayPort?: number,
 ): void {
   const currentEntry = registry.getSandbox(sandboxName) as RebuildSandboxEntry | null;
   if (!currentEntry || !isDeepStrictEqual(currentEntry, entry)) {
     fail("the recorded sandbox target changed during preflight", bail);
   }
-  const currentTarget = resolveTarget(currentEntry, resumeConfig, bail);
+  const currentTarget = resolveTarget(currentEntry, resumeConfig, bail, gatewayPort);
   if (!isDeepStrictEqual(currentTarget, target)) {
     fail("the resolved DCode target changed during preflight", bail);
   }
@@ -350,7 +354,7 @@ function disposePreparation(
 export async function prepareDcodeReplacementBeforeMutation(
   input: DcodeReplacementPreflightInput,
 ): Promise<PreparedDcodeReplacement | null> {
-  const { sandboxName, entry, resumeConfig, skipLiveRoute, log, bail } = input;
+  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail } = input;
   let buildContext: PreparedDcodeRebuildImage | null = null;
   let pinnedBase: PinnedDcodeBaseImage | null = null;
   let transferred = false;
@@ -363,7 +367,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     }
 
     const session = requireManagedDcodeSession(sandboxName, bail);
-    const target = resolveTarget(entry, resumeConfig, bail);
+    const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
     if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
 
     pinnedBase = buildPinnedDcodeBaseImage(bail);
@@ -376,6 +380,7 @@ export async function prepareDcodeReplacementBeforeMutation(
         model: target.model,
         preferredInferenceApi: target.preferredInferenceApi,
         sandboxGpuConfig,
+        gatewayPort,
       }),
     );
     if (!imageResult.ok) fail(imageResult.detail, bail);
@@ -386,7 +391,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     }
     if (!input.checkGatewaySchema()) return null;
     if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
-    requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail);
+    requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
     if (!verifyPreparedDcodeRebuildImage(buildContext) || !pinnedBase.verify()) {
       fail("the prepared DCode replacement inputs changed during preflight", bail);
     }
@@ -410,8 +415,9 @@ export async function prepareDcodeReplacementBeforeMutation(
 export async function revalidateDcodeReplacementAtMutationEdge(
   input: DcodeReplacementPreflightInput & { replacement: PreparedDcodeReplacement },
 ): Promise<boolean> {
-  const { sandboxName, entry, resumeConfig, skipLiveRoute, log, bail, replacement } = input;
-  const target = resolveTarget(entry, resumeConfig, bail);
+  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail, replacement } =
+    input;
+  const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
   if (replacement.gatewayName !== target.gatewayName) {
     fail("the prepared DCode gateway changed before deletion", bail);
   }
@@ -420,7 +426,7 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   }
   if (!input.checkGatewaySchema()) return false;
   if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
-  requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail);
+  requireCurrentTarget(sandboxName, entry, target, resumeConfig, bail, gatewayPort);
   if (!replacement.verify()) {
     fail("the prepared DCode replacement inputs changed before deletion", bail);
   }

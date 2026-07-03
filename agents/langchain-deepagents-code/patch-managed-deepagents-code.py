@@ -97,10 +97,19 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.sandbox_snapshot_name = None
     if hasattr(args, "sandbox_setup"):
         args.sandbox_setup = None
+    from deepagents_code._nemoclaw_managed import (
+        assert_safe_runtime as _nemoclaw_assert_safe_runtime,
+        managed_mcp_config_path as _nemoclaw_managed_mcp_config_path,
+    )
+
+    # The pinned release treats this as its trusted user-level config;
+    # /sandbox/.mcp.json is project-level and remains untrusted.
+    managed_mcp_config = _nemoclaw_managed_mcp_config_path()
+    has_managed_mcp = managed_mcp_config is not None
     if hasattr(args, "mcp_config"):
-        args.mcp_config = None
+        args.mcp_config = managed_mcp_config if has_managed_mcp else None
     if hasattr(args, "no_mcp"):
-        args.no_mcp = True
+        args.no_mcp = not has_managed_mcp
     if hasattr(args, "trust_project_mcp"):
         args.trust_project_mcp = False
     if hasattr(args, "shell_allow_list"):
@@ -117,8 +126,6 @@ MAIN_PATCH = '''    # NemoClaw-managed Deep Agents Code hardening v2.
         args.acp = False
     if hasattr(args, "startup_cmd"):
         args.startup_cmd = None
-
-    from deepagents_code._nemoclaw_managed import assert_safe_runtime as _nemoclaw_assert_safe_runtime
 
     _nemoclaw_assert_safe_runtime()
 '''
@@ -423,8 +430,12 @@ async def run_non_interactive(*args, **kwargs):
     kwargs["model_params"] = None
     kwargs["profile_override"] = None
     kwargs["sandbox_type"] = "none"
-    kwargs["mcp_config_path"] = None
-    kwargs["no_mcp"] = True
+    from deepagents_code._nemoclaw_managed import managed_mcp_config_path
+
+    managed_mcp_config = managed_mcp_config_path()
+    has_managed_mcp = managed_mcp_config is not None
+    kwargs["mcp_config_path"] = managed_mcp_config if has_managed_mcp else None
+    kwargs["no_mcp"] = not has_managed_mcp
     kwargs["trust_project_mcp"] = False
     kwargs["enable_interpreter"] = False
     kwargs["interpreter_ptc"] = None
@@ -627,6 +638,7 @@ HELPER_SOURCE = r'''# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORAT
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
 import stat
@@ -636,6 +648,7 @@ from urllib.parse import urlparse
 _MANAGED_STATE_DIR = Path("/sandbox/.deepagents/.state")
 _AUTH_FILE = _MANAGED_STATE_DIR / "auth.json"
 _CODEX_AUTH_FILE = _MANAGED_STATE_DIR / "chatgpt-auth.json"
+_MCP_CONFIG_FILE = Path("/sandbox/.deepagents/.mcp.json")
 _INFERENCE_BASE_URL_FILE = Path(
     "/usr/local/share/nemoclaw/dcode-inference-base-url"
 )
@@ -652,6 +665,13 @@ _CREDENTIAL_ENV_NAMES = {
     "OTEL_EXPORTER_OTLP_HEADERS",
     "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
 }
+_OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+_MCP_SERVER_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
+_MCP_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,127}")
+_MCP_DNS_NAME = re.compile(
+    r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
 _SECRET_PATTERNS = tuple(
     (platform, re.compile(pattern, flags))
     for platform, pattern, flags in (
@@ -684,6 +704,17 @@ def _contains_other_platform_secret(value: str, platform: str) -> bool:
     )
 
 
+def _is_openshell_placeholder_for_name(name: str, value: str) -> bool:
+    if name == "OPENSHELL_TLS_KEY" or not _MCP_ENV_NAME.fullmatch(name):
+        return False
+    canonical = f"{_OPENSHELL_ENV_PLACEHOLDER_PREFIX}{name}"
+    versioned = re.fullmatch(
+        rf"{re.escape(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)}v[0-9]{{1,20}}_{re.escape(name)}",
+        value,
+    )
+    return value == canonical or versioned is not None
+
+
 def _is_managed_value(name: str, value: str) -> bool:
     if name == "DEEPAGENTS_CODE_OPENAI_API_KEY":
         return value == "nemoclaw-managed-inference"
@@ -704,6 +735,13 @@ def _is_managed_value(name: str, value: str) -> bool:
 
 def _assert_safe_environment() -> None:
     for name, value in os.environ.items():
+        if _OPENSHELL_ENV_PLACEHOLDER_PREFIX in value:
+            if _is_openshell_placeholder_for_name(name, value):
+                continue
+            raise RuntimeError(
+                f"runtime environment variable {name} contains an invalid "
+                "OpenShell credential placeholder"
+            )
         if _is_managed_value(name, value):
             continue
         if _contains_secret_shape(value) or (
@@ -737,6 +775,108 @@ def _assert_safe_auth_state() -> None:
         raise RuntimeError(
             "auth.json contains credentials; use NemoClaw credential handling"
         )
+
+
+def _validate_managed_mcp_url(value: object) -> None:
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        raise RuntimeError("managed MCP server URL is invalid")
+    if value != value.strip() or any(ord(character) < 32 for character in value):
+        raise RuntimeError("managed MCP server URL is invalid")
+    if any(character in value for character in ("%", "\\", "*", "[", "]", "{", "}", ";")):
+        raise RuntimeError("managed MCP server URL is not canonical")
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+        or not parsed.path.startswith("/")
+        or "//" in parsed.path
+    ):
+        raise RuntimeError("managed MCP server URL is invalid")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("managed MCP server URL port is invalid") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise RuntimeError("managed MCP server URL port is invalid")
+    hostname = parsed.hostname
+    expected_netloc = hostname if port is None else f"{hostname}:{port}"
+    if parsed.netloc != expected_netloc:
+        raise RuntimeError("managed MCP server URL hostname is not canonical")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        if (
+            hostname != hostname.lower()
+            or hostname.endswith(".")
+            or not _MCP_DNS_NAME.fullmatch(hostname)
+            or hostname == "localhost"
+            or hostname.endswith((".localhost", ".local", ".internal"))
+        ):
+            raise RuntimeError("managed MCP server URL hostname is invalid")
+    else:
+        if address.version != 4 or not address.is_global:
+            raise RuntimeError("managed MCP server URL address is not public IPv4")
+    if _contains_secret_shape(parsed.path):
+        raise RuntimeError("managed MCP server URL path contains credential-shaped data")
+
+
+def _validate_managed_mcp_entry(server: object, entry: object) -> None:
+    if not isinstance(server, str) or not _MCP_SERVER_NAME.fullmatch(server):
+        raise RuntimeError("managed MCP config contains an invalid server name")
+    if not isinstance(entry, dict) or set(entry) != {"type", "url", "headers"}:
+        raise RuntimeError(f"managed MCP server {server} has an invalid shape")
+    if entry["type"] != "http":
+        raise RuntimeError(f"managed MCP server {server} must use HTTP transport")
+    _validate_managed_mcp_url(entry["url"])
+    headers = entry["headers"]
+    if not isinstance(headers, dict) or set(headers) != {"Authorization"}:
+        raise RuntimeError(f"managed MCP server {server} has invalid headers")
+    authorization = headers["Authorization"]
+    if not isinstance(authorization, str) or not authorization.startswith("Bearer "):
+        raise RuntimeError(f"managed MCP server {server} has invalid authorization")
+    placeholder = authorization.removeprefix("Bearer ")
+    if not placeholder.startswith(_OPENSHELL_ENV_PLACEHOLDER_PREFIX):
+        raise RuntimeError(f"managed MCP server {server} must use an OpenShell placeholder")
+    suffix = placeholder.removeprefix(_OPENSHELL_ENV_PLACEHOLDER_PREFIX)
+    match = re.fullmatch(r"(?:v[0-9]{1,20}_)?([A-Za-z_][A-Za-z0-9_]{0,127})", suffix)
+    if match is None or not _is_openshell_placeholder_for_name(match.group(1), placeholder):
+        raise RuntimeError(f"managed MCP server {server} has an invalid OpenShell placeholder")
+
+
+def managed_mcp_config_path() -> str | None:
+    """Return only a complete, strict, HTTP-only NemoClaw MCP config."""
+    path = _MCP_CONFIG_FILE
+    if not path.exists() and not path.is_symlink():
+        return None
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("managed MCP config is missing or unsafe")
+    try:
+        metadata = path.stat()
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("managed MCP config is unreadable") from exc
+    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise RuntimeError("managed MCP config has unsafe ownership or mode")
+    if not raw or len(raw.encode("utf-8")) > 262144:
+        raise RuntimeError("managed MCP config has invalid size")
+    try:
+        data = json.loads(raw)
+    except Exception as exc:
+        raise RuntimeError("managed MCP config is malformed") from exc
+    if not isinstance(data, dict) or set(data) != {"mcpServers"}:
+        raise RuntimeError("managed MCP config must contain only mcpServers")
+    servers = data["mcpServers"]
+    if not isinstance(servers, dict) or not servers or len(servers) > 64:
+        raise RuntimeError("managed MCP config has an invalid server map")
+    for server, entry in servers.items():
+        _validate_managed_mcp_entry(server, entry)
+    return str(path)
 
 
 def managed_inference_base_url() -> str:

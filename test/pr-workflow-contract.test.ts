@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1057,9 +1057,98 @@ describe("pull request and main workflow contracts", () => {
 
     expect(runs).toContain("docker image inspect");
     expect(runs).toContain("${image}@sha256:");
+    expect(runs).toContain("mcp_client_imports_ok");
+    expect(runs).toContain("Build-time package/import guard only");
+    expect(runs).toContain("_MCP_HTTP_AVAILABLE");
     expect(runs).toContain("layout_ok");
     expect(runs).toContain("HERMES_BASE_IMAGE=${digest_ref}");
     expect(runs).toContain("HERMES_BASE_IMAGE=nemoclaw-hermes-base-local");
+  });
+
+  it("rejects a pulled Hermes base without MCP HTTP imports and falls back locally", () => {
+    const temp = mkdtempSync(join(tmpdir(), "nemoclaw-hermes-base-resolver-"));
+    const fakeBin = join(temp, "bin");
+    const dockerLog = join(temp, "docker.log");
+    const githubEnv = join(temp, "github.env");
+    const remoteDigest = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"a".repeat(64)}`;
+    const resolver = requiredStep(resolveHermesBaseAction, "Resolve Hermes sandbox base image").run;
+
+    try {
+      mkdirSync(fakeBin);
+      writeFileSync(githubEnv, "");
+      writeFileSync(
+        join(fakeBin, "docker"),
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          "const args = process.argv.slice(2);",
+          'fs.appendFileSync(process.env.DOCKER_LOG, JSON.stringify(args) + "\\n");',
+          'if (args[0] === "pull" || args[0] === "build") process.exit(0);',
+          'if (args[0] === "image" && args[1] === "inspect") {',
+          '  process.stdout.write(process.env.REMOTE_DIGEST + "\\n");',
+          "  process.exit(0);",
+          "}",
+          'if (args[0] === "run") {',
+          '  const entrypointIndex = args.indexOf("--entrypoint");',
+          "  const entrypoint = args[entrypointIndex + 1];",
+          "  const image = args[entrypointIndex + 2];",
+          '  if (entrypoint === "/usr/bin/ldd") {',
+          '    process.stdout.write("ldd (Ubuntu GLIBC 2.39) 2.39\\n");',
+          "    process.exit(0);",
+          "  }",
+          '  if (entrypoint === "sh") process.exit(0);',
+          '  if (entrypoint === "/opt/hermes/.venv/bin/python") {',
+          "    process.exit(image === process.env.REMOTE_DIGEST ? 42 : 0);",
+          "  }",
+          "}",
+          "console.error(`unexpected docker invocation: ${JSON.stringify(args)}`);",
+          "process.exit(2);",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // Keep the fake executable in a dedicated PATH directory so every other
+      // command in the composite action remains the real host utility.
+      const result = spawnSync("bash", ["-c", resolver ?? ""], {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          DOCKER_LOG: dockerLog,
+          GITHUB_ENV: githubEnv,
+          GITHUB_SHA: "",
+          PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+          REMOTE_DIGEST: remoteDigest,
+        },
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("lacks the packaged MCP Streamable HTTP client imports");
+      expect(result.stdout).toContain("building locally");
+      expect(readFileSync(githubEnv, "utf8").trim()).toBe(
+        "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local",
+      );
+
+      const calls = readFileSync(dockerLog, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      const remoteProbe = calls.findIndex(
+        (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
+      );
+      const localBuild = calls.findIndex((args) => args[0] === "build");
+      const localProbe = calls.findIndex(
+        (args) =>
+          args.includes("/opt/hermes/.venv/bin/python") &&
+          args.includes("nemoclaw-hermes-base-local"),
+      );
+      expect(remoteProbe).toBeGreaterThanOrEqual(0);
+      expect(localBuild).toBeGreaterThan(remoteProbe);
+      expect(localProbe).toBeGreaterThan(localBuild);
+    } finally {
+      rmSync(temp, { force: true, recursive: true });
+    }
   });
 
   it("does not run npm lifecycle scripts during CI dependency installs", () => {

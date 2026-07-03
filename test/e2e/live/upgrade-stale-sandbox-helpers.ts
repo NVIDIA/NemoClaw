@@ -17,6 +17,10 @@ export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
 const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
 const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
+const MCPORTER_RUNTIME_RELPATHS = [
+  path.join("agents", "openclaw", "mcporter-runtime", "package.json"),
+  path.join("agents", "openclaw", "mcporter-runtime", "package-lock.json"),
+];
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -112,6 +116,11 @@ function createOldBaseBuildContext(): string {
     path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
     path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
   );
+  for (const relativePath of MCPORTER_RUNTIME_RELPATHS) {
+    const target = path.join(buildContext, relativePath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(path.join(REPO_ROOT, relativePath), target);
+  }
   return buildContext;
 }
 
@@ -134,6 +143,14 @@ export function writeStaleRegistryEntry(): void {
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
+  const dashboardPort = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  expect(
+    typeof dashboardPort === "number" &&
+      Number.isInteger(dashboardPort) &&
+      dashboardPort > 0 &&
+      dashboardPort <= 65535,
+    "initial onboard must persist the dashboard port used by authoritative rebuild",
+  ).toBe(true);
   registry.sandboxes = registry.sandboxes ?? {};
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
@@ -143,6 +160,8 @@ export function writeStaleRegistryEntry(): void {
     gpuEnabled: false,
     policies: [],
     policyTier: null,
+    fromDockerfile: null,
+    dashboardPort,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
   };

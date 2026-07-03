@@ -40,6 +40,12 @@ const SAMPLE_CONFIG = [
 
 const OPAQUE = "Zx3Qw9Lp7Rt2Vn5Bd8Kf1Mh6Cg4Js0Ay";
 const CANONICAL_TLS_KEY_PATH = "/etc/openshell/tls/client/tls.key";
+const MANAGED_MCP_VALIDATOR_INVOCATION = [
+  'managed_mcp_config="$(',
+  "  /opt/venv/bin/python3 -I -c \\",
+  "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
+  ')"',
+].join("\n");
 
 function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
   const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
@@ -61,6 +67,7 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
   const configFile = path.join(tempDir, "config.toml");
   const fixture = fs
     .readFileSync(WRAPPER, "utf8")
+    .replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""')
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,

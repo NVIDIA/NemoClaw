@@ -7,14 +7,23 @@ import path from "node:path";
 
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
+import {
+  createDockerDriverGatewayPortListenerHelpers,
+  type DockerDriverGatewayPortListenerOptions,
+  type DockerDriverGatewayPortListenerScan,
+} from "./docker-driver-gateway-port-listener";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
-import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
-import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
+
+// Keep the listener option type on the established runtime facade while the
+// implementation remains isolated in docker-driver-gateway-port-listener.ts.
+export type { DockerDriverGatewayPortListenerOptions } from "./docker-driver-gateway-port-listener";
+
 import * as vmDriverProcess from "./vm-driver-process";
 
 const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
@@ -24,6 +33,11 @@ const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = 
 export type DockerDriverGatewayRuntimeDrift = { reason: string };
 
 type RunCapture = (args: string[], opts?: { ignoreError?: boolean }) => string;
+type RunCaptureEx = (args: readonly string[]) => {
+  stdout: string;
+  exitCode: number | null;
+  timedOut: boolean;
+};
 type DockerDriverGatewayEnvModule = typeof import("./docker-driver-gateway-env");
 
 // Source boundary: OpenShell does not currently expose an authoritative local
@@ -35,13 +49,14 @@ type DockerDriverGatewayEnvModule = typeof import("./docker-driver-gateway-env")
 // attached to a Docker-driver gateway. These heuristics can be retired when
 // OpenShell owns and reports the same runtime identity fields directly.
 export interface DockerDriverGatewayRuntimeDeps {
-  gatewayPort: number;
+  gatewayPort: number | (() => number);
   getCachedOpenshellBinary(): string | null;
   getBlueprintMaxOpenshellVersion(): string | null;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   isOpenshellDevVersion(versionOutput: string | null | undefined): boolean;
   loadDockerDriverGatewayEnv?(): DockerDriverGatewayEnvModule;
   runCapture: RunCapture;
+  runCaptureEx?: RunCaptureEx;
   shouldUseOpenshellDevChannel(): boolean;
   supportedOpenshellFallbackVersion: string;
 }
@@ -54,15 +69,18 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string>;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
+  getDockerDriverGatewayPortListenerScan(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): DockerDriverGatewayPortListenerScan;
+  /** Compatibility view for callers that only need the verified PID list. */
+  getDockerDriverGatewayPortListenerPids(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): number[];
   getDockerDriverGatewayPortListenerPid(
     portCheck: PortProbeResult,
-    opts?: {
-      platform?: NodeJS.Platform;
-      arch?: NodeJS.Architecture;
-      gatewayBin?: string | null;
-      isPidAliveFn?: (pid: number) => boolean;
-      isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-    },
+    opts?: DockerDriverGatewayPortListenerOptions,
   ): number | null;
   getDockerDriverGatewayRuntimeDrift(
     pid: number,
@@ -100,10 +118,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   const dockerDriverGatewayEnv: DockerDriverGatewayEnvModule =
     deps.loadDockerDriverGatewayEnv?.() ?? require("./docker-driver-gateway-env");
 
+  const currentGatewayPort = () =>
+    typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
+
   function getDockerDriverGatewayStateDir(): string {
     const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
     if (configured && configured.trim()) return path.resolve(configured.trim());
-    const dir = gatewayBinding.resolveGatewayStateDirName(deps.gatewayPort);
+    const dir = gatewayBinding.resolveGatewayStateDirName(currentGatewayPort());
     return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
   }
 
@@ -179,6 +200,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string> {
     const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
+      gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
@@ -233,7 +255,8 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return (
       env.OPENSHELL_DRIVERS === "docker" ||
       Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
-      env.OPENSHELL_GRPC_ENDPOINT === dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint()
+      env.OPENSHELL_GRPC_ENDPOINT ===
+        dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort())
     );
   }
 
@@ -321,7 +344,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
           {
             pid,
             desiredEnv,
-            endpoint: dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(),
+            endpoint: dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort()),
             gatewayBin,
             dockerHost: process.env.DOCKER_HOST || null,
             platform,
@@ -406,52 +429,42 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     );
   }
 
-  function getDockerDriverGatewayPortListenerPid(
+  // Bind listener discovery to this factory's liveness and process-identity
+  // dependencies. Returning the configured methods keeps onboard on one
+  // authoritative runtime instance rather than constructing a second factory.
+  const {
+    getDockerDriverGatewayPortListenerPid,
+    getDockerDriverGatewayPortListenerScan,
+    isDockerDriverGatewayPortListener,
+  } = createDockerDriverGatewayPortListenerHelpers({
+    gatewayPort: currentGatewayPort,
+    runCaptureEx:
+      deps.runCaptureEx ??
+      ((args) => {
+        try {
+          return { stdout: deps.runCapture([...args]), exitCode: 0, timedOut: false };
+        } catch {
+          return { stdout: "", exitCode: null, timedOut: false };
+        }
+      }),
+    isPidAlive,
+    isDockerDriverGatewayProcess: (pid, gatewayBin, platform) =>
+      isDockerDriverGatewayProcess(pid, gatewayBin, {
+        requireDockerDriverEnv: shouldRequireDockerDriverEnv(platform),
+      }),
+  });
+  const getDockerDriverGatewayPortListenerPids = (
     portCheck: PortProbeResult,
-    opts: {
-      platform?: NodeJS.Platform;
-      arch?: NodeJS.Architecture;
-      gatewayBin?: string | null;
-      isPidAliveFn?: (pid: number) => boolean;
-      isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-    } = {},
-  ): number | null {
-    if (portCheck.ok) return null;
-    if (
-      !isLinuxDockerDriverGatewayEnabled(
-        opts.platform ?? process.platform,
-        opts.arch ?? process.arch,
-      )
-    )
-      return null;
-    const pid = Number(portCheck.pid);
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-    const proc = String(portCheck.process || "").toLowerCase();
-    if (!proc.startsWith("openshell")) return null;
-    const alive = opts.isPidAliveFn ?? isPidAlive;
-    if (!alive(pid)) return null;
-    const isGateway =
-      opts.isDockerDriverGatewayProcessFn ??
-      ((candidatePid: number, gatewayBin?: string | null) =>
-        isDockerDriverGatewayProcess(candidatePid, gatewayBin, {
-          requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
-        }));
-    if (!isGateway(pid, opts.gatewayBin)) return null;
-    return pid;
-  }
-
-  function isDockerDriverGatewayPortListener(
-    portCheck: PortProbeResult,
-    opts: Parameters<typeof getDockerDriverGatewayPortListenerPid>[1] = {},
-  ): boolean {
-    return getDockerDriverGatewayPortListenerPid(portCheck, opts) !== null;
-  }
+    opts: DockerDriverGatewayPortListenerOptions = {},
+  ): number[] => getDockerDriverGatewayPortListenerScan(portCheck, opts).pids;
 
   return {
     clearDockerDriverGatewayRuntimeFiles,
     getDockerDriverGatewayEnv,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
+    getDockerDriverGatewayPortListenerScan,
+    getDockerDriverGatewayPortListenerPids,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayRuntimeDrift,
     getDockerDriverGatewayRuntimeDriftFromSnapshot,

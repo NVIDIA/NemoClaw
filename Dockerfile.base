@@ -200,6 +200,12 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
 # with the openclaw_version input for a one-off build without editing this file.
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+# Keep the version, integrity, runtime lock, license, and advisory baseline
+# synchronized with agents/openclaw/dependency-review.md.
+ARG MCPORTER_VERSION=0.7.3
+ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
+COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 
 # Keep OpenClaw's jiti-generated source cache out of /tmp so provider marker
 # names do not persist in runtime snapshots or leak-scan inputs.
@@ -234,7 +240,24 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
             echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
         fi; \
     fi; \
-    npm install -g "openclaw@${OPENCLAW_VERSION}" \
+    MCPORTER_EXPECTED_INTEGRITY=""; \
+    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
+    if [ -n "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
+        if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+            echo "Error: mcporter ${MCPORTER_VERSION} npm integrity mismatch"; \
+            echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}"; \
+            echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}"; exit 1; \
+        fi; \
+    fi; \
+    npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}" \
+    && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
+        --ignore-scripts --omit=dev --no-audit --no-fund --no-progress \
+    && ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter \
+    && test "$(mcporter --version)" = "$MCPORTER_VERSION" \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low \
+    && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 
