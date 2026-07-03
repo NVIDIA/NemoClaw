@@ -114,6 +114,37 @@ describe("findRecentPolicyDenial (#5978)", () => {
       endpoint: "example.com:443",
     });
   });
+
+  // A second-precision epoch stamp ([1783046573], no fraction) floors to
+  // ...000ms; a command started mid-second must not filter out a denial that
+  // truly happened later in that same second.
+  const EPOCH_SECOND_DENIAL =
+    "[1783046573] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
+
+  it("keeps a second-precision epoch denial when the command started mid-second", () => {
+    expect(findRecentPolicyDenial(EPOCH_SECOND_DENIAL, 1783046573500)).toEqual({
+      endpoint: "example.com:443",
+    });
+  });
+
+  it("drops a second-precision epoch denial once the whole second predates the start", () => {
+    expect(findRecentPolicyDenial(EPOCH_SECOND_DENIAL, 1783046574000)).toBeNull();
+  });
+
+  // Same granularity slack for a second-precision ISO gateway stamp.
+  const ISO_SECOND_BASE = Date.parse("2026-07-03T04:00:00Z");
+  const ISO_SECOND_DENIAL =
+    "2026-07-03T04:00:00Z [gateway] policy_denied CONNECT example.com:443 not allowed by policy";
+
+  it("keeps a second-precision ISO denial when the command started mid-second", () => {
+    expect(findRecentPolicyDenial(ISO_SECOND_DENIAL, ISO_SECOND_BASE + 500)).toEqual({
+      endpoint: "example.com:443",
+    });
+  });
+
+  it("drops a second-precision ISO denial once the whole second predates the start", () => {
+    expect(findRecentPolicyDenial(ISO_SECOND_DENIAL, ISO_SECOND_BASE + 1000)).toBeNull();
+  });
 });
 
 describe("buildPolicyDenialExecHint (#5978)", () => {

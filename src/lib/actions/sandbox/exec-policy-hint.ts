@@ -89,18 +89,37 @@ export function extractDeniedEndpoint(line: string): string | null {
 
 export type PolicyDenialMatch = { endpoint: string | null };
 
+// parseLineTimestamp floors a second-precision timestamp (an epoch or ISO stamp
+// with no fractional part) to `.000`, so its true instant can be up to 999 ms
+// later than the parsed value. These patterns detect that missing sub-second
+// precision so the recency check can compare against the latest instant the
+// line could represent.
+const SECOND_PRECISION_EPOCH_RE = /^\s*\[\d+\]/;
+const SECOND_PRECISION_ISO_RE =
+  /^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?(?!\.\d)/;
+
+// The latest instant a line's timestamp could represent: exact for sub-second
+// precision, or +999 ms when the stamp is only second-precise.
+function latestPossibleTimestampMs(line: string, timestamp: number): number {
+  const secondPrecise = SECOND_PRECISION_EPOCH_RE.test(line) || SECOND_PRECISION_ISO_RE.test(line);
+  return secondPrecise ? timestamp + 999 : timestamp;
+}
+
 /**
- * Find the most recent policy-denial event that occurred at or after the
- * command started. Lines without a parseable timestamp, and denials that
- * predate the command start, are ignored so a stale denial from a previous
- * command never triggers a hint.
+ * Find the most recent policy-denial event that could have occurred at or after
+ * the command started. Lines without a parseable timestamp, and denials whose
+ * latest possible instant predates the command start, are ignored so a stale
+ * denial from a previous command does not trigger a hint.
  *
- * The comparison is exact — no backward tolerance. The sandbox shares the
- * host's kernel clock, and this command's own denial is always logged strictly
- * after the host stamped the start time (the child must spawn, connect, and be
- * refused first), so an exact cutoff never drops a real denial while a backward
- * skew would let a denial from an immediately preceding exec masquerade as this
- * command's, printing a spurious hint on an unrelated failure.
+ * There is no arbitrary backward tolerance. The sandbox shares the host's
+ * kernel clock, and this command's own denial is always logged after the host
+ * stamped the start time (the child must spawn, connect, and be refused first),
+ * so the cutoff is exact for millisecond-precision lines: a backward skew would
+ * let a denial from an immediately preceding exec masquerade as this command's.
+ * The only slack is the inherent granularity of a second-precision stamp — a
+ * denial logged as `HH:MM:SS` could have happened anywhere in that second, so it
+ * is kept when that whole second reaches the start time, which is the smallest
+ * window that cannot silently drop a genuinely fresh denial.
  */
 export function findRecentPolicyDenial(
   logOutput: string,
@@ -111,7 +130,7 @@ export function findRecentPolicyDenial(
   for (const line of logOutput.split(/\r?\n/)) {
     if (!isPolicyDenialLine(line)) continue;
     const timestamp = parseLineTimestamp(line);
-    if (timestamp === null || timestamp < threshold) continue;
+    if (timestamp === null || latestPossibleTimestampMs(line, timestamp) < threshold) continue;
     match = { endpoint: extractDeniedEndpoint(line) };
   }
   return match;
