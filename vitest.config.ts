@@ -7,18 +7,32 @@ import { defineConfig } from "vitest/config";
 
 import {
   shouldRunBranchValidationE2E,
-  shouldRunLiveE2EScenarios,
-} from "./test/e2e-scenario/fixtures/live-project-gate.ts";
+  shouldRunLiveE2E,
+} from "./test/e2e/fixtures/live-project-gate.ts";
 import { resolveE2ERetryCount } from "./test/helpers/e2e-retries";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
-const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
+const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+const canonicalOpenShellPolicyBoundary = path.resolve(
+  "nemoclaw/src/shared/openshell-policy-boundary.cts",
+);
+const canonicalOpenShellPolicyAlias = [
+  {
+    find: /^.*openshell-policy-boundary\.cjs$/,
+    replacement: canonicalOpenShellPolicyBoundary,
+  },
+];
+const typedSourceTransform = {
+  oxc: {
+    include: /\.(?:[cm]?ts|[jt]sx)$/,
+  },
+};
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
@@ -35,8 +49,10 @@ export default defineConfig({
     hideSkippedTests: isCi,
     projects: [
       {
+        ...typedSourceTransform,
         test: {
           name: "cli",
+          alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
@@ -44,22 +60,32 @@ export default defineConfig({
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           name: "integration",
+          alias: canonicalOpenShellPolicyAlias,
           // Source-backed process fixtures can exceed the unit-test budget
           // when several coverage shards transpile and spawn them concurrently.
           testTimeout: testTimeout(15_000),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
+          // The integration suite shells out heavily, and stacking multiple
+          // forks of the require-hook transpile cache on the 7 GiB ubuntu
+          // runner reliably exhausts physical RAM when coverage is on.
+          // Disable file parallelism for the integration project so the test
+          // files run serially against a single worker (vitest 4 dropped
+          // poolOptions.forks.singleFork; fileParallelism: false is the
+          // documented replacement).
+          fileParallelism: false,
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",
             "**/.claude/**",
             "test/e2e/**",
-            "test/e2e-scenario/live/**",
-            "test/e2e-scenario/support-tests/**",
+            "test/e2e/live/**",
+            "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-preflight.test.ts",
@@ -69,8 +95,10 @@ export default defineConfig({
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           name: "installer-integration",
+          alias: canonicalOpenShellPolicyAlias,
           include: [
             "test/install-express-prompt.test.ts",
             "test/install-preflight.test.ts",
@@ -82,43 +110,54 @@ export default defineConfig({
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           name: "package-contract",
+          alias: canonicalOpenShellPolicyAlias,
           include: ["test/package-contract/**/*.test.ts"],
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           name: "plugin",
+          alias: canonicalOpenShellPolicyAlias,
           include: ["nemoclaw/src/**/*.test.ts"],
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           // Fast tests for the E2E fixture/support layer. Vitest remains the
           // only harness; this project does not define a separate runner.
-          name: "e2e-vitest-support",
+          name: "e2e-support",
+          alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
-          include: ["test/e2e-scenario/support-tests/**/*.test.ts"],
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          include: ["test/e2e/support/**/*.test.ts"],
         },
       },
       {
+        ...typedSourceTransform,
         test: {
-          name: "e2e-scenarios-live",
+          name: "e2e-live",
+          alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Vitest counts retries after the initial failure. In CI the default
           // value of 2 gives live E2Es up to three total attempts while keeping
           // local opt-in runs single-shot unless NEMOCLAW_E2E_RETRIES is set.
           retry: e2eRetryCount,
-          include: runLiveE2EScenarios ? ["test/e2e-scenario/live/**/*.test.ts"] : [],
-          // Live scenario tests are opt-in because they install, onboard, and
+          include: runLiveE2E ? ["test/e2e/live/**/*.test.ts"] : [],
+          // Live E2E tests are opt-in because they install, onboard, and
           // mutate real NemoClaw/OpenShell state. Run explicitly with:
-          //   NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live
+          //   NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live
         },
       },
       {
+        ...typedSourceTransform,
         test: {
           name: "e2e-branch-validation",
+          alias: canonicalOpenShellPolicyAlias,
           retry: e2eRetryCount,
           include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
           // Branch validation E2E: rsyncs the branch over a Brev instance
@@ -140,7 +179,7 @@ export default defineConfig({
     ],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts"],
+      include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts", "nemoclaw/src/**/*.cts"],
       exclude: ["**/*.test.ts", "dist/**"],
       reporter: ["text-summary", "json-summary"],
     },

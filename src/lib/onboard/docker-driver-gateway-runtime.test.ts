@@ -6,12 +6,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import {
   createDockerDriverGatewayRuntimeHelpers,
   type DockerDriverGatewayRuntimeDeps,
 } from "./docker-driver-gateway-runtime";
-import * as dockerDriverGatewayEnv from "./docker-driver-gateway-env";
 import {
   getDockerDriverGatewayRuntimeMarkerPath,
   writeDockerDriverGatewayRuntimeMarkerForStateDir,
@@ -102,6 +101,9 @@ describe("docker-driver gateway runtime helpers", () => {
           expect(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBe(
             "ghcr.io/nvidia/openshell/supervisor:0.0.99",
           );
+          expect(env.OPENSHELL_GATEWAY_CONFIG).toBe(
+            path.join(path.resolve(stateDir), "openshell-gateway.toml"),
+          );
           expect(env.OPENSHELL_DB_URL).toBe(
             `sqlite:${path.join(path.resolve(stateDir), "openshell.db")}`,
           );
@@ -110,6 +112,22 @@ describe("docker-driver gateway runtime helpers", () => {
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("pins the stable 0.0.72 supervisor default while preserving an explicit override", () => {
+    const image = (fallback: string) =>
+      makeHelpers({
+        getBlueprintMaxOpenshellVersion: () => "0.0.72",
+        supportedOpenshellFallbackVersion: fallback,
+      }).helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE;
+    const stable = withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => image("0.0.72"));
+    expect(stable).toBe(
+      "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    );
+    const override = "registry.example.test/supervisor@sha256:override";
+    expect(withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: override }, () => image("0.0.72"))).toBe(
+      override,
+    );
   });
 
   it("clears custom state-dir PID and marker files when the recorded PID is not the gateway", () => {
@@ -125,7 +143,7 @@ describe("docker-driver gateway runtime helpers", () => {
         writeDockerDriverGatewayRuntimeMarkerForStateDir(stateDir, {
           pid,
           desiredEnv,
-          endpoint: "http://127.0.0.1:8080",
+          endpoint: "https://127.0.0.1:8080",
           platform: "linux",
           arch: process.arch,
         });
@@ -338,5 +356,39 @@ describe("docker-driver gateway runtime helpers", () => {
     expect(runCapture).toHaveBeenCalledWith(["ps", "-p", String(pid), "-o", "args="], {
       ignoreError: true,
     });
+  });
+
+  it("detects a replaced executable against the compatibility identity gateway binary", () => {
+    const pid = 12_349;
+    const identityGatewayBin = "/opt/openshell/openshell-gateway";
+    const replacementGatewayBin = "/opt/openshell/replaced/openshell-gateway";
+    const desiredEnv = { OPENSHELL_DRIVERS: "docker" };
+    const { helpers } = makeHelpers();
+    const originalExistsSync = fs.existsSync.bind(fs);
+    const originalReadFileSync = fs.readFileSync.bind(fs);
+    const originalReadlinkSync = fs.readlinkSync.bind(fs);
+    const existingProcPaths = new Set([`/proc/${pid}/environ`, `/proc/${pid}/exe`]);
+    const procFileContents = new Map([[`/proc/${pid}/environ`, "OPENSHELL_DRIVERS=docker\0"]]);
+    const procLinks = new Map([[`/proc/${pid}/exe`, replacementGatewayBin]]);
+    vi.spyOn(fs, "existsSync").mockImplementation(
+      ((candidate) =>
+        existingProcPaths.has(String(candidate)) ||
+        originalExistsSync(candidate)) as typeof fs.existsSync,
+    );
+    vi.spyOn(fs, "readFileSync").mockImplementation(
+      ((candidate, options) =>
+        procFileContents.get(String(candidate)) ??
+        originalReadFileSync(candidate, options as never)) as typeof fs.readFileSync,
+    );
+    vi.spyOn(fs, "readlinkSync").mockImplementation(
+      ((candidate, options) =>
+        procLinks.get(String(candidate)) ??
+        originalReadlinkSync(candidate, options as never)) as typeof fs.readlinkSync,
+    );
+
+    expect(
+      helpers.getDockerDriverGatewayRuntimeDrift(pid, desiredEnv, identityGatewayBin, "linux")
+        ?.reason,
+    ).toBe(`executable=${replacementGatewayBin} (expected ${identityGatewayBin})`);
   });
 });

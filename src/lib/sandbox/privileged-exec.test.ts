@@ -14,7 +14,7 @@ const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(he
 
 function withPrivilegedExecMocks<T>(
   deps: {
-    dockerCapture: (args: readonly string[]) => string;
+    dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
     getSandbox: (name: string) => { name?: string; openshellDriver?: string | null } | null;
     listSandboxes: () => {
       sandboxes?: Array<{ name?: string | null }>;
@@ -86,6 +86,12 @@ describe("privileged sandbox exec routing", () => {
     expect(selected).toBe("openshell-demo-abc123");
   });
 
+  it("fails closed when multiple suffix containers match without an exact identity", () => {
+    expect(() =>
+      selectDirectSandboxContainer("demo", "openshell-demo-old\nopenshell-demo-new\n", ["demo"]),
+    ).toThrow(/Multiple running direct OpenShell containers.*demo.*old.*new/);
+  });
+
   it("uses the longest registered sandbox-name match to avoid prefix collisions", () => {
     const containerNames = [
       "openshell-alpha-child",
@@ -133,6 +139,62 @@ describe("privileged sandbox exec routing", () => {
     );
   });
 
+  it("bounds direct sandbox container discovery", () => {
+    const discoveryCalls: Array<{
+      args: readonly string[];
+      timeout: number | undefined;
+    }> = [];
+
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: (args, options) => {
+          discoveryCalls.push({ args, timeout: options?.timeout });
+          return "openshell-alpha\n";
+        },
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"])).toEqual([
+          "exec",
+          "--user",
+          "root",
+          "openshell-alpha",
+          "id",
+        ]);
+      },
+    );
+
+    expect(discoveryCalls).toEqual([
+      {
+        args: ["ps", "--format", "{{.Names}}"],
+        timeout: 5000,
+      },
+    ]);
+  });
+
+  it("clears interpreter and dynamic-loader injection variables for root control", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => "openshell-alpha\n",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        const argv = privilegedSandboxExecArgv("alpha", ["/trusted/control"], false, true);
+        expect(argv.slice(0, 1)).toEqual(["exec"]);
+        expect(argv).toContain("LD_PRELOAD=");
+        expect(argv).toContain("LD_LIBRARY_PATH=");
+        expect(argv).toContain("LD_AUDIT=");
+        expect(argv).toContain("PYTHONPATH=");
+        expect(argv).toContain("PYTHONUSERBASE=");
+        expect(argv).toContain("PYTHONNOUSERSITE=1");
+        expect(argv).toContain("BASH_ENV=");
+        expect(argv.slice(-4)).toEqual(["--user", "root", "openshell-alpha", "/trusted/control"]);
+      },
+    );
+  });
+
   it("fails before docker discovery when the sandbox registry entry is unavailable", () => {
     let dockerPsCalls = 0;
     withPrivilegedExecMocks(
@@ -148,6 +210,26 @@ describe("privileged sandbox exec routing", () => {
       },
       ({ privilegedSandboxExecArgv }) => {
         expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow("registry corrupt");
+      },
+    );
+    expect(dockerPsCalls).toBe(0);
+  });
+
+  it("rejects a Kubernetes registry owner before stale local-container discovery", () => {
+    let dockerPsCalls = 0;
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "kubernetes" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => {
+          dockerPsCalls += 1;
+          return "openshell-alpha-stale\n";
+        },
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+          /driver: kubernetes.*refusing local Docker discovery/i,
+        );
       },
     );
     expect(dockerPsCalls).toBe(0);
@@ -202,10 +284,18 @@ describe("privileged sandbox exec routing", () => {
         }),
         dockerCapture: () => "openshell-alpha-child\n",
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(Error);
+        expect(String(refusal)).toMatch(
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
+        expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
       },
     );
   });

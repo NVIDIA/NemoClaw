@@ -453,9 +453,10 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
   const sandboxList = deps.listSandboxes();
   const { sandboxes } = sandboxList;
   const resolvedDefault = resolveDefaultSandboxName(() => sandboxList) ?? null;
+  log("");
+  log("  Global status (registered sandboxes and host services):");
   if (sandboxes.length > 0) {
     const live = deps.getLiveInference();
-    log("");
     log("  Sandboxes:");
     for (const sb of sandboxes) {
       const isDefault = sb.name === resolvedDefault;

@@ -7,10 +7,7 @@
  * and performs lightweight reachability checks for remote cloud providers.
  */
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
+import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import { normalizeCredentialValue, resolveProviderCredential } from "../credentials/store";
@@ -91,52 +88,22 @@ function useStatusProbeTiming(argv: string[]): string[] {
   );
 }
 
-function quoteCurlConfigValue(value: string): string {
-  return value
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"')
-    .replace(/[\r\n]+/g, " ");
-}
-
-function createAuthCurlConfig(headerValue: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${KIMI_HEALTH_CURL_CONFIG_PREFIX}-`));
-  try {
-    fs.chmodSync(dir, 0o700);
-    const configPath = path.join(dir, "auth.conf");
-    fs.writeFileSync(configPath, `header = "${quoteCurlConfigValue(headerValue)}"\n`, {
-      mode: 0o600,
-      encoding: "utf8",
-    });
-    return configPath;
-  } catch (error) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
-function cleanupAuthCurlConfig(configPath: string): void {
-  const dir = path.dirname(configPath);
-  if (dir !== os.tmpdir() && path.basename(dir).startsWith(`${KIMI_HEALTH_CURL_CONFIG_PREFIX}-`)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-}
-
 function buildKimiStatusProbeCurlArgs(
   model: string,
   endpoint: string,
-  configPath: string,
+  authArgs: readonly string[],
   isWsl?: boolean,
 ): string[] {
   const args = useStatusProbeTiming(
     getChatCompletionsProbeCurlArgs({
-      authHeader: [],
+      credentialArgs: [],
       model,
       url: endpoint,
       isWsl,
     }),
   );
   const url = args.pop() || endpoint;
-  return [...args, "--config", configPath, url];
+  return [...args, ...authArgs, url];
 }
 
 /**
@@ -205,13 +172,12 @@ function probeNvidiaKimiK26Health(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
-      ok: true,
+      ok: false,
       probed: false,
       providerLabel,
       endpoint,
-      detail:
-        `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
-        `skipping model-specific chat-completions probe. (${reason})`,
+      failureLabel: "unhealthy",
+      detail: `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health. (${reason})`,
     };
   }
 
@@ -228,30 +194,29 @@ function probeNvidiaKimiK26Health(
   }
 
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
-  let authConfigPath = "";
+  let authConfig: ReturnType<typeof createBearerAuthConfig>;
   try {
-    authConfigPath = createAuthCurlConfig(`Authorization: Bearer ${apiKey}`);
+    authConfig = createBearerAuthConfig(apiKey, { prefix: KIMI_HEALTH_CURL_CONFIG_PREFIX });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
-      ok: true,
+      ok: false,
       probed: false,
       providerLabel,
       endpoint,
-      detail:
-        `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
-        `skipping model-specific chat-completions probe. (${reason})`,
+      failureLabel: "unhealthy",
+      detail: `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health. (${reason})`,
     };
   }
 
   const result = (() => {
     try {
       return runCurlProbeImpl(
-        buildKimiStatusProbeCurlArgs(model, endpoint, authConfigPath, options.isWsl),
-        { trustedConfigFiles: [authConfigPath] },
+        buildKimiStatusProbeCurlArgs(model, endpoint, authConfig.args, options.isWsl),
+        { trustedConfigFiles: authConfig.trustedConfigFiles },
       );
     } finally {
-      cleanupAuthCurlConfig(authConfigPath);
+      authConfig.cleanup();
     }
   })();
   const healthy = result.ok;

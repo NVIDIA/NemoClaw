@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
   CLOUD_MODEL_OPTIONS,
+  DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
@@ -25,16 +26,28 @@ import {
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
-    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nemotron-3-ultra-550b-a55b",
-      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "z-ai/glm-5.1",
-      "minimaxai/minimax-m2.7",
-      "moonshotai/kimi-k2.6",
-      "openai/gpt-oss-120b",
-      "deepseek-ai/deepseek-v4-pro",
+    expect(CLOUD_MODEL_OPTIONS).toEqual([
+      { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
+      { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+      { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+      { id: "minimaxai/minimax-m3", label: "Minimax M3" },
     ]);
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+    );
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "openai/gpt-oss-120b",
+    );
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).not.toContain(
+      "deepseek-ai/deepseek-v4-pro",
+    );
+  });
+
+  it("keeps the NVIDIA Endpoints default on Nemotron 3 Super", () => {
+    expect(DEFAULT_CLOUD_MODEL).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toContain(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
   });
 
   it("aligns Hermes Provider defaults with the Hermes Agent Nous catalog", () => {
@@ -52,6 +65,11 @@ describe("inference selection config", () => {
       "openai/gpt-5.5",
     ]);
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
+  });
+
+  it("retires GLM 5.1 only from the NVIDIA Endpoints picker", () => {
+    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain("z-ai/glm-5.1");
+    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain("z-ai/glm-5.1");
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {

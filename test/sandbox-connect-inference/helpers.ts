@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { expect } from "vitest";
+import { afterEach, expect } from "vitest";
 import { execTimeout } from "../helpers/timeouts";
 
 /**
@@ -17,6 +17,7 @@ import { execTimeout } from "../helpers/timeouts";
 
 export type SandboxEntryFixture = {
   name: string;
+  dashboardPort?: number;
   model?: string | null;
   provider?: string | null;
   nimContainer?: string | null;
@@ -33,7 +34,84 @@ export type SetupFixtureOptions = {
   inferenceProbeResponses?: string[];
   inferenceSetStatus?: number;
   writeOllamaProxyState?: boolean;
+  gatewaySupervisorRecovery?: boolean;
 };
+
+const fixtureForwardListeners = new Map<string, ChildProcess>();
+
+// A fixture can invoke runConnect more than once. Keep its advertised forward
+// live for the whole test, then tear down the child and temp tree together.
+function startFixtureForwardListener(tmpDir: string): number {
+  const readyPath = path.join(tmpDir, "forward-listener-ready");
+  const errorPath = path.join(tmpDir, "forward-listener-error");
+  const listener = spawn(
+    process.execPath,
+    [
+      "-e",
+      [
+        'const fs = require("node:fs");',
+        'const net = require("node:net");',
+        `const readyPath = ${JSON.stringify(readyPath)};`,
+        `const readyTempPath = ${JSON.stringify(`${readyPath}.tmp`)};`,
+        `const errorPath = ${JSON.stringify(errorPath)};`,
+        "const server = net.createServer((socket) => socket.end());",
+        "server.on('error', (error) => { fs.writeFileSync(errorPath, String(error)); process.exit(1); });",
+        "server.listen(0, '127.0.0.1', () => { fs.writeFileSync(readyTempPath, String(server.address().port)); fs.renameSync(readyTempPath, readyPath); });",
+        "const stop = () => server.close(() => process.exit(0));",
+        "process.on('SIGTERM', stop);",
+        "process.on('SIGINT', stop);",
+        "setTimeout(() => process.exit(0), 60000).unref();",
+      ].join("\n"),
+    ],
+    { stdio: "ignore" },
+  );
+  fixtureForwardListeners.set(tmpDir, listener);
+
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(readyPath) && !fs.existsSync(errorPath) && Date.now() < deadline) {
+    Atomics.wait(waitCell, 0, 0, 10);
+  }
+  if (!fs.existsSync(readyPath)) {
+    listener.kill("SIGTERM");
+    const detail = fs.existsSync(errorPath) ? fs.readFileSync(errorPath, "utf-8") : "timeout";
+    throw new Error(`Fixture forward listener failed to start: ${detail}`);
+  }
+
+  const port = Number(fs.readFileSync(readyPath, "utf-8"));
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    listener.kill("SIGTERM");
+    throw new Error(`Fixture forward listener returned invalid port: ${String(port)}`);
+  }
+  return port;
+}
+
+async function stopFixtureForwardListener(tmpDir: string): Promise<void> {
+  const listener = fixtureForwardListeners.get(tmpDir);
+  fixtureForwardListeners.delete(tmpDir);
+  if (!listener || listener.exitCode !== null) return;
+
+  await new Promise<void>((resolve) => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(forceTimer);
+      clearTimeout(abandonTimer);
+      resolve();
+    };
+    const forceTimer = setTimeout(() => listener.kill("SIGKILL"), 1_000);
+    const abandonTimer = setTimeout(finish, 3_000);
+    listener.once("exit", finish);
+    listener.kill("SIGTERM");
+  });
+}
+
+afterEach(async () => {
+  const fixtureDirs = [...fixtureForwardListeners.keys()];
+  await Promise.all(fixtureDirs.map((tmpDir) => stopFixtureForwardListener(tmpDir)));
+  for (const tmpDir of fixtureDirs) fs.rmSync(tmpDir, { recursive: true, force: true });
+});
 
 export function isHostWsl() {
   return (
@@ -97,6 +175,9 @@ function initStateFile(stateFile: string, options: SetupFixtureOptions) {
       inferenceSetCalls: [],
       sandboxConnectCalls: [],
       sandboxExecCalls: [],
+      gatewayControlCalls: [],
+      gatewaySupervisorRecovery: options.gatewaySupervisorRecovery ?? false,
+      gatewayRunning: options.gatewaySupervisorRecovery !== true,
     }),
   );
 }
@@ -110,6 +191,7 @@ function writeOpenshellStub(
   stateFile: string,
   sandboxName: string,
   inferenceBlock: string,
+  dashboardPort: number,
   options: SetupFixtureOptions,
 ) {
   writeExecutable(
@@ -179,7 +261,8 @@ if (args[0] === "sandbox" && args[1] === "exec") {
       process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nSTOPPED\\n");
       process.exit(0);
     }
-    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
+    const gatewayStatus = state.gatewayRunning === false ? "STOPPED" : "RUNNING";
+    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + gatewayStatus + "\\n");
     process.exit(0);
   }
   const response = state.inferenceProbeResponses.length
@@ -215,6 +298,11 @@ if (args[0] === "logs") {
   process.exit(0);
 }
 
+if (args[0] === "forward" && args[1] === "list") {
+  process.stdout.write("${sandboxName} 127.0.0.1 ${dashboardPort} 12345 running\\n");
+  process.exit(0);
+}
+
 if (args[0] === "forward") {
   process.exit(0);
 }
@@ -236,9 +324,44 @@ const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
 state.dockerCalls.push(args);
 fs.writeFileSync(stateFile, JSON.stringify(state));
 const cmd = args.join(" ");
+const userIndex = args.indexOf("--user");
+const sanitizedPrefix =
+  userIndex > 1 &&
+  (userIndex - 1) % 2 === 0 &&
+  args.slice(1, userIndex).every((value, index) =>
+    index % 2 === 0 ? value === "--env" : /^[A-Z0-9_]+=.*$/.test(value)
+  );
 
 if (args[0] === "ps") {
-  process.stdout.write("openshell-cluster-nemoclaw\\n");
+  const directContainer = state.gatewaySupervisorRecovery
+    ? "openshell-${sandboxName}-fixture\\n"
+    : "";
+  process.stdout.write("openshell-cluster-nemoclaw\\n" + directContainer);
+  process.exit(0);
+}
+
+if (
+  args[0] === "exec" &&
+  sanitizedPrefix &&
+  args.includes("LD_PRELOAD=") &&
+  args.includes("PYTHONUSERBASE=") &&
+  args.includes("PYTHONNOUSERSITE=1") &&
+  args.length === userIndex + 6 &&
+  args[userIndex + 1] === "root" &&
+  args[userIndex + 2] === "openshell-${sandboxName}-fixture" &&
+  args[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
+  args[userIndex + 4] === "recover"
+) {
+  state.gatewayControlCalls.push(args);
+  const nonce = args[userIndex + 5] || "";
+  if (!state.gatewaySupervisorRecovery || !/^[0-9a-f]{64}$/.test(nonce)) {
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    process.stderr.write("PRIVILEGED_CONTROL_UNAVAILABLE\\n");
+    process.exit(65);
+  }
+  state.gatewayRunning = true;
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  process.stdout.write("GATEWAY_PID=4242\\n");
   process.exit(0);
 }
 
@@ -360,14 +483,19 @@ export function setupFixture(
   const curlPath = path.join(homeLocalBin, "curl");
   const psPath = path.join(homeLocalBin, "ps");
   const sandboxName = String(sandboxEntry.name);
+  // The OpenShell stub advertises this forward as running. Back that claim
+  // with a real listener so probe-only forward ownership checks behave the
+  // same on Linux and macOS, not according to whether a host happens to have
+  // the historical default port open.
+  const dashboardPort = startFixtureForwardListener(tmpDir);
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
 
   const inferenceBlock = buildInferenceBlock(liveInferenceProvider, liveInferenceModel);
-  writeRegistryState(registryDir, sandboxName, sandboxEntry, options);
+  writeRegistryState(registryDir, sandboxName, { ...sandboxEntry, dashboardPort }, options);
   initStateFile(stateFile, options);
-  writeOpenshellStub(openshellPath, stateFile, sandboxName, inferenceBlock, options);
+  writeOpenshellStub(openshellPath, stateFile, sandboxName, inferenceBlock, dashboardPort, options);
   writeDockerStub(dockerPath, stateFile, sandboxName);
   writeCurlStub(curlPath, stateFile);
   writePsStub(psPath);
@@ -415,6 +543,14 @@ export function runConnect(
   connectArgs: string[] = [],
 ) {
   const repoRoot = path.join(import.meta.dirname, "..", "..");
+  const state = JSON.parse(fs.readFileSync(path.join(tmpDir, "state.json"), "utf-8"));
+  const recoveryEnv = state.gatewaySupervisorRecovery
+    ? {
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "2",
+        NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS: "0",
+        NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
+      }
+    : {};
   return spawnSync(
     process.execPath,
     [path.join(repoRoot, "bin", "nemoclaw.js"), sandboxName, "connect", ...connectArgs],
@@ -429,6 +565,7 @@ export function runConnect(
         NEMOCLAW_OLLAMA_PORT: "11434",
         NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
         VITEST: "true",
+        ...recoveryEnv,
         ...extraEnv,
       },
       timeout: execTimeout(30_000),

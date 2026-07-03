@@ -17,8 +17,8 @@ import {
   type UninstallPaths,
 } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
-import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
+import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
@@ -31,6 +31,7 @@ export interface RunResult {
 export interface UninstallRunOptions {
   assumeYes: boolean;
   deleteModels: boolean;
+  destroyUserData?: boolean;
   gatewayName?: string;
   keepOpenShell: boolean;
 }
@@ -281,13 +282,23 @@ function printBye(runtime: UninstallRuntime): void {
   runtime.log(branding.uninstallGoodbye);
 }
 
+function userDataDispositionLine(options: UninstallRunOptions, runtime: UninstallRuntime): string {
+  if (options.destroyUserData) {
+    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: --destroy-user-data set)";
+  }
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    return "  · ~/.nemoclaw (removes rebuild-backups/, backups/, sandboxes.json: NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1)";
+  }
+  return "  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)";
+}
+
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
   const branding = runtimeBranding(runtime);
   if (options.assumeYes) return true;
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
-  runtime.log("  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)");
+  runtime.log(userDataDispositionLine(options, runtime));
   runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(
@@ -675,6 +686,16 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
       `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
     );
   }
+  // Also remove the sibling agent-alias shims (nemohermes, nemo-deepagents) the
+  // installer creates; uninstall previously left them resolving on PATH (#6098).
+  // The same classification guard preserves any non-managed file of that name.
+  for (const alias of paths.agentAliasShimPaths) {
+    const aliasShim = classifyShimPath(alias.path, {}, alias.binName);
+    if (aliasShim.remove) removePath(alias.path, runtime);
+    else if (aliasShim.kind === "preserve-foreign-file") {
+      runtime.warn(`Leaving ${alias.path} in place because it is not an installer-managed shim.`);
+    }
+  }
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
 }
@@ -797,7 +818,10 @@ function resolvePreserveSet(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
 ): readonly string[] {
-  // Explicit acknowledgement env var → full purge, matches today's behaviour.
+  if (options.destroyUserData) {
+    runtime.log("--destroy-user-data set; purging user data under ~/.nemoclaw/.");
+    return [];
+  }
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
     runtime.log(
       "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
@@ -805,17 +829,14 @@ function resolvePreserveSet(
     return [];
   }
   const preservable = detectPreservableEntries(paths, runtime);
-  // Nothing on disk worth preserving → no message, no prompt; treat as default
-  // preserve set so a later snapshot-create still survives if the user re-runs.
   if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
-  // Non-interactive (no TTY, --yes, or NEMOCLAW_NON_INTERACTIVE=1) → preserve
-  // silently with a one-line notice. Default behaviour is safe; users who want
-  // a destructive uninstall in CI must set the env var.
   const nonInteractive =
     !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
   if (nonInteractive) {
     runtime.log(`Preserving ${preservable.join(", ")} under ${paths.nemoclawStateDir}.`);
-    runtime.log("  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to purge user data on uninstall.");
+    runtime.log(
+      "  Pass --destroy-user-data (or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1) to purge user data on uninstall.",
+    );
     return PRESERVED_USER_DATA_ENTRIES;
   }
   runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);

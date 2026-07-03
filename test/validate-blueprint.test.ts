@@ -25,6 +25,18 @@ const BRAVE_PROVIDER_PROFILE_PATH = new URL(
   "../nemoclaw-blueprint/provider-profiles/brave.yaml",
   import.meta.url,
 );
+const TAVILY_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/tavily.yaml",
+  import.meta.url,
+);
+const TAVILY_POLICY_PRESET_PATH = new URL(
+  "../nemoclaw-blueprint/policies/presets/tavily.yaml",
+  import.meta.url,
+);
+const DEEPAGENTS_POLICY_PATH = new URL(
+  "../agents/langchain-deepagents-code/policy-additions.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
@@ -83,6 +95,7 @@ type PolicyEntry = {
 
 type SandboxPolicy = {
   version?: number;
+  filesystem_policy?: { read_only?: string[] };
   network_policies?: Record<string, PolicyEntry>;
 };
 
@@ -109,6 +122,7 @@ type ProviderProfile = {
   id?: string;
   credentials?: ProviderProfileCredential[];
   endpoints?: ProviderProfileEndpoint[];
+  binaries?: string[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -472,6 +486,59 @@ describe("Brave Search provider profile", () => {
   });
 });
 
+describe("Tavily Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(TAVILY_PROVIDER_PROFILE_PATH);
+  const preset = loadYaml<PolicyPreset>(TAVILY_POLICY_PRESET_PATH);
+  const deepAgentsPolicy = loadYaml<SandboxPolicy>(DEEPAGENTS_POLICY_PATH);
+
+  it("routes TAVILY_API_KEY through a bearer authorization header", () => {
+    expect(profile.id).toBe("tavily");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["TAVILY_API_KEY"],
+        auth_style: "bearer",
+        header_name: "authorization",
+      }),
+    ]);
+  });
+
+  it("matches the Tavily Search API endpoint used by the policy preset", () => {
+    expect(profile.endpoints).toEqual([
+      expect.objectContaining({
+        host: "api.tavily.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      }),
+    ]);
+  });
+
+  it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
+    expect(profile.binaries).toEqual([
+      "/opt/venv/bin/python3*",
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ]);
+  });
+
+  it("keeps its binary allowlist aligned with the Tavily policy preset", () => {
+    const presetBinaries = preset.network_policies?.tavily?.binaries?.map(({ path }) => path);
+    expect(profile.binaries).toEqual(presetBinaries);
+  });
+
+  it("anchors managed Python access to Deep Agents Code's read-only venv", () => {
+    const managedPython = "/opt/venv/bin/python3*";
+    const managedInferenceBinaries = deepAgentsPolicy.network_policies?.managed_inference?.binaries;
+
+    expect(deepAgentsPolicy.filesystem_policy?.read_only).toContain("/opt/venv");
+    expect(managedInferenceBinaries).toContainEqual({ path: managedPython });
+    expect(profile.binaries).toContain(managedPython);
+  });
+});
+
 describe("permissive sandbox policy", () => {
   // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
   // permissive`. It must carry forward the gateway-managed inference route
@@ -664,11 +731,11 @@ describe("jira preset", () => {
 
 describe("messaging WebSocket presets", () => {
   const DISCORD_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    "../src/lib/messaging/channels/discord/policy/openclaw.yaml",
     import.meta.url,
   );
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
 
@@ -724,7 +791,7 @@ describe("messaging WebSocket presets", () => {
 
 describe("Slack REST credential rewrite", () => {
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
   const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);

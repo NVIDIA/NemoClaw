@@ -17,6 +17,12 @@ Daily release labels coordinate release work. They do not classify issues and th
 - A PR or issue leaves the daily release cycle only when its version label is removed without a replacement.
 - Version labels are pruned after seven days only after durable release history is preserved and no open PR still carries or depends on the old label.
 
+## Release-Prep Docs
+
+Run `/nemoclaw-contributor-update-docs for vX.Y.Z` before generating the final release plan for `vX.Y.Z`.
+Release-prep docs must be merged or explicitly waived before `release:plan` captures the release commit.
+If any merge lands after `release:plan`, generate a fresh plan before cutting the tag.
+
 ## Cutoff
 
 The daily cutoff is the maintainer-defined point where the release tag is prepared.
@@ -27,8 +33,25 @@ At cutoff:
 2. Confirm each is intended for the release.
 3. List open PRs and issues still carrying the target label as post-tag stragglers.
 4. Generate QA handoff from merged PRs.
-5. Cut the release tag only with explicit maintainer confirmation.
-6. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+5. Generate the release plan to freeze the exact candidate commit.
+6. Review the candidate commit's pre-tag E2E evidence.
+7. Cut the release tag only with explicit maintainer confirmation.
+8. After the tag and workflow-managed `latest` are verified, automatically move every open straggler to the next patch label.
+
+## Pre-Tag E2E Evidence
+
+The release candidate is the exact full `origin/main` commit SHA captured by the generated release plan. At that commit, `.github/workflows/e2e.yaml` is the sole source of truth for the release E2E test set. Do not maintain a separate release-gating test list.
+
+Before asking for the exact release confirmation phrase, build and show an evidence ledger for that SHA:
+
+- Every E2E test execution declared by the workflow must have at least one completed, successful execution for the candidate SHA. This includes tests that require explicit selection and every expanded matrix execution.
+- Treat each expanded matrix execution as a separate ledger entry. Use its matrix `id`, or all distinguishing matrix dimensions when no single ID exists, in the test identifier so results for distinct expansions are never collapsed under the parent job.
+- Green evidence may accumulate across multiple workflow runs, selective runs, reruns, and attempts. A later failure does not erase an earlier successful execution for the same test and SHA.
+- Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence.
+- Map each test with green evidence to its successful run or job URL and attempt number.
+- If a test has no successful execution, the tag may still proceed at maintainer discretion only with an itemized maintainer exception that records the test identifier, relevant run links or available evidence, the current result or failure summary, and the rationale for proceeding.
+
+Every test must have either green evidence or an itemized maintainer exception before the release confirmation is requested. If the candidate SHA changes, discard the ledger and its exceptions, regenerate the release plan, and repeat the review for the new SHA.
 
 ## Carry Forward
 

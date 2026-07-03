@@ -52,7 +52,14 @@ type RebuildFlowOverrides = {
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
   sessionSandboxName?: string;
+  sandboxListOutput?: string;
   backupPolicyPresets?: string[];
+  preDeleteSandboxEntry?: Record<string, unknown>;
+  preDeleteDefaultSandbox?: string | null;
+  preDeleteLatestManifest?: Record<string, unknown> | null;
+  recoveryManifestValidation?: (
+    manifest: Record<string, unknown>,
+  ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
 };
 
 type RebuildFlowHarness = {
@@ -68,6 +75,7 @@ type RebuildFlowHarness = {
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
+  restoreSandboxEntrySpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
@@ -193,7 +201,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: "alpha Ready" },
+    result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
@@ -212,17 +220,36 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     .mockImplementation(() => undefined);
   const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
-  vi.spyOn(registry, "getSandbox").mockReturnValue({
+  const sandboxEntry = {
     name: "alpha",
     provider: "ollama-local",
     model: "nvidia/nemotron",
     policies: ["npm"],
     agent: null,
+    agentVersion: "0.1.0",
     nimContainer: null,
     ...(overrides.sandboxEntry ?? {}),
+  };
+  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  let registryLoadCount = 0;
+  vi.spyOn(registry, "load").mockImplementation(() => {
+    const isPreDeleteRead = registryLoadCount > 0;
+    registryLoadCount++;
+    return {
+      defaultSandbox: isPreDeleteRead ? (overrides.preDeleteDefaultSandbox ?? "alpha") : "alpha",
+      sandboxes: {
+        alpha:
+          isPreDeleteRead && overrides.preDeleteSandboxEntry
+            ? overrides.preDeleteSandboxEntry
+            : sandboxEntry,
+      },
+    };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const restoreSandboxEntrySpy = vi
+    .spyOn(registry, "restoreSandboxEntry")
+    .mockImplementation(() => undefined);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -251,6 +278,19 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
       policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
     },
   });
+  vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
+    (...args: unknown[]) => {
+      const manifest = args[2] as Record<string, unknown>;
+      return overrides.recoveryManifestValidation?.(manifest) ?? { ok: true as const, manifest };
+    },
+  );
+  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(
+    () =>
+      (overrides.preDeleteLatestManifest === undefined
+        ? makePreparedRecoveryManifest()
+        : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
+  );
+  vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(true);
   const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
     overrides.restoreSandboxState ??
       (() => ({
@@ -286,6 +326,8 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
     overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
   );
+  vi.spyOn(shields, "isShieldsDown").mockReturnValue(true);
+  vi.spyOn(shields, "clearShieldsState").mockImplementation(() => undefined);
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
@@ -310,6 +352,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     registryUpdateSpy,
     releaseOnboardLockSpy,
     relockSpy,
+    restoreSandboxEntrySpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
@@ -387,6 +430,25 @@ function makeActiveTeamsMessagingPlan() {
   };
 }
 
+function makePreparedRecoveryManifest() {
+  return {
+    version: 1,
+    sandboxName: "alpha",
+    timestamp: "2026-07-01T06-50-42-044Z",
+    agentType: "openclaw",
+    agentVersion: "0.1.0",
+    expectedVersion: "0.2.0",
+    stateDirs: ["workspace"],
+    backedUpDirs: ["workspace"],
+    stateFiles: [],
+    dir: "/sandbox/.openclaw",
+    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
+    blueprintDigest: null,
+    policyPresets: ["npm"],
+    customPolicies: [],
+  };
+}
+
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -443,13 +505,188 @@ describe("rebuildSandbox flow", () => {
     );
   });
 
-  it("prunes disabled messaging channel presets from the final registry policies", async () => {
+  it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      sandboxListOutput: "alpha Error",
+    });
+    const recoveryManifest = makePreparedRecoveryManifest();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+      "alpha",
+      recoveryManifest.backupPath,
+    );
+  });
+
+  it("rejects a mismatched prepared manifest before deleting the sandbox (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      recoveryManifestValidation: () => ({
+        ok: false,
+        reason: "manifest sandbox 'beta' does not match 'alpha'",
+      }),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Invalid recovery manifest");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the prepared manifest immediately before deleting the sandbox (#6114)", async () => {
+    let validationCount = 0;
+    const harness = createRebuildFlowHarness({
+      recoveryManifestValidation: (manifest) => {
+        validationCount++;
+        return validationCount === 1
+          ? { ok: true as const, manifest }
+          : { ok: false as const, reason: "persisted backup identity changed during validation" };
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Invalid recovery manifest");
+
+    expect(validationCount).toBe(2);
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects same-agent registry configuration drift before deleting the sandbox (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      preDeleteSandboxEntry: {
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "new-model",
+        policies: ["npm", "github"],
+        agent: null,
+        agentVersion: "0.1.0",
+        nemoclawVersion: "0.0.71",
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recovery registry configuration changed during preflight");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("uses the single refreshed registry snapshot for recreate rollback (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      preDeleteDefaultSandbox: "beta",
+      onboard: () => {
+        throw new Error("recreate failed");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recreate failed");
+
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
+      { reclaimDefault: null },
+    );
+  });
+
+  it("rejects a latest-backup change immediately before deleting the sandbox (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      preDeleteLatestManifest: {
+        ...makePreparedRecoveryManifest(),
+        timestamp: "2026-07-01T07-00-00-000Z",
+        backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T07-00-00-000Z",
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: makePreparedRecoveryManifest(),
+      }),
+    ).rejects.toThrow("Recovery backup identity changed during preflight");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+  });
+
+  it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        throw new Error("recreate failed");
+      },
+    });
+    const recoveryManifest = makePreparedRecoveryManifest();
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).rejects.toThrow("Recreate failed");
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
+      { reclaimDefault: "alpha" },
+    );
+    expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
     const disabledSlackPlan = {
       schemaVersion: 1,
       sandboxName: "alpha",
       agent: "openclaw",
       workflow: "rebuild",
-      channels: [],
+      channels: [
+        { channelId: "telegram", disabled: false },
+        { channelId: "discord", disabled: false },
+        { channelId: "whatsapp", disabled: false },
+        { channelId: "wechat", disabled: false },
+        { channelId: "slack", disabled: true },
+      ],
       disabledChannels: ["slack"],
       credentialBindings: [],
       networkPolicy: { presets: [], entries: [] },
@@ -460,7 +697,7 @@ describe("rebuildSandbox flow", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      backupPolicyPresets: ["slack", "npm"],
+      backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],
       buildMessagingRebuildPlan: () => disabledSlackPlan,
     });
 
@@ -468,11 +705,17 @@ describe("rebuildSandbox flow", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "slack");
+    expect(harness.applyPresetSpy.mock.calls.map((call) => call[1])).toEqual([
+      "npm",
+      "pypi",
+      "telegram",
+      "discord",
+      "whatsapp",
+      "wechat",
+    ]);
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
-      policies: ["npm"],
+      policies: ["npm", "pypi", "telegram", "discord", "whatsapp", "wechat"],
     });
   });
 

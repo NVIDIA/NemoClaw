@@ -12,7 +12,6 @@
 #   2. Node.js 22 (nodesource)
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
-#   5. Docker images pre-pulled (sandbox-base, openshell/supervisor, node:22-trixie-slim)
 #
 # What this does NOT install (intentionally):
 #   - code-server (not needed for automated CI)
@@ -28,10 +27,9 @@
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.44)
+#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.72)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
-#   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
 #
 # Related:
 #   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
@@ -40,7 +38,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.44}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.72}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -48,13 +46,6 @@ NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
-
-# Docker images to pre-pull. These are the expensive layers that cause
-# timeouts when pulled during CI runs.
-DOCKER_IMAGES=(
-  "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
-  "node:22-trixie-slim"
-)
 
 # ── Suppress apt noise ───────────────────────────────────────────────
 export DEBIAN_FRONTEND=noninteractive
@@ -71,6 +62,19 @@ fail() {
   printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
   exit 1
 }
+
+assert_openshell_version() {
+  local raw="$1"
+  if [[ ! "$raw" =~ ^v?[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    fail "Invalid OPENSHELL_VERSION '$raw'; expected vX.Y.Z or X.Y.Z"
+  fi
+}
+
+assert_openshell_version "$OPENSHELL_VERSION"
+if [[ "$OPENSHELL_VERSION" != v* ]]; then
+  OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+fi
+OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
 
 # ── Retry helper ─────────────────────────────────────────────────────
 # Usage: retry 3 10 "description" command arg1 arg2
@@ -110,6 +114,75 @@ wait_for_apt_lock() {
   done
 }
 
+openshell_cli_asset_for_arch() {
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64 | amd64) printf '%s\n' "openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+    aarch64 | arm64) printf '%s\n' "openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+    *) fail "Unsupported architecture: $arch" ;;
+  esac
+}
+
+openshell_cli_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+      ;;
+    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openshell_checksum_line() {
+  local checksum_file="$1" asset="$2"
+  awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+verify_openshell_cli_asset() {
+  local tmpdir="$1" asset="$2" checksum_file="openshell-checksums-sha256.txt"
+  local checksum_line expected_sha release_sha
+  local -a sha_cmd
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    sha_cmd=(shasum -a 256)
+  else
+    fail "No SHA-256 tool available (sha256sum/shasum)"
+  fi
+
+  retry 3 10 "download openshell checksum" \
+    curl -fsSL -o "$tmpdir/$checksum_file" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
+  checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset")" \
+    || fail "OpenShell checksum file does not list $asset"
+  expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")" \
+    || fail "No NemoClaw-pinned SHA-256 for OpenShell ${OPENSHELL_VERSION} asset ${asset}"
+  release_sha="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+  [[ "$release_sha" == "$expected_sha" ]] \
+    || fail "OpenShell release checksum for $asset does not match NemoClaw-pinned ${OPENSHELL_VERSION} digest"
+  (cd "$tmpdir" && printf '%s\n' "$checksum_line" | "${sha_cmd[@]}" -c -) \
+    || fail "OpenShell CLI checksum verification failed for $asset"
+}
+
+install_openshell_cli_release() {
+  local asset tmpdir
+  asset="$(openshell_cli_asset_for_arch)"
+  tmpdir="$(mktemp -d)"
+  retry 3 10 "download openshell" \
+    curl -fsSL -o "$tmpdir/$asset" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
+  verify_openshell_cli_asset "$tmpdir" "$asset"
+  tar xzf "$tmpdir/$asset" -C "$tmpdir"
+  sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+  rm -rf "$tmpdir"
+}
+
 # ══════════════════════════════════════════════════════════════════════
 # 1. System packages
 # ══════════════════════════════════════════════════════════════════════
@@ -139,10 +212,10 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
-# Make the socket world-accessible so SSH sessions (which don't pick up the
-# new docker group until re-login) can use Docker immediately.  This is a
-# short-lived CI VM — socket security is not a concern.
-sudo chmod 666 /var/run/docker.sock
+# The current bootstrap process predates the usermod above, so any Docker
+# daemon command in this session must use `sg docker -c ...`. New SSH sessions
+# naturally receive the docker group. Never weaken the host-root-equivalent
+# Docker socket permissions to work around stale group membership.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -171,8 +244,8 @@ else
   elif command -v shasum >/dev/null 2>&1; then
     actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
   else
-    warn "No SHA-256 tool found — skipping NodeSource integrity check"
-    actual_hash="$NODESOURCE_SHA256"
+    rm -f "$ns_tmp"
+    fail "No SHA-256 tool available (sha256sum/shasum)"
   fi
   if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
     rm -f "$ns_tmp"
@@ -191,41 +264,17 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 if command -v openshell >/dev/null 2>&1; then
   _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
-  _pinned_ver="${OPENSHELL_VERSION#v}" # strip leading 'v'
+  _pinned_ver="$OPENSHELL_VERSION_NO_V"
   if [ "$_installed_ver" = "$_pinned_ver" ]; then
     info "OpenShell CLI already installed at pinned version: $_installed_ver"
   else
     info "OpenShell CLI $_installed_ver does not match pinned ${_pinned_ver} — reinstalling..."
-    ARCH="$(uname -m)"
-    case "$ARCH" in
-      x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-      aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
-      *) fail "Unsupported architecture: $ARCH" ;;
-    esac
-    tmpdir="$(mktemp -d)"
-    retry 3 10 "download openshell" \
-      curl -fsSL -o "$tmpdir/$ASSET" \
-      "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${ASSET}"
-    tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
-    sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
-    rm -rf "$tmpdir"
+    install_openshell_cli_release
     info "OpenShell CLI upgraded: $(openshell --version 2>&1 || echo unknown)"
   fi
 else
   info "Installing OpenShell CLI ${OPENSHELL_VERSION}..."
-  ARCH="$(uname -m)"
-  case "$ARCH" in
-    x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-    aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
-    *) fail "Unsupported architecture: $ARCH" ;;
-  esac
-  tmpdir="$(mktemp -d)"
-  retry 3 10 "download openshell" \
-    curl -fsSL -o "$tmpdir/$ASSET" \
-    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${ASSET}"
-  tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
-  sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
-  rm -rf "$tmpdir"
+  install_openshell_cli_release
   info "OpenShell CLI installed: $(openshell --version 2>&1 || echo unknown)"
 fi
 
@@ -241,32 +290,6 @@ else
   info "Cloning NemoClaw (ref: $NEMOCLAW_REF)..."
   git clone --branch "$NEMOCLAW_REF" --depth 1 \
     "https://github.com/NVIDIA/NemoClaw.git" "$NEMOCLAW_CLONE_DIR"
-fi
-
-# ── Start Docker image pulls in the background ─────────────────────
-# Docker pulls are network-bound and independent of npm install / plugin
-# build (CPU-bound). Running them in parallel saves ~60-80s.
-DOCKER_PULL_PID=""
-if [[ "${SKIP_DOCKER_PULL:-0}" != "1" ]]; then
-  info "Pre-pulling Docker images in background..."
-  (
-    SUPERVISOR_TAG="${OPENSHELL_VERSION#v}" # v0.0.44 -> 0.0.44
-    SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor:${SUPERVISOR_TAG}"
-
-    # Pull all images in parallel
-    for image in "${DOCKER_IMAGES[@]}" "$SUPERVISOR_IMAGE"; do
-      sg docker -c "docker pull $image" 2>&1 | tail -1 &
-    done
-    wait
-
-    # If pinned supervisor tag failed, try :latest
-    if ! sg docker -c "docker image inspect $SUPERVISOR_IMAGE" >/dev/null 2>&1; then
-      warn "  Could not pull $SUPERVISOR_IMAGE — trying :latest"
-      sg docker -c "docker pull ghcr.io/nvidia/openshell/supervisor:latest" 2>&1 | tail -1 \
-        || warn "  Failed to pull openshell/supervisor (will be pulled at test time)"
-    fi
-  ) &
-  DOCKER_PULL_PID=$!
 fi
 
 info "Installing npm dependencies..."
@@ -299,18 +322,7 @@ sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
 info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
 
 # ══════════════════════════════════════════════════════════════════════
-# 6. Wait for Docker image pulls to finish
-# ══════════════════════════════════════════════════════════════════════
-if [[ -n "$DOCKER_PULL_PID" ]]; then
-  info "Waiting for background Docker pulls to finish..."
-  wait "$DOCKER_PULL_PID" || warn "Some Docker pulls failed (will be pulled at test time)"
-  info "Docker images pre-pulled"
-elif [[ "${SKIP_DOCKER_PULL:-0}" == "1" ]]; then
-  info "Skipping Docker image pre-pulls (SKIP_DOCKER_PULL=1)"
-fi
-
-# ══════════════════════════════════════════════════════════════════════
-# 7. Readiness sentinel
+# 6. Readiness sentinel
 # ══════════════════════════════════════════════════════════════════════
 sudo touch "$SENTINEL"
 echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null

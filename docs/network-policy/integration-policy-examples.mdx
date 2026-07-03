@@ -47,6 +47,7 @@ An approval updates the running policy, but it does not create a reviewable Nemo
 ## Supported Integration Presets
 
 NemoClaw ships maintained policy presets for common services in `nemoclaw-blueprint/policies/presets/`.
+Messaging channel presets are scoped to the sandbox's active agent; if an agent does not have a matching channel policy, that channel preset is omitted from `policy-list` and `policy-add <preset>` reports it as unknown.
 
 | Workflow | Preset |
 |----------|--------|
@@ -96,7 +97,9 @@ $$nemoclaw my-assistant policy-add outlook --dry-run
 $$nemoclaw my-assistant policy-add outlook --yes
 ```
 
-Configure the email or calendar tool credentials through the integration you run in the sandbox.
+`policy-add` exits non-zero if the `outlook` preset is already applied. If you applied it in the lifecycle example above, run `$$nemoclaw my-assistant policy-remove outlook --yes` first (or skip this apply step).
+
+Then configure the email or calendar tool credentials through the integration you run in the sandbox.
 Keep OAuth client secrets and refresh tokens out of policy files.
 
 If the tool still fails, run `openshell term`, trigger the workflow again, and inspect the blocked request.
@@ -250,8 +253,9 @@ The Brave Search API key is still configured separately during onboarding or thr
 ## Weather and Public Reference Lookups
 
 Use the `weather` preset when the agent needs read-only weather or geocoding lookups.
-The Balanced and Open tiers include it by default.
-The preset covers Open-Meteo, geocoding, and National Weather Service endpoints without enabling messaging or productivity APIs.
+The Open tier includes it by default.
+Balanced and Restricted sandboxes require the explicit `policy-add weather` step below.
+The preset covers read-only public weather and geocoding lookups, including current conditions, forecasts, geocoding, and weather alerts, without enabling messaging or productivity APIs.
 
 ```bash
 $$nemoclaw my-assistant policy-add weather --dry-run
@@ -365,18 +369,18 @@ $$nemoclaw my-assistant policy-list
 ```
 
 Use OpenShell when you need an editable copy of the live policy.
-Requires OpenShell 0.0.44+ for `policy get --full` and `policy set --wait` syntax.
+Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 
 ```bash
 # shellcheck shell=bash
 # Source-of-truth review:
-# invalidState: OpenShell 0.0.44 policy get --full emits metadata before the --- YAML header.
+# invalidState: OpenShell 0.0.72 policy get --base emits metadata before the --- YAML header.
 # sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.
 # whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.
 # regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.
 # removalCondition: remove this pipeline after pinned OpenShell emits clean raw YAML.
 tmp_policy=$(mktemp)
-openshell policy get --full my-assistant \
+openshell policy get --base my-assistant \
   | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
   > "$tmp_policy" \
   && grep -q '^version:' "$tmp_policy" \

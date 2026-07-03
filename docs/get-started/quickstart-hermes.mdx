@@ -11,6 +11,9 @@ content:
 skill:
   priority: 20
 ---
+import { StarterPromptFallback } from "../_components/StarterPrompt";
+import { StarterPromptButton } from "../_components/StarterPromptButton";
+
 Use NemoHermes to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
@@ -20,6 +23,16 @@ On Linux, the installer can install Docker, start the service, and add your user
 If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
 On macOS, start Docker Desktop or Colima before you run the installer.
 The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image if it is not already cached.
+
+## Start from Your Coding Agent
+
+Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
+The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It also asks your agent to confirm Hermes as the selected agent before it builds the install or onboard command.
+
+<StarterPromptButton />
+
+<StarterPromptFallback />
 
 ## Install and Onboard
 
@@ -31,6 +44,7 @@ export NEMOCLAW_AGENT=hermes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Hermes-capable build without a version override.
 To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
 Use the externally reachable origin for the dashboard port `18789`.
 NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.

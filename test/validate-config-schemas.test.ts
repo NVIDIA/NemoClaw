@@ -9,7 +9,7 @@
  * Vitest project.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
@@ -96,6 +96,7 @@ describe("config validation target discovery", () => {
   const targets = discoverTargets();
   const filesBySchema = new Map(targets.map((target) => [target.schema, target.files]));
   const sandboxPolicyFiles = filesBySchema.get("schemas/sandbox-policy.schema.json") ?? [];
+  const presetFiles = filesBySchema.get("schemas/policy-preset.schema.json") ?? [];
 
   it("includes every binary-scoped sandbox policy family", () => {
     expect(sandboxPolicyFiles).toEqual(
@@ -113,6 +114,17 @@ describe("config validation target discovery", () => {
     expect(filesBySchema.get("nemoclaw-blueprint/model-specific-setup/schema.json") ?? []).toEqual(
       expect.arrayContaining([
         "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
+      ]),
+    );
+  });
+
+  it("discovers channel-owned messaging policy presets", () => {
+    expect(presetFiles).toEqual(
+      expect.arrayContaining([
+        "src/lib/messaging/channels/slack/policy/openclaw.yaml",
+        "src/lib/messaging/channels/slack/policy/hermes.yaml",
+        "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
+        "src/lib/messaging/channels/telegram/policy/hermes.yaml",
       ]),
     );
   });
@@ -384,20 +396,13 @@ describe("sandbox-policy.schema.json", () => {
 
 describe("policy-preset.schema.json", () => {
   const validate = compileSchema("schemas/policy-preset.schema.json");
-  const presetsDir = repoPath("nemoclaw-blueprint/policies/presets");
-
-  let presetFiles: string[] = [];
-  try {
-    presetFiles = readdirSync(presetsDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
-  } catch (err) {
-    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
-    if (code !== "ENOENT") throw err;
-    // directory may not exist
-  }
+  const presetFiles =
+    discoverTargets().find((target) => target.schema === "schemas/policy-preset.schema.json")
+      ?.files ?? [];
 
   for (const file of presetFiles) {
     it(`${file} passes schema validation`, () => {
-      const data = loadYAML(join(presetsDir, file));
+      const data = loadYAML(repoPath(file));
       expectValid(validate, data, file);
     });
   }

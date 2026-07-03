@@ -7,9 +7,22 @@ import type { JsonObject, JsonValue } from "../core/json-types";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
+  isMessagingChannelPolicyPreset,
   listBuiltInMessagingChannelManifests,
+  listMessagingChannelPolicyPresets,
   listMessagingPolicyPresetMetadata,
+  loadMessagingChannelPolicyPreset,
 } from "../messaging/channels";
+import {
+  buildPolicyGetCommand,
+  buildPolicyGetFullCommand,
+  buildPolicySetCommand,
+} from "./commands";
+import {
+  parseOpenShellPolicy,
+  stripProviderComposedPolicies,
+  withoutProviderComposedPolicies,
+} from "./merge";
 
 const fs = require("fs");
 const path = require("path");
@@ -46,8 +59,21 @@ type SelectionOptions = {
   applied?: string[];
 };
 
+type PresetLoadOptions = {
+  agent?: string | null;
+};
+
+type PresetListOptions = {
+  agent?: string | null;
+};
+
+type MergePresetNamesOptions = {
+  agent?: string | null;
+};
+
 type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
+  agent?: string | null;
 };
 
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
@@ -55,13 +81,22 @@ function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
 }
 
 /**
- * Enumerate every preset YAML under `nemoclaw-blueprint/policies/presets/`
- * and return `{ file, name, description }` triples parsed from the file's
- * `preset:` header.
+ * Enumerate every built-in preset and return `{ file, name, description }`
+ * triples parsed from each file's `preset:` header. Non-messaging presets live
+ * under `nemoclaw-blueprint/policies/presets/`; messaging channel presets live
+ * beside their channel manifests under `src/lib/messaging/channels/<channel>/policy/`.
  */
-function listPresets(): PresetInfo[] {
-  if (!fs.existsSync(PRESETS_DIR)) return [];
-  return fs
+function listPresets(options: PresetListOptions = {}): PresetInfo[] {
+  const channelPresets = listMessagingChannelPolicyPresets({ agent: options.agent }).map(
+    ({ file, name, description }) => ({
+      file,
+      name,
+      description,
+    }),
+  );
+  const channelPresetNames = new Set(channelPresets.map((preset) => preset.name));
+  if (!fs.existsSync(PRESETS_DIR)) return channelPresets;
+  const centralPresets = fs
     .readdirSync(PRESETS_DIR)
     .filter((f: string) => f.endsWith(".yaml"))
     .map((f: string) => {
@@ -73,28 +108,50 @@ function listPresets(): PresetInfo[] {
         name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
         description: descMatch ? descMatch[1].trim() : "",
       };
-    });
+    })
+    .filter((preset: PresetInfo) => !channelPresetNames.has(preset.name));
+  return [...centralPresets, ...channelPresets];
 }
 
 /**
- * Read a built-in preset by short name from `PRESETS_DIR`. Guards against
- * path traversal and returns `null` if the preset does not exist.
+ * Read a non-messaging built-in preset by short name from `PRESETS_DIR`.
+ * Guards against path traversal and returns `null` if the preset does not
+ * exist.
  */
-function loadPreset(name: string): string | null {
+function loadCentralPreset(name: string, options: { reportMissing?: boolean } = {}): string | null {
   const file = path.resolve(PRESETS_DIR, `${name}.yaml`);
   if (!file.startsWith(PRESETS_DIR + path.sep) && file !== PRESETS_DIR) {
     console.error(`  Invalid preset name: ${name}`);
     return null;
   }
   if (!fs.existsSync(file)) {
-    console.error(`  Preset not found: ${name}`);
+    if (options.reportMissing !== false) console.error(`  Preset not found: ${name}`);
     return null;
   }
   return fs.readFileSync(file, "utf-8");
 }
 
+function loadPresetForAgent(name: string, options: PresetLoadOptions = {}): string | null {
+  const channelPreset = loadMessagingChannelPolicyPreset(name, { agent: options.agent });
+  if (channelPreset) return channelPreset;
+  if (isMessagingChannelPolicyPreset(name)) return null;
+  return loadCentralPreset(name);
+}
+
+function loadPreset(name: string): string | null {
+  return loadPresetForAgent(name, { agent: "openclaw" });
+}
+
 function isPolicyObject(value: PolicyValue): value is PolicyObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPresetPolicyMap(value: PolicyValue): value is PolicyObject {
+  return (
+    isPolicyObject(value) &&
+    Object.keys(value).length > 0 &&
+    Object.values(value).every(isPolicyObject)
+  );
 }
 
 function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
@@ -106,6 +163,41 @@ function parseNetworkPolicies(content: string | null | undefined): PolicyObject 
   } catch {
     return null;
   }
+}
+
+// The single sandbox->host bridge hostname OpenShell provisions. An endpoint
+// that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
+// (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
+// is a user-preset egress-bypass attempt (#6073). Mirrors the
+// ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS trust boundary in
+// src/lib/actions/inference-set.ts.
+const HOST_GATEWAY_BRIDGE_HOST = "host.openshell.internal";
+
+function endpointHostIsGatewayBridge(ep: PolicyObject): boolean {
+  const host = (ep as { host?: unknown }).host;
+  return (
+    typeof host === "string" && host.replace(/\.$/, "").toLowerCase() === HOST_GATEWAY_BRIDGE_HOST
+  );
+}
+
+function networkPoliciesHasAllowedIps(np: PolicyObject): boolean {
+  for (const policyVal of Object.values(np)) {
+    if (!isPolicyObject(policyVal)) continue;
+    // Object-level `allowed_ips` has no endpoint host context and is never a
+    // legitimate shape; always reject. Use `in` (not `Object.hasOwn`) so an
+    // inherited/prototype-chain `allowed_ips` can't bypass the guard (#6072).
+    if ("allowed_ips" in policyVal) return true;
+    const endpoints = (policyVal as PolicyObject).endpoints;
+    if (!Array.isArray(endpoints)) continue;
+    for (const ep of endpoints) {
+      if (!isPolicyObject(ep) || !("allowed_ips" in ep)) continue;
+      // Trust-boundary exemption: `allowed_ips` is permitted only to pin the
+      // sandbox->host bridge; reject it for every other host (#6073).
+      if (endpointHostIsGatewayBridge(ep)) continue;
+      return true;
+    }
+  }
+  return false;
 }
 
 function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
@@ -179,7 +271,20 @@ function loadAgentPresetContent(
 }
 
 function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
-  const builtinPresetContent = loadPreset(presetName);
+  let sandboxAgent: string | null = null;
+  try {
+    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  } catch {
+    sandboxAgent = null;
+  }
+
+  const channelPresetContent = loadMessagingChannelPolicyPreset(presetName, {
+    agent: sandboxAgent,
+  });
+  if (channelPresetContent) return channelPresetContent;
+  if (isMessagingChannelPolicyPreset(presetName)) return null;
+
+  const builtinPresetContent = loadCentralPreset(presetName);
   if (!builtinPresetContent) return null;
   return (
     loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
@@ -270,7 +375,16 @@ function listSetupPolicyPresets(
   sandboxName: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): PresetInfo[] {
-  return [...filterSetupPolicyPresets(listPresets(), options), ...listCustomPresets(sandboxName)];
+  let sandboxAgent: string | null = null;
+  try {
+    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  } catch {
+    sandboxAgent = null;
+  }
+  return [
+    ...filterSetupPolicyPresets(listPresets({ agent: options.agent ?? sandboxAgent }), options),
+    ...listCustomPresets(sandboxName),
+  ];
 }
 
 function clampSetupPolicyPresetNames(
@@ -300,42 +414,27 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 }
 
 /**
- * Parse the output of `openshell policy get --full` which has a metadata
- * header (Version, Hash, etc.) followed by `---` and then the actual YAML.
+ * Parse the output of `openshell policy get --base` or `--full`, which has a
+ * metadata header (Version, Hash, etc.) followed by `---` and then the actual
+ * YAML.
  */
-function parseCurrentPolicy(raw: string | null | undefined): string {
+// invalidState: metadata-only, diagnostic, malformed, or empty CLI output is
+// not a policy and must remain distinguishable from a parsed YAML mapping.
+// sourceBoundary: OpenShell owns CLI output; the canonical parser owns what
+// NemoClaw admits as policy YAML.
+// whyNotSourceFix: NemoClaw supports CLI releases whose process output is the
+// only available boundary, including versionless network_policies bodies.
+// regressionTest: nemoclaw/src/shared/openshell-policy-boundary.test.ts and
+// test/policy-mutation-read-failure.test.ts.
+// removalCondition: remove this fail-soft adapter when every caller consumes a
+// typed OpenShell policy API.
+function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
   if (!raw) return "";
-  const sep = raw.indexOf("---");
-  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
-  if (!candidate) return "";
-  if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
-    return "";
-  }
-  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
-    return "";
-  }
   try {
-    const parsed = YAML.parse(candidate);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return "";
-    }
+    return parseOpenShellPolicy(raw).yamlBody;
   } catch {
     return "";
   }
-  return candidate;
-}
-
-/**
- * Resolve the openshell binary, preferring an absolute path so spawnSync does
- * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
- * from PATH (issue #4224). Falls back to the literal "openshell" so callers
- * that build argv at module scope (or in tests that only check argv shape)
- * don't side-effect on a missing binary; command entry points call
- * `assertOpenshellResolvable()` before invoking openshell to surface the
- * actionable diagnostic.
- */
-function resolveOpenshellBinary(): string {
-  return openshellResolveModule.resolveOpenshell() ?? "openshell";
 }
 
 /**
@@ -375,59 +474,9 @@ function assertOpenshellResolvable(): void {
 }
 
 /**
- * Build the openshell policy set command as an argv array.
- */
-function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "set", "--policy", policyFile, "--wait", sandboxName];
-}
-
-/**
- * Build the openshell policy get command as an argv array.
- */
-function buildPolicyGetCommand(sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
-}
-
-/**
- * Text-based fallback for merging preset entries into policy YAML.
- * Used when preset entries cannot be parsed as structured YAML.
- */
-function textBasedMerge(currentPolicy: string, presetEntries: string): string {
-  if (!currentPolicy) {
-    return "version: 1\n\nnetwork_policies:\n" + presetEntries;
-  }
-  let merged;
-  if (/^network_policies\s*:/m.test(currentPolicy)) {
-    const lines = currentPolicy.split("\n");
-    const result = [];
-    let inNp = false;
-    let inserted = false;
-    for (const line of lines) {
-      if (/^network_policies\s*:/.test(line)) {
-        inNp = true;
-        result.push(line);
-        continue;
-      }
-      if (inNp && /^\S.*:/.test(line) && !inserted) {
-        result.push(presetEntries);
-        inserted = true;
-        inNp = false;
-      }
-      result.push(line);
-    }
-    if (inNp && !inserted) result.push(presetEntries);
-    merged = result.join("\n");
-  } else {
-    merged = currentPolicy.trimEnd() + "\n\nnetwork_policies:\n" + presetEntries;
-  }
-  if (!merged.trimStart().startsWith("version:")) merged = "version: 1\n\n" + merged;
-  return merged;
-}
-
-/**
  * Merge preset entries into existing policy YAML using structured YAML
- * parsing. Replaces the previous text-based manipulation which could
- * produce invalid YAML when indentation or ordering varied.
+ * parsing. Invalid input fails closed instead of falling back to text
+ * manipulation that could produce a syntactically valid but unsafe policy.
  *
  * Behavior:
  *   - Parses both current policy and preset entries as YAML
@@ -440,26 +489,33 @@ function textBasedMerge(currentPolicy: string, presetEntries: string): string {
  * @returns {string} Merged YAML
  */
 function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): string {
-  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const parsedCurrentPolicy = parseCurrentPolicyOrEmpty(currentPolicy);
+  if (currentPolicy.trim() && !parsedCurrentPolicy) {
+    throw new Error(
+      "Cannot merge policy preset: the current policy is not a valid YAML mapping. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parsedCurrentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
 
   // Parse preset entries. They come as indented content under network_policies:,
   // so we wrap them to make valid YAML for parsing.
-  let presetPolicies;
+  let presetPolicies: PolicyObject;
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetPolicies = parsed?.network_policies;
+    if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) {
+      throw new Error("network_policies must be a non-empty mapping of policy objects");
+    }
+    presetPolicies = withoutProviderComposedPolicies(parsed.network_policies);
   } catch {
-    presetPolicies = null;
-  }
-
-  // If YAML parsing failed or entries are not a mergeable object,
-  // fall back to the text-based approach for backward compatibility.
-  if (!presetPolicies || typeof presetPolicies !== "object" || Array.isArray(presetPolicies)) {
-    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+    throw new Error(
+      "Cannot merge policy preset: preset network_policies entries must be a valid YAML mapping. " +
+        "Check the preset file and try again; no policy changes were made.",
+    );
   }
 
   if (!normalizedCurrentPolicy) {
@@ -470,9 +526,15 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   let current: PolicyDocument | null;
   try {
     const parsed = YAML.parse(normalizedCurrentPolicy);
-    current = isPolicyDocument(parsed) ? parsed : {};
+    current = isPolicyDocument(parsed) ? parsed : null;
   } catch {
-    return textBasedMerge(normalizedCurrentPolicy, presetEntries);
+    current = null;
+  }
+  if (!current) {
+    throw new Error(
+      "Cannot merge policy preset: the normalized current policy could not be parsed. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
   }
 
   // Structured merge: preset entries override existing on name collision.
@@ -498,13 +560,14 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
 function mergePresetNamesIntoPolicy(
   currentPolicy: string,
   presetNames: string[],
+  options: MergePresetNamesOptions = {},
 ): { policy: string; appliedPresets: string[]; missingPresets: string[] } {
   let merged = currentPolicy;
   const appliedPresets: string[] = [];
   const missingPresets: string[] = [];
 
   for (const presetName of [...new Set(presetNames)]) {
-    const presetContent = loadPreset(presetName);
+    const presetContent = loadPresetForAgent(presetName, { agent: options.agent });
     const presetEntries = extractPresetEntries(presetContent);
     if (!presetEntries) {
       missingPresets.push(presetName);
@@ -531,26 +594,39 @@ function removePresetFromPolicy(
   currentPolicy: string,
   presetEntries: string | null | undefined,
 ): string {
-  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const parsedCurrentPolicy = parseCurrentPolicyOrEmpty(currentPolicy);
+  if (currentPolicy.trim() && !parsedCurrentPolicy) {
+    throw new Error(
+      "Cannot remove policy preset: the current policy is not a valid YAML mapping. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parsedCurrentPolicy);
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
 
-  if (!normalizedCurrentPolicy) return "version: 1\n\nnetwork_policies:\n";
-
   // Parse preset entries to extract the network_policies key names.
   // They come as indented content under network_policies:,
   // so we wrap them to make valid YAML for parsing.
-  let presetKeys: string[];
+  let presetPolicies: PolicyObject;
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetKeys = parsed?.network_policies ? Object.keys(parsed.network_policies) : [];
+    if (!isPolicyDocument(parsed) || !isPresetPolicyMap(parsed.network_policies)) {
+      throw new Error("network_policies must be a non-empty mapping of policy objects");
+    }
+    presetPolicies = parsed.network_policies;
   } catch {
-    presetKeys = [];
+    throw new Error(
+      "Cannot remove policy preset: preset network_policies entries must be a valid YAML mapping. " +
+        "Check the preset file and try again; no policy changes were made.",
+    );
   }
 
+  const presetKeys = Object.keys(presetPolicies);
   if (presetKeys.length === 0) return normalizedCurrentPolicy;
+  if (!normalizedCurrentPolicy) return "version: 1\n\nnetwork_policies:\n";
 
   // Parse the current policy as structured YAML
   let current: PolicyDocument | null;
@@ -558,10 +634,15 @@ function removePresetFromPolicy(
     const parsed = YAML.parse(normalizedCurrentPolicy);
     current = isPolicyDocument(parsed) ? parsed : null;
   } catch {
-    return normalizedCurrentPolicy;
+    current = null;
   }
 
-  if (!current) return normalizedCurrentPolicy;
+  if (!current) {
+    throw new Error(
+      "Cannot remove policy preset: the normalized current policy could not be parsed. " +
+        "Re-read the base policy and try again; no policy changes were made.",
+    );
+  }
 
   // Guard: network_policies may be an array in legacy policies — only
   // delete keys when it is a plain object.
@@ -625,12 +706,13 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    // Mutations start from round-trippable --base, never provider-composed --full.
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
     /* ignored */
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
@@ -768,6 +850,16 @@ function applyPresetContent(
     );
   }
 
+  if (options.custom) {
+    const np = parseNetworkPolicies(presetContent);
+    if (np && networkPoliciesHasAllowedIps(np)) {
+      console.error(
+        `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets.`,
+      );
+      return false;
+    }
+  }
+
   const presetEntries = extractPresetEntries(presetContent);
   if (!presetEntries) {
     console.error(`  Preset ${presetName} has no network_policies section.`);
@@ -775,15 +867,18 @@ function applyPresetContent(
   }
 
   // Get current policy YAML from sandbox
-  let rawPolicy = "";
+  let rawPolicy: string | null = null;
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    // Mutations start from round-trippable --base, never provider-composed --full.
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
-    /* ignored */
+    /* Refused below. */
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
-  if (rawPolicy.trim() && !currentPolicy) {
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
+  // A live mutation requires a usable policy; empty is an invalid read, not a
+  // fresh sandbox whose unknown policy may be replaced with a scaffold.
+  if (!currentPolicy) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
@@ -858,9 +953,10 @@ function applyPresetContent(
 }
 
 /**
- * Apply a built-in preset (by name) to a running sandbox. Loads the preset
- * from `nemoclaw-blueprint/policies/presets/<name>.yaml` and delegates to
- * `applyPresetContent`. Returns `false` if the named preset does not exist.
+ * Apply a built-in preset (by name) to a running sandbox. Loads messaging
+ * presets from channel-owned policy files and non-messaging presets from the
+ * central preset directory, then delegates to `applyPresetContent`. Returns
+ * `false` if the named preset does not exist.
  */
 function applyPreset(
   sandboxName: string,
@@ -893,15 +989,18 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const uniquePresetNames = [...new Set(presetNames)].filter(Boolean);
   if (uniquePresetNames.length === 0) return true;
 
-  let rawPolicy = "";
+  let rawPolicy: string | null = null;
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    // Mutations start from round-trippable --base, never provider-composed --full.
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
-    /* ignored */
+    /* Refused below. */
   }
 
-  let merged = parseCurrentPolicy(rawPolicy);
-  if (rawPolicy.trim() && !merged) {
+  let merged = parseCurrentPolicyOrEmpty(rawPolicy);
+  // Keep the batch entrypoint on the same fail-closed source boundary as
+  // applyPresetContent: an unusable successful read is still a failed read.
+  if (!merged) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
     );
@@ -1051,6 +1150,12 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     presetMeta && typeof presetMeta === "object" && !Array.isArray(presetMeta)
       ? (presetMeta as PolicyObject).name
       : undefined;
+  if (typeof presetName === "string" && presetName.startsWith("_provider_")) {
+    console.error(
+      `  Preset name cannot start with '_provider_' (reserved by OpenShell): ${filePath}`,
+    );
+    return null;
+  }
   if (typeof presetName !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(presetName)) {
     console.error(
       `  Preset must declare preset.name (lowercase, hyphenated RFC 1123 label): ${filePath}`,
@@ -1063,6 +1168,19 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     Array.isArray(parsed.network_policies)
   ) {
     console.error(`  Preset missing network_policies section: ${filePath}`);
+    return null;
+  }
+  if (Object.keys(parsed.network_policies).some((name) => name.startsWith("_provider_"))) {
+    console.error(
+      `  Preset network_policies keys cannot start with '_provider_' (reserved by OpenShell): ${filePath}`,
+    );
+    return null;
+  }
+  const np = parsed.network_policies as PolicyObject;
+  if (networkPoliciesHasAllowedIps(np)) {
+    console.error(
+      `  Preset '${presetName}' contains 'allowed_ips', which is not permitted in user-supplied presets: ${filePath}`,
+    );
     return null;
   }
   const builtin = listPresets().map((p) => p.name);
@@ -1146,12 +1264,12 @@ function presetMatchesGateway(
 function getGatewayPresets(sandboxName: string): string[] | null {
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true });
   } catch {
     return null;
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
   if (!currentPolicy) return null;
 
   let parsed;
@@ -1172,8 +1290,14 @@ function getGatewayPresets(sandboxName: string): string[] | null {
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
   const matched: string[] = [];
+  let sandboxAgent: string | null = null;
+  try {
+    sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
+  } catch {
+    sandboxAgent = null;
+  }
 
-  for (const preset of listPresets()) {
+  for (const preset of listPresets({ agent: sandboxAgent })) {
     if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
       matched.push(preset.name);
     }
@@ -1303,6 +1427,7 @@ export {
   applyPresets,
   assertOpenshellResolvable,
   buildPolicyGetCommand,
+  buildPolicyGetFullCommand,
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
@@ -1311,16 +1436,19 @@ export {
   getGatewayPresets,
   getPresetEndpoints,
   getPresetValidationWarning,
+  isMessagingChannelPolicyPreset,
   listCustomPresets,
   listPresets,
   listSetupPolicyPresets,
   loadPreset,
+  loadPresetForSandbox,
   loadPresetFromFile,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
+  networkPoliciesHasAllowedIps,
   PERMISSIVE_POLICY_PATH,
   PRESETS_DIR,
-  parseCurrentPolicy,
+  parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
   removePreset,
   removePresetFromPolicy,

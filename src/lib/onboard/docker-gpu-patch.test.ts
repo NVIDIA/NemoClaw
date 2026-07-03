@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
+import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -27,7 +27,6 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
-import { waitForCreatedSandboxReadyWithTrace } from "./sandbox-readiness-tracing";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -77,11 +76,27 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("docker-gpu-patch", () => {
-  it("detects only the Linux Docker-driver GPU path and honors the opt-out", () => {
+  it("routes native CDI Linux directly unless the legacy patch is forced", () => {
     expect(
       shouldApplyDockerGpuPatch(
         { sandboxGpuEnabled: true },
         { env: {}, platform: "linux", dockerDriverGateway: true },
+      ),
+    ).toBe(false);
+    expect(
+      shouldApplyDockerGpuPatch(
+        { sandboxGpuEnabled: true },
+        {
+          env: { NEMOCLAW_DOCKER_GPU_PATCH: "auto" },
+          platform: "linux",
+          dockerDriverGateway: true,
+        },
+      ),
+    ).toBe(false);
+    expect(
+      shouldApplyDockerGpuPatch(
+        { sandboxGpuEnabled: true },
+        { env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" }, platform: "linux", dockerDriverGateway: true },
       ),
     ).toBe(true);
     expect(
@@ -100,6 +115,21 @@ describe("docker-gpu-patch", () => {
       shouldApplyDockerGpuPatch(
         { sandboxGpuEnabled: false },
         { env: {}, platform: "linux", dockerDriverGateway: true },
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps Jetson on the compatibility patch by default while honoring its opt-out", () => {
+    expect(
+      shouldApplyDockerGpuPatch(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+        { env: {}, platform: "linux", dockerDriverGateway: true },
+      ),
+    ).toBe(true);
+    expect(
+      shouldApplyDockerGpuPatch(
+        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+        { env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, platform: "linux", dockerDriverGateway: true },
       ),
     ).toBe(false);
   });
@@ -147,33 +177,6 @@ describe("docker-gpu-patch", () => {
       ]),
     );
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
-  });
-
-  it("replaces OpenShell's idle sandbox command when recreating a managed container", () => {
-    const sandboxCommand = [
-      "env",
-      "CHAT_UI_URL=http://127.0.0.1:8642",
-      "NEMOCLAW_DASHBOARD_PORT=8642",
-      "nemoclaw-start",
-    ];
-
-    const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"), {
-      openshellSandboxCommand: sandboxCommand,
-    });
-
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "--env",
-        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 NEMOCLAW_DASHBOARD_PORT=8642 nemoclaw-start",
-      ]),
-    );
-    expect(args).not.toEqual(
-      expect.arrayContaining(["--env", "OPENSHELL_SANDBOX_COMMAND=sleep infinity"]),
-    );
-    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
-      "openshell/sandbox:abc",
-      ...sandboxCommand,
-    ]);
   });
 
   it("adds OpenShell's sandbox command env when the inspected container lacks one", () => {
@@ -590,7 +593,12 @@ describe("docker-gpu-patch", () => {
       if (args[0] === "info") return "";
       return "";
     });
-    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+    const dockerRunDetached = vi.fn(
+      (_args: readonly string[], _opts?: Record<string, unknown>) => ({
+        status: 0,
+        stdout: "new-container-id\n",
+      }),
+    );
     const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
@@ -625,15 +633,19 @@ describe("docker-gpu-patch", () => {
     expect(
       dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
-    expect(dockerRunDetached).toHaveBeenCalledWith(
+    const cloneArgs = dockerRunDetached.mock.calls[0]?.[0] ?? [];
+    expect(cloneArgs).toEqual(
       expect.arrayContaining([
         "--env",
         "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
         "openshell/sandbox:abc",
-        "env",
-        "CHAT_UI_URL=http://127.0.0.1:8642",
-        "nemoclaw-start",
       ]),
+    );
+    expect(cloneArgs.slice(cloneArgs.indexOf("openshell/sandbox:abc"))).toEqual([
+      "openshell/sandbox:abc",
+    ]);
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      cloneArgs,
       expect.objectContaining({ ignoreError: true }),
     );
   });
@@ -931,32 +943,8 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
   });
 
-  it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
-    const outputs = ["my-sandbox   Provisioning   1s ago", "my-sandbox   Error          3s ago"];
-    let i = 0;
-    const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
-    const sleep = vi.fn();
-
-    const ready = waitForCreatedSandboxReadyWithTrace({
-      sandboxName: "my-sandbox",
-      // 600 / 2 = 300 readyAttempts. Without short-circuit we'd loop 300
-      // times. With short-circuit we should bail out after the 2nd poll.
-      timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
-      sleep,
-    });
-
-    expect(ready).toEqual({
-      ready: false,
-      reason: "terminal_failure_phase",
-      failurePhase: "Error",
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    // Should not sleep after detecting the terminal phase.
-    expect(sleep).toHaveBeenCalledTimes(1);
-  });
+  // Create/readiness-wait Error-phase behavior (including the #6043 transient
+  // debounce and its env contract) lives in sandbox-readiness-tracing.test.ts.
 
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     // Without the short-circuit, a patched container that crashes on startup

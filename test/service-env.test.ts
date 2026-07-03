@@ -39,6 +39,18 @@ function extractRuntimeShellEnvSnippet() {
   return `${src.slice(start, end).trimEnd()}\nwrite_runtime_shell_env`;
 }
 
+function extractOpenClawBootstrapEnvSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("# Normalize the sandbox-create bootstrap wrapper");
+  const end = src.indexOf("# Marker file the Docker HEALTHCHECK reads", start);
+  const extractionFailure =
+    "Failed to extract OpenClaw bootstrap environment normalization from " +
+    "scripts/nemoclaw-start.sh";
+  expect(start, extractionFailure).not.toBe(-1);
+  expect(end, extractionFailure).toBeGreaterThan(start);
+  return src.slice(start, end).trimEnd();
+}
+
 function extractRuntimeShellEnvShimSnippet() {
   const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
   const start = src.indexOf("ensure_runtime_shell_env_shim() {");
@@ -53,6 +65,34 @@ function extractRuntimeShellEnvShimSnippet() {
 }
 
 describe("service environment", () => {
+  describe("OpenClaw EC2 metadata discovery", () => {
+    it("overrides ambient and sandbox-create wrapper false values before startup", () => {
+      const tmpFile = join(tmpdir(), `nemoclaw-imds-bootstrap-${process.pid}.sh`);
+      try {
+        const wrapper = [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "set -- env AWS_EC2_METADATA_DISABLED=false nemoclaw-start openclaw agent",
+          extractOpenClawBootstrapEnvSnippet(),
+          'printf "%s\\n" "$AWS_EC2_METADATA_DISABLED"',
+        ].join("\n");
+        writeFileSync(tmpFile, wrapper, { mode: 0o700 });
+
+        const out = execFileSync("bash", [tmpFile], {
+          encoding: "utf-8",
+          env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
+        });
+        expect(out.trim()).toBe("true");
+      } finally {
+        try {
+          unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    });
+  });
+
   describe("start-services behavior", () => {
     const scriptPath = join(import.meta.dirname, "../scripts/start-services.sh");
 
@@ -577,6 +617,7 @@ describe("service environment", () => {
         expect(envFile).toContain("export NO_PROXY=");
         expect(envFile).not.toContain("inference.local");
         expect(envFile).toContain("10.200.0.1");
+        expect(envFile).toContain('export AWS_EC2_METADATA_DISABLED="true"');
         expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='test-token-123'");
         expect(envFile).toContain("nemoclaw-configure-guard begin");
         expect(envFile).toContain('command openclaw "$@"');
@@ -611,6 +652,18 @@ describe("service environment", () => {
           }).trim();
         }
         expect(perms).toBe("444");
+
+        const connectedValue = execFileSync(
+          "bash",
+          [
+            "--noprofile",
+            "--norc",
+            "-c",
+            `export AWS_EC2_METADATA_DISABLED=false; source ${JSON.stringify(join(fakeDataDir, "proxy-env.sh"))}; printf "%s" "$AWS_EC2_METADATA_DISABLED"`,
+          ],
+          { encoding: "utf-8" },
+        );
+        expect(connectedValue).toBe("true");
       } finally {
         try {
           unlinkSync(tmpFile);
@@ -944,6 +997,9 @@ describe("service environment", () => {
           "set +u",
           persistBlock,
           extractRuntimeShellEnvShimSnippet(),
+          // validate_tmp_permissions also inspects fixed runtime log paths; keep
+          // this fixture independent of ambient /tmp state left by other tests.
+          "install -m 600 /dev/null /tmp/gateway.log",
           "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });
@@ -974,11 +1030,15 @@ describe("service environment", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-idempotent-write-test-${process.pid}.sh`);
+      const chownLog = join(fakeDataDir, "chown.log");
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
         const toolRedirects = extractToolRedirects();
         const wrapper = [
           "#!/usr/bin/env bash",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
+          'chown() { printf "%s\\n" "$*" >> "$CHOWN_LOG"; }',
+          `export CHOWN_LOG=${JSON.stringify(chownLog)}`,
           sandboxInitSource,
           toolRedirects,
           'PROXY_HOST="10.200.0.1"',
@@ -1000,6 +1060,14 @@ describe("service environment", () => {
         // HTTP_PROXY line — no duplication from repeated runs.
         const httpProxyCount = (envFile.match(/export HTTP_PROXY=/g) || []).length;
         expect(httpProxyCount).toBe(1);
+        const metadataCount = (envFile.match(/export AWS_EC2_METADATA_DISABLED=/g) || []).length;
+        expect(metadataCount).toBe(1);
+        expect((lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8)).toBe("444");
+        const chownCalls = readFileSync(chownLog, "utf-8").trim().split("\n");
+        expect(chownCalls).toHaveLength(3);
+        expect(chownCalls.every((call) => /^root:root .*\/\.proxy-env\.sh\.tmp\./.test(call))).toBe(
+          true,
+        );
       } finally {
         try {
           unlinkSync(tmpFile);
