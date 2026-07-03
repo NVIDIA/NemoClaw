@@ -69,6 +69,8 @@ run_dcode() {
 
 has_context_secret_shape() {
   local upper="${1^^}"
+  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
+  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
 }
 
@@ -342,10 +344,23 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
-# Identity output intentionally reads only the exact quoted scalar shape written
-# by NemoClaw. This is not a general TOML parser: malformed values, inline
-# comments, and unsupported forms are ignored, then the caller uses a safe
-# default and applies terminal/secret filtering before printing.
+# SECURITY: managed identity/status display boundary.
+# - Invalid state: config.toml and runtime environment values are mutable inside
+#   the sandbox and can contain terminal controls, credentials, unsafe endpoint
+#   components, or TOML forms outside the generated NemoClaw contract.
+# - Source boundary: this wrapper is the final boundary before those values are
+#   printed. Validating only the config writer would not protect later sandbox
+#   mutations, and upstream dcode does not expose a validated identity API.
+# - Source-fix constraint: this pre-exec Bash entrypoint cannot import the
+#   canonical TypeScript filters or a full TOML parser without adding a process
+#   and dependency. It therefore reads only known generated sections and exact
+#   quoted scalars; arrays, inline comments, and other forms are not accepted.
+# - Regression: test/dcode-wrapper-identity.test.ts covers malformed scalars,
+#   terminal controls, oversized and secret-shaped metadata, and unsafe endpoint
+#   forms. The composed startup/status handoff has a separate integration test.
+# - Removal condition: replace these local readers/filters when upstream dcode
+#   provides a validated identity API or every invocation uses a Node entrypoint
+#   that imports the canonical TypeScript contracts and a real TOML parser.
 toml_section_scalar() {
   local section="$1"
   local key="$2"
@@ -439,11 +454,17 @@ terminal_safe_identity_value() {
 }
 
 safe_endpoint_identity_value() {
-  local value scheme authority
+  local value lower_value scheme authority
   value="$(terminal_safe_identity_value "$1")"
   [ -n "$value" ] || return 0
   case "$value" in
     *\\* | *\?* | *\#*) return 0 ;;
+  esac
+  lower_value="${value,,}"
+  # Encoded query, fragment, userinfo, or percent delimiters can conceal
+  # credential-bearing endpoint components from the literal checks above.
+  case "$lower_value" in
+    *%3f* | *%23* | *%40* | *%25*) return 0 ;;
   esac
   scheme="${value%%://*}"
   [ "$scheme" != "$value" ] || return 0

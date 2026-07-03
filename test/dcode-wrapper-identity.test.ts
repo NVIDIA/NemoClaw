@@ -298,22 +298,74 @@ describe.skipIf(!canRun)(
       }
     });
 
-    it("falls back safely when generated config scalars are malformed", () => {
+    it("falls back safely for malformed or unsupported generated config scalars", () => {
       withTempDir((dir) => {
-        const malformedConfig = SAMPLE_CONFIG.replace("[agents]", "[agents")
-          .replace('default = "openai:demo-model"', 'default = "openai:partial-model')
-          .replace(
-            'base_url = "https://inference.local/v1"',
-            'base_url = "https://partial.example.test/v1',
-          );
-        const run = runBashWrapper(buildFixture(dir, malformedConfig), ["status"], {});
+        const cases = [
+          {
+            agent: "partial-agent",
+            config: SAMPLE_CONFIG.replace("[agents]", "[agents")
+              .replace('default = "backend-dev"', 'default = "partial-agent')
+              .replace('default = "openai:demo-model"', 'default = "openai:partial-model')
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://partial.example.test/v1',
+              ),
+            rejected: ["partial-agent", "partial-model", "partial.example.test"],
+          },
+          {
+            agent: "inline-agent",
+            config: SAMPLE_CONFIG.replace(
+              'default = "backend-dev"',
+              'default = "inline-agent" # unsupported inline comment',
+            )
+              .replace(
+                'default = "openai:demo-model"',
+                'default = "openai:inline-model" # unsupported inline comment',
+              )
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://inline.example.test/v1" # unsupported inline comment',
+              ),
+            rejected: ["inline-agent", "inline-model", "inline.example.test"],
+          },
+          {
+            agent: "array-agent",
+            config: SAMPLE_CONFIG.replace('default = "backend-dev"', 'default = ["array-agent"]')
+              .replace('default = "openai:demo-model"', 'default = ["openai:array-model"]')
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = ["https://array.example.test/v1"]',
+              ),
+            rejected: ["array-agent", "array-model", "array.example.test"],
+          },
+          {
+            agent: "nested-agent",
+            config: SAMPLE_CONFIG.replace("[agents]", "[agents.preferences]")
+              .replace('default = "backend-dev"', 'default = "nested-agent"')
+              .replace("[models]", "[models.preferences]")
+              .replace('default = "openai:demo-model"', 'default = "openai:nested-model"')
+              .replace("[models.providers.openai]", "[models.providers.openai.metadata]")
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://nested.example.test/v1"',
+              ),
+            rejected: ["nested-agent", "nested-model", "nested.example.test"],
+          },
+        ];
 
-        expect(run.status).toBe(0);
-        expect(run.launched).toBe(false);
-        expect(run.stdout).toContain("Agent:    agent (default)");
-        expect(run.stdout).not.toContain("partial-model");
-        expect(run.stdout).not.toContain("partial.example.test");
-        expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+        for (const testCase of cases) {
+          const fixture = buildFixture(dir, testCase.config);
+          addAgentDir(fixture, testCase.agent);
+          const run = runBashWrapper(fixture, ["status"], {});
+
+          expect(run.status).toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stdout).toContain("Agent:    agent (default)");
+          for (const rejected of testCase.rejected) {
+            expect(run.stdout).not.toContain(rejected);
+          }
+          expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+        }
       });
     });
 
@@ -325,6 +377,11 @@ describe.skipIf(!canRun)(
           "https://example.test/v1#opaque-fragment",
           "https://status-user:opaque-password\\u0040example.test/v1",
           "https://example.test/v1\\u003Fapi_key=opaque-secret",
+          "https://example.test/v1%3Fapi_key%3Dopaque-secret",
+          "https://example.test/v1%3fapi_key%3dopaque-secret",
+          "https://example.test/v1%23opaque-fragment",
+          "https://status-user%3Aopaque-password%40example.test/v1",
+          "https://example.test/v1%253Fapi_key%253Dopaque-secret",
           "https",
         ];
         for (const endpoint of unsafeEndpoints) {
