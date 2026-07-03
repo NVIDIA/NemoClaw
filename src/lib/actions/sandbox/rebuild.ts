@@ -69,6 +69,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -80,6 +81,7 @@ import {
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
@@ -766,6 +768,23 @@ export async function rebuildSandbox(
     log,
     bail,
   );
+
+  // #5954: detect cross-sandbox messaging credential conflicts (e.g. another
+  // sandbox already polling the same Teams app) BEFORE any destructive
+  // backup/delete. This guard previously ran only in the recreate
+  // (onboard --resume) phase — after the sandbox was destroyed — so a conflict
+  // left the sandbox permanently lost. Running it here keeps it intact.
+  await preflightRebuildMessagingConflicts(rebuildMessagingPlan, {
+    sandboxName,
+    gatewayName: getSandboxTargetGatewayName(sandboxName),
+    registry,
+    cliName: () => CLI_NAME,
+    // The conflict warning explains why the rebuild aborts, so it must reach
+    // the user regardless of the verbose flag (unlike the diagnostic `log`).
+    log: (message: string) => console.log(message),
+    error: (message: string) => console.error(message),
+    bail,
+  });
 
   // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
   const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);

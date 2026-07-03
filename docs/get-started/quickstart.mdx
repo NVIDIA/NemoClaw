@@ -11,17 +11,24 @@ content:
 skill:
   priority: 10
 ---
+import { StarterPromptFallback } from "../_components/StarterPrompt";
+import { StarterPromptButton } from "../_components/StarterPromptButton";
+
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
 <Note>
 Review the [Prerequisites](prerequisites) before following this guide.
 </Note>
 
-<Tip title="Use AI Agent Docs">
-NemoClaw publishes Markdown docs and a small docs-routing skill for AI coding assistants.
-Use them when you want your assistant to walk through installation, inference choices, policy approvals, monitoring, or troubleshooting with NemoClaw-specific guidance.
-Refer to [AI Agent Docs](../resources/agent-skills).
-</Tip>
+## Start from Your Coding Agent
+
+Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
+The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It also tells your agent to collect choices before launching interactive commands and to handle credentials outside the chat transcript.
+
+<StarterPromptButton />
+
+<StarterPromptFallback />
 
 ## Install NemoClaw and Onboard an OpenClaw Agent
 

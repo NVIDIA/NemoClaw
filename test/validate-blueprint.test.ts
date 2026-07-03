@@ -731,11 +731,11 @@ describe("jira preset", () => {
 
 describe("messaging WebSocket presets", () => {
   const DISCORD_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    "../src/lib/messaging/channels/discord/policy/openclaw.yaml",
     import.meta.url,
   );
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
 
@@ -791,7 +791,7 @@ describe("messaging WebSocket presets", () => {
 
 describe("Slack REST credential rewrite", () => {
   const SLACK_PRESET_PATH = new URL(
-    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
     import.meta.url,
   );
   const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);

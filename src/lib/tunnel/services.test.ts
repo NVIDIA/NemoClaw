@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
+import { registerTunnelOrigin } from "./allowed-origins";
 import { resolveDefaultSandboxName } from "./service-command";
 import {
   getServiceStatuses,
@@ -26,6 +27,11 @@ import {
   startAll,
   stopAll,
 } from "./services";
+
+// startAll's tunnel-origin registration performs real host→sandbox config
+// writes; stub it so these tests exercise only the wiring (tunnel-URL and
+// sandbox-name discovery plus the skip/guard branches), never openshell/docker.
+vi.mock("./allowed-origins", () => ({ registerTunnelOrigin: vi.fn() }));
 
 const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
@@ -503,5 +509,116 @@ describe("stopAll", () => {
     );
     expect(psCall).toBeDefined();
     expect(psCall?.args).toContain("--max-time");
+  });
+});
+
+// #6212: after cloudflared yields a public URL, startAll must register that
+// origin in the sandbox gateway's allowedOrigins. These tests cover the wiring
+// in startAll (URL + sandbox-name discovery, skip/guard branches). The
+// registration module itself is mocked (see vi.mock at the top of this file),
+// so no host→sandbox config write or gateway reload runs here.
+describe("startAll tunnel-origin registration (#6212)", () => {
+  let tmpDir: string;
+  let pidDir: string;
+
+  function writeFakeCloudflared(lines: string[]): void {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(fakeCloudflared, ["#!/usr/bin/env sh", ...lines].join("\n"));
+    chmodSync(fakeCloudflared, 0o700);
+    vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
+  }
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-register-test-"));
+    pidDir = join(tmpDir, "pids");
+    vi.stubEnv("CLOUDFLARE_TUNNEL_TOKEN", undefined);
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", undefined);
+    vi.stubEnv("NEMOCLAW_SANDBOX", undefined);
+    vi.stubEnv("SANDBOX_NAME", undefined);
+    vi.mocked(registerTunnelOrigin).mockReset();
+  });
+
+  afterEach(() => {
+    const state = readCloudflaredState(pidDir);
+    const runningPid = state.kind === "running" ? state.pid : Number.NaN;
+    try {
+      process.kill(runningPid, "SIGTERM");
+    } catch {
+      // Not running (NaN pid throws) or already exited.
+    }
+    vi.unstubAllEnvs();
+    rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  // Scenario 14
+  it("calls registration with the raw discovered URL and the opts sandbox name", async () => {
+    writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
+    logSpy.mockRestore();
+
+    expect(registerTunnelOrigin).toHaveBeenCalledTimes(1);
+    // The raw URL (path intact) is passed through; origin conversion happens
+    // inside registerTunnelOrigin, not here.
+    expect(registerTunnelOrigin).toHaveBeenCalledWith(
+      "my-sandbox",
+      "https://good.trycloudflare.com/route",
+      expect.objectContaining({ info: expect.any(Function), warn: expect.any(Function) }),
+    );
+  });
+
+  // Scenario 15
+  it("skips registration and warns when no sandbox name is available", async () => {
+    writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345 });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(registerTunnelOrigin).not.toHaveBeenCalled();
+    expect(output).toContain("No sandbox name available — skipping tunnel-origin registration");
+  });
+
+  // Scenario 16
+  it("does not register when no tunnel URL is produced, but still prints the banner", async () => {
+    // A present-but-URL-less cloudflared would force startAll's 15s URL-wait
+    // poll and exceed the 5s test budget, so drive the same tunnelUrl==="" branch
+    // with cloudflared absent from PATH (the "cloudflared not found" path).
+    const emptyBin = join(tmpDir, "empty-bin");
+    mkdirSync(emptyBin, { recursive: true });
+    vi.stubEnv("PATH", emptyBin);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(registerTunnelOrigin).not.toHaveBeenCalled();
+    expect(output).toContain("Services");
+    expect(output).not.toContain("Public URL");
+  });
+
+  // Scenario 17 — guard-rail for Decision 6: startAll must stay resilient even
+  // if registration escapes its own try/catch.
+  it("still resolves and prints the Public URL banner when registration throws", async () => {
+    writeFakeCloudflared(["echo 'https://good.trycloudflare.com/route'", "sleep 20"]);
+    vi.mocked(registerTunnelOrigin).mockImplementation(() => {
+      throw new Error("registration blew up");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await expect(
+      startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" }),
+    ).resolves.toBeUndefined();
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("Public URL");
+    expect(output).toContain("https://good.trycloudflare.com/route");
   });
 });

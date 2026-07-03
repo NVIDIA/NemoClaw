@@ -2519,9 +2519,7 @@ function shieldsDownWithoutHostLock(sandboxName: string, opts: ShieldsDownOpts =
   console.log("  Capturing current policy snapshot...");
   let rawPolicy: string;
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), {
-      ignoreError: true,
-    });
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
     rawPolicy = "";
   }
