@@ -272,6 +272,9 @@ function validateSecretScopeAndRegistryWrites(
 function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
   const jobName = "build-sandbox-images";
   const job = workflow.jobs[jobName] ?? {};
+  if (job["timeout-minutes"] !== 60) {
+    errors.push("build-sandbox-images timeout must cover the 45-minute runtime override budget");
+  }
   const build = requireStep(errors, jobName, job, "Build production image");
   const runtime = requireStep(
     errors,

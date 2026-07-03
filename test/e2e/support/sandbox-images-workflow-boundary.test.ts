@@ -63,9 +63,11 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects rebuilding or failing to reuse the OpenClaw production image", () => {
+  it("rejects an undersized timeout, rebuilding, or failing to reuse the OpenClaw image", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const runtime = imageWorkflow.jobs["build-sandbox-images"].steps!.find(
+    const openClaw = imageWorkflow.jobs["build-sandbox-images"];
+    openClaw["timeout-minutes"] = 15;
+    const runtime = openClaw.steps!.find(
       (step) => step.name === "Run runtime overrides test against production image",
     )!;
     runtime.env!.NEMOCLAW_TEST_IMAGE = "nemoclaw-runtime-overrides-rebuilt";
@@ -73,6 +75,7 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
+        "build-sandbox-images timeout must cover the 45-minute runtime override budget",
         "runtime overrides must consume the prebuilt OpenClaw production image",
         "runtime overrides step must not rebuild the prebuilt image",
       ]),

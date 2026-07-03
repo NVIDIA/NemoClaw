@@ -24,7 +24,7 @@ permissions:
 jobs:
   build-sandbox-images:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -32,7 +32,9 @@ jobs:
           persist-credentials: false
 
       # Keep only the credential-bearing step anchored. Each image builder
-      # gets its own isolated Docker config and explicit cleanup.
+      # gets its own isolated Docker config and explicit cleanup. Direct branch
+      # dispatches pull anonymously; only trusted NVIDIA main push/manual runs
+      # receive Docker Hub credentials (this workflow has no schedule trigger).
       - &dockerhub-auth
         name: Authenticate to Docker Hub
         env:
