@@ -22,6 +22,18 @@ const PR_NUMBER = 42;
 const HEAD = "4d52e7adb2b37409da02f29d046fbe546855f37b";
 const PRIOR_HEAD = "f25bac9555ea598825f3df140cef93be96e0b0cb";
 
+interface ExecOptions {
+  input?: string;
+}
+
+type Scenario = (_command: string, rawArgs: string[], options?: ExecOptions) => string;
+type RouteMatcher = (args: string, rawArgs: string[]) => boolean;
+
+interface Route {
+  matches: RouteMatcher;
+  respond: (options: ExecOptions) => string;
+}
+
 function contributorQuery(headSha = HEAD) {
   return JSON.stringify({
     data: {
@@ -92,6 +104,136 @@ function trustedComment(body = renderObservationComment(observation())): string 
   });
 }
 
+function approvalReview(): string {
+  return JSON.stringify({
+    id: 91,
+    state: "APPROVED",
+    commit_id: HEAD,
+    submitted_at: "2026-07-03T00:20:00Z",
+    user: { id: 5_445, login: "cv", type: "User" },
+  });
+}
+
+function includes(fragment: string): RouteMatcher {
+  return (args) => args.includes(fragment);
+}
+
+function matches(pattern: RegExp): RouteMatcher {
+  return (args) => pattern.test(args);
+}
+
+function graphql(_args: string, rawArgs: string[]): boolean {
+  return rawArgs[0] === "api" && rawArgs[1] === "graphql";
+}
+
+function route(matchesRoute: RouteMatcher, respond: Route["respond"]): Route {
+  return { matches: matchesRoute, respond };
+}
+
+function unexpectedGh(args: string): never {
+  throw new Error(`Unexpected gh call: ${args}`);
+}
+
+function runRoutes(routes: Route[]): Scenario {
+  return (_command, rawArgs, options = {}) => {
+    const args = rawArgs.join(" ");
+    return (
+      routes.find((candidate) => candidate.matches(args, rawArgs))?.respond(options) ??
+      unexpectedGh(args)
+    );
+  };
+}
+
+function parseInput<T>(options: ExecOptions): T {
+  return JSON.parse(options.input ?? "{}") as T;
+}
+
+function stableHeadScenario(payloads: Array<Record<string, unknown>>): Scenario {
+  return runRoutes([
+    route(includes(`repos/${REPO}/pulls/${PR_NUMBER} --jq .head.sha`), () => HEAD),
+    route(graphql, () => contributorQuery()),
+    route(includes(`/issues/${PR_NUMBER}/comments`), () => trustedComment()),
+    route(includes(`/pulls/${PR_NUMBER}/reviews`), () => approvalReview()),
+    route(includes(`/collaborators/cv/permission`), () => JSON.stringify({ permission: "write" })),
+    route(includes(`/commits/${HEAD}/pulls?`), () => String(PR_NUMBER)),
+    route(includes(`/commits/${HEAD}/check-runs?`), () => JSON.stringify({ check_runs: [] })),
+    route(matches(/--method POST .*\/check-runs/u), (options) => {
+      payloads.push(parseInput(options));
+      return JSON.stringify({ id: 700 });
+    }),
+    route(includes("--method PATCH repos/NVIDIA/NemoClaw/check-runs/700"), (options) => {
+      payloads.push(parseInput(options));
+      return JSON.stringify({ id: 700 });
+    }),
+  ]);
+}
+
+function changingHeadScenario(conclusions: string[]): Scenario {
+  const headShas = [HEAD, PRIOR_HEAD];
+  return runRoutes([
+    route(
+      includes(`repos/${REPO}/pulls/${PR_NUMBER} --jq .head.sha`),
+      () => headShas.shift() ?? "",
+    ),
+    route(graphql, () => contributorQuery()),
+    route(includes(`/issues/${PR_NUMBER}/comments`), () => trustedComment()),
+    route(includes(`/pulls/${PR_NUMBER}/reviews`), () => ""),
+    route(includes(`/commits/${HEAD}/pulls?`), () => String(PR_NUMBER)),
+    route(includes(`/commits/${HEAD}/check-runs?`), () => JSON.stringify({ check_runs: [] })),
+    route(matches(/--method POST .*\/check-runs/u), () => JSON.stringify({ id: 701 })),
+    route(includes("--method PATCH repos/NVIDIA/NemoClaw/check-runs/701"), (options) => {
+      conclusions.push(parseInput<{ conclusion: string }>(options).conclusion);
+      return JSON.stringify({ id: 701 });
+    }),
+  ]);
+}
+
+function sharedHeadScenario(conclusion: { value: string }): Scenario {
+  const secondObservation: ContributorObservation = {
+    ...observation(),
+    prNumber: 43,
+    eventId: "43001",
+  };
+  return runRoutes([
+    route(matches(/repos\/NVIDIA\/NemoClaw\/pulls\/(42|43) --jq \.head\.sha/u), () => HEAD),
+    route(graphql, () => contributorQuery()),
+    route(includes("/issues/42/comments"), () => trustedComment()),
+    route(includes("/issues/43/comments"), () =>
+      trustedComment(renderObservationComment(secondObservation)),
+    ),
+    route(includes("/pulls/42/reviews"), () => approvalReview()),
+    route(includes("/pulls/43/reviews"), () => ""),
+    route(includes("/collaborators/cv/permission"), () => JSON.stringify({ permission: "write" })),
+    route(includes(`/commits/${HEAD}/pulls?`), () => "42\n43"),
+    route(includes(`/commits/${HEAD}/check-runs?`), () => JSON.stringify({ check_runs: [] })),
+    route(matches(/--method POST .*\/check-runs/u), () => JSON.stringify({ id: 702 })),
+    route(includes("--method PATCH repos/NVIDIA/NemoClaw/check-runs/702"), (options) => {
+      conclusion.value = parseInput<{ conclusion: string }>(options).conclusion;
+      return JSON.stringify({ id: 702 });
+    }),
+  ]);
+}
+
+function delayedSynchronizeScenario(): Scenario {
+  return runRoutes([
+    route(graphql, () => contributorQuery(HEAD)),
+    route(includes(`--method POST repos/${REPO}/issues/${PR_NUMBER}/comments`), () =>
+      JSON.stringify({ id: 900 }),
+    ),
+    route(includes(`/issues/${PR_NUMBER}/comments`), () => ""),
+  ]);
+}
+
+function editedLedgerScenario(): Scenario {
+  return () =>
+    JSON.stringify({
+      body: "<!-- nemoclaw-independent-approval-ledger:v1\n{}\n-->",
+      created_at: "2026-07-03T00:15:00Z",
+      updated_at: "2026-07-03T00:16:00Z",
+      user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
+    });
+}
+
 describe("independent approval GitHub adapter", () => {
   beforeEach(() => {
     execFileSyncMock.mockReset();
@@ -99,38 +241,7 @@ describe("independent approval GitHub adapter", () => {
 
   it("publishes only success or failure on the exact stable PR head (#6222)", () => {
     const payloads: Array<Record<string, unknown>> = [];
-    execFileSyncMock.mockImplementation(
-      (_command: string, rawArgs: string[], options: { input?: string }) => {
-        const args = rawArgs.join(" ");
-        if (args.includes(`repos/${REPO}/pulls/${PR_NUMBER} --jq .head.sha`)) return HEAD;
-        if (rawArgs[0] === "api" && rawArgs[1] === "graphql") return contributorQuery();
-        if (args.includes(`/issues/${PR_NUMBER}/comments`)) return trustedComment();
-        if (args.includes(`/pulls/${PR_NUMBER}/reviews`)) {
-          return JSON.stringify({
-            id: 91,
-            state: "APPROVED",
-            commit_id: HEAD,
-            submitted_at: "2026-07-03T00:20:00Z",
-            user: { id: 5_445, login: "cv", type: "User" },
-          });
-        }
-        if (args.includes(`/collaborators/cv/permission`))
-          return JSON.stringify({ permission: "write" });
-        if (args.includes(`/commits/${HEAD}/pulls?`)) return String(PR_NUMBER);
-        if (args.includes(`/commits/${HEAD}/check-runs?`)) {
-          return JSON.stringify({ check_runs: [] });
-        }
-        if (args.includes("--method POST") && args.includes("/check-runs")) {
-          payloads.push(JSON.parse(options.input ?? "{}") as Record<string, unknown>);
-          return JSON.stringify({ id: 700 });
-        }
-        if (args.includes("--method PATCH") && args.includes("/check-runs/700")) {
-          payloads.push(JSON.parse(options.input ?? "{}") as Record<string, unknown>);
-          return JSON.stringify({ id: 700 });
-        }
-        throw new Error(`Unexpected gh call: ${args}`);
-      },
-    );
+    execFileSyncMock.mockImplementation(stableHeadScenario(payloads));
 
     const evaluation = publishPullRequestCheck(REPO, PR_NUMBER);
 
@@ -143,102 +254,33 @@ describe("independent approval GitHub adapter", () => {
     expect(payloads[1]).toMatchObject({ status: "completed", conclusion: "success" });
     expect(payloads.flatMap((payload) => Object.values(payload))).not.toContain("neutral");
     expect(payloads.flatMap((payload) => Object.values(payload))).not.toContain("skipped");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(10);
   });
 
   it("fails the published check when the head changes during evaluation (#6222)", () => {
-    let headReads = 0;
     const conclusions: string[] = [];
-    execFileSyncMock.mockImplementation(
-      (_command: string, rawArgs: string[], options: { input?: string }) => {
-        const args = rawArgs.join(" ");
-        if (args.includes(`repos/${REPO}/pulls/${PR_NUMBER} --jq .head.sha`)) {
-          headReads += 1;
-          return headReads === 1 ? HEAD : PRIOR_HEAD;
-        }
-        if (rawArgs[0] === "api" && rawArgs[1] === "graphql") return contributorQuery();
-        if (args.includes(`/issues/${PR_NUMBER}/comments`)) return trustedComment();
-        if (args.includes(`/pulls/${PR_NUMBER}/reviews`)) return "";
-        if (args.includes(`/commits/${HEAD}/pulls?`)) return String(PR_NUMBER);
-        if (args.includes(`/commits/${HEAD}/check-runs?`))
-          return JSON.stringify({ check_runs: [] });
-        if (args.includes("--method POST") && args.includes("/check-runs")) {
-          return JSON.stringify({ id: 701 });
-        }
-        if (args.includes("--method PATCH") && args.includes("/check-runs/701")) {
-          const payload = JSON.parse(options.input ?? "{}") as { conclusion?: string };
-          if (payload.conclusion) conclusions.push(payload.conclusion);
-          return JSON.stringify({ id: 701 });
-        }
-        throw new Error(`Unexpected gh call: ${args}`);
-      },
-    );
+    execFileSyncMock.mockImplementation(changingHeadScenario(conclusions));
 
     expect(() => publishPullRequestCheck(REPO, PR_NUMBER)).toThrow(/head changed/u);
     expect(conclusions).toEqual(["failure"]);
+    expect(execFileSyncMock).toHaveBeenCalledTimes(9);
   });
 
   it("fails a shared-SHA check unless every associated open PR passes (#6222)", () => {
-    let conclusion = "";
-    const secondObservation: ContributorObservation = {
-      ...observation(),
-      prNumber: 43,
-      eventId: "43001",
-    };
-    execFileSyncMock.mockImplementation(
-      (_command: string, rawArgs: string[], options: { input?: string }) => {
-        const args = rawArgs.join(" ");
-        if (/repos\/NVIDIA\/NemoClaw\/pulls\/(42|43) --jq \.head\.sha/u.test(args)) return HEAD;
-        if (rawArgs[0] === "api" && rawArgs[1] === "graphql") return contributorQuery();
-        if (args.includes("/issues/42/comments")) return trustedComment();
-        if (args.includes("/issues/43/comments")) {
-          return trustedComment(renderObservationComment(secondObservation));
-        }
-        if (args.includes("/pulls/42/reviews")) {
-          return JSON.stringify({
-            id: 91,
-            state: "APPROVED",
-            commit_id: HEAD,
-            submitted_at: "2026-07-03T00:20:00Z",
-            user: { id: 5_445, login: "cv", type: "User" },
-          });
-        }
-        if (args.includes("/pulls/43/reviews")) return "";
-        if (args.includes("/collaborators/cv/permission")) {
-          return JSON.stringify({ permission: "write" });
-        }
-        if (args.includes(`/commits/${HEAD}/pulls?`)) return "42\n43";
-        if (args.includes(`/commits/${HEAD}/check-runs?`))
-          return JSON.stringify({ check_runs: [] });
-        if (args.includes("--method POST") && args.includes("/check-runs")) {
-          return JSON.stringify({ id: 702 });
-        }
-        if (args.includes("--method PATCH") && args.includes("/check-runs/702")) {
-          const payload = JSON.parse(options.input ?? "{}") as { conclusion?: string };
-          conclusion = payload.conclusion ?? conclusion;
-          return JSON.stringify({ id: 702 });
-        }
-        throw new Error(`Unexpected gh call: ${args}`);
-      },
-    );
+    const conclusion = { value: "" };
+    execFileSyncMock.mockImplementation(sharedHeadScenario(conclusion));
 
     const published = publishPullRequestCheck(REPO, PR_NUMBER);
 
     expect(published.result.pass).toBe(true);
     expect(published.checkPass).toBe(false);
     expect(published.evaluatedPullRequests).toEqual([42, 43]);
-    expect(conclusion).toBe("failure");
+    expect(conclusion.value).toBe("failure");
+    expect(execFileSyncMock).toHaveBeenCalledTimes(14);
   });
 
   it("preserves a delayed synchronize actor without marking the live head observed (#6222)", () => {
-    execFileSyncMock.mockImplementation((_command: string, rawArgs: string[]) => {
-      if (rawArgs[0] === "api" && rawArgs[1] === "graphql") return contributorQuery(HEAD);
-      const args = rawArgs.join(" ");
-      if (args.includes("--method POST") && args.includes(`/issues/${PR_NUMBER}/comments`)) {
-        return JSON.stringify({ id: 900 });
-      }
-      if (args.includes(`/issues/${PR_NUMBER}/comments`)) return "";
-      throw new Error(`Unexpected gh call: ${rawArgs.join(" ")}`);
-    });
+    execFileSyncMock.mockImplementation(delayedSynchronizeScenario());
 
     const recorded = recordObservation({
       repo: REPO,
@@ -257,18 +299,13 @@ describe("independent approval GitHub adapter", () => {
       type: "User",
       reasons: ["push_actor"],
     });
+    expect(execFileSyncMock).toHaveBeenCalledTimes(3);
   });
 
   it("fails closed for malformed or edited trusted ledger comments (#6222)", () => {
-    execFileSyncMock.mockReturnValue(
-      JSON.stringify({
-        body: "<!-- nemoclaw-independent-approval-ledger:v1\n{}\n-->",
-        created_at: "2026-07-03T00:15:00Z",
-        updated_at: "2026-07-03T00:16:00Z",
-        user: { id: 41_898_282, login: "github-actions[bot]", type: "Bot" },
-      }),
-    );
+    execFileSyncMock.mockImplementation(editedLedgerScenario());
 
     expect(() => fetchObservations(REPO, PR_NUMBER)).toThrow(/edited or has invalid dates/u);
+    expect(execFileSyncMock).toHaveBeenCalledTimes(1);
   });
 });
