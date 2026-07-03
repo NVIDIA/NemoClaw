@@ -683,13 +683,11 @@ async function checkSandboxInference(
           ? parseAnthropicContent(body)
           : parseChatContent(body);
       const responseModel = inferenceResponseModel(body);
-      if (responseModel !== SWITCH_MODEL) {
-        lastFailure = `route not yet propagated: expected model ${SWITCH_MODEL}, got ${responseModel || "<missing>"}`;
-      } else if (/\bPONG\b/i.test(content)) {
-        return "ok";
-      } else {
-        lastFailure = `expected PONG, got ${content.slice(0, 300)}`;
-      }
+      const modelMatches = responseModel === SWITCH_MODEL;
+      if (modelMatches && /\bPONG\b/i.test(content)) return "ok";
+      lastFailure = modelMatches
+        ? `expected PONG, got ${content.slice(0, 300)}`
+        : `route not yet propagated: expected model ${SWITCH_MODEL}, got ${responseModel || "<missing>"}`;
     }
 
     if (attempt < 3) await sleep(5_000);
