@@ -55,6 +55,7 @@ import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { createRebuildRouteHandoff } from "../../onboard/rebuild-route-handoff";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -764,6 +765,9 @@ export async function rebuildSandbox(
   // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return;
+  const rebuildRouteHandoff = resumeConfig.registryInferenceRoute
+    ? createRebuildRouteHandoff(sandboxName, resumeConfig.registryInferenceRoute)
+    : null;
   const hostCredentialAvailable = Boolean(
     resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
   );
@@ -1010,9 +1014,7 @@ export async function rebuildSandbox(
     try {
       await onboard({
         ...recreateOpts,
-        rebuildRegistryInferenceRoute: resumeConfig.registryInferenceRoute
-          ? { sandboxName, route: resumeConfig.registryInferenceRoute }
-          : null,
+        rebuildRegistryInferenceRoute: rebuildRouteHandoff,
       });
       log("onboard() returned successfully");
     } catch (err) {

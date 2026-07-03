@@ -10,6 +10,8 @@ const SAFE_PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:-]+$/;
 const SAFE_PROVIDER_KEY = /^[A-Z_][A-Z0-9_]*$/;
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
 const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
+const LEADING_FIELD_LABEL_RESET_PATTERN = /^(?:\x1B\[0m)*[ \t]*/u;
+const UNSAFE_FIELD_VALUE_CONTROL_PATTERN = /[\x00-\x08\x0A-\x1F\x7F-\x9F]/u;
 
 export type GatewayProviderMetadata = {
   name: string;
@@ -69,6 +71,13 @@ function commandStreamText(value: string | Buffer | null | undefined): string {
   return Buffer.isBuffer(value) ? value.toString("utf8") : (value ?? "");
 }
 
+function hasUnsafeRawProviderFieldValue(rawLine: string): boolean {
+  const separatorIndex = rawLine.indexOf(":");
+  if (separatorIndex < 0) return true;
+  const rawValue = rawLine.slice(separatorIndex + 1).replace(LEADING_FIELD_LABEL_RESET_PATTERN, "");
+  return UNSAFE_FIELD_VALUE_CONTROL_PATTERN.test(rawValue);
+}
+
 /**
  * Parse the non-secret identity and binding keys emitted by `openshell provider get`.
  * Provider display output is untrusted: it must stay bounded, contain each required
@@ -80,12 +89,16 @@ function commandStreamText(value: string | Buffer | null | undefined): string {
 export function parseGatewayProviderMetadata(output: string): GatewayProviderMetadata | null {
   if (Buffer.byteLength(output, "utf8") > MAX_PROVIDER_OUTPUT_BYTES) return null;
 
-  const text = output.replace(ANSI_OSC_PATTERN, "").replace(ANSI_CSI_PATTERN, "");
   const fields = new Map<ProviderField, string>();
 
-  for (const line of text.split(/\r?\n/u)) {
+  for (const rawLine of output.split(/\r?\n/u)) {
+    const line = rawLine.replace(ANSI_OSC_PATTERN, "").replace(ANSI_CSI_PATTERN, "");
     const match = line.match(PROVIDER_FIELD_PATTERN);
     if (!match) continue;
+    // OpenShell styles field labels, then emits identity values as plain text.
+    // Permit the label's immediate SGR reset, but reject escape/control bytes
+    // once the semantic value begins instead of normalizing an injected value.
+    if (hasUnsafeRawProviderFieldValue(rawLine)) return null;
     const field = CANONICAL_PROVIDER_FIELDS.get(match[1].toLowerCase());
     if (!field || fields.has(field)) return null;
     fields.set(field, match[2].trim());

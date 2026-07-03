@@ -111,7 +111,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
   });
 
   it("rejects Bedrock Runtime before deletion when neither AWS nor compatible auth exists", () => {
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const bedrock = config({
       provider: "compatible-anthropic-endpoint",
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -137,6 +137,12 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readRecordedProviderEndpoints: () => [],
       }),
     ).toThrow("Missing Bedrock Runtime authentication");
+
+    const diagnostics = errors.mock.calls.flat().join(" ");
+    expect(diagnostics).toContain("AWS_BEARER_TOKEN_BEDROCK");
+    expect(diagnostics).toContain("AWS_PROFILE");
+    expect(diagnostics).toContain("IAM environment credentials");
+    expect(diagnostics).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
   });
 
   it.each([
@@ -178,7 +184,7 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
     ).toThrow("Unsafe gateway credential reuse");
   });
 
-  it("rejects spoofed gateway bindings and conflicting custom endpoints", () => {
+  it("rejects spoofed gateway bindings", () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const spoofedProvider = {
       ...exactGatewayProvider,
@@ -190,11 +196,18 @@ describe("checkRebuildGatewayCredentialReuseOrBail", () => {
         readRecordedProviderEndpoints: () => [],
       }),
     ).toThrow("no compatible non-secret identity");
+  });
+
+  it("rejects a custom endpoint recorded by another sandbox", () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const readRecordedProviderEndpoints = vi.fn(() => ["https://other.example.test/v1"]);
+
     expect(() =>
       checkRebuildGatewayCredentialReuseOrBail("alpha", config(), false, vi.fn(), throwingBail, {
         readGatewayProviderMetadata: () => exactGatewayProvider,
-        readRecordedProviderEndpoints: () => ["https://other.example.test/v1"],
+        readRecordedProviderEndpoints,
       }),
     ).toThrow("recovered endpoint identity is missing or incompatible");
+    expect(readRecordedProviderEndpoints).toHaveBeenCalledWith("compatible-endpoint", "alpha");
   });
 });

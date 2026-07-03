@@ -143,6 +143,13 @@ describe("rebuildSandbox flow", () => {
         },
       }),
     );
+    const rebuildRouteHandoff = (
+      harness.onboardSpy.mock.calls[0][0] as {
+        rebuildRegistryInferenceRoute: { route: object };
+      }
+    ).rebuildRegistryInferenceRoute;
+    expect(Object.isFrozen(rebuildRouteHandoff)).toBe(true);
+    expect(Object.isFrozen(rebuildRouteHandoff.route)).toBe(true);
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       "/tmp/nemoclaw-rebuild-backup",

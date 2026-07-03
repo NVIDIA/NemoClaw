@@ -7,7 +7,7 @@ import { createSession, MACHINE_SNAPSHOT_VERSION, type Session } from "../../sta
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { rewindSessionForRebuildResume } from "./rebuild-resume-session";
 
-function createResumeConfig(): RebuildResumeConfig {
+function createResumeConfig(overrides: Partial<RebuildResumeConfig> = {}): RebuildResumeConfig {
   return {
     agent: null,
     provider: "compatible-endpoint",
@@ -20,6 +20,7 @@ function createResumeConfig(): RebuildResumeConfig {
     endpointUrl: "https://new-provider.example/v1",
     registryInferenceRoute: null,
     ambient: { presentVars: [], agentMismatch: null },
+    ...overrides,
   };
 }
 
@@ -134,5 +135,33 @@ describe("rewindSessionForRebuildResume", () => {
     });
 
     expect(rewound.compatibleEndpointReasoning).toBeNull();
+  });
+
+  it("keeps the registry route handoff out of the persisted resume session", () => {
+    const session = createSession({ sandboxName: "old-name" });
+    const rewound = rewindSessionForRebuildResume(session, {
+      sandboxName: "alpha",
+      rebuildAgent: "openclaw",
+      rebuildMessagingPlan: null,
+      rebuildsHermesSandbox: false,
+      rebuildHermesToolGateways: [],
+      resumeConfig: createResumeConfig({
+        registryInferenceRoute: {
+          provider: "compatible-endpoint",
+          model: "nvidia/nemotron-3",
+          endpointUrl: "https://new-provider.example/v1",
+          preferredInferenceApi: "openai",
+          source: "registry",
+        },
+      }),
+    });
+
+    expect(rewound).not.toHaveProperty("registryInferenceRoute");
+    expect(rewound).not.toHaveProperty("rebuildRegistryInferenceRoute");
+    expect(rewound).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3",
+      endpointUrl: "https://new-provider.example/v1",
+    });
   });
 });

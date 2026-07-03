@@ -28,20 +28,32 @@ describe("gateway provider metadata", () => {
     });
   });
 
-  it("strips bounded OSC and CSI sequences before parsing field values", () => {
-    const output = [
-      "Name: comp\u001b]8;;https://attacker.invalid\u0007atible-endpoint",
-      "Type: \u001b[31mopenai\u001b[0m",
-      "Credential keys: COMPATIBLE_\u001b[1mAPI_KEY\u001b[0m",
-      "Config keys: OPENAI_BASE_URL",
-    ].join("\n");
-
-    expect(parseGatewayProviderMetadata(output)).toEqual({
-      name: "compatible-endpoint",
-      type: "openai",
-      credentialKeys: ["COMPATIBLE_API_KEY"],
-      configKeys: ["OPENAI_BASE_URL"],
-    });
+  it.each([
+    [
+      "OSC injection inside the provider name",
+      "Name: comp\u001b]8;;https://attacker.invalid\u0007atible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+    ],
+    [
+      "CSI injection inside the provider name",
+      "Name: compat\u001b[31mi\u001b[0mble-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+    ],
+    [
+      "CSI injection inside a binding key",
+      "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_\u001b[1mAPI_KEY\u001b[0m\nConfig keys: OPENAI_BASE_URL",
+    ],
+    [
+      "null byte inside the provider name",
+      "Name: compat\u0000ible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+    ],
+    [
+      "Unicode lookalike inside the provider name",
+      "Name: compat\u0456ble-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+    ],
+  ])("rejects adversarial %s", (_label, output) => {
+    expect(parseGatewayProviderMetadata(output)).toBeNull();
+    expect(
+      readGatewayProviderMetadata("compatible-endpoint", () => ({ status: 0, stdout: output })),
+    ).toBeNull();
   });
 
   it("parses syntactic binding identity without authorizing provider-specific reuse", () => {

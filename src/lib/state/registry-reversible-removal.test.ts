@@ -64,6 +64,52 @@ describe("reversible registry removal", () => {
     expect(source.sandboxes).toEqual({ beta: entry("beta") });
   });
 
+  it("restores a removed row after a concurrent add without clobbering the new default", () => {
+    const alpha = entry("alpha", "old-model");
+    const beta = entry("beta", "new-model");
+    const removed = removeSandboxFromRegistry(registry([alpha], "alpha"), "alpha");
+    expect(removed.receipt).not.toBeNull();
+
+    const concurrent = registry([beta], "beta");
+    const restored = restoreSandboxIfMissingInRegistry(concurrent, removed.receipt!.entry);
+
+    expect(restored).toEqual({
+      registry: {
+        sandboxes: { beta, alpha },
+        defaultSandbox: "beta",
+      },
+      restored: true,
+    });
+    expect(concurrent).toEqual(registry([beta], "beta"));
+  });
+
+  it("restores two removals without letting the second restore clobber the reclaimed default", () => {
+    const alpha = entry("alpha", "alpha-model");
+    const beta = entry("beta", "beta-model");
+    const removedAlpha = removeSandboxFromRegistry(registry([alpha, beta], "alpha"), "alpha");
+    const removedBeta = removeSandboxFromRegistry(removedAlpha.registry, "beta");
+    expect(removedAlpha.receipt).not.toBeNull();
+    expect(removedBeta.receipt).not.toBeNull();
+    expect(removedBeta.registry).toEqual({
+      sandboxes: {},
+      defaultSandbox: null,
+    });
+
+    const restoredAlpha = restoreSandboxIfMissingInRegistry(
+      removedBeta.registry,
+      removedAlpha.receipt!.entry,
+    );
+    const restoredBeta = restoreSandboxIfMissingInRegistry(
+      restoredAlpha.registry,
+      removedBeta.receipt!.entry,
+    );
+
+    expect(restoredBeta.registry).toEqual({
+      sandboxes: { alpha, beta },
+      defaultSandbox: "alpha",
+    });
+  });
+
   it.each([
     null,
     "missing",
@@ -76,7 +122,7 @@ describe("reversible registry removal", () => {
     expect(result.registry.defaultSandbox).toBe("alpha");
   });
 
-  it("keeps a replacement row and the original registry unchanged", () => {
+  it("refuses a spoofed same-name recreation and keeps its replacement row", () => {
     const replacement = entry("alpha", "replacement-model");
     const source = registry([replacement, entry("beta")], "beta");
 
