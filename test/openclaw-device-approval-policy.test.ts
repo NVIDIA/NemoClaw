@@ -164,9 +164,6 @@ describe("openclaw device approval policy (#4462)", () => {
   });
 
   it("preserves non-world-readable device state modes under a permissive umask", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
     try {
       const stateDir = path.join(tmpDir, "state");

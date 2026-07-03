@@ -226,6 +226,7 @@ def _save_device_state(devices_dir, name, value):
         try:
             tmp.unlink()
         except FileNotFoundError:
+            # Cleanup is idempotent if another recovery already removed the temp file.
             pass
         raise
 
