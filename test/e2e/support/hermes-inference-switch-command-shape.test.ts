@@ -100,16 +100,22 @@ describe("Hermes inference switch command shape", () => {
     expect(mockAnthropicSwitchEnabled({})).toBe(false);
   });
 
-  it("retries live PONG probes before returning the final result", async () => {
+  it("retries live PONG probes until the response model matches", async () => {
     const probeResult = (stdout: string): ShellProbeResult =>
       ({ exitCode: 0, stdout, stderr: "" }) as ShellProbeResult;
     const run = vi
       .fn()
-      .mockResolvedValueOnce(probeResult('{"error":"no compatible inference route available"}'))
-      .mockResolvedValueOnce(probeResult('{"content":[{"type":"text","text":"PONG"}]}'));
+      .mockResolvedValueOnce(
+        probeResult('{"model":"baseline-model","choices":[{"message":{"content":"PONG"}}]}'),
+      )
+      .mockResolvedValueOnce(
+        probeResult('{"model":"target-model","content":[{"type":"text","text":"PONG"}]}'),
+      );
     const delay = vi.fn().mockResolvedValue(undefined);
 
-    await expect(runHermesPongWithRetry({ delay, run })).resolves.toMatchObject({ exitCode: 0 });
+    await expect(
+      runHermesPongWithRetry({ delay, expectedModel: "target-model", run }),
+    ).resolves.toMatchObject({ exitCode: 0 });
     expect(run.mock.calls).toEqual([[1], [2]]);
     expect(delay).toHaveBeenCalledWith(5_000);
   });

@@ -7,6 +7,7 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_BASE_URL } from "../fixtures/hosted-inference.ts";
+import { inferenceResponseModel } from "../fixtures/inference-switch-retry.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   apiKeyShape,
@@ -249,6 +250,7 @@ test.skipIf(!shouldRunLiveE2E())(
       max_tokens: inferenceLocalMaxTokens(),
     });
     const inferenceLocal = await runHermesPongWithRetry({
+      expectedModel: SWITCH_MODEL,
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
@@ -263,6 +265,7 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
     expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
+    expect(inferenceResponseModel(inferenceLocal.stdout)).toBe(SWITCH_MODEL);
 
     const hermesApiPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -270,6 +273,7 @@ test.skipIf(!shouldRunLiveE2E())(
       max_tokens: 100,
     });
     const chat = await runHermesPongWithRetry({
+      expectedModel: SWITCH_MODEL,
       run: (attempt) =>
         sandbox.execShell(
           SANDBOX_NAME,
@@ -284,5 +288,6 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/PONG/i);
+    expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
   },
 );

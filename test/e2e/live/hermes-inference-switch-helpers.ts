@@ -18,6 +18,7 @@ import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
+  inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
 } from "../fixtures/inference-switch-retry.ts";
@@ -156,6 +157,7 @@ export function chatContent(raw: string): string {
 export async function runHermesPongWithRetry(options: {
   attempts?: number;
   delay?: (milliseconds: number) => Promise<void>;
+  expectedModel: string;
   run: (attempt: number) => Promise<ShellProbeResult>;
 }): Promise<ShellProbeResult> {
   const attempts = options.attempts ?? 3;
@@ -168,7 +170,9 @@ export async function runHermesPongWithRetry(options: {
     let pong = false;
     if (last.exitCode === 0) {
       try {
-        pong = /PONG/iu.test(chatContent(last.stdout));
+        pong =
+          inferenceResponseModel(last.stdout) === options.expectedModel &&
+          /PONG/iu.test(chatContent(last.stdout));
       } catch {}
     }
     if (pong || attempt === attempts) return last;

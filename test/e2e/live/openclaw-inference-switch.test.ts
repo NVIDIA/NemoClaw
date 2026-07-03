@@ -31,6 +31,7 @@ import {
 } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
+  inferenceResponseModel,
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
 } from "../fixtures/inference-switch-retry.ts";
@@ -681,8 +682,14 @@ async function checkSandboxInference(
         SWITCH_INFERENCE_API === "anthropic-messages"
           ? parseAnthropicContent(body)
           : parseChatContent(body);
-      if (/\bPONG\b/i.test(content)) return "ok";
-      lastFailure = `expected PONG, got ${content.slice(0, 300)}`;
+      const responseModel = inferenceResponseModel(body);
+      if (responseModel !== SWITCH_MODEL) {
+        lastFailure = `route not yet propagated: expected model ${SWITCH_MODEL}, got ${responseModel || "<missing>"}`;
+      } else if (/\bPONG\b/i.test(content)) {
+        return "ok";
+      } else {
+        lastFailure = `expected PONG, got ${content.slice(0, 300)}`;
+      }
     }
 
     if (attempt < 3) await sleep(5_000);
@@ -947,7 +954,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         "OpenShell route points at the switched provider/model",
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
-        "sandbox inference.local returns PONG after the switch",
+        "sandbox inference.local returns PONG from the switched model",
         "openclaw agent answers through the switched inference route",
       ],
     });
@@ -1112,6 +1119,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         configChecked: true,
         registryAndSessionChecked: true,
         inferenceLocalPong: true,
+        inferenceLocalModelMatched: true,
         openClawAgentPong: true,
       },
     });
