@@ -117,7 +117,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
     );
     if (result.status !== 0) return null;
-    return parseVersionFromText(result.stdout);
+    return parseVersionFromText(result.stdout, agent.versionCommand);
   } catch {
     return null;
   } finally {
