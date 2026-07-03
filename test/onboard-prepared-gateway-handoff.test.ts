@@ -116,9 +116,14 @@ const { onboard } = require(${onboardPath});
     PATH: process.env.PATH || "/usr/bin:/bin",
     NO_COLOR: "1",
   };
-  for (const key of ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]) {
-    if (process.env[key]) env[key] = process.env[key];
-  }
+  Object.assign(
+    env,
+    Object.fromEntries(
+      ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]
+        .map((key) => [key, process.env[key]] as const)
+        .filter((entry): entry is readonly [string, string] => entry[1] !== undefined),
+    ),
+  );
 
   const result = spawnSync(process.execPath, ["--require", sourceRequireHook, scriptPath], {
     cwd: repoRoot,

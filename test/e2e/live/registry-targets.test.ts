@@ -96,18 +96,17 @@ for (const target of listTargets()) {
               `SUPPORTED_LIFECYCLES whitelist together.`,
           );
         }
-        if (profile === "dcode-rebuild-invalid-credential") {
-          lifecycleResult = await lifecycle.simulate(
-            profile,
-            instance,
-            dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
-              readRegistrySandboxEntry(instance.sandboxName),
-              secrets.required(HOSTED_INFERENCE_SECRET),
-            ),
-          );
-        } else {
-          lifecycleResult = await lifecycle.simulate(profile, instance);
-        }
+        lifecycleResult =
+          profile === "dcode-rebuild-invalid-credential"
+            ? await lifecycle.simulate(
+                profile,
+                instance,
+                dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+                  readRegistrySandboxEntry(instance.sandboxName),
+                  secrets.required(HOSTED_INFERENCE_SECRET),
+                ),
+              )
+            : await lifecycle.simulate(profile, instance);
       }
 
       const validation = await stateValidation.from(target.expectedStateId, instance);

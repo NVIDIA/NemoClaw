@@ -12,9 +12,16 @@ import { ROOT } from "../../runner";
 import {
   disposePreparedDcodeRebuildImage,
   type ManagedDcodeRebuildImageInput,
+  type ManagedDcodeRebuildImageResult,
+  type PreparedDcodeRebuildImage,
   prepareManagedDcodeRebuildImage,
   verifyPreparedDcodeRebuildImage,
 } from "./rebuild-managed-image-preflight";
+
+function expectPreparedImage(result: ManagedDcodeRebuildImageResult): PreparedDcodeRebuildImage {
+  expect(result.ok).toBe(true);
+  return (result as Extract<ManagedDcodeRebuildImageResult, { ok: true }>).prepared;
+}
 
 function dcodeInput(
   overrides: Partial<ManagedDcodeRebuildImageInput> = {},
@@ -102,12 +109,12 @@ describe("managed DCode rebuild image preflight", () => {
     });
     expect(cleanupBuildCtx).not.toHaveBeenCalled();
 
-    if (!result.ok) throw new Error(result.detail);
-    expect(verifyPreparedDcodeRebuildImage(result.prepared)).toBe(true);
+    const prepared = expectPreparedImage(result);
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
     fs.appendFileSync(stagedDockerfile, "# changed after preflight\n");
-    expect(verifyPreparedDcodeRebuildImage(result.prepared)).toBe(false);
-    expect(disposePreparedDcodeRebuildImage(result.prepared)).toBe(true);
-    expect(disposePreparedDcodeRebuildImage(result.prepared)).toBe(true);
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
+    expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
     expect(cleanupBuildCtx).toHaveBeenCalledOnce();
   });
 
@@ -133,9 +140,9 @@ describe("managed DCode rebuild image preflight", () => {
       createImageTag: () => "nemoclaw-rebuild-preflight:dcode-cleanup",
     });
 
-    if (!result.ok) throw new Error(result.detail);
-    expect(disposePreparedDcodeRebuildImage(result.prepared)).toBe(false);
-    expect(disposePreparedDcodeRebuildImage(result.prepared)).toBe(true);
+    const prepared = expectPreparedImage(result);
+    expect(disposePreparedDcodeRebuildImage(prepared)).toBe(false);
+    expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
     expect(cleanupBuildCtx).toHaveBeenCalledTimes(2);
   });
 

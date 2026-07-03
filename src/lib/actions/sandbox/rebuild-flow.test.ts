@@ -271,10 +271,11 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   let sandboxEntryReadCount = 0;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => {
     const configuredReads = overrides.sandboxEntryReads ?? [];
-    if (sandboxEntryReadCount < configuredReads.length) {
-      return configuredReads[sandboxEntryReadCount++] as never;
-    }
-    return sandboxEntry;
+    return (
+      sandboxEntryReadCount < configuredReads.length
+        ? configuredReads[sandboxEntryReadCount++]
+        : sandboxEntry
+    ) as never;
   });
   let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {

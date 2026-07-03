@@ -81,8 +81,7 @@ describe("prepared DCode rebuild adapter", () => {
     const create = vi.fn(
       async (attempt: number, context: PreparedSandboxBuildContext | null): Promise<number> => {
         contexts.push(context);
-        if (attempt === 1) throw new Error("first attempt failed");
-        return attempt;
+        return attempt === 1 ? Promise.reject(new Error("first attempt failed")) : attempt;
       },
     );
     const bound = createPreparedDcodeRebuildRuntime(preparedOptions, "nemoclaw").bindCreateSandbox(
