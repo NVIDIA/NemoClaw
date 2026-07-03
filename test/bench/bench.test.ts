@@ -175,8 +175,22 @@ describe("buildChatCompletionsUrl", () => {
     );
   });
 
+  it.each([
+    "http://localhost:8000/v1",
+    "http://127.0.0.1:8000/v1",
+    "http://[::1]:8000/v1",
+  ])("allows a plaintext loopback endpoint: %s", (base) => {
+    expect(buildChatCompletionsUrl(base)).toContain("/v1/chat/completions");
+  });
+
   it("rejects non-HTTP and credential-bearing endpoints", () => {
     expect(() => buildChatCompletionsUrl("file:///tmp/inference")).toThrow("HTTP or HTTPS");
+    expect(() => buildChatCompletionsUrl("http://example.com/v1")).toThrow(
+      "must use HTTPS unless the host is loopback",
+    );
+    expect(() => buildChatCompletionsUrl("http://127.evil/v1")).toThrow(
+      "must use HTTPS unless the host is loopback",
+    );
     expect(() => buildChatCompletionsUrl("https://user:pass@host.test/v1")).toThrow(
       "must not include username or password",
     );
@@ -288,6 +302,24 @@ describe("runInferenceRoundTrip", () => {
     });
     expect(metric.status).toBe("error");
     expect(metric.reason).toBe("Error: request failed");
+  });
+
+  it("rejects remote plaintext before sending the API key", async () => {
+    let requestCount = 0;
+    const fetchImpl = (async () => {
+      requestCount += 1;
+      return { ok: true, status: 200, text: async () => VALID_COMPLETION } as Response;
+    }) as typeof fetch;
+    const metric = await runInferenceRoundTrip({
+      ...inferenceOptionsBase,
+      baseUrl: "http://example.com/v1",
+      samples: 1,
+      fetchImpl,
+      clock: queueClock([0, 5]),
+    });
+    expect(metric.status).toBe("error");
+    expect(metric.reason).toContain("must use HTTPS unless the host is loopback");
+    expect(requestCount).toBe(0);
   });
 
   it("does not copy a credential-bearing fetch error into the report", async () => {

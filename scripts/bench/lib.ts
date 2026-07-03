@@ -5,6 +5,7 @@
 // (issue #5604). The CLI entry point lives in run.ts; everything here is pure or
 // dependency-injected so it can be unit tested without a live sandbox or network.
 
+import { isIP } from "node:net";
 import os from "node:os";
 
 import { redactFull } from "../../src/lib/security/redact";
@@ -180,6 +181,15 @@ interface ChatRequestResult {
 
 class InvalidBenchmarkEndpointError extends Error {}
 
+function isLoopbackHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "[::1]" ||
+    (isIP(normalized) === 4 && normalized.startsWith("127."))
+  );
+}
+
 export function buildChatCompletionsUrl(baseUrl: string): string {
   let url: URL;
   try {
@@ -189,6 +199,9 @@ export function buildChatCompletionsUrl(baseUrl: string): string {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new InvalidBenchmarkEndpointError("base URL must use HTTP or HTTPS");
+  }
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    throw new InvalidBenchmarkEndpointError("base URL must use HTTPS unless the host is loopback");
   }
   if (url.username || url.password) {
     throw new InvalidBenchmarkEndpointError("base URL must not include username or password");

@@ -17,10 +17,12 @@ not for gating.
 > The harness only sends requests to the inference endpoint you configure. It
 > never uploads results or sends telemetry to any external service.
 
-The configured endpoint must be HTTP(S) and must not contain URL userinfo.
-Redirects are refused, query values are redacted from shareable reports, remote
-error bodies are never copied into reports, and a successful sample must contain
-a valid OpenAI-compatible chat completion rather than an arbitrary HTTP 2xx body.
+The configured endpoint must use HTTPS, except that HTTP is allowed for loopback
+hosts (`localhost`, `127.0.0.0/8`, and `::1`) so local inference stays easy to
+benchmark. URL userinfo is rejected. Redirects are refused, query values are
+redacted from shareable reports, remote error bodies are never copied into
+reports, and a successful sample must contain a valid OpenAI-compatible chat
+completion rather than an arbitrary HTTP 2xx body.
 
 ## Metrics
 
