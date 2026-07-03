@@ -148,6 +148,21 @@ describe("repo skill markdown files", () => {
     ).toBeGreaterThan(skill.indexOf("Readiness only"));
   });
 
+  it("keeps development CLI exposure anchored to the setup script", () => {
+    const contributing = fs.readFileSync(path.join(repoRoot, "CONTRIBUTING.md"), "utf8");
+    const localTesting = contributing
+      .split("### Local Development Testing\n")[1]
+      ?.split("\n## Main Tasks")[0];
+
+    expect(localTesting).toBeDefined();
+    expect(localTesting).toContain("./scripts/dev-setup.sh --expose-cli");
+    expect(localTesting).toContain("command -v nemoclaw");
+    expect(localTesting).toContain("nemoclaw --version");
+    expect(localTesting).toContain("npm unlink -g nemoclaw");
+    expect(localTesting).not.toMatch(/^\s*npm link\s*$/m);
+    expect(localTesting).not.toContain('export PATH="$(npm prefix -g)/bin:$PATH"');
+  });
+
   it("preserves the single NVSkills catalog skill copy", () => {
     const catalogEntries = fs.readdirSync(catalogSkillsRoot).sort();
     expect(catalogEntries).toEqual(["README.md", "nemoclaw-user-guide"]);

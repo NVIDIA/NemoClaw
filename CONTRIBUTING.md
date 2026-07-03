@@ -147,19 +147,17 @@ npm run typecheck:cli   # or: npx tsc -p tsconfig.cli.json
 
 ### Local Development Testing
 
-After building, return to the repository root and link the CLI so the `nemoclaw` command is available locally.
+After building, return to the repository root and explicitly expose the development CLI through the setup helper.
 If you followed the build step above, you are still inside `nemoclaw/` and must `cd ..` first:
 
 ```bash
-cd ..                   # back to the repo root (from nemoclaw/ subdirectory)
-npm link
-# npm links the CLI into $(npm prefix -g)/bin; add it to PATH so `nemoclaw`
-# resolves (append to ~/.bashrc / ~/.zshrc to persist):
-export PATH="$(npm prefix -g)/bin:$PATH"
-nemoclaw --version      # verify the linked version
+cd ..                                   # back to the repo root
+./scripts/dev-setup.sh --expose-cli
+command -v nemoclaw                     # verify which executable is active
+nemoclaw --version                      # verify the development CLI runs
 ```
 
-To unlink when you are done: `npm unlink -g nemoclaw`
+The exposure command prefers `npm link` and falls back to a managed `~/.local/bin/nemoclaw` shim; follow any PATH guidance it prints. To remove an npm link when you are done, first verify the active executable with `command -v nemoclaw`, then run `npm unlink -g nemoclaw`.
 
 ## Main Tasks
 
