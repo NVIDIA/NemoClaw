@@ -2781,6 +2781,9 @@ jobs:
           npx vitest run --project e2e-live \
             test/e2e/live/full-e2e.test.ts \
             --silent=false --reporter=default
+          npx vitest run --project e2e-live \
+            test/e2e/live/onboard-progress-budget.test.ts \
+            --silent=false --reporter=default
 
       - name: Upload full-e2e artifacts
         if: always()

@@ -17,6 +17,11 @@ describe("release gate workflow resource contracts", () => {
     expect(fullJob.needs).toBe("generate-matrix");
     expect(fullJob.if).not.toContain("always()");
     expect(fullJob.if).toContain(",full-e2e,");
+    expect(
+      fullJob.steps?.find((step) => step.name === "Run full-e2e live Vitest test")?.run,
+    ).toMatch(
+      /full-e2e\.test\.ts[\s\S]*npx vitest run --project e2e-live[\s\S]*onboard-progress-budget\.test\.ts/,
+    );
     expect(tuiJob.needs).toBe("generate-matrix");
     expect(tuiJob.if).not.toContain("always()");
     expect(tuiJob.if).toContain(",openclaw-tui-chat-correlation,");

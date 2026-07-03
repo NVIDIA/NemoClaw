@@ -746,6 +746,12 @@ const {
 
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
+const waitForSandboxReady = sandboxReadinessTracing.createSandboxReadyWaiter({
+  runCaptureOpenshell,
+  isSandboxReady,
+  isLinuxDockerDriverGatewayEnabled,
+  sleep: sleepSeconds,
+});
 const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
   gatewayBinding.createGatewayNameBoundClassifiers(gatewayState, () => GATEWAY_NAME);
 
@@ -1551,39 +1557,6 @@ async function ensureNamedCredential(
   helpUrl: string | null = null,
 ): Promise<string | typeof BACK_TO_SELECTION> {
   return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
-}
-
-function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
-  for (let i = 0; i < attempts; i += 1) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) return true;
-
-    // Package-managed OpenShell gateways report readiness through
-    // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
-    if (isLinuxDockerDriverGatewayEnabled()) {
-      if (i < attempts - 1) sleepSeconds(delaySeconds);
-      continue;
-    }
-    const podPhase = runCaptureOpenshell(
-      [
-        "doctor",
-        "exec",
-        "--",
-        "kubectl",
-        "-n",
-        "openshell",
-        "get",
-        "pod",
-        sandboxName,
-        "-o",
-        "jsonpath={.status.phase}",
-      ],
-      { ignoreError: true },
-    );
-    if (podPhase === "Running") return true;
-    sleepSeconds(delaySeconds);
-  }
-  return false;
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
@@ -2940,8 +2913,8 @@ async function createSandbox(
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
-    sandboxCreateLaunch.prepareSandboxCreateLaunch({
+  const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
       chatUiUrl,
       createArgs,
@@ -2952,6 +2925,8 @@ async function createSandbox(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
+      // Transitional BuildKit handoff removal is tracked by #6258.
+      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3013,7 +2988,7 @@ async function createSandbox(
         backupPath: restoreBackupPath,
       });
       console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output, { createArgs });
+      printSandboxCreateRecoveryHints(createResult.output, { createArgs: prebuild.createArgs });
       process.exit(createResult.status || 1);
     }
   }
@@ -3097,8 +3072,10 @@ async function createSandbox(
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
 
-  // Register only after ready; OpenShell tags in seconds, so parse the tag instead of using buildId.
-  const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
+  // Register only after confirmed ready — prevents phantom entries
+  // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
+  const resolvedImageTag =
+    prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   const inferenceSelection = sandboxRegistration.selection;
@@ -4604,7 +4581,8 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-async function onboard(opts: OnboardOptions = {}): Promise<void> {
+const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
+async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
