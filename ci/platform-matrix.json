@@ -39,7 +39,7 @@
       "status": "caveated",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
+      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
     },
     {
       "name": "DGX Spark",
@@ -210,7 +210,7 @@
     {
       "name": "Web search backend",
       "status": "caveated",
-      "notes": "Runtime-configurable web-search backend plumbed through the OpenShell gateway. Brave is the currently-implemented backend. See `src/lib/onboard/brave-provider-profile.ts` and `src/lib/onboard/web-search-flow.ts`. Users supply backend credentials during an onboard prompt. NemoClaw does not bundle a key."
+      "notes": "Onboarding supports Brave and Tavily for OpenClaw and Tavily for Hermes. Provider selection, agent configuration, and credential attachment are build-time inputs, so changing the provider recreates the sandbox. OpenShell replaces resolver placeholders at egress, including JSON request-body rewriting for Hermes Tavily. Users supply the backend credential; NemoClaw does not bundle a key."
     }
   ],
 
@@ -301,7 +301,7 @@
     {
       "name": "WhatsApp",
       "status": "caveated",
-      "notes": "Supported by both OpenClaw and Hermes through the channel manifest `supportedAgents` declaration in `src/lib/messaging/channels/whatsapp/manifest.ts`. Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `nemoclaw-blueprint/policies/presets/whatsapp.yaml`. No Meta Business API integration today; that path is out of scope for this matrix."
+      "notes": "Supported by both OpenClaw and Hermes through the channel manifest `supportedAgents` declaration in `src/lib/messaging/channels/whatsapp/manifest.ts`. Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `src/lib/messaging/channels/whatsapp/policy/openclaw.yaml` and `src/lib/messaging/channels/whatsapp/policy/hermes.yaml`. No Meta Business API integration today; that path is out of scope for this matrix."
     },
     {
       "name": "Microsoft Teams",

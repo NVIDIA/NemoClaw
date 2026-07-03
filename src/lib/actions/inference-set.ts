@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
-
-import { getOpenshellBinary, runOpenshell } from "../adapters/openshell/runtime";
+import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
@@ -32,6 +31,10 @@ import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+
+export { InferenceSetError };
 
 export interface InferenceSetOptions {
   provider: string;
@@ -54,8 +57,6 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
-
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
@@ -75,7 +76,13 @@ export interface InferenceSetDeps {
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   prepareRunOpenshell: () => void;
-  runOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => OpenshellRunResult;
+  captureOpenshell: (
+    args: string[],
+    opts?: Pick<
+      CaptureOpenshellOptions,
+      "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
+    >,
+  ) => CaptureOpenshellResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
@@ -84,16 +91,6 @@ export interface InferenceSetDeps {
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
-}
-
-export class InferenceSetError extends Error {
-  constructor(
-    message: string,
-    readonly exitCode = 1,
-  ) {
-    super(message);
-    this.name = "InferenceSetError";
-  }
 }
 
 const SUPPORTED_PROVIDER_NAMES = [
@@ -126,7 +123,7 @@ function defaultDeps(): InferenceSetDeps {
     prepareRunOpenshell: () => {
       getOpenshellBinary();
     },
-    runOpenshell: (args, opts) => runOpenshell(args, opts),
+    captureOpenshell: (args, opts) => captureOpenshell(args, opts),
     appendAuditEntry,
     log: console.log,
     isLocalInferenceProvider: (provider) =>
@@ -673,17 +670,17 @@ async function runInferenceSetWithoutHostLock(
   }
 
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-  const setResult = deps.runOpenshell(
+  const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
     {
       ignoreError: true,
+      includeStreams: true,
+      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
     },
   );
   if (setResult.status !== 0) {
-    throw new InferenceSetError(
-      `OpenShell inference route update failed with exit ${setResult.status ?? 1}.`,
-      setResult.status ?? 1,
-    );
+    const failure = buildInferenceSetFailure(setResult, provider, deps);
+    throw new InferenceSetError(failure.message, failure.exitCode);
   }
 
   // Write minimal registry state before any sandbox-facing config read so the

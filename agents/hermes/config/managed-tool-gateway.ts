@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { HermesBuildSettings } from "./build-env.ts";
 
 export type ManagedToolGatewayEntry = {
   service: string;
@@ -13,6 +14,16 @@ export type ManagedToolGatewayEntry = {
 };
 
 export type ManagedToolGatewayMatrix = Record<string, ManagedToolGatewayEntry>;
+
+export function effectiveManagedToolGatewayPresets(
+  settings: Pick<HermesBuildSettings, "managedToolGateways" | "webSearchProvider">,
+): string[] {
+  if (!settings.managedToolGateways.brokerEnabled) return [];
+
+  return settings.managedToolGateways.presets.filter(
+    (preset) => !(settings.webSearchProvider === "tavily" && preset === "nous-web"),
+  );
+}
 
 export function loadManagedToolGatewayMatrix(): ManagedToolGatewayMatrix {
   const scriptDir = dirname(fileURLToPath(import.meta.url));

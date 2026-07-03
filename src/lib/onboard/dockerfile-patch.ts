@@ -4,7 +4,11 @@
 import fs from "node:fs";
 
 import { getSandboxInferenceConfig } from "../inference/config";
-import type { WebSearchConfig } from "../inference/web-search";
+import {
+  isWebSearchEnabled,
+  type WebSearchConfig,
+  webSearchProviderForConfig,
+} from "../inference/web-search";
 import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 
@@ -246,9 +250,9 @@ export function patchStagedDockerfile(
     );
   }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
-  // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
-  // Without this, the host export is silently dropped at image build time and
-  // the sandbox falls back to the default 10.200.0.1:3128 proxy. See #1409.
+  // shell. Agent Dockerfiles consume these validated build args; dcode pins
+  // them into root-owned image files so untrusted runtime env cannot redirect
+  // its managed inference traffic. See #1409 and #6191.
   const proxyHostEnv = process.env.NEMOCLAW_PROXY_HOST;
   if (proxyHostEnv && isValidProxyHost(proxyHostEnv)) {
     dockerfile = dockerfile.replace(
@@ -265,7 +269,11 @@ export function patchStagedDockerfile(
   }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
-    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(webSearchConfig ? "1" : "0")}`,
+    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(isWebSearchEnabled(webSearchConfig) ? "1" : "0")}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
+    `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${sanitizeDockerArg(webSearchProviderForConfig(webSearchConfig))}`,
   );
   for (const envKey of [
     "NEMOCLAW_OPENCLAW_OTEL",

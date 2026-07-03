@@ -20,7 +20,7 @@ const CURRENT_INSTALLED_BASE = [
 ].join("\n");
 
 const CURRENT_INSTALLED_DOCKERFILE = [
-  "COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
+  "COPY agents/hermes/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py",
   "COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py",
   "RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \\",
   "    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts",

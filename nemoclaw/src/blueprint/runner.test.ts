@@ -71,9 +71,19 @@ vi.mock("execa", () => ({
   execa: (...args: unknown[]) => mockExeca(...args),
 }));
 
-vi.mock("./ssrf.js", () => ({
-  validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
-}));
+vi.mock("./ssrf.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./ssrf.js")>();
+  return {
+    ...actual,
+    validateEndpointUrl: vi.fn(async (url: string) => ({
+      url,
+      pinnedUrl: url,
+      protocol: url.startsWith("http:") ? "http:" : "https:",
+      hostname: new URL(url).hostname,
+      dnsResolved: false,
+    })),
+  };
+});
 
 const { validateEndpointUrl } = await import("./ssrf.js");
 const mockedValidateEndpoint = vi.mocked(validateEndpointUrl);
@@ -183,7 +193,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (
       args[0] === "policy" &&
       args[1] === "get" &&
-      args[2] === "--full" &&
+      args[2] === "--base" &&
       args[3] === "test-sandbox"
     ) {
       return { exitCode: 0, stdout, stderr: "" };
@@ -553,17 +563,6 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(true);
     });
 
-    it("validates and applies endpoint URL override", async () => {
-      captureStdout();
-      mockExeca.mockResolvedValue({ exitCode: 0 });
-
-      const plan = await actionPlan("default", minimalBlueprint(), {
-        endpointUrl: "https://override.example.com/v1",
-      });
-      expect(plan.inference.endpoint).toBe("https://override.example.com/v1");
-      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.example.com/v1");
-    });
-
     it("SSRF-validates the blueprint-defined endpoint even without --endpoint-url override", async () => {
       captureStdout();
       mockExeca.mockResolvedValue({ exitCode: 0 });
@@ -639,7 +638,7 @@ describe("runner", () => {
       );
     });
 
-    it("applies blueprint policy additions by merging into the live policy", async () => {
+    it("applies blueprint policy additions by merging into the base policy", async () => {
       const bp = minimalBlueprint({
         components: {
           inference: {
@@ -674,12 +673,11 @@ describe("runner", () => {
           },
         },
       });
-
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (
           args[0] === "policy" &&
           args[1] === "get" &&
-          args[2] === "--full" &&
+          args[2] === "--base" &&
           args[3] === "test-sandbox"
         ) {
           return {
@@ -775,7 +773,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("fails closed when policy get --full does not include a policy document", async () => {
+    it("fails closed when policy get --base does not include a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
@@ -793,7 +791,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("can merge policy additions into an empty policy document", async () => {
+    it("fails closed when policy get --base returns metadata without a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
@@ -802,20 +800,13 @@ describe("runner", () => {
       });
       mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---"].join("\n"));
 
-      await actionApply("default", bp);
-
-      const mergedPolicyKey = [...store.keys()].find(
-        (k) => k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
+      await expect(actionApply("default", bp)).rejects.toThrow(
+        /does not contain a policy YAML document/i,
       );
-      if (!mergedPolicyKey) throw new Error("merged policy file not written");
-      const mergedEntry = store.get(mergedPolicyKey);
-      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
-      const merged = YAML.parse(mergedEntry.content) as {
-        version?: number;
-        network_policies?: Record<string, unknown>;
-      };
-      expect(merged.version).toBe(1);
-      expect(merged.network_policies).toHaveProperty("nim_service");
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
     });
 
     it("skips policy commands when policy additions are empty", async () => {
@@ -1081,9 +1072,28 @@ describe("runner", () => {
 
     it("validates and applies endpoint URL override", async () => {
       await actionApply("default", minimalBlueprint(), {
-        endpointUrl: "https://override.example.com/v1",
+        endpointUrl: "https://93.184.216.34/v1",
       });
-      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://override.example.com/v1");
+      expect(mockedValidateEndpoint).toHaveBeenCalledWith("https://93.184.216.34/v1");
+    });
+
+    it("fails closed before provider creation for DNS-backed HTTPS endpoint overrides", async () => {
+      mockedValidateEndpoint.mockResolvedValueOnce({
+        url: "https://override.example.com/v1",
+        pinnedUrl: "https://93.184.216.34/v1",
+        protocol: "https:",
+        hostname: "override.example.com",
+        dnsResolved: true,
+      });
+
+      await expect(
+        actionApply("default", minimalBlueprint(), {
+          endpointUrl: "https://override.example.com/v1",
+        }),
+      ).rejects.toThrow(/DNS-backed HTTPS endpoint/);
+      expect(
+        mockExeca.mock.calls.some((c) => Array.isArray(c[1]) && c[1].includes("provider")),
+      ).toBe(false);
     });
 
     it("passes --timeout when timeout_secs is set in profile", async () => {

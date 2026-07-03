@@ -166,4 +166,24 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.autoYes).toBe(false);
     expect(opts.noGpu).toBe(true);
   });
+
+  it("forwards the ephemeral prepared DCode rebuild handoff as one capability (#6195)", () => {
+    const preparedDcodeRebuild = {
+      buildContext: {
+        buildCtx: "/tmp/dcode-rebuild",
+        stagedDockerfile: "/tmp/dcode-rebuild/Dockerfile",
+        buildId: "dcode-build",
+        cleanupBuildCtx: () => true,
+      },
+      gatewayName: "nemoclaw",
+    };
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { sandboxGpuMode: "0" },
+      rebuildAgent: "langchain-deepagents-code",
+      preparedDcodeRebuild,
+    });
+
+    expect(opts.preparedDcodeRebuild).toBe(preparedDcodeRebuild);
+  });
 });

@@ -63,6 +63,7 @@ describe("LangChain Deep Agents Code config generator", () => {
       "# NemoClaw provider route: inference; upstream provider: nvidia-prod; API: openai-completions.",
     );
     expect(config).toContain("use_responses_api = false");
+    expect(config).toContain("check = false");
     expect(config).toContain("auto_update = false");
     expect(config).not.toMatch(/NVIDIA_API_KEY|OPENAI_API_KEY=|sk-/);
   });

@@ -12,7 +12,7 @@ const SUPPORTED_ONBOARDING = new Set(["cloud-openclaw", "cloud-langchain-deepage
 // dispatches it, and (b) at least one expected-state declares the post-
 // lifecycle host invariants the fixture creates. New profiles must add
 // the dispatcher branch and an expected-state in the same change set.
-const SUPPORTED_LIFECYCLES = new Set(["post-reboot-recovery"]);
+const SUPPORTED_LIFECYCLES = new Set(["post-reboot-recovery", "dcode-rebuild-invalid-credential"]);
 
 export interface LiveTargetSupport {
   supported: boolean;

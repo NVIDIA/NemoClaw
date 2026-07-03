@@ -113,7 +113,17 @@ export type RemoteProviderDeps = CommonDeps & {
   };
 };
 
+// DNS lookup signature compatible with `dnsPromises.lookup(host, { all: true })`
+// and with the injectable `lookup` accepted by
+// `rewriteConfigUrlsWithDnsPinning` in `../../sandbox/config`. Real callers omit
+// it (defaulting to real DNS); tests inject a mock.
+export type LookupFn = (
+  hostname: string,
+  options: { all: true },
+) => Promise<Array<{ address: string; family?: number }>>;
+
 export type HermesDeps = CommonDeps & {
+  lookup?: LookupFn;
   hermesProviderAuth: {
     HERMES_PROVIDER_NAME: string;
     isHermesProviderRegistered(runOpenshell: any): boolean;

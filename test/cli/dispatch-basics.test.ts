@@ -130,7 +130,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("nemoclaw upgrade-sandboxes");
     expect(r.out).toContain("(--check, --auto, --yes|-y)");
     expect(r.out).toContain("nemoclaw update");
-    expect(r.out).toContain("(--check, --yes|-y)");
+    expect(r.out).toContain("(--check, --fresh, --yes|-y)");
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
     expect(r.out).toContain("nemoclaw onboard");
@@ -213,6 +213,69 @@ describe("CLI dispatch", () => {
     const r = run("boguscmd boguscmd2");
     expect(r.code).toBe(1);
     expect(r.out.includes("Unknown command")).toBeTruthy();
+  });
+
+  it("routes a missing-sandbox inference action through name validation, not Unknown action (#5977)", () => {
+    // `inference` is a known sandbox action token, so a missing sandbox name
+    // must surface the sandbox-not-found path — never the NemoClaw-owned
+    // `Unknown action: inference` reporter that originally broke the workflow.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-missing-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const r = runWithEnv(
+        "missing-sb inference get",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        },
+        execTimeout(30_000),
+      );
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Sandbox 'missing-sb' does not exist");
+      expect(r.out).not.toContain("Unknown action: inference");
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("lists inference among Valid actions when reporting an unknown sandbox action (#5977)", () => {
+    // The reporter-facing action list is derived from registered sandbox
+    // commands; the new sandbox-scoped inference route must appear there so
+    // users discover it instead of hitting the old dead end.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-valid-actions-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+    writeSandboxRegistry(home, "alpha");
+
+    try {
+      const r = runWithEnv(
+        "alpha bogus-action-5977",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        },
+        execTimeout(30_000),
+      );
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Unknown action: bogus-action-5977");
+      expect(r.out).toMatch(/Valid actions:.*\binference\b/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {

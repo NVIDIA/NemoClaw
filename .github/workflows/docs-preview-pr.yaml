@@ -23,6 +23,9 @@ permissions:
   contents: read
   pull-requests: write
 
+env:
+  FERN_STAGING_INSTANCE: nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw
+
 jobs:
   preview:
     runs-on: ubuntu-latest
@@ -30,6 +33,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
       - name: Check Fern preview availability
         id: fern-preview
@@ -64,7 +69,7 @@ jobs:
           npm run docs:check-agent-variants
           FERN_VERSION=$(node -p "require('./fern/fern.config.json').version")
           set +e
-          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          OUTPUT=$(cd fern && npx --yes "fern-api@${FERN_VERSION}" generate --docs --instance "$FERN_STAGING_INSTANCE" --preview --id "$PREVIEW_ID" 2>&1)
           STATUS=$?
           set -e
           echo "$OUTPUT"
@@ -72,6 +77,19 @@ jobs:
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
             exit "$STATUS"
+          fi
+          FERN_ORG=$(node -p "require('./fern/fern.config.json').organization")
+          INSTANCE_PATH="${FERN_STAGING_INSTANCE#*/}"
+          if [[ "$INSTANCE_PATH" == "$FERN_STAGING_INSTANCE" ]]; then
+            INSTANCE_PATH=""
+          else
+            INSTANCE_PATH="/${INSTANCE_PATH}"
+          fi
+          EXPECTED_BASE="https://${FERN_ORG}-preview-${PREVIEW_ID}.docs.buildwithfern.com${INSTANCE_PATH}"
+          EXPECTED_PREFIX="${EXPECTED_BASE}/"
+          if [[ "$URL" != "$EXPECTED_BASE" && "$URL" != "${EXPECTED_PREFIX}"* ]]; then
+            echo "::error::Preview URL must match ${EXPECTED_BASE} or start with ${EXPECTED_PREFIX}; got ${URL}."
+            exit 1
           fi
           echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
 

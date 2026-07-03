@@ -22,8 +22,13 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 WORKDIR /opt/nemoclaw
-RUN npm ci && npm run build
+RUN npm ci \
+    && npm run build \
+    && node --experimental-strip-types \
+        /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
+        /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -38,6 +43,10 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
 
 # OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
@@ -97,9 +106,15 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
+# the primary security gate: it enforces the generated boundary's strict module
+# dependency allowlist before this stage copies it. The node check below is
+# defense in depth only and proves the copied runtime still exports the complete
+# audited interface; function availability does not replace dependency lockdown.
 RUN npm ci --omit=dev \
     && test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
     && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
@@ -651,11 +666,10 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret flag: set to "1" when the user configured Brave Search during
-# onboard. Controls whether the web search block is written to openclaw.json.
-# The actual API key is injected at runtime via openshell:resolve:env, never
-# baked into the image.
+# Non-secret web-search selection from onboard. The actual API key is injected
+# at runtime via openshell:resolve:env, never baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 ARG NEMOCLAW_OPENCLAW_OTEL=0
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
@@ -685,6 +699,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
@@ -731,8 +746,20 @@ RUN set -eu; \
         openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
-        openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
-        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+        case "$NEMOCLAW_WEB_SEARCH_PROVIDER" in \
+            brave) \
+                openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
+                BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            tavily) \
+                openclaw plugins inspect tavily --json > /dev/null; \
+                TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            *) \
+                echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \
+                exit 1 \
+                ;; \
+        esac; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
     fi

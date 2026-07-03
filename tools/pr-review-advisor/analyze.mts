@@ -709,6 +709,7 @@ export function classifyTestDepth(
       file.endsWith("Dockerfile") ||
       /(^|\/)(install|setup|brev-setup|nemoclaw-start)\.sh$/.test(file) ||
       file.startsWith("nemoclaw-blueprint/policies/") ||
+      (file.startsWith("src/lib/messaging/channels/") && file.includes("/policy/")) ||
       file.startsWith("nemoclaw/src/blueprint/") ||
       file.startsWith("test/e2e/") ||
       file.includes("sandbox") ||

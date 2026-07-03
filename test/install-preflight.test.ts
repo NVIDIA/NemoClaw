@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   INSTALLER_PAYLOAD,
+  readShellConstant,
   TEST_SYSTEM_PATH,
   writeExecutable,
 } from "./helpers/installer-sourced-env";
@@ -2112,7 +2113,7 @@ describe("installer release-tag resolution", () => {
     });
   }
 
-  it("defaults to 'lkg' with no env override", () => {
+  it("defaults to the installer default ref with no env override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -2122,7 +2123,7 @@ describe("installer release-tag resolution", () => {
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("lkg");
+    expect(result.stdout.trim()).toBe(readShellConstant(INSTALLER, "DEFAULT_INSTALL_REF"));
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override", () => {
@@ -2908,16 +2909,14 @@ describe("installer flag parsing", () => {
 
     expect(result.status).toBe(0);
     const output = `${result.stdout}${result.stderr}`;
+    const defaultInstallRef = readShellConstant(INSTALLER, "DEFAULT_INSTALL_REF");
+    const installTagExample = readShellConstant(INSTALLER, "INSTALL_TAG_EXAMPLE");
     expect(output).toMatch(/NEMOCLAW_INSTALL_TAG/);
-    expect(output).toMatch(/default: lkg/);
+    expect(output).toContain(`default: ${defaultInstallRef}`);
     expect(output).toMatch(/set this on bash or export it first/);
-    expect(output).toMatch(/curl .* \| NEMOCLAW_INSTALL_TAG=v0\.0\.56 bash/);
+    expect(output).toContain(`NEMOCLAW_INSTALL_TAG=${installTagExample} bash`);
   });
 });
-
-// ---------------------------------------------------------------------------
-// ensure_supported_runtime — missing binary paths
-// ---------------------------------------------------------------------------
 
 describe("installer runtime checks (sourced)", () => {
   /**

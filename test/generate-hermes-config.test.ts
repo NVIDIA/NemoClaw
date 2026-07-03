@@ -27,6 +27,8 @@ const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
   NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+  NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+  NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
   NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({}),
   NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({}),
@@ -171,7 +173,7 @@ function findRawSecretEnvEntries(envFile: string): string[] {
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
   const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
   // Mirror ENV_FILE_ALLOWED_RAW_SECRET_KEYS in
-  // agents/hermes/validate-env-secret-boundary.py. API_SERVER_KEY is the bearer
+  // agents/hermes/validate-hermes-env-secret-boundary.py. API_SERVER_KEY is the bearer
   // token Hermes' own api_server (v0.16.0+) requires; it is minted at sandbox
   // startup and never travels through the OpenShell proxy, so it has no resolver
   // placeholder and is allowed to be raw.
@@ -281,6 +283,51 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
     expect(envFile).not.toContain("API_SERVER_KEY=");
+  });
+
+  it("configures Hermes' native Tavily backend with an egress-resolved credential", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+    });
+
+    expect(config.web).toEqual({ backend: "tavily" });
+    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+  });
+
+  it("does not configure Tavily when web search is disabled", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+    });
+
+    expect(config.web).toBeUndefined();
+    expect(envFile).not.toContain("TAVILY_API_KEY=");
+  });
+
+  it("fails fast for unsupported web-search provider values", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "search.example.com",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
+    );
+  });
+
+  it("fails closed when Brave is requested for Hermes", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
+    );
   });
 
   it("records the upstream provider and model as a self-describing annotation", () => {
@@ -491,6 +538,25 @@ describe("agents/hermes/generate-config.ts", () => {
       "FAL_QUEUE_GATEWAY_URL=http://host.openshell.internal:11436/fal-queue\n",
     );
     expect(envFile).toContain("MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal\n");
+  });
+
+  it("prefers selected Tavily over nous-web while preserving other managed tools", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-web", "nous-audio"]),
+    });
+
+    expect(config.web).toEqual({ backend: "tavily" });
+    expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
+    expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
+    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(envFile).not.toContain("FIRECRAWL_GATEWAY_URL=");
+    expect(envFile).toContain(
+      "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",
+    );
+    expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
   });
 
   it("fails fast for unknown managed-tool gateway presets", () => {

@@ -39,9 +39,8 @@ const {
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
-const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = require("./onboard/prepared-dcode-rebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
-const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
@@ -85,6 +84,7 @@ const {
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
   agentSupportsWebSearch,
+  agentSupportsWebSearchProvider,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
 const onboardDashboard: typeof import("./onboard/dashboard") = require("./onboard/dashboard");
 const dashboardRuntime: typeof import("./onboard/dashboard-runtime") = require("./onboard/dashboard-runtime");
@@ -540,6 +540,7 @@ const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
+const notReadyRecreate: typeof import("./onboard/not-ready-recreate") = require("./onboard/not-ready-recreate");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
@@ -646,8 +647,9 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
+import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
-type OnboardOptions = {
+type OnboardOptions = import("./onboard/prepared-dcode-rebuild").PreparedDcodeRebuildOptions & {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   resume?: boolean;
@@ -947,7 +949,8 @@ function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
 ) {
-  braveProviderProfile.ensureBraveProviderProfile(tokenDefs, { root: ROOT, runOpenshell, redact });
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, { root: ROOT, runOpenshell, redact });
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
   // upsertMessagingProviders process.exits on failure, so reaching this
   // point means every entry in tokenDefs that had a token was registered.
@@ -991,28 +994,18 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
   return Boolean(live && live.provider === provider && live.model === model);
 }
 
-const {
-  pruneStaleSandboxEntry,
-  shouldRestoreLatestBackupOnRecreate,
-  confirmRecreateForSelectionDrift,
-  isOpenclawReady,
-} = sandboxLifecycle.createSandboxLifecycleHelpers({
-  runCaptureOpenshell,
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-    fetchGatewayAuthTokenFromSandbox(sandboxName),
-  agentProductName,
-  prompt,
-  isAffirmativeAnswer,
-});
-
-const { ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } =
-  createWebSearchFlowHelpers({
-    prompt,
-    note,
-    isNonInteractive,
-    cliName,
+const { pruneStaleSandboxEntry, confirmRecreateForSelectionDrift, isOpenclawReady } =
+  sandboxLifecycle.createSandboxLifecycleHelpers({
     runCaptureOpenshell,
+    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
+      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    agentProductName,
+    prompt,
+    isAffirmativeAnswer,
   });
+
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 
@@ -1970,10 +1963,10 @@ async function startGatewayWithOptions(
   if (isLinuxDockerDriverGatewayEnabled()) {
     return startDockerDriverGateway({
       exitOnFailure,
-      skipSandboxBridgeReachability:
-        gpuPassthrough &&
-        process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" &&
-        dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host",
+      skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+        gpuPassthrough,
+        _gpu?.platform,
+      ),
     });
   }
 
@@ -2555,6 +2548,7 @@ async function createSandbox(
   sandboxGpuConfig: SandboxGpuConfig | null = null,
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
+  preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2603,6 +2597,7 @@ async function createSandbox(
       channels: MESSAGING_CHANNELS,
       enabledChannels,
       sandboxName,
+      agentName: agent?.name ?? "openclaw",
       webSearchConfig,
       env: process.env,
     },
@@ -2638,20 +2633,14 @@ async function createSandbox(
   // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
+  let notReadyRecreateInProgress = false;
 
-  if (!liveExists && existingRegistryEntryBeforePrune && shouldRestoreLatestBackupOnRecreate()) {
-    const latestBackup = sandboxState.getLatestBackup(sandboxName);
-    if (latestBackup?.backupPath) {
-      pendingStateRestoreBackupPath = latestBackup.backupPath;
-      note(
-        `  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`,
-      );
-    } else {
-      note(
-        `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
-      );
-    }
-  }
+  pendingStateRestoreBackupPath = notReadyRecreate.selectPreUpgradeBackupForCreate({
+    liveExists,
+    hasExistingRegistryEntry: existingRegistryEntryBeforePrune !== null,
+    sandboxName,
+    note,
+  });
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2792,11 +2781,13 @@ async function createSandbox(
             return sandboxName;
           }
         } else {
-          console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-          console.error(
-            "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.",
-          );
-          process.exit(1);
+          notReadyRecreateInProgress = true;
+          const outcome = notReadyRecreate.resolveNotReadyOutcome(sandboxName, note);
+          if (outcome.kind === "blocked") {
+            for (const hint of outcome.hints) console.error(hint);
+            process.exit(1);
+          }
+          pendingStateRestoreBackupPath = outcome.restoreBackupPath;
         }
       } else if (existingSandboxState === "ready") {
         if (confirmedSelectionDrift) {
@@ -2887,7 +2878,12 @@ async function createSandbox(
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
-    if (pendingStateRestore === null && !shouldSkipPreRecreateBackup(process.env)) {
+    const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
+    if (
+      noRestorePending &&
+      !notReadyRecreateInProgress &&
+      !shouldSkipPreRecreateBackup(process.env)
+    ) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = backupSandboxBeforeRecreate({ sandboxName });
       if (!result.ok) {
@@ -2922,21 +2918,15 @@ async function createSandbox(
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
   const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
-    buildContextStage.stageCreateSandboxBuildContext({
-      root: ROOT,
-      fromDockerfile,
+    preparedDcodeRebuild.resolveSandboxBuildContext({
+      preparedBuildContext,
       agent,
-      createAgentSandbox: agentOnboard.createAgentSandbox,
-      log: console.log,
-      warn: console.warn,
-      error: console.error,
-      exit: process.exit,
+      fromDockerfile,
     });
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  process.on("exit", cleanupBuildCtx);
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -2998,16 +2988,14 @@ async function createSandbox(
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  const plannedMessagingPlan = plannedMessagingState?.plan;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels:
-      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
+      getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
   });
-  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+  const buildId = await preparedDcodeRebuild.resolveSandboxBuildId({
+    preparedBuildContext,
     agent,
     fromDockerfile,
-    sandboxBaseImage: SANDBOX_BASE_IMAGE,
-    sandboxBaseTag: SANDBOX_BASE_TAG,
     stagedDockerfile,
     model,
     chatUiUrl,
@@ -3016,8 +3004,6 @@ async function createSandbox(
     webSearchConfig,
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    log: console.log,
-    warn: console.warn,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
@@ -3025,6 +3011,7 @@ async function createSandbox(
       agent,
       chatUiUrl,
       createArgs,
+      sandboxName,
       env: process.env,
       extraPlaceholderKeys,
       getDashboardForwardPort,
@@ -4653,6 +4640,10 @@ function skippedStepMessage(
 
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  const preparedDcodeRuntime = preparedDcodeRebuild.createPreparedDcodeRebuildRuntime(
+    opts,
+    GATEWAY_NAME,
+  );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
@@ -4660,7 +4651,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  delete process.env.OPENSHELL_GATEWAY;
+  preparedDcodeRuntime.applyGatewayEnv(process.env);
   const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
     onboardEntryOptions.resolveOnboardEntryOptions(
       {
@@ -5070,6 +5061,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         sandboxDeps: {
           resolvePath: path.resolve,
           agentSupportsWebSearch,
+          agentSupportsWebSearchProvider,
           note,
           updateSession: onboardSession.updateSession,
           getStoredMessagingChannelConfig,
@@ -5082,7 +5074,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           stringSetsEqual,
           removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
           repairRecordedSandbox,
-          ensureValidatedBraveSearchCredential,
+          ensureValidatedWebSearchCredential,
           isBackToSelection,
           configureWebSearch,
           startRecordedStep,
@@ -5097,7 +5089,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
-          createSandbox,
+          createSandbox: preparedDcodeRuntime.bindCreateSandbox(createSandbox),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
           recordStepComplete,
@@ -5300,6 +5292,7 @@ module.exports = {
   classifySandboxCreateFailure,
   configureWebSearch,
   createSandbox,
+  ensureValidatedWebSearchCredential,
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
@@ -5371,6 +5364,7 @@ module.exports = {
   openshellArgv,
   runCaptureOpenshell,
   agentSupportsWebSearch,
+  agentSupportsWebSearchProvider,
   setupInference,
   setupMessagingChannels,
   MESSAGING_CHANNELS,

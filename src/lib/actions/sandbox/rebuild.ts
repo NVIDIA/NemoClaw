@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { isDeepStrictEqual } from "node:util";
+
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
@@ -67,8 +69,10 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
+import { createDcodeRebuildOrchestrator, isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   backupSandboxStateForRebuild,
@@ -78,6 +82,7 @@ import {
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
@@ -577,10 +582,99 @@ async function reapplyMessagingManifestAfterOpenClawDoctor(
  * `Dockerfile.base` changes fail before destructive work and are applied to the
  * recreated sandbox image.
  */
+interface RebuildSandboxExecutionOptions {
+  throwOnError?: boolean;
+  /** Internal installer recovery input; never exposed as a CLI option. */
+  recoveryManifest?: sandboxState.RebuildManifest;
+}
+
+type RebuildBail = (message: string, code?: number) => never;
+
+function failPreparedRecoveryPreDelete(
+  detail: string,
+  errorMessage: string,
+  bail: RebuildBail,
+): never {
+  console.error("");
+  console.error(`  ${_RD}Recovery pre-delete check failed:${R} ${detail}.`);
+  console.error("  Sandbox is untouched — no data was lost.");
+  return bail(errorMessage);
+}
+
+function revalidatePreparedRecoveryBeforeDelete(
+  sandboxName: string,
+  initialEntry: RebuildSandboxEntry,
+  candidate: sandboxState.RebuildManifest | null,
+  registrySnapshot: registry.SandboxRegistry | null,
+  bail: RebuildBail,
+): {
+  manifest: sandboxState.RebuildManifest | null;
+  registrySnapshot: registry.SandboxRegistry | null;
+} {
+  if (!candidate) return { manifest: null, registrySnapshot };
+
+  const refreshedRegistrySnapshot = JSON.parse(
+    JSON.stringify(registry.load()),
+  ) as registry.SandboxRegistry;
+  const currentEntry = refreshedRegistrySnapshot.sandboxes[sandboxName];
+  if (!currentEntry) {
+    return failPreparedRecoveryPreDelete(
+      "registry entry no longer exists",
+      "Recovery registry identity changed during preflight.",
+      bail,
+    );
+  }
+  if (!isDeepStrictEqual(currentEntry, initialEntry)) {
+    return failPreparedRecoveryPreDelete(
+      "registered sandbox configuration changed during preflight",
+      "Recovery registry configuration changed during preflight.",
+      bail,
+    );
+  }
+
+  const latestManifest = sandboxState.getLatestBackup(sandboxName);
+  if (
+    !latestManifest ||
+    latestManifest.timestamp !== candidate.timestamp ||
+    latestManifest.backupPath !== candidate.backupPath
+  ) {
+    return failPreparedRecoveryPreDelete(
+      "latest prepared backup changed during preflight",
+      "Recovery backup identity changed during preflight.",
+      bail,
+    );
+  }
+
+  const validation = sandboxState.validateRebuildRecoveryManifest(
+    sandboxName,
+    currentEntry.agent,
+    latestManifest,
+  );
+  if (!validation.ok) {
+    return failPreparedRecoveryPreDelete(
+      validation.reason,
+      `Invalid recovery manifest: ${validation.reason}`,
+      bail,
+    );
+  }
+  if (!sandboxState.hasPositiveManagedImageEvidence(currentEntry)) {
+    return failPreparedRecoveryPreDelete(
+      "registry no longer has a NemoClaw-managed image fingerprint",
+      "Recovery registry entry has no NemoClaw-managed image fingerprint.",
+      bail,
+    );
+  }
+
+  return {
+    manifest: validation.manifest,
+    registrySnapshot: refreshedRegistrySnapshot,
+  };
+}
+
 export async function rebuildSandbox(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
-  opts: { throwOnError?: boolean } = {},
+  opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   const normalized = normalizeRebuildSandboxOptions(options);
   const verbose = normalized.verbose === true || process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
@@ -588,7 +682,7 @@ export async function rebuildSandbox(
   const skipConfirm = normalized.yes === true || normalized.force === true;
   // When called from upgradeSandboxes in a loop, throwOnError prevents
   // process.exit from aborting the entire batch on the first failure.
-  const bail = opts.throwOnError
+  const bail: RebuildBail = opts.throwOnError
     ? (msg: string, _code = 1) => {
         throw new Error(msg);
       }
@@ -600,14 +694,44 @@ export async function rebuildSandbox(
   const sb = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sb) return;
 
+  let recoveryManifest: sandboxState.RebuildManifest | null = null;
+  if (opts.recoveryManifest) {
+    const validation = sandboxState.validateRebuildRecoveryManifest(
+      sandboxName,
+      sb.agent,
+      opts.recoveryManifest,
+    );
+    if (!validation.ok) {
+      console.error("");
+      console.error(`  ${_RD}Recovery preflight failed:${R} ${validation.reason}.`);
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail(`Invalid recovery manifest: ${validation.reason}`);
+      return;
+    }
+    if (!sandboxState.hasPositiveManagedImageEvidence(sb)) {
+      console.error("");
+      console.error(
+        `  ${_RD}Recovery preflight failed:${R} registry has no NemoClaw-managed image fingerprint.`,
+      );
+      console.error(
+        "  Pre-fingerprint and custom-image sandboxes are not recreated automatically.",
+      );
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail("Recovery registry entry has no NemoClaw-managed image fingerprint.");
+      return;
+    }
+    recoveryManifest = validation.manifest;
+  }
+
   // Multi-agent guard (temporary — until swarm lands)
   if (!isSingleAgentRebuildSupported(sb, bail)) return;
 
   const rebuildAgent = sb.agent || null;
+  const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
+  if (!rebuildsDcodeSandbox && !checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
 
   // Hydrate non-secret messaging config before the rebuild touches anything
   // destructive. The manifest plan in registry is the durable source; legacy
@@ -625,45 +749,100 @@ export async function rebuildSandbox(
   );
   if (!rebuildConfirmed) return;
 
+  const dcodePreflight = createDcodeRebuildOrchestrator({
+    sandboxName,
+    entry: sb,
+    rebuildAgent,
+    log,
+    bail,
+    deps: {
+      checkGatewaySchema: checkRebuildGatewaySchemaPreflight,
+      preflightCredentials: preflightRebuildCredentials,
+      ensureAgentBaseImage: ensureRebuildAgentBaseImage,
+    },
+  });
+
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
   // anything. The most common rebuild failure is a missing provider credential
   // when onboard runs in non-interactive mode. Checking now lets us abort with
   // the sandbox still intact. See #2273.
-  if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
+  const credentialsReady = await dcodePreflight.preflightCredentials();
+  if (!credentialsReady) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
   // #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
   // provider, model, credential, endpoint — from the registry/session BEFORE any
   // destructive backup/delete, and surface/neutralize ambient onboard-selection
   // env that would otherwise steer the resume away from the recorded sandbox.
   // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
-  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
-  if (!resumeConfig) return;
+  const resumeConfig = dcodePreflight.runSync(() =>
+    prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, dcodePreflight.bail),
+  );
+  if (!resumeConfig) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
-  const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
-    sandboxName,
-    sb,
-    rebuildAgent,
-    log,
-    bail,
+  const rebuildMessagingPlan = await dcodePreflight.run(() =>
+    stageRebuildMessagingPlanOrBail(sandboxName, sb, rebuildAgent, log, dcodePreflight.bail),
+  );
+
+  // #5954: detect cross-sandbox messaging credential conflicts (e.g. another
+  // sandbox already polling the same Teams app) BEFORE any destructive
+  // backup/delete. This guard previously ran only in the recreate
+  // (onboard --resume) phase — after the sandbox was destroyed — so a conflict
+  // left the sandbox permanently lost. Running it here keeps it intact.
+  await dcodePreflight.run(() =>
+    preflightRebuildMessagingConflicts(rebuildMessagingPlan, {
+      sandboxName,
+      gatewayName: getSandboxTargetGatewayName(sandboxName),
+      registry,
+      cliName: () => CLI_NAME,
+      // The conflict warning explains why the rebuild aborts, so it must reach
+      // the user regardless of the verbose flag (unlike the diagnostic `log`).
+      log: (message: string) => console.log(message),
+      error: (message: string) => console.error(message),
+      bail: dcodePreflight.bail,
+    }),
   );
 
   // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
-  const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
-  if (!liveState) return;
-  const { staleRecovery, staleRegistrySnapshot } = liveState;
+  const liveState = await dcodePreflight.run(() =>
+    resolveRebuildLiveState(sandboxName, sb, log, dcodePreflight.bail),
+  );
+  if (!liveState) {
+    dcodePreflight.cleanup();
+    return;
+  }
+  const { staleRecovery } = liveState;
+  const preparedBackupRecovery = recoveryManifest !== null;
+  const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  // A prepared pre-upgrade backup can recover a sandbox that still appears in
+  // OpenShell but is stuck in Provisioning/Error. Capture the same registry
+  // rollback state used by missing-live-sandbox recovery before deletion.
+  let recoveryRegistrySnapshot = dcodePreflight.runSync(() =>
+    preparedBackupRecovery
+      ? JSON.parse(JSON.stringify(registry.load()))
+      : liveState.staleRegistrySnapshot,
+  );
 
-  // Build agent base layers before backup/delete so Dockerfile.base errors leave
-  // the existing sandbox intact. This is what applies local Hermes version edits.
-  if (!ensureRebuildAgentBaseImage(rebuildAgent, bail)) return;
+  // DCode prebuilds and seals the managed replacement inputs; other agents retain the
+  // existing base-image-only preflight.
+  const imageReady = await dcodePreflight.prepareImage(resumeConfig, recoveryRecreate);
+  if (!imageReady) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
   // On stale-sandbox recovery the live sandbox is gone, so the normal
   // unlock→recreate→relock cycle cannot run. Track stale lock state and defer
   // clearing old shields state until recreate succeeds (#4497).
-  const { rebuildShieldsWindow, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
-    sandboxName,
-    staleRecovery,
+  const { rebuildShieldsWindow, staleSandboxWasLocked } = dcodePreflight.runSync(() =>
+    openRebuildShieldsWindowForState(sandboxName, recoveryRecreate),
   );
-  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+  if (!rebuildShieldsWindow) return dcodePreflight.bail("Failed to auto-unlock shields.");
 
   const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
     relockRebuildShieldsWindow(sandboxName, rebuildShieldsWindow, sandboxStillExists, CLI_NAME);
@@ -671,16 +850,38 @@ export async function rebuildSandbox(
   let sandboxStillExists = true;
 
   try {
-    // Step 2: Backup (skipped on stale-sandbox recovery -- no live state exists)
-    const backupManifest = backupSandboxStateForRebuild(
+    // Re-read the prepared manifest immediately before the destructive phase.
+    // Base-image builds and other preflight work can take long enough that the
+    // on-disk backup may have been replaced since the initial validation.
+    const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
       sandboxName,
       sb,
-      staleRecovery,
-      log,
-      relockShieldsIfNeeded,
+      recoveryManifest,
+      recoveryRegistrySnapshot,
       bail,
     );
+    recoveryManifest = preDeleteRecovery.manifest;
+    recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+
+    // Step 2: Backup (skipped on stale-sandbox recovery -- no live state exists)
+    // Installer recovery already has a validated pre-upgrade backup. Reuse it
+    // instead of trying to reach a non-Ready sandbox to create a second backup.
+    const backupManifest =
+      recoveryManifest ??
+      backupSandboxStateForRebuild(
+        sandboxName,
+        sb,
+        staleRecovery,
+        log,
+        relockShieldsIfNeeded,
+        bail,
+      );
     if (backupManifest === undefined) return;
+
+    // Backup can take long enough for the recorded target, gateway route, or
+    // retained build inputs to drift. DCode fails closed at the deletion edge;
+    // a harmless backup may remain, but the live sandbox is preserved.
+    if (!(await dcodePreflight.revalidateBeforeDelete(resumeConfig, recoveryRecreate))) return;
 
     // Step 3: Delete sandbox without tearing down gateway or session.
     // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -782,6 +983,7 @@ export async function rebuildSandbox(
       s.nimContainer = resumeConfig.nimContainer;
       s.credentialEnv = resumeConfig.credentialEnv;
       s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
+      dcodePreflight.clearManagedCustomDockerfile(s);
       // `onboard --resume` uses the session as the recreate contract. Always
       // overwrite the endpoint from the preflighted registry-derived config,
       // even when the pre-existing session currently matches this sandbox name:
@@ -808,9 +1010,10 @@ export async function rebuildSandbox(
     // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
     // Only read from the session when it belongs to this sandbox to avoid
     // using config from a different sandbox's onboard run.
-    const storedFromDockerfile = sessionMatchesSandbox
-      ? sessionAfter?.metadata?.fromDockerfile || null
-      : null;
+    const storedFromDockerfile = dcodePreflight.storedDockerfile(
+      sessionMatchesSandbox,
+      sessionAfter,
+    );
     log(
       `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
     );
@@ -850,6 +1053,7 @@ export async function rebuildSandbox(
       sb,
       rebuildAgent,
       storedFromDockerfile,
+      preparedDcodeRebuild: dcodePreflight.preparedReplacement ?? undefined,
       autoYes: skipConfirm || rebuildConfirmed,
     });
     // #5735: isolate ambient onboard-selection env only for the duration of the
@@ -860,6 +1064,7 @@ export async function rebuildSandbox(
     // unrelated onboard's values. Restored in finally so a bulk rebuild loop
     // and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+    const restoreDockerGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
     try {
       await onboard(recreateOpts);
       log("onboard() returned successfully");
@@ -873,6 +1078,7 @@ export async function rebuildSandbox(
     } finally {
       process.exit = _savedExit;
       restoreAmbientRecreateEnv();
+      restoreDockerGpuPatchNetwork();
     }
 
     if (!onboardFailed) {
@@ -896,32 +1102,30 @@ export async function rebuildSandbox(
         /* best effort */
       }
 
-      // Stale-sandbox recovery had no backup to fall back on and already removed
-      // the registry entry before the recreate. If the recreate failed, restore
-      // the captured entry so the recommended `rebuild --yes` (and `connect`)
+      // Recovery already removed the registry entry before the recreate. If the
+      // recreate failed, restore the captured entry so the recommended
+      // `rebuild --yes` (and `connect`)
       // remain retryable instead of failing at dispatch with "not found in
       // registry" (#4497). Restore unconditionally — overwriting any partial entry
       // a failed `onboard` may have registered — so the original metadata
       // (defaultSandbox, customPolicies, every field) wins, not a half-written
       // recreate entry. The restore targets only this sandbox under the registry
       // lock, leaving other sandboxes' concurrent changes intact.
-      const snapshotEntry = staleRegistrySnapshot?.sandboxes?.[sandboxName];
-      if (staleRecovery && snapshotEntry) {
+      const snapshotEntry = recoveryRegistrySnapshot?.sandboxes?.[sandboxName];
+      if (recoveryRecreate && snapshotEntry) {
         try {
           registry.restoreSandboxEntry(snapshotEntry, {
             reclaimDefault:
-              staleRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
+              recoveryRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
           });
-          log("Stale-recovery recreate failed: restored preserved registry entry for retry");
+          log("Recovery recreate failed: restored preserved registry entry for retry");
         } catch (err) {
-          log(
-            `Failed to restore registry entry after stale-recovery recreate failure: ${String(err)}`,
-          );
+          log(`Failed to restore registry entry after recovery recreate failure: ${String(err)}`);
         }
       }
 
       console.error("");
-      if (staleRecovery) {
+      if (recoveryRecreate) {
         console.error(`  ${_RD}Recovery recreate failed.${R}`);
         console.error(
           "  Your local registry entry has been preserved — you can retry once the issue above is fixed.",
@@ -955,11 +1159,10 @@ export async function rebuildSandbox(
       return;
     }
 
-    // Recreate succeeded. For stale recovery, reset the now-stale shields state so
-    // the freshly recreated (mutable) sandbox reports its true posture instead of
-    // the gone sandbox's old lock seal. Deferred until here so a failed recreate
-    // above leaves the lockdown record intact for a retry (#4497).
-    if (staleRecovery) {
+    // Recreate succeeded. Reset the prior shields state so the freshly recreated
+    // (mutable) sandbox reports its true posture. Deferred until here so a failed
+    // recreate above leaves the lockdown record intact for a retry (#4497).
+    if (recoveryRecreate) {
       shields.clearShieldsState(sandboxName);
     }
 
@@ -1182,15 +1385,15 @@ export async function rebuildSandbox(
     }
 
     console.log("");
-    if (
+    const postRestoreComplete =
       restoreSucceeded &&
       !mutablePermsRepairUnverified &&
       !mutableConfigHashRefreshUnverified &&
       !messagingHostForwardUnverified &&
-      !policyPresetRestoreIncomplete
-    ) {
+      !policyPresetRestoreIncomplete;
+    if (postRestoreComplete) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
-      if (staleRecovery) {
+      if (staleRecovery && !backupManifest) {
         console.log(
           `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
         );
@@ -1235,14 +1438,23 @@ export async function rebuildSandbox(
     // Stale recovery reset the shields state to mutable (the gone sandbox's lock
     // seal could not carry over to the fresh image). If lockdown had been enabled,
     // tell the operator to re-apply it on the recreated sandbox (#4497).
-    if (staleRecovery && staleSandboxWasLocked) {
+    if (recoveryRecreate && staleSandboxWasLocked) {
       console.log(
         `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
       );
     }
+    if (preparedBackupRecovery && !postRestoreComplete) {
+      bail(
+        `Prepared backup recovery for '${sandboxName}' completed with unverified post-restore state.`,
+      );
+    }
   } finally {
-    if (!rebuildShieldsWindow.relocked) {
-      relockShieldsIfNeeded(sandboxStillExists);
+    try {
+      if (!rebuildShieldsWindow.relocked) {
+        relockShieldsIfNeeded(sandboxStillExists);
+      }
+    } finally {
+      dcodePreflight.cleanup();
     }
   }
 }

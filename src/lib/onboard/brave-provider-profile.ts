@@ -4,8 +4,20 @@
 import path from "node:path";
 
 import { compactText } from "../core/url-utils";
+import { isWebSearchEnabled } from "../inference/web-search";
 
 export const BRAVE_PROVIDER_PROFILE_ID = "brave";
+export const TAVILY_PROVIDER_PROFILE_ID = "tavily";
+// OpenShell custom profiles are immutable after import. Use a versioned Hermes
+// profile so upgrades never accept the earlier Deep Agents-only Tavily binary
+// allowlist as compatible with Hermes.
+export const HERMES_TAVILY_PROVIDER_PROFILE_ID = "tavily-hermes-v1";
+export const WEB_SEARCH_PROVIDER_PROFILE_IDS = [
+  BRAVE_PROVIDER_PROFILE_ID,
+  TAVILY_PROVIDER_PROFILE_ID,
+  HERMES_TAVILY_PROVIDER_PROFILE_ID,
+] as const;
+export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS)[number];
 
 /**
  * Single source of truth for "the user opted in to Brave Search at runtime."
@@ -18,7 +30,13 @@ export const BRAVE_PROVIDER_PROFILE_ID = "brave";
 export function shouldEnableBraveWebSearch(
   webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
 ): boolean {
-  return Boolean(webSearchConfig?.fetchEnabled);
+  return shouldEnableWebSearch(webSearchConfig);
+}
+
+export function shouldEnableWebSearch(
+  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
+): boolean {
+  return isWebSearchEnabled(webSearchConfig as { fetchEnabled: boolean } | null | undefined);
 }
 
 export type BraveProviderProfileDeps = {
@@ -46,7 +64,14 @@ function bufferOrStringToText(value: string | Buffer | null | undefined): string
 }
 
 export function braveProviderProfilePath(root: string): string {
-  return path.join(root, "nemoclaw-blueprint", "provider-profiles", "brave.yaml");
+  return webSearchProviderProfilePath(root, "brave");
+}
+
+export function webSearchProviderProfilePath(
+  root: string,
+  provider: WebSearchProviderProfileId,
+): string {
+  return path.join(root, "nemoclaw-blueprint", "provider-profiles", `${provider}.yaml`);
 }
 
 /**
@@ -60,28 +85,53 @@ export function ensureBraveProviderProfile(
   tokenDefs: readonly TokenDefShape[],
   deps: BraveProviderProfileDeps,
 ): void {
-  const needs = tokenDefs.some(
-    ({ providerType, token }) => providerType === BRAVE_PROVIDER_PROFILE_ID && Boolean(token),
-  );
-  if (!needs) return;
+  ensureWebSearchProviderProfiles(tokenDefs, deps);
+}
+
+/** Register every selected web-search provider profile before token upsert. */
+export function ensureWebSearchProviderProfiles(
+  tokenDefs: readonly TokenDefShape[],
+  deps: BraveProviderProfileDeps,
+): void {
+  const neededProviders = new Set<WebSearchProviderProfileId>();
+  for (const { providerType, token } of tokenDefs) {
+    if (!token) continue;
+    if (
+      typeof providerType === "string" &&
+      (WEB_SEARCH_PROVIDER_PROFILE_IDS as readonly string[]).includes(providerType)
+    ) {
+      neededProviders.add(providerType as WebSearchProviderProfileId);
+    }
+  }
+  if (neededProviders.size === 0) return;
 
   const errorLog = deps.log ?? console.error;
   const exit = deps.exit ?? ((code?: number) => process.exit(code));
 
-  const result = deps.runOpenshell(
-    ["provider", "profile", "import", "--file", braveProviderProfilePath(deps.root)],
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-  );
-  if (result.status === 0) return;
+  for (const provider of neededProviders) {
+    const result = deps.runOpenshell(
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        webSearchProviderProfilePath(deps.root, provider),
+      ],
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    if (result.status === 0) continue;
 
-  // OpenShell reports re-imports of an already-registered custom profile as
-  // a non-zero exit. Tolerate that so re-onboard / recreate keeps working.
-  const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
-  if (/already exists/i.test(rawDiagnostic)) return;
+    // OpenShell reports re-imports of an already-registered custom profile as
+    // a non-zero exit. Tolerate that so re-onboard / recreate keeps working.
+    const rawDiagnostic = `${bufferOrStringToText(result.stderr)} ${bufferOrStringToText(result.stdout)}`;
+    if (/already exists/i.test(rawDiagnostic)) continue;
 
-  const diagnostic = compactText(deps.redact(rawDiagnostic));
-  errorLog("\n  ✗ Failed to register the Brave Search provider profile with OpenShell.");
-  if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
-  errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-  exit(result.status || 1);
+    const diagnostic = compactText(deps.redact(rawDiagnostic));
+    errorLog(
+      `\n  ✗ Failed to register the ${provider} web-search provider profile with OpenShell.`,
+    );
+    if (diagnostic) errorLog(`    ${diagnostic.slice(0, 500)}`);
+    errorLog("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
+    exit(result.status || 1);
+  }
 }

@@ -7,7 +7,10 @@ import YAML from "yaml";
 
 import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
-import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  requiredMessagingChannelPolicyPresets,
+} from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { filterSuppressedAgentRequiredPresets } from "./policy-tier-suppression";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
@@ -228,10 +231,16 @@ export function prepareInitialSandboxCreatePolicy(
     tierKnown && options.policyTier !== "restricted"
       ? requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw")
       : [];
+  const isHermesPolicyFromPath = isHermesPolicyPath(basePolicyPath);
+  const isHermesPolicy = options.agentName === "hermes" || isHermesPolicyFromPath;
+  const policyAgent = options.agentName ?? (isHermesPolicyFromPath ? "hermes" : null);
+  const messagingCreateTimePresets = isHermesPolicy
+    ? allMessagingChannelPolicyPresets(activeMessagingChannels)
+    : requiredMessagingChannelPolicyPresets(activeMessagingChannels);
   const requestedCreateTimePresets = filterSuppressedAgentRequiredPresets(
     [
       ...new Set([
-        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+        ...messagingCreateTimePresets,
         ...otelCreateTimePresets,
         ...(options.additionalPresets || []),
       ]),
@@ -242,7 +251,7 @@ export function prepareInitialSandboxCreatePolicy(
   const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
   let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
-  if (options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath)) {
+  if (isHermesPolicy) {
     const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
     if (filtered.changed) {
       const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
@@ -294,7 +303,9 @@ export function prepareInitialSandboxCreatePolicy(
     };
   }
 
-  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets);
+  const mergedPolicy = policies.mergePresetNamesIntoPolicy(basePolicy, createTimePresets, {
+    agent: policyAgent,
+  });
   if (mergedPolicy.missingPresets.length > 0) {
     throw new Error(
       `Cannot prepare sandbox create policy; missing policy preset(s): ${mergedPolicy.missingPresets.join(", ")}`,

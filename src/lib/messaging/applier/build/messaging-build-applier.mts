@@ -520,17 +520,27 @@ export function openClawDoctorEnvOverrides(
   plan: MessagingBuildPlan | null,
   env: Env = process.env,
 ): Record<string, string> {
-  if (!plan) return {};
-  const active = new Set(activeChannels(plan));
   const overrides: Record<string, string> = {};
-  for (const binding of plan.credentialBindings) {
-    if (!active.has(binding.channelId)) continue;
-    if (typeof binding.providerEnvKey === "string" && typeof binding.placeholder === "string") {
-      overrides[binding.providerEnvKey] = binding.placeholder;
+  if (plan) {
+    const active = new Set(activeChannels(plan));
+    for (const binding of plan.credentialBindings) {
+      if (!active.has(binding.channelId)) continue;
+      if (typeof binding.providerEnvKey === "string" && typeof binding.placeholder === "string") {
+        overrides[binding.providerEnvKey] = binding.placeholder;
+      }
     }
   }
   if (isTruthyEnv(env.NEMOCLAW_WEB_SEARCH_ENABLED)) {
-    overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
+    const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "brave").trim();
+    if (provider === "brave") {
+      overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
+    } else if (provider === "tavily") {
+      overrides.TAVILY_API_KEY = "openshell:resolve:env:TAVILY_API_KEY";
+    } else {
+      throw new MessagingBuildApplierError(
+        `Unsupported NEMOCLAW_WEB_SEARCH_PROVIDER: ${provider || "<empty>"}`,
+      );
+    }
   }
   return overrides;
 }
