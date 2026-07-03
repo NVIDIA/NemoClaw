@@ -3,19 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  B,
-  D,
-  failLine,
-  G,
-  infoLine,
-  okLine,
-  R,
-  RD,
-  severityLine,
-  warnLine,
-  YW,
-} from "./terminal-style";
+import { B, D, failLine, G, R, RD, warnLine, YW } from "./terminal-style";
 
 describe("terminal-style", () => {
   it("exports terminal style strings", () => {
@@ -59,11 +47,10 @@ function restoreStream(
 // SGR color codes with a `39` (default-foreground) reset.
 const YELLOW = (s: string) => `\x1b[33m${s}\x1b[39m`;
 const RED = (s: string) => `\x1b[31m${s}\x1b[39m`;
-const GREEN = (s: string) => `\x1b[32m${s}\x1b[39m`;
-
 describe("preflight severity lines (#6004)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.resetModules();
     restoreStream(process.stdout, ORIGINAL_STDOUT);
     restoreStream(process.stderr, ORIGINAL_STDERR);
   });
@@ -76,18 +63,16 @@ describe("preflight severity lines (#6004)", () => {
     stubStream(process.stdout, false, 1);
     expect(warnLine("disk low")).toBe(`  ${YELLOW("⚠ disk low")}`);
     expect(failLine("docker down")).toBe(`  ${RED("✗ docker down")}`);
-    expect(okLine("ready")).toBe("  ✓ ready");
   });
 
   it("drops warn/error color when stderr is redirected but stdout is a TTY (#6004)", () => {
     // The inverse leak: stderr redirected to a log, stdout still a terminal.
-    // warn/error must go plain so no raw ANSI lands in the log; stdout-bound
-    // ok lines stay colored. The old helpers colored from stdout and leaked.
+    // warn/error must go plain so no raw ANSI lands in the log. The old
+    // helpers colored from stdout and leaked.
     stubStream(process.stdout, true, 24);
     stubStream(process.stderr, false, 1);
     expect(warnLine("disk low")).toBe("  ⚠ disk low");
     expect(failLine("docker down")).toBe("  ✗ docker down");
-    expect(okLine("ready")).toBe(`  ${GREEN("✓ ready")}`);
   });
 
   it("emits plain text with no ANSI when the stream reports no color (NO_COLOR / CI)", () => {
@@ -98,13 +83,15 @@ describe("preflight severity lines (#6004)", () => {
     stubStream(process.stderr, true, 1);
     expect(warnLine("a")).toBe("  ⚠ a");
     expect(failLine("b")).toBe("  ✗ b");
-    expect(okLine("c")).toBe("  ✓ c");
   });
 
-  it("leaves info lines uncolored with no marker on any stream", () => {
+  it("selects the legacy true-color green when configured before import", async () => {
     stubStream(process.stdout, true, 24);
-    stubStream(process.stderr, true, 24);
-    expect(infoLine("hello")).toBe("  hello");
-    expect(severityLine("info", "hello")).toBe("  hello");
+    vi.stubEnv("NO_COLOR", "");
+    vi.stubEnv("COLORTERM", "truecolor");
+    vi.resetModules();
+
+    const freshStyles = await import("./terminal-style");
+    expect(freshStyles.G).toBe("\x1b[38;2;118;185;0m");
   });
 });

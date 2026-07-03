@@ -43,7 +43,12 @@ interface DaemonJsonDnsPatchOpts {
  *  - refuses to write if the existing file is not parseable, asking
  *    the user to fix it manually first.
  *
- * The snippet is printed verbatim; nothing here executes it.
+ * Source boundary: this repairs privileged, platform-owned Docker daemon
+ * configuration outside NemoClaw's state. Unprivileged onboarding cannot
+ * safely mutate that file or restart Docker without explicit user consent, so
+ * the commands remain plain, copy-pastable output and nothing here executes
+ * them. Remove this workaround only when Docker/OpenShell exposes a managed
+ * daemon-DNS configuration API that preserves those ownership boundaries.
  */
 function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   const { daemonJsonPath, configDir, dnsValue, sudo, installJqHint, indent } = opts;
