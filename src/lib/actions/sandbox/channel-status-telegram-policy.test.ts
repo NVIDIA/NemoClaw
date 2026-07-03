@@ -48,13 +48,13 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1 (default)",
+      detail: "yes (default)",
     });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram User ID \(for DM access\) \(TELEGRAM_ALLOWED_IDS\):\s+not set/);
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open \(default\)/);
     expect(dump).toMatch(
-      /Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+1 \(default\)/,
+      /Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+yes \(default\)/,
     );
   });
 

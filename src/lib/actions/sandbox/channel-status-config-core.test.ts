@@ -81,11 +81,11 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1",
+      detail: "yes",
     });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open/);
-    expect(dump).toMatch(/Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+1/);
+    expect(dump).toMatch(/Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+yes/);
     expect(dump).not.toMatch(/Telegram Bot Token/);
     expect(dump).not.toMatch(/TELEGRAM_BOT_TOKEN/);
   });
@@ -143,7 +143,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "0",
+      detail: "no",
     });
   });
 
@@ -226,7 +226,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1",
+      detail: "yes",
     });
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
