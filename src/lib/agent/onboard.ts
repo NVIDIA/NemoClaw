@@ -17,13 +17,17 @@ import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
+import { enforceTerminalAgentVersion } from "./terminal-version-enforcement";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+  runCaptureOpenshell: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
@@ -249,6 +253,10 @@ export async function handleAgentSetup(
         syncNemoClawConfig();
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
         if (smokeResult.ok) {
+          await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+            beforeFailure: () => startRecordedStep("agent_setup", { sandboxName, provider, model }),
+            onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+          });
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -309,6 +317,9 @@ export async function handleAgentSetup(
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
       );
     }
+    await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, {
+      onFailure: (message) => failAgentSetup(sandboxName, agent, message, recordStepFailed),
+    });
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;

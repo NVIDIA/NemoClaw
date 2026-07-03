@@ -68,6 +68,9 @@ const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inferen
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
+const dockerDriverGatewayCutover: typeof import("./onboard/docker-driver-gateway-cutover") = require("./onboard/docker-driver-gateway-cutover");
+const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
+  require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
 const {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
@@ -163,7 +166,7 @@ const pRetry = require("p-retry");
  *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
-const { ROOT, SCRIPTS, redact, run, runCapture, runFile, validateName } = runner;
+const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
 const { runSandboxProviderPreDeleteCleanup } =
   require("./onboard/sandbox-provider-cleanup") as typeof import("./onboard/sandbox-provider-cleanup");
@@ -630,6 +633,7 @@ const {
   clearDockerDriverGatewayRuntimeFiles,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
+  getDockerDriverGatewayPortListenerScan,
   getDockerDriverGatewayPortListenerPid,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -649,6 +653,7 @@ const {
   getInstalledOpenshellVersion,
   isOpenshellDevVersion,
   runCapture,
+  runCaptureEx,
   shouldUseOpenshellDevChannel,
   supportedOpenshellFallbackVersion: SUPPORTED_OPENSHELL_FALLBACK_VERSION,
 });
@@ -1267,10 +1272,8 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
   }
 }
 
-function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
+function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-  terminateDockerDriverGatewayProcess(pid);
-  clearDockerDriverGatewayRuntimeFiles();
 }
 
 async function refreshDockerDriverGatewayReuseState(
@@ -2071,6 +2074,15 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
+/**
+ * Reconcile or create the host Docker-driver gateway. The public onboard()
+ * entrypoint holds acquireOnboardLock()'s atomic cross-process filesystem lock
+ * (created with openSync("wx")) across this whole call, so separate concurrent
+ * `nemoclaw onboard` CLI processes cannot race creation.
+ * The strict post-reap bind check below remains a second boundary against
+ * recovery commands or external processes that do not participate in that
+ * lock; the OS then permits only one child to bind the port.
+ */
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,
@@ -2126,93 +2138,77 @@ async function startDockerDriverGateway({
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const pidFileGatewayPid = getDockerDriverGatewayPid();
-  if (
-    pidFileGatewayPid !== null &&
-    isDockerDriverGatewayProcessAlive() &&
-    isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
-  ) {
-    const drift = getDockerDriverGatewayRuntimeDrift(
-      pidFileGatewayPid,
-      driftGatewayEnv,
+  // Port availability and listener enumeration are not atomic. The cutover
+  // rechecks health before adoption, reaps every observed duplicate, and
+  // requires a fresh strict bind proof after reaping before launch.
+  const portListenerScan = getDockerDriverGatewayPortListenerScan(
+    await checkGatewayPortAvailable(),
+    { gatewayBin: identityGatewayBin },
+  );
+  const cutover = await dockerDriverGatewayCutover.runDockerDriverGatewayCutover(
+    {
+      gatewayBin,
+      identityGatewayBin,
       driftGatewayBin,
-    );
-    if (drift) {
-      restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
-    } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-        skip: skipSandboxBridgeReachability,
-        port: GATEWAY_PORT,
-      });
-      console.log("  ✓ Reusing existing Docker-driver gateway");
-      return;
-    } else {
-      console.log(
-        `  Docker-driver gateway metadata reports healthy but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Starting a fresh gateway...`,
-      );
-    }
-  }
-
-  const portCheck = await checkGatewayPortAvailable();
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, {
-    gatewayBin: identityGatewayBin,
-  });
-  if (portListenerPid !== null) {
-    const drift = getDockerDriverGatewayRuntimeDrift(
-      portListenerPid,
       driftGatewayEnv,
-      driftGatewayBin,
-    );
-    if (drift) {
-      rememberDockerDriverGatewayPid(portListenerPid);
-      restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
-    } else {
-      rememberDockerDriverGatewayPid(portListenerPid);
-    }
-    if (!drift && registerDockerDriverGatewayEndpoint()) {
-      const adoptedStatus = runCaptureOpenshell(["status"], { ignoreError: true });
-      const adoptedGwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
-        ignoreError: true,
-      });
-      const adoptedActiveGatewayInfo = runCaptureOpenshell(["gateway", "info"], {
-        ignoreError: true,
-      });
-      if (
-        isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
-        (await isDockerDriverGatewayHttpReady())
-      ) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-          skip: skipSandboxBridgeReachability,
+      exitOnFailure,
+      skipSandboxBridgeReachability,
+      stateDir,
+      portListenerScan,
+      pidFileGatewayPid: getDockerDriverGatewayPid(),
+      initialHealth: {
+        status: gatewayStatus,
+        namedInfo: gwInfo,
+        activeInfo: activeGatewayInfo,
+      },
+    },
+    {
+      isDockerDriverGatewayProcessAlive,
+      isGatewayHealthy,
+      getDockerDriverGatewayRuntimeDrift,
+      logDockerDriverGatewayRestart,
+      registerDockerDriverGatewayEndpoint,
+      isDockerDriverGatewayHttpReady,
+      verifySandboxBridgeGatewayReachableOrExit: (fail, options) =>
+        verifySandboxBridgeGatewayReachableOrExit(fail, {
+          ...options,
           port: GATEWAY_PORT,
-        });
-        console.log(`  ✓ Reusing existing Docker-driver gateway process (PID ${portListenerPid})`);
-        return;
-      }
-    }
-  }
-  if (!gatewayBin) {
-    console.error("  OpenShell Docker-driver gateway binary not found.");
-    console.error(
-      `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
-    );
-    if (exitOnFailure) process.exit(1);
-    throw new Error("OpenShell gateway binary not found");
-  }
-
-  const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
-  if (existingPid !== null && isPidAlive(existingPid)) {
-    if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
-      clearDockerDriverGatewayRuntimeFiles();
-    } else {
-      console.log(`  Restarting unhealthy Docker-driver gateway process (PID ${existingPid})...`);
-      try {
-        process.kill(existingPid, "SIGTERM");
-        sleepSeconds(1);
-      } catch {
-        /* best effort; the new process will surface any remaining port conflict */
-      }
-    }
-  }
+        }),
+      readGatewayHealth: () => ({
+        status: runCaptureOpenshell(["status"], { ignoreError: true }),
+        namedInfo: runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
+          ignoreError: true,
+        }),
+        activeInfo: runCaptureOpenshell(["gateway", "info"], { ignoreError: true }),
+      }),
+      rememberDockerDriverGatewayPid,
+      reapDuplicateHostGatewaysExceptOrFail,
+      reapHostGatewayBeforeLaunchOrFail,
+      isGatewayPortAvailable: async () => {
+        const probe = await checkGatewayPortAvailable();
+        return probe.ok && !probe.warning;
+      },
+      reportUntrustedGatewayPort: (message) => {
+        const detail =
+          `Refusing to start a second OpenShell gateway: ${message}. ` +
+          `Inspect port ${GATEWAY_PORT} and stop only its owning process before retrying.`;
+        console.error(`  ${detail}`);
+        if (exitOnFailure) process.exit(1);
+        throw new Error(detail);
+      },
+      reportMissingGatewayBinary: () => {
+        console.error("  OpenShell Docker-driver gateway binary not found.");
+        console.error(
+          `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
+        );
+        if (exitOnFailure) process.exit(1);
+        throw new Error("OpenShell gateway binary not found");
+      },
+      log: (message) => console.log(message),
+    },
+  );
+  if (cutover === "reused") return;
+  if (!gatewayBin) throw new Error("OpenShell gateway binary missing after cutover");
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
