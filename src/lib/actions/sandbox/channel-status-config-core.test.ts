@@ -16,7 +16,12 @@ describe("showSandboxChannelStatus config comparison", () => {
                   telegram: {
                     accounts: {
                       default: {
-                        groupPolicy: "allowlist",
+                        groupPolicy: "open",
+                      },
+                    },
+                    groups: {
+                      "*": {
+                        requireMention: true,
                       },
                     },
                   },
@@ -51,7 +56,7 @@ describe("showSandboxChannelStatus config comparison", () => {
             required: false,
             sourceEnv: "TELEGRAM_GROUP_POLICY",
             statePath: "telegramConfig.groupPolicy",
-            value: "allowlist",
+            value: "open",
           },
         ],
       }),
@@ -68,17 +73,78 @@ describe("showSandboxChannelStatus config comparison", () => {
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
       severity: "ok",
-      detail: "allowlist",
+      detail: "open",
     });
     expect(
       signals.find(
         (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
       ),
-    ).toBeUndefined();
+    ).toMatchObject({
+      severity: "ok",
+      detail: "yes",
+    });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+allowlist/);
+    expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open/);
+    expect(dump).toMatch(/Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+yes/);
     expect(dump).not.toMatch(/Telegram Bot Token/);
     expect(dump).not.toMatch(/TELEGRAM_BOT_TOKEN/);
+  });
+
+  it("marks Telegram all-message mode ok when OpenClaw omits the groups stanza (#5691)", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          channels: {
+            telegram: {
+              accounts: {
+                default: {
+                  groupPolicy: "open",
+                },
+              },
+            },
+          },
+        }),
+        stderr: "",
+      }),
+      sandbox: entry(["telegram"], [], {
+        telegram: [
+          {
+            channelId: "telegram",
+            inputId: "requireMention",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+            statePath: "telegramConfig.requireMention",
+            value: "0",
+          },
+          {
+            channelId: "telegram",
+            inputId: "groupPolicy",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_GROUP_POLICY",
+            statePath: "telegramConfig.groupPolicy",
+            value: "open",
+          },
+        ],
+      }),
+      appliedPresets: ["telegram"],
+    });
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "telegram",
+    });
+
+    const signals = result && "signals" in result ? result.signals : [];
+    expect(
+      signals.find(
+        (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
+      ),
+    ).toMatchObject({
+      severity: "ok",
+      detail: "no",
+    });
   });
 
   it("does not compare Hermes Telegram group policy when the manifest does not render it", async () => {
@@ -160,7 +226,7 @@ describe("showSandboxChannelStatus config comparison", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "1",
+      detail: "yes",
     });
     expect(
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
