@@ -1,15 +1,28 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # NemoClaw sandbox entrypoint for LangChain Deep Agents Code.
 
 set -euo pipefail
+unset BASH_ENV ENV
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
+export LANGGRAPH_NO_VERSION_CHECK=true
+export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
+export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
+export DEEPAGENTS_CODE_LANGSMITH_TRACING_V2=false
+export DEEPAGENTS_CODE_LANGCHAIN_TRACING=false
+export DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2=false
+export LANGSMITH_TRACING=false
+export LANGSMITH_TRACING_V2=false
+export LANGCHAIN_TRACING=false
+export LANGCHAIN_TRACING_V2=false
+export DEEPAGENTS_CODE_OFFLINE=1
+export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
@@ -69,7 +82,7 @@ PROXY_PORT="$(read_managed_proxy_value "$MANAGED_PROXY_PORT_FILE" "port")"
 unset NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT
 # Generic proxy fallbacks are outside the managed dcode contract and may carry
 # host credentials even after the scheme-specific proxy values are normalized.
-unset ALL_PROXY all_proxy
+unset ALL_PROXY all_proxy OPENAI_PROXY
 
 # Keep this validator behavior identical to the host-side TypeScript boundary.
 # It is applied only to image-baked values that onboard writes into root-owned
@@ -122,12 +135,24 @@ prepare_runtime_env() {
     printf '%s\n' 'export HOME=/sandbox'
     printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
+    printf '%s\n' 'export LANGGRAPH_NO_VERSION_CHECK=true'
+    printf '%s\n' 'export OTEL_ENABLED=false'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
+    printf '%s\n' 'export DEEPAGENTS_CODE_LANGSMITH_TRACING=false'
+    printf '%s\n' 'export DEEPAGENTS_CODE_LANGSMITH_TRACING_V2=false'
+    printf '%s\n' 'export DEEPAGENTS_CODE_LANGCHAIN_TRACING=false'
+    printf '%s\n' 'export DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2=false'
+    printf '%s\n' 'export LANGSMITH_TRACING=false'
+    printf '%s\n' 'export LANGSMITH_TRACING_V2=false'
+    printf '%s\n' 'export LANGCHAIN_TRACING=false'
+    printf '%s\n' 'export LANGCHAIN_TRACING_V2=false'
+    printf '%s\n' 'export DEEPAGENTS_CODE_OFFLINE=1'
+    printf '%s\n' 'export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system'
     # shellcheck disable=SC2016
     printf '%s\n' 'export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"'
     # shellcheck disable=SC2016
     printf '%s\n' 'export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"'
-    printf '%s\n' 'unset ALL_PROXY all_proxy'
+    printf '%s\n' 'unset ALL_PROXY all_proxy OPENAI_PROXY'
     write_export_if_set HTTP_PROXY
     write_export_if_set HTTPS_PROXY
     write_export_if_set NO_PROXY

@@ -106,6 +106,59 @@ describe("Deep Agents MCP config adapter", () => {
     });
   });
 
+  it("rejects unowned config before registration mutates the file", () => {
+    const initialConfig = { ui: { theme: "dark" } };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(baseEntry),
+      initialConfig,
+    );
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain("only mcpServers is allowed");
+    expect(registration.config).toEqual(initialConfig);
+  });
+
+  it("renders the complete registry-owned server projection", () => {
+    const jiraEntry: McpBridgeEntry = {
+      ...baseEntry,
+      server: "jira",
+      url: "https://mcp.atlassian.com/v1/",
+      env: ["JIRA_MCP_TOKEN"],
+      providerName: "alpha-mcp-jira",
+      policyName: "mcp-bridge-jira",
+    };
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand(jiraEntry, false, [baseEntry, jiraEntry]),
+      {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: baseEntry.url,
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+            },
+          },
+        },
+      },
+    );
+
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: baseEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
+        },
+        jira: {
+          type: "http",
+          url: jiraEntry.url,
+          headers: { Authorization: "Bearer openshell:resolve:env:JIRA_MCP_TOKEN" },
+        },
+      },
+    });
+  });
+
   it("fails Deep Agents removal on corrupt config unless forced", () => {
     const normal = buildDeepAgentsMcpRemoveCommand(baseEntry);
     const forced = buildDeepAgentsMcpRemoveCommand(baseEntry, true);

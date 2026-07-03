@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { McpBridgeEntry } from "../../state/registry";
+import { getSandbox, type McpBridgeEntry } from "../../state/registry";
 import {
   type AdapterMutationOptions,
   type AdapterRegistrationInspection,
@@ -24,10 +24,20 @@ const DEEPAGENTS_MCP_CAPABILITY_COMMAND =
 export function buildDeepAgentsMcpRegisterCommand(
   entry: McpBridgeEntry,
   replaceExisting = false,
+  managedEntries: readonly McpBridgeEntry[] = [entry],
 ): string {
+  const expectedServers = Object.fromEntries(
+    managedEntries
+      .map((managedEntry): [string, Record<string, unknown>] => [
+        managedEntry.server,
+        deepAgentsManagedServerConfig(managedEntry),
+      ])
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
   const payload = {
     server: entry.server,
     expected: deepAgentsManagedServerConfig(entry),
+    expectedServers,
     replaceExisting,
   };
   return [
@@ -45,6 +55,9 @@ export function buildDeepAgentsMcpRegisterCommand(
     "if not isinstance(data, dict):",
     `    print('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: expected a JSON object', file=sys.stderr)`,
     "    raise SystemExit(2)",
+    "if data and set(data) != {'mcpServers'}:",
+    `    print('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: only mcpServers is allowed', file=sys.stderr)`,
+    "    raise SystemExit(2)",
     "servers = data.setdefault('mcpServers', {})",
     "if not isinstance(servers, dict):",
     `    print('Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: mcpServers must be an object', file=sys.stderr)`,
@@ -52,7 +65,13 @@ export function buildDeepAgentsMcpRegisterCommand(
     "if payload['server'] in servers and not payload['replaceExisting']:",
     `    print(f"MCP server '{payload['server']}' already exists in ${DEEPAGENTS_MCP_CONFIG_PATH} and is not managed by NemoClaw.", file=sys.stderr)`,
     "    raise SystemExit(2)",
-    "servers[payload['server']] = payload['expected']",
+    "for name, current in servers.items():",
+    "    if name == payload['server'] and payload['replaceExisting']:",
+    "        continue",
+    "    if payload['expectedServers'].get(name) != current:",
+    `        print(f"Invalid ${DEEPAGENTS_MCP_CONFIG_PATH}: MCP server '{name}' is not exact registry-owned state", file=sys.stderr)`,
+    "        raise SystemExit(2)",
+    "data = {'mcpServers': payload['expectedServers']}",
     "config_path.parent.mkdir(parents=True, exist_ok=True)",
     "tmp = config_path.with_name(config_path.name + '.nemoclaw-mcp.tmp')",
     "tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
@@ -158,6 +177,17 @@ function verifyDeepAgentsAdapterRegistration(sandboxName: string, entry: McpBrid
   );
 }
 
+function registryOwnedDeepAgentsEntries(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+): McpBridgeEntry[] {
+  const entries = new Map<string, McpBridgeEntry>();
+  const bridges = getSandbox(sandboxName)?.mcp?.bridges ?? {};
+  for (const bridge of Object.values(bridges)) entries.set(bridge.server, bridge);
+  entries.set(entry.server, entry);
+  return [...entries.values()];
+}
+
 export function registerDeepAgentsAdapter(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -167,7 +197,11 @@ export function registerDeepAgentsAdapter(
   runDeepAgentsAdapterCommand(
     sandboxName,
     entry,
-    buildDeepAgentsMcpRegisterCommand(entry, replaceExisting),
+    buildDeepAgentsMcpRegisterCommand(
+      entry,
+      replaceExisting,
+      registryOwnedDeepAgentsEntries(sandboxName, entry),
+    ),
     `Deep Agents Code MCP config registration failed for '${entry.server}'.`,
     { envValues },
   );

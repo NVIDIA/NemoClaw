@@ -92,7 +92,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     adapterRegistered = false;
     return { status: 0, stdout: "", stderr: "" };
   }
-  if (command.includes("servers[payload['server']] = payload['expected']")) {
+  if (command.includes("data = {'mcpServers': payload['expectedServers']}")) {
     adapterRegistered = true;
     return { status: 0, stdout: "", stderr: "" };
   }

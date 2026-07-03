@@ -3,7 +3,7 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 
-// deepagents-code 0.1.12 auto-discovers this as the user-level MCP config.
+// The pinned Deep Agents Code release auto-discovers this as the user-level MCP config.
 // `/sandbox/.mcp.json` is project-level and is intentionally rejected by
 // headless `dcode -n` unless project MCP has been separately trusted.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";

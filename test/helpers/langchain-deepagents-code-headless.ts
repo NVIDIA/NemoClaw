@@ -27,7 +27,17 @@ export const PROXY_URL_ENV_NAMES = [
   "https_proxy",
 ] as const;
 export const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
-const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
+export const TRACING_ENABLE_ENV_NAMES = [
+  "DEEPAGENTS_CODE_LANGSMITH_TRACING",
+  "DEEPAGENTS_CODE_LANGSMITH_TRACING_V2",
+  "DEEPAGENTS_CODE_LANGCHAIN_TRACING",
+  "DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2",
+  "LANGSMITH_TRACING",
+  "LANGSMITH_TRACING_V2",
+  "LANGCHAIN_TRACING",
+  "LANGCHAIN_TRACING_V2",
+] as const;
 
 export function makeStartScriptFixture(
   tempDir: string,
@@ -122,16 +132,22 @@ export function runStartScriptProxyProbe(
   env: NodeJS.ProcessEnv,
 ): { envFileText: string; output: string } {
   const probe = [
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
-      (name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`,
-    ),
+    ...[
+      ...PROXY_URL_ENV_NAMES,
+      ...NO_PROXY_ENV_NAMES,
+      ...CLEARED_PROXY_ENV_NAMES,
+      ...TRACING_ENABLE_ENV_NAMES,
+    ].map((name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`),
     "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
     "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
     "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
-      (name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`,
-    ),
+    ...[
+      ...PROXY_URL_ENV_NAMES,
+      ...NO_PROXY_ENV_NAMES,
+      ...CLEARED_PROXY_ENV_NAMES,
+      ...TRACING_ENABLE_ENV_NAMES,
+    ].map((name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`),
   ].join("\n");
   const result = spawnSync("bash", [scriptPath, "bash", "-c", probe], {
     env: {
