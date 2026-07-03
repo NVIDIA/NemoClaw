@@ -147,6 +147,22 @@ export async function addSandboxPolicy(
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
+    const channelManifest = resolveChannelManifest(normalized);
+    if (channelManifest) {
+      const agent = resolveAgentForSandbox(sandboxName);
+      if (!channelSupportedByAgent(channelManifest, agent)) {
+        console.error(
+          `  Preset '${channelManifest.id}' is not a supported channel for agent '${agent.name}' in sandbox '${sandboxName}'.`,
+        );
+        console.error(
+          `  Channel-supported agents: ${formatSupportedMessagingAgentIds(channelManifest.supportedAgents)}.`,
+        );
+        console.error(
+          `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+        );
+        process.exit(1);
+      }
+    }
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
     if (!preset) {
       console.error(`  Unknown preset '${presetArg}'.`);
