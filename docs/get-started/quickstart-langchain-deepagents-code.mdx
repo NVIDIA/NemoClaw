@@ -129,7 +129,7 @@ nemo-deepagents <sandbox-name> rebuild
 nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
-After upgrading from a release that persisted LangSmith environment values, rebuild existing Deep Agents Code sandboxes because the corrected `start.sh` is baked into the image.
+If you upgrade from a release that persisted LangSmith environment values, rebuild each existing Deep Agents Code sandbox so its image includes the corrected `start.sh`.
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
