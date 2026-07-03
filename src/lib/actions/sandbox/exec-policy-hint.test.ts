@@ -31,6 +31,11 @@ const START_AFTER_DENIAL = 1783046800000;
 describe("isPolicyDenialLine (#5978)", () => {
   it.each([
     ["OCSF NET:OPEN DENIED audit line", DENIED_CURL_LINE, true],
+    [
+      "OCSF NET:OPEN DENIED audit line for a bracketed IPv6 target",
+      "[1783046573.602] [sandbox] NET:OPEN [MED] DENIED /usr/bin/curl(9) -> [2001:db8::1]:443 [reason:not allowed by any policy]",
+      true,
+    ],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
     ["bare reason phrasing", "endpoint host:443 is not allowed by any policy", true],
     ["NET:OPEN INFO ssh relay (not a denial)", SSH_RELAY_INFO_LINE, false],
@@ -269,6 +274,25 @@ describe("maybeEmitPolicyDenialHint (#5978)", () => {
     expect(h.lines).toHaveLength(1);
     expect(h.lines[0]).toBe(hint);
     expect(h.enableCount()).toBe(1);
+  });
+
+  it("emits the breadcrumb naming a bracketed IPv6 endpoint end to end", async () => {
+    const h = harness();
+    const hint = await maybeEmitPolicyDenialHint(
+      "nemoclaw",
+      "oc-fresh",
+      56,
+      false,
+      START_BEFORE_DENIAL,
+      {
+        ...h.base,
+        probeLogs: () =>
+          "[1783046573.602] [sandbox] NET:OPEN [MED] DENIED /usr/bin/curl(9) -> [2001:db8::1]:443 [reason:not allowed by any policy]",
+      },
+    );
+    expect(hint).toContain("for [2001:db8::1]:443");
+    expect(h.lines).toHaveLength(1);
+    expect(h.lines[0]).toBe(hint);
   });
 
   it("stays silent on a successful command", async () => {

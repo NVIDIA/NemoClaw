@@ -276,8 +276,10 @@ function defaultEnableAudit(sandboxName: string): void {
   });
 }
 
-// Capture the recent log tail. Best-effort: any failure yields empty output and
-// therefore no hint.
+// Capture the recent log tail. Best-effort by design: the hint is UX only, so a
+// probe failure must degrade to an empty tail (and therefore no hint) rather
+// than surface — the exec's own exit code must never be affected. `ignoreError`
+// keeps a failed read from throwing; any absent output becomes "".
 function defaultProbeLogs(sandboxName: string): string {
   const runtime =
     require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");

@@ -931,8 +931,7 @@ curl: (56) CONNECT tunnel failed, response 403
 This is a network-policy denial, not a tool or certificate problem.
 
 When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw checks the sandbox audit log for a policy denial recorded after the command started.
-If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below.
-An IPv6 target is named in its bracketed form (for example `[2001:db8::1]:443`):
+If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below:
 
 ```text
 curl: (56) CONNECT tunnel failed, response 403
@@ -942,6 +941,12 @@ nemoclaw: recent network policy denial detected for example.com:443 inside sandb
   Review applied presets: nemoclaw oc-fresh policy-list
   Allow the host:         nemoclaw oc-fresh policy-add <preset>
   Silence this hint:      export NEMOCLAW_NO_POLICY_HINT=1
+```
+
+An IPv6 target is named in its RFC 3986 bracketed form:
+
+```text
+nemoclaw: recent network policy denial detected for [2001:db8::1]:443 inside sandbox 'oc-fresh'.
 ```
 
 The tool's own stdout/stderr bytes and its exit code are left unchanged. The breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial. A command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb, and `NEMOCLAW_NO_POLICY_HINT=1` suppresses it entirely.
