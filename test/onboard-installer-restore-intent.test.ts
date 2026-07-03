@@ -66,10 +66,10 @@ runner.runCapture = (command) => {
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
