@@ -932,9 +932,10 @@ If it finds one, it appends a short breadcrumb to stderr after the tool's own ou
 curl: (56) CONNECT tunnel failed, response 403
 nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
   The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
-  See the denied flow:      nemoclaw oc-fresh logs --tail 50
-  Review or allow the host: nemoclaw oc-fresh policy-list
-  Silence this hint:        export NEMOCLAW_NO_POLICY_HINT=1
+  See the denied flow:    nemoclaw oc-fresh logs --tail 50
+  Review applied presets: nemoclaw oc-fresh policy-list
+  Allow the host:         nemoclaw oc-fresh policy-add <preset>
+  Silence this hint:      export NEMOCLAW_NO_POLICY_HINT=1
 ```
 
 The tool's own stdout/stderr bytes and its exit code are left unchanged — the breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial (a command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb).

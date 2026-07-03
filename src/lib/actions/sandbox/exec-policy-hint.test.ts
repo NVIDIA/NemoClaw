@@ -123,7 +123,8 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     ["the denied endpoint", "example.com:443"],
     ["the sandbox name", "oc-fresh"],
     ["the logs breadcrumb", "nemoclaw oc-fresh logs --tail 50"],
-    ["the policy-list breadcrumb", "nemoclaw oc-fresh policy-list"],
+    ["the policy-list review breadcrumb", "nemoclaw oc-fresh policy-list"],
+    ["the policy-add allow-path breadcrumb", "nemoclaw oc-fresh policy-add <preset>"],
     ["the opt-out env", POLICY_HINT_SUPPRESS_ENV],
   ])("names %s", (_label, expected) => {
     expect(hint).toContain(expected);
