@@ -606,6 +606,76 @@ prompt_is_blank() {
   esac
 }
 
+# Reject non-interactive prompts that ask dcode to read or disclose credentials
+# before the agent process can launch tools (#6187).
+prompt_mentions_sensitive_credential() {
+  local lower_prompt="${1,,}"
+  case "$lower_prompt" in
+    *"~/.ssh/id_"* | *".ssh/id_"* | *" id_rsa"* | *"/id_rsa"* | *" id_ed25519"* | *"/id_ed25519"* | *" id_ecdsa"* | *"/id_ecdsa"* | *" id_dsa"* | *"/id_dsa"*)
+      return 0
+      ;;
+    *"ssh private key"* | *"private key"*)
+      return 0
+      ;;
+    *"~/.aws/credentials"* | *".aws/credentials"* | *"aws_secret_access_key"* | *"aws_access_key_id"*)
+      return 0
+      ;;
+    *"~/.netrc"* | *".netrc"* | *".npmrc"* | *"credential file"* | *"credentials file"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+prompt_mentions_generic_secret() {
+  local lower_prompt="${1,,}"
+  case "$lower_prompt" in
+    *"api key"* | *"api token"* | *"access token"* | *"bearer token"* | *"password"* | *"secret"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+prompt_requests_credential_access() {
+  local lower_prompt="${1,,}"
+  case "$lower_prompt" in
+    *"read "* | *"cat "* | *"print "* | *"show "* | *"display "* | *"dump "* | *"copy "* | *"open "*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+prompt_requests_credential_disclosure() {
+  local lower_prompt="${1,,}"
+  case "$lower_prompt" in
+    *"print "* | *"show "* | *"display "* | *"dump "* | *"copy "* | *"send "* | *"post "* | *"upload "* | *"exfiltrat"* | *"leak "* | *"curl "* | *"wget "*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+reject_credential_exposure_prompt() {
+  printf 'NemoClaw: refusing non-interactive prompt for %s because it requests credential leakage or exfiltration.\n' "$1" >&2
+  printf '  SSH private keys, tokens, passwords, and other credentials must not be read, exposed, or sent externally.\n' >&2
+  exit 2
+}
+
+reject_if_credential_exposure_prompt() {
+  local flag="$1"
+  local prompt="$2"
+  if prompt_mentions_sensitive_credential "$prompt"; then
+    if prompt_requests_credential_access "$prompt" || prompt_requests_credential_disclosure "$prompt"; then
+      reject_credential_exposure_prompt "$flag"
+    fi
+  fi
+  if prompt_mentions_generic_secret "$prompt" && prompt_requests_credential_disclosure "$prompt"; then
+    reject_credential_exposure_prompt "$flag"
+  fi
+}
+
 dcode_args=("$@")
 arg_index=0
 while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
@@ -619,6 +689,7 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
         if prompt_is_blank "${dcode_args[value_index]}"; then
           reject_empty_non_interactive "$current_arg"
         fi
+        reject_if_credential_exposure_prompt "$current_arg" "${dcode_args[value_index]}"
       fi
       arg_index=$((value_index + 1))
       continue
@@ -627,11 +698,13 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
       if prompt_is_blank "${current_arg#--non-interactive=}"; then
         reject_empty_non_interactive "--non-interactive"
       fi
+      reject_if_credential_exposure_prompt "--non-interactive" "${current_arg#--non-interactive=}"
       ;;
     -n?*)
       if prompt_is_blank "${current_arg#-n}"; then
         reject_empty_non_interactive "-n"
       fi
+      reject_if_credential_exposure_prompt "-n" "${current_arg#-n}"
       ;;
   esac
   arg_index=$((arg_index + 1))

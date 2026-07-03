@@ -63,6 +63,11 @@ For a single headless task, run:
 dcode -n "Summarize this repository"
 ```
 
+For non-interactive runs, the managed wrapper refuses empty prompts and prompts that ask `dcode`
+to read, print, send, upload, or disclose credential material such as SSH private keys, credential
+files, API tokens, passwords, or similar secrets.
+Those refusals exit with status `2` before Deep Agents Code launches.
+
 The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
 
 To confirm which sandbox a session is in, run the identity command:
