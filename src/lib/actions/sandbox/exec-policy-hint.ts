@@ -129,6 +129,8 @@ function isStructuredJsonPolicyDenial(line: string): boolean {
 }
 
 /**
+ * @internal Temporary structured-log detector for the exec breadcrumb.
+ *
  * True when a log line records a network policy denial. Matches only the
  * structured OpenShell OCSF decision or an exact proxy JSON error code. Loose
  * policy-related prose and config keys are deliberately ignored so an
@@ -188,9 +190,9 @@ export type PolicyDenialMatch = { endpoint: string | null };
 // - Precision rule: +999 ms is the exact representation bound of a timestamp
 //   with no fractional seconds, not a measured skew or tuning heuristic.
 //   Millisecond timestamps therefore use zero backward tolerance.
-// - Evidence/coverage: PR #6238's restricted-sandbox curl, Python, and git runs
-//   recorded denials after dispatch; tests pin exact, 1 ms-stale, and both
-//   second-precision boundary cases.
+// - Evidence/coverage: restricted-sandbox curl, Python, and git validation for
+//   this change recorded denials after dispatch; tests pin exact, 1 ms-stale,
+//   and both second-precision boundary cases.
 // - Removal condition: remove the precision compensation if OpenShell
 //   guarantees millisecond timestamps or returns a typed denial for this exec.
 const SECOND_PRECISION_EPOCH_RE = /^\s*\[\d+\]/;
@@ -277,7 +279,10 @@ export function shouldProbePolicyDenial(
   if (commandCode === 0) return false;
   if (hadInvocationError) return false;
   const suppress = env[POLICY_HINT_SUPPRESS_ENV];
-  if (suppress && suppress !== "0" && suppress !== "false") return false;
+  const normalizedSuppress = suppress?.toLowerCase();
+  if (normalizedSuppress && normalizedSuppress !== "0" && normalizedSuppress !== "false") {
+    return false;
+  }
   return true;
 }
 
