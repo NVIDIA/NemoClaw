@@ -457,6 +457,24 @@ describe("trace ingestion", () => {
     expect(ingestPolicyOverhead(nonFinite)).toMatchObject({ status: "error" });
   });
 
+  it("does not echo untrusted root or metric status text into report reasons", () => {
+    const leakedStatus = { code: "arbitrary-trace-secret" } as unknown as TraceSpan["status"];
+    const metrics = [
+      ingestSandboxColdStart(traceArtifact([], { rootStatus: leakedStatus })),
+      ingestSandboxColdStart(
+        traceArtifact([
+          traceSpan(SANDBOX_PHASE_SPAN, 2000, {
+            status: leakedStatus,
+          }),
+        ]),
+      ),
+    ];
+    const serialized = JSON.stringify(metrics);
+    expect(serialized).not.toContain("arbitrary-trace-secret");
+    expect(metrics[0].reason).toContain("status is missing or not OK");
+    expect(metrics[1].reason).toContain("status is missing or not OK");
+  });
+
   it("rejects spans from a different trace identity", () => {
     const artifact = traceArtifact([
       traceSpan(SANDBOX_PHASE_SPAN, 2000, {

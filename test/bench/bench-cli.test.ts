@@ -158,4 +158,34 @@ describe("benchmark CLI", () => {
     expect(result.stderr).toContain("NEMOCLAW_BENCH_BASE_URL");
     expect(result.stderr).toContain("NEMOCLAW_BENCH_MODEL");
   });
+
+  it("rejects an unrelated API key environment before sending a request", async () => {
+    const fixture = await startInferenceServer(VALID_COMPLETION);
+    const unrelatedSecret = "github-token-that-must-not-leak";
+    try {
+      const result = await runBench(
+        [
+          "--base-url",
+          `${fixture.baseUrl}/v1`,
+          "--model",
+          "test-model",
+          "--api-key-env",
+          "GITHUB_TOKEN",
+          "--samples",
+          "1",
+          "--warmup",
+          "0",
+        ],
+        { GITHUB_TOKEN: unrelatedSecret },
+      );
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(
+        "--api-key-env must be OPENAI_API_KEY or NVIDIA_INFERENCE_API_KEY",
+      );
+      expect(`${result.stdout}\n${result.stderr}`).not.toContain(unrelatedSecret);
+      expect(fixture.requests).toEqual([]);
+    } finally {
+      await closeServer(fixture.server);
+    }
+  });
 });

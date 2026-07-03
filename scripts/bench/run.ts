@@ -52,7 +52,7 @@ Usage:
 Options:
   --base-url <url>      OpenAI-compatible base URL (or env OPENAI_BASE_URL / NEMOCLAW_BENCH_BASE_URL)
   --model <name>        Model id to send (or env OPENAI_MODEL / NEMOCLAW_BENCH_MODEL)
-  --api-key-env <NAME>  Env var holding the API key (default: OPENAI_API_KEY, then NVIDIA_INFERENCE_API_KEY)
+  --api-key-env <NAME>  API key env: OPENAI_API_KEY or NVIDIA_INFERENCE_API_KEY (checked in that order by default)
   --samples <n>         Timed inference requests (default 5)
   --warmup <n>          Untimed warm-up requests (default 1)
   --prompt <text>       Prompt to send (default: a tiny deterministic prompt)
@@ -159,7 +159,11 @@ function toNonNegativeInt(value: string, flag: string): number {
 }
 
 function resolveApiKey(envName?: string): { name: string; value: string | undefined } {
-  const candidates = envName ? [envName] : ["OPENAI_API_KEY", "NVIDIA_INFERENCE_API_KEY"];
+  const allowedNames = ["OPENAI_API_KEY", "NVIDIA_INFERENCE_API_KEY"] as const;
+  if (envName && !allowedNames.includes(envName as (typeof allowedNames)[number])) {
+    throw new Error("--api-key-env must be OPENAI_API_KEY or NVIDIA_INFERENCE_API_KEY");
+  }
+  const candidates = envName ? [envName] : [...allowedNames];
   for (const name of candidates) {
     const value = process.env[name];
     if (value) return { name, value };

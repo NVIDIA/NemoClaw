@@ -43,7 +43,9 @@ non-zero.
 - An OpenAI-compatible inference endpoint and model you can reach from the host
   (e.g. an NVIDIA endpoint, a local vLLM/Ollama server, or — from inside a
   sandbox — `https://inference.local/v1`).
-- The API key in an environment variable (never passed as a flag).
+- The API key in `OPENAI_API_KEY` or `NVIDIA_INFERENCE_API_KEY` (the value is
+  never passed as a flag). Put a compatible provider's key in one of these
+  benchmark-specific names rather than selecting an unrelated process secret.
 - Optional: an onboard trace artifact for the sandbox/policy metrics. Produce one
   by running `NEMOCLAW_TRACE=1 nemoclaw onboard --non-interactive ...`; the trace
   file path is printed and also controlled by `NEMOCLAW_TRACE_FILE` /

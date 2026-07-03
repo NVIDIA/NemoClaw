@@ -97,7 +97,7 @@ function inspectTraceArtifact(artifact: unknown): TraceInspection {
   }
   const rootStatus = asRecord(root.status)?.code;
   if (rootStatus !== "OK") {
-    return { ok: false, reason: `onboard root span status is ${String(rootStatus ?? "missing")}` };
+    return { ok: false, reason: "onboard root span status is missing or not OK" };
   }
   if (!isValidDuration(root.duration_ms)) {
     return { ok: false, reason: "onboard root span has an invalid duration" };
@@ -129,7 +129,7 @@ function readMetricSpan(trace: ValidTrace, name: string): MetricSpan {
   }
   const status = asRecord(span.status)?.code;
   if (status !== "OK") {
-    return { kind: "error", reason: `${name} span status is ${String(status ?? "missing")}` };
+    return { kind: "error", reason: `${name} span status is missing or not OK` };
   }
   if (!isValidDuration(span.duration_ms)) {
     return { kind: "error", reason: `${name} span has an invalid duration` };
