@@ -93,17 +93,16 @@ describe("agent base image provisioning", () => {
         root,
       }) => {
         dockerImageInspectMock.mockReturnValue({ status: 0 });
-        dockerImageInspectFormatMock.mockImplementation((format: string) => {
-          if (format === "{{json .}}") {
-            return JSON.stringify({
-              Id: `sha256:${"a".repeat(64)}`,
-              Os: "linux",
-              Architecture: "amd64",
-              RepoDigests: [],
-            });
-          }
-          return `sha256:${"a".repeat(64)}`;
-        });
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: `sha256:${"a".repeat(64)}`,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [],
+              })
+            : `sha256:${"a".repeat(64)}`,
+        );
 
         const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
 
