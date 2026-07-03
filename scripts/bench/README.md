@@ -17,13 +17,18 @@ not for gating.
 > The harness only sends requests to the inference endpoint you configure. It
 > never uploads results or sends telemetry to any external service.
 
+The configured endpoint must be HTTP(S) and must not contain URL userinfo.
+Redirects are refused, query values are redacted from shareable reports, remote
+error bodies are never copied into reports, and a successful sample must contain
+a valid OpenAI-compatible chat completion rather than an arbitrary HTTP 2xx body.
+
 ## Metrics
 
 | Metric | Source | Notes |
 |--------|--------|-------|
 | `inference-round-trip` | live request | Times N OpenAI-compatible `/v1/chat/completions` calls (warm-up + samples), reports min/median/p95/mean/max. |
 | `sandbox-cold-start` | onboard trace | Total duration of the emitted `nemoclaw.onboard.phase.sandbox` span, which encloses sandbox creation and readiness. The nested `nemoclaw.sandbox.readiness_wait` span is reported as an optional breakdown without being added twice. |
-| `policy-shield-overhead` | onboard trace | `nemoclaw.policy.application` span. Marked `unsupported` when no trace is supplied. |
+| `policy-shield-overhead` | onboard trace | Marked `unsupported` in v1: the available `nemoclaw.policy.application` span measures setup, not request-path shield overhead. Interactive traces can also include human think time. |
 
 Trace metrics require a completed NemoClaw onboard trace with successful root
 and metric spans. A valid trace without a selected metric reports that metric as
@@ -38,8 +43,11 @@ non-zero.
   sandbox — `https://inference.local/v1`).
 - The API key in an environment variable (never passed as a flag).
 - Optional: an onboard trace artifact for the sandbox/policy metrics. Produce one
-  by running `NEMOCLAW_TRACE=1 nemoclaw onboard ...`; the trace file path is
-  printed and also controlled by `NEMOCLAW_TRACE_FILE` / `NEMOCLAW_TRACE_DIR`.
+  by running `NEMOCLAW_TRACE=1 nemoclaw onboard --non-interactive ...`; the trace
+  file path is printed and also controlled by `NEMOCLAW_TRACE_FILE` /
+  `NEMOCLAW_TRACE_DIR`. Non-interactive collection provides more comparable
+  context; request-path policy overhead remains unsupported until dedicated
+  instrumentation exists.
 
 ## Usage
 
@@ -99,6 +107,10 @@ Run `npm run bench -- --help` for all flags.
   ]
 }
 ```
+
+Trace-backed metrics also include a sanitized `context` object when available
+(`provider`, `model`, `agent`, `non_interactive`, and `fresh`) so runs can be
+compared without exposing sandbox names or credentials.
 
 The harness exits non-zero when a selected metric errors, a supplied trace is
 invalid, or required prerequisites (endpoint, model, API key) are missing.

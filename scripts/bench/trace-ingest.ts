@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { BenchMetric, LatencyStats, MetricId } from "./lib";
+import { redactFull } from "../../src/lib/security/redact";
+
+import type { BenchMetric, BenchMetricContext, LatencyStats, MetricId } from "./lib";
 
 // Span names emitted by src/lib/onboard/tracing.ts into the nemoclaw.trace_timing
 // artifact. The benchmark reads canonical emitted spans rather than adding
@@ -17,17 +19,26 @@ interface TraceLikeSpan {
   name?: unknown;
   duration_ms?: unknown;
   status?: unknown;
+  attributes?: unknown;
 }
 
 interface ValidTrace {
   rootSpanId: string;
+  rootDurationMs: number;
+  rootAttributes: Record<string, unknown>;
   spans: TraceLikeSpan[];
 }
 
 type TraceMetricId = Extract<MetricId, "sandbox-cold-start" | "policy-shield-overhead">;
 type TraceInspection = { ok: true; trace: ValidTrace } | { ok: false; reason: string };
 type MetricSpan =
-  | { kind: "ok"; durationMs: number; spanId: string; parentSpanId?: string }
+  | {
+      kind: "ok";
+      durationMs: number;
+      spanId: string;
+      parentSpanId?: string;
+      attributes: Record<string, unknown>;
+    }
   | { kind: "missing" }
   | { kind: "error"; reason: string };
 
@@ -91,7 +102,15 @@ function inspectTraceArtifact(artifact: unknown): TraceInspection {
   if (!isValidDuration(root.duration_ms)) {
     return { ok: false, reason: "onboard root span has an invalid duration" };
   }
-  return { ok: true, trace: { rootSpanId: root.span_id, spans } };
+  return {
+    ok: true,
+    trace: {
+      rootSpanId: root.span_id,
+      rootDurationMs: root.duration_ms,
+      rootAttributes: asRecord(root.attributes) ?? {},
+      spans,
+    },
+  };
 }
 
 function isValidDuration(value: unknown): value is number {
@@ -119,7 +138,36 @@ function readMetricSpan(trace: ValidTrace, name: string): MetricSpan {
     kind: "ok",
     durationMs: round3(span.duration_ms),
     spanId: span.span_id,
+    attributes: asRecord(span.attributes) ?? {},
     ...(typeof span.parent_span_id === "string" ? { parentSpanId: span.parent_span_id } : {}),
+  };
+}
+
+function safeContextString(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.trim().length === 0) return undefined;
+  return redactFull(value)
+    .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
+    .trim()
+    .slice(0, 160);
+}
+
+function traceMetricContext(
+  trace: ValidTrace,
+  metricAttributes: Record<string, unknown>,
+): BenchMetricContext {
+  const sandboxAttributes =
+    asRecord(trace.spans.find((span) => span.name === SANDBOX_PHASE_SPAN)?.attributes) ?? {};
+  const provider = safeContextString(metricAttributes.provider ?? sandboxAttributes.provider);
+  const model = safeContextString(sandboxAttributes.model);
+  const agent = safeContextString(trace.rootAttributes.agent ?? sandboxAttributes.agent);
+  const nonInteractive = trace.rootAttributes.non_interactive;
+  const fresh = trace.rootAttributes.fresh;
+  return {
+    ...(provider ? { provider } : {}),
+    ...(model ? { model } : {}),
+    ...(agent ? { agent } : {}),
+    ...(typeof nonInteractive === "boolean" ? { non_interactive: nonInteractive } : {}),
+    ...(typeof fresh === "boolean" ? { fresh } : {}),
   };
 }
 
@@ -157,6 +205,12 @@ export function ingestSandboxColdStart(artifact: unknown): BenchMetric {
       `${SANDBOX_PHASE_SPAN} is not a child of the onboard root`,
     );
   }
+  if (phase.durationMs > inspected.trace.rootDurationMs) {
+    return invalidTraceMetric(
+      "sandbox-cold-start",
+      `${SANDBOX_PHASE_SPAN} duration exceeds the onboard root`,
+    );
+  }
 
   const breakdown: Record<string, number> = { sandbox_phase_ms: phase.durationMs };
   const readiness = readMetricSpan(inspected.trace, SANDBOX_READINESS_SPAN);
@@ -178,7 +232,12 @@ export function ingestSandboxColdStart(artifact: unknown): BenchMetric {
     }
     breakdown.readiness_wait_ms = readiness.durationMs;
   }
-  return { ...base, breakdown, stats: singleValueStats(phase.durationMs) };
+  return {
+    ...base,
+    breakdown,
+    context: traceMetricContext(inspected.trace, phase.attributes),
+    stats: singleValueStats(phase.durationMs),
+  };
 }
 
 export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
@@ -196,7 +255,37 @@ export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
         "no policy.application span in the trace artifact (re-run `nemoclaw onboard` with NEMOCLAW_TRACE=1, then pass --trace <file>)",
     };
   }
-  return { ...base, stats: singleValueStats(policy.durationMs) };
+  if (policy.parentSpanId !== inspected.trace.rootSpanId) {
+    return invalidTraceMetric(
+      "policy-shield-overhead",
+      `${POLICY_APPLICATION_SPAN} is not a child of the onboard root`,
+    );
+  }
+  if (policy.durationMs > inspected.trace.rootDurationMs) {
+    return invalidTraceMetric(
+      "policy-shield-overhead",
+      `${POLICY_APPLICATION_SPAN} duration exceeds the onboard root`,
+    );
+  }
+  const context = traceMetricContext(inspected.trace, policy.attributes);
+  if (inspected.trace.rootAttributes.non_interactive !== true) {
+    return {
+      ...base,
+      status: "unsupported",
+      source: "none",
+      context,
+      reason:
+        "interactive policy selection can include human think time; collect the trace with `nemoclaw onboard --non-interactive`",
+    };
+  }
+  return {
+    ...base,
+    status: "unsupported",
+    source: "none",
+    context,
+    reason:
+      "the onboard trace records policy application setup time, not request-path shield overhead; dedicated request-path timing is not available",
+  };
 }
 
 function round3(value: number): number {

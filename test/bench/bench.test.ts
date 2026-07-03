@@ -60,6 +60,10 @@ const inferenceOptionsBase = {
   timeoutMs: 1000,
 };
 
+const VALID_COMPLETION = JSON.stringify({
+  choices: [{ message: { role: "assistant", content: "PONG" } }],
+});
+
 const TRACE_ID = "0123456789abcdef0123456789abcdef";
 const ROOT_SPAN_ID = "0123456789abcdef";
 let spanSequence = 1;
@@ -92,12 +96,19 @@ function traceArtifact(
     rootDurationMs?: number;
     summaryTraceId?: string;
     scopeName?: string;
+    rootAttributes?: Record<string, unknown>;
   } = {},
 ): TraceArtifact {
   const root = traceSpan("nemoclaw.onboard", options.rootDurationMs ?? 3000, {
     span_id: ROOT_SPAN_ID,
     parent_span_id: undefined,
     status: options.rootStatus ?? { code: "OK" },
+    attributes: {
+      fresh: false,
+      non_interactive: true,
+      agent: "openclaw",
+      ...options.rootAttributes,
+    },
   });
   return {
     resource_spans: [
@@ -157,6 +168,19 @@ describe("buildChatCompletionsUrl", () => {
   ])("normalizes trailing slashes for %s", (base) => {
     expect(buildChatCompletionsUrl(base)).toBe("https://inference.local/v1/chat/completions");
   });
+
+  it("appends the completion path before query parameters and removes fragments", () => {
+    expect(buildChatCompletionsUrl("https://host.test/v1?tenant=alpha#ignored")).toBe(
+      "https://host.test/v1/chat/completions?tenant=alpha",
+    );
+  });
+
+  it("rejects non-HTTP and credential-bearing endpoints", () => {
+    expect(() => buildChatCompletionsUrl("file:///tmp/inference")).toThrow("HTTP or HTTPS");
+    expect(() => buildChatCompletionsUrl("https://user:pass@host.test/v1")).toThrow(
+      "must not include username or password",
+    );
+  });
 });
 
 describe("redactBaseUrl", () => {
@@ -173,12 +197,11 @@ describe("redactBaseUrl", () => {
 
   it("redacts credential-bearing query parameters", () => {
     const redacted = redactBaseUrl(
-      "https://inference.local/v1?api_key=clear-api-secret&password=clear-password&key=clear-key&authorization=clear-auth",
+      "https://inference.local/v1?api_key=clear-api-secret&password=clear-password&custom=clear-query-secret",
     );
     expect(redacted).not.toContain("clear-api-secret");
     expect(redacted).not.toContain("clear-password");
-    expect(redacted).not.toContain("clear-key");
-    expect(redacted).not.toContain("clear-auth");
+    expect(redacted).not.toContain("clear-query-secret");
   });
 
   it("does not echo malformed or unsupported endpoint URLs", () => {
@@ -204,7 +227,7 @@ describe("runInferenceRoundTrip", () => {
     const metric = await runInferenceRoundTrip({
       ...inferenceOptionsBase,
       samples: 2,
-      fetchImpl: fakeFetch(200, "{}"),
+      fetchImpl: fakeFetch(200, VALID_COMPLETION),
       clock: queueClock([0, 10, 100, 130]),
     });
     expect(metric.status).toBe("ok");
@@ -215,14 +238,42 @@ describe("runInferenceRoundTrip", () => {
   });
 
   it("returns an error metric on a non-2xx response", async () => {
+    const echoedSecret = inferenceOptionsBase.apiKey;
     const metric = await runInferenceRoundTrip({
       ...inferenceOptionsBase,
       samples: 1,
-      fetchImpl: fakeFetch(500, "upstream boom"),
+      fetchImpl: fakeFetch(500, `echoed prompt and credential: ${echoedSecret}`),
       clock: queueClock([0, 5]),
     });
     expect(metric.status).toBe("error");
     expect(metric.reason).toContain("HTTP 500");
+    expect(metric.reason).not.toContain(echoedSecret);
+    expect(metric.reason).not.toContain("echoed prompt");
+  });
+
+  it("rejects an HTTP 2xx body that is not a chat completion", async () => {
+    const metric = await runInferenceRoundTrip({
+      ...inferenceOptionsBase,
+      samples: 1,
+      fetchImpl: fakeFetch(200, "{}"),
+      clock: queueClock([0, 5]),
+    });
+    expect(metric.status).toBe("error");
+    expect(metric.reason).toContain("not an OpenAI-compatible chat completion");
+  });
+
+  it.each([
+    { message: { content: null, reasoning_content: "reasoning output" } },
+    { message: { content: "", reasoning: "reasoning output" } },
+    { text: "legacy completion output" },
+  ])("accepts compatible reasoning or text output: $message $text", async (choice) => {
+    const metric = await runInferenceRoundTrip({
+      ...inferenceOptionsBase,
+      samples: 1,
+      fetchImpl: fakeFetch(200, JSON.stringify({ choices: [choice] })),
+      clock: queueClock([0, 5]),
+    });
+    expect(metric.status).toBe("ok");
   });
 
   it("returns an error metric when the request throws", async () => {
@@ -236,14 +287,31 @@ describe("runInferenceRoundTrip", () => {
       clock: queueClock([0, 5]),
     });
     expect(metric.status).toBe("error");
-    expect(metric.reason).toContain("ECONNREFUSED");
+    expect(metric.reason).toBe("Error: request failed");
+  });
+
+  it("does not copy a credential-bearing fetch error into the report", async () => {
+    const throwingFetch = (async () => {
+      throw new TypeError(
+        "request to https://user:clear-password@host/v1?secret=clear-query-secret failed",
+      );
+    }) as unknown as typeof fetch;
+    const metric = await runInferenceRoundTrip({
+      ...inferenceOptionsBase,
+      samples: 1,
+      fetchImpl: throwingFetch,
+      clock: queueClock([0, 5]),
+    });
+    expect(metric.reason).toBe("TypeError: request failed");
+    expect(metric.reason).not.toContain("clear-password");
+    expect(metric.reason).not.toContain("clear-query-secret");
   });
 
   it("refuses redirects so prompts stay on the configured origin", async () => {
     let requestInit: RequestInit | undefined;
     const fetchImpl: typeof fetch = async (_input, init) => {
       requestInit = init;
-      return { ok: true, status: 200, text: async () => "{}" } as Response;
+      return { ok: true, status: 200, text: async () => VALID_COMPLETION } as Response;
     };
     const metric = await runInferenceRoundTrip({
       ...inferenceOptionsBase,
@@ -292,6 +360,9 @@ describe("trace ingestion", () => {
     expect(metric.status).toBe("ok");
     expect(metric.breakdown).toEqual({ sandbox_phase_ms: 2000, readiness_wait_ms: 800 });
     expect(metric.stats?.median_ms).toBe(2000);
+    // This span exists only around createSandbox(); an initial cold creation can
+    // have fresh=false because --fresh controls forced recreation.
+    expect(metric.context?.fresh).toBe(false);
   });
 
   it("marks sandbox cold-start unsupported when spans are absent", () => {
@@ -301,10 +372,21 @@ describe("trace ingestion", () => {
     expect(metric.reason).toContain("trace");
   });
 
-  it("reads the policy.application span", () => {
-    const metric = ingestPolicyOverhead(traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, 42)]));
-    expect(metric.status).toBe("ok");
-    expect(metric.stats?.median_ms).toBe(42);
+  it("does not present policy application setup time as request-path overhead", () => {
+    const metric = ingestPolicyOverhead(
+      traceArtifact([
+        traceSpan(POLICY_APPLICATION_SPAN, 42, { attributes: { provider: "nvidia" } }),
+      ]),
+    );
+    expect(metric.status).toBe("unsupported");
+    expect(metric.stats).toBeUndefined();
+    expect(metric.reason).toContain("not request-path shield overhead");
+    expect(metric.context).toMatchObject({
+      provider: "nvidia",
+      agent: "openclaw",
+      non_interactive: true,
+      fresh: false,
+    });
   });
 
   it("marks policy overhead unsupported when the span is absent", () => {
@@ -367,6 +449,29 @@ describe("trace ingestion", () => {
       traceSpan(SANDBOX_READINESS_SPAN, 500, { parent_span_id: ROOT_SPAN_ID }),
     ]);
     expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects a sandbox phase longer than the onboard root", () => {
+    const artifact = traceArtifact([traceSpan(SANDBOX_PHASE_SPAN, 3001)]);
+    expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects foreign and impossible policy spans", () => {
+    const foreign = traceArtifact([
+      traceSpan(POLICY_APPLICATION_SPAN, 42, { parent_span_id: "foreign" }),
+    ]);
+    const tooLong = traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, 3001)]);
+    expect(ingestPolicyOverhead(foreign)).toMatchObject({ status: "error" });
+    expect(ingestPolicyOverhead(tooLong)).toMatchObject({ status: "error" });
+  });
+
+  it("marks interactive policy timing unsupported because it can include human think time", () => {
+    const artifact = traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, 42)], {
+      rootAttributes: { non_interactive: false },
+    });
+    const metric = ingestPolicyOverhead(artifact);
+    expect(metric).toMatchObject({ status: "unsupported", source: "none" });
+    expect(metric.reason).toContain("human think time");
   });
 });
 

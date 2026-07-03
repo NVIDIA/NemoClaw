@@ -206,7 +206,12 @@ async function buildReport(options: CliOptions): Promise<BenchReport> {
     schema_version: BENCH_SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
     environment: collectEnvironment(),
-    target: buildBenchTarget(options.baseUrl, options.model, apiKey.value !== undefined),
+    target: buildBenchTarget(
+      options.baseUrl,
+      options.model,
+      apiKey.value !== undefined,
+      apiKey.value ? [apiKey.value] : [],
+    ),
     metrics,
   };
 }
