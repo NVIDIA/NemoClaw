@@ -343,4 +343,43 @@ const ctx = module.exports;
     assert.deepEqual(payload.calls.apply, [{ sandboxName: "test-sb", presetName: "github" }]);
     assert.deepEqual(payload.sessionUpdates, []);
   });
+
+  // Restricted-tier suppression (see src/lib/onboard/policy-tier-suppression.ts)
+  // only filters agent-required presets at the onboarding boundary
+  // (suggestions / preservation / resume). The documented operator escape
+  // hatch — `nemoclaw <sandbox> policy-add <preset>` — bypasses the
+  // suppression module and goes directly through `policies.applyPreset`.
+  // This regression pins down that contract: the restricted-incompatible
+  // presets can still be applied on demand.
+  it("policy-add openclaw-pricing succeeds independently of restricted-tier suppression (escape hatch contract)", () => {
+    const script = `${buildPreamble({
+      presetNamesAvailable: ["npm", "openclaw-pricing"],
+      sessionSandboxName: "test-sb",
+      sessionPolicyPresets: [],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxPolicy("test-sb", { preset: "openclaw-pricing", yes: true });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      calls: ctx.calls,
+      sessionUpdates: ctx.sessionUpdates,
+      finalSession: ctx.getSessionState(),
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.calls.apply, [
+      { sandboxName: "test-sb", presetName: "openclaw-pricing" },
+    ]);
+    assert.deepEqual(payload.sessionUpdates[0].policyPresets, ["openclaw-pricing"]);
+  });
 });

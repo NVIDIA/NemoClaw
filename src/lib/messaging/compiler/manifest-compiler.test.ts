@@ -307,6 +307,18 @@ describe("ManifestCompiler", () => {
         }),
       ]),
     );
+    expect(plan.runtimeSetup?.nodePreloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "teams",
+          module: "msteams-message-hints",
+          source: "/usr/local/lib/nemoclaw/preloads/msteams-message-hints.js",
+          target: "/tmp/nemoclaw-msteams-message-hints.js",
+          injectInto: ["boot", "connect"],
+          optional: false,
+        }),
+      ]),
+    );
     expect(plan.buildSteps.every((step) => step.value !== undefined)).toBe(true);
     expect(plan.stateUpdates).toContainEqual({
       channelId: "wechat",
@@ -1011,7 +1023,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1080,7 +1091,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-config-prompt",
@@ -1164,7 +1174,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1309,7 +1318,6 @@ describe("ManifestCompiler", () => {
       ],
       policyPresets: ["matrix"],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-enroll",

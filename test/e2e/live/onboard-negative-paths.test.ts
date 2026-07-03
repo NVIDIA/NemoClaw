@@ -146,3 +146,12 @@ liveTest(
     });
   },
 );
+
+// The `policy-add --from-file` allowed_ips rejection (#6073) is exercised where
+// it can actually reach the guard: the CLI resolves sandbox existence before
+// dispatching policy-add, so a fake sandbox name fails "sandbox does not exist"
+// and never reaches preset validation. That end-to-end rejection now runs
+// against a real sandbox in test/e2e/live/network-policy.test.ts (tc-net-10),
+// and the guard logic itself (reject non-bridge allowed_ips, accept the
+// host.openshell.internal bridge, object-level and prototype-chain cases) is
+// unit-covered in src/lib/policy/preset-allowed-ips.test.ts.

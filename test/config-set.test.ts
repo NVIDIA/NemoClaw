@@ -15,8 +15,10 @@ const {
   validateUrlValue,
   validateUrlValueWithDns,
   rewriteConfigUrlsWithDnsPinning,
+  restartSandboxAgentAfterConfigSet,
   formatConfigValueForLogs,
   resolveAgentConfig,
+  buildConfigSetRestartGuidance,
   buildRecomputeSandboxConfigHashScript,
 } = require("../src/lib/sandbox/config");
 const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
@@ -46,7 +48,7 @@ describe("resolveAgentConfig", () => {
 });
 
 describe("buildRecomputeSandboxConfigHashScript", () => {
-  it("keeps OpenClaw on the mutable compatibility hash", () => {
+  it("does not run a pathname hash pass after an OpenClaw config transaction", () => {
     const script = buildRecomputeSandboxConfigHashScript({
       agentName: "openclaw",
       configPath: "/sandbox/.openclaw/openclaw.json",
@@ -56,13 +58,10 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
       sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
     });
 
-    expect(script).toContain("cd '/sandbox/.openclaw'");
-    expect(script).toContain("sha256sum 'openclaw.json' > .config-hash");
-    expect(script).toContain("chown sandbox:sandbox .config-hash");
-    expect(script).toContain("chmod 660 .config-hash");
+    expect(script).toBeNull();
   });
 
-  it("updates Hermes strict and compatibility hashes with the expected permissions", () => {
+  it("does not run a second pathname-based hash pass after a Hermes config transaction", () => {
     const script = buildRecomputeSandboxConfigHashScript({
       agentName: "hermes",
       configPath: "/sandbox/.hermes/config.yaml",
@@ -72,21 +71,7 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
       sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
     });
 
-    expect(script).toContain("strict_hash='/etc/nemoclaw/hermes.config-hash'");
-    expect(script).toContain('strict_tmp="${strict_hash}.tmp.$$"');
-    expect(script).toContain("compat_hash='/sandbox/.hermes/.config-hash'");
-    expect(script).toContain('compat_tmp="${compat_hash}.tmp.$$"');
-    expect(script).toContain('trap \'rm -f "$strict_tmp" "$compat_tmp"\' EXIT HUP INT TERM');
-    expect(script).toContain(
-      "sha256sum '/sandbox/.hermes/config.yaml' '/sandbox/.hermes/.env' > \"$strict_tmp\"",
-    );
-    expect(script).toContain('chown root:root "$strict_tmp"');
-    expect(script).toContain('chmod 444 "$strict_tmp"');
-    expect(script).toContain('mv -f "$strict_tmp" "$strict_hash"');
-    expect(script).toContain('cp "$strict_hash" "$compat_tmp"');
-    expect(script).toContain('chown sandbox:sandbox "$compat_tmp"');
-    expect(script).toContain('chmod 600 "$compat_tmp"');
-    expect(script).toContain('mv -f "$compat_tmp" "$compat_hash"');
+    expect(script).toBeNull();
   });
 });
 
@@ -119,6 +104,45 @@ describe("selectDirectSandboxContainer", () => {
 });
 
 describe("config set helpers", () => {
+  describe("buildConfigSetRestartGuidance", () => {
+    it("keeps managed restart guidance for OpenClaw and Hermes", () => {
+      for (const agentName of ["openclaw", "hermes"]) {
+        const output = buildConfigSetRestartGuidance("alpha", agentName).join("\n");
+
+        expect(output).toContain("--restart");
+        expect(output).toContain("nemoclaw 'alpha' gateway restart");
+      }
+    });
+
+    it("uses runtime-specific guidance for custom agents", () => {
+      const output = buildConfigSetRestartGuidance("custom-box", "custom-agent").join("\n");
+
+      expect(output).toContain("Follow the restart procedure for 'custom-agent'");
+      expect(output).toContain("NemoClaw does not manage restarts for this agent");
+      expect(output).not.toContain("--restart");
+      expect(output).not.toContain("gateway restart");
+    });
+  });
+
+  describe("restartSandboxAgentAfterConfigSet", () => {
+    it("routes --restart through the managed gateway supervisor flow", () => {
+      const calls: string[] = [];
+
+      restartSandboxAgentAfterConfigSet("alpha", (sandboxName: string) => {
+        calls.push(sandboxName);
+        return { ok: true };
+      });
+
+      expect(calls).toEqual(["alpha"]);
+    });
+
+    it("fails the config command when the managed restart fails", () => {
+      expect(() => restartSandboxAgentAfterConfigSet("alpha", () => ({ ok: false }))).toThrow(
+        "Config was updated, but the managed gateway restart failed for 'alpha'.",
+      );
+    });
+  });
+
   describe("extractDotpath", () => {
     it("extracts a top-level key", () => {
       expect(extractDotpath({ foo: "bar" }, "foo")).toBe("bar");
@@ -489,11 +513,20 @@ describe("config set helpers", () => {
       );
     });
 
-    it("preserves HTTPS hostnames after DNS validation", async () => {
+    it("fails closed for DNS-backed HTTPS hostname URLs", async () => {
       const lookup = async () => [{ address: "93.184.216.34", family: 4 }];
-      await expect(rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup)).resolves.toBe(
-        "https://example.com/v1",
-      );
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://example.com/v1", lookup),
+      ).rejects.toThrow(/DNS-backed HTTPS URLs are not supported/);
+    });
+
+    it("preserves HTTPS IP-literal URLs without DNS lookup", async () => {
+      const lookup = async () => {
+        throw new Error("lookup should not run for IP literals");
+      };
+      await expect(
+        rewriteConfigUrlsWithDnsPinning("https://93.184.216.34/v1", lookup),
+      ).resolves.toBe("https://93.184.216.34/v1");
     });
 
     it("recursively rewrites nested HTTP URLs and leaves non-URLs unchanged", async () => {
@@ -502,7 +535,6 @@ describe("config set helpers", () => {
         rewriteConfigUrlsWithDnsPinning(
           {
             primary: "http://api.example.com/v1",
-            secure: "https://secure.example.com/v1",
             label: "production",
             fallbacks: ["http://backup.example.com/v2"],
           },
@@ -510,7 +542,6 @@ describe("config set helpers", () => {
         ),
       ).resolves.toEqual({
         primary: "http://93.184.216.34/v1",
-        secure: "https://secure.example.com/v1",
         label: "production",
         fallbacks: ["http://93.184.216.34/v2"],
       });

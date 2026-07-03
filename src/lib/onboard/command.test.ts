@@ -141,6 +141,40 @@ describe("onboard command options", () => {
     expect(errors.join("\n")).toContain("aliases: nemohermes → hermes");
   });
 
+  it("rejects an unknown NEMOCLAW_AGENT cleanly instead of throwing uncaught (#5972)", () => {
+    // #5972: an unknown NEMOCLAW_AGENT must fail via the clean error/exit path,
+    // matching --agent, not by throwing uncaught deep in runOnboard.
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {},
+        {
+          env: { NEMOCLAW_AGENT: "bogus-agent" },
+          listAgents: () => ["openclaw", "hermes"],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Unknown agent 'bogus-agent' (from NEMOCLAW_AGENT)");
+    expect(errors.join("\n")).toContain("aliases: nemohermes → hermes");
+  });
+
+  it("accepts a valid NEMOCLAW_AGENT (and its aliases) without forcing the flag value", () => {
+    const listAgents = () => ["openclaw", "hermes", "langchain-deepagents-code"];
+    // Valid env agents resolve downstream, so resolveAgent leaves `agent` null.
+    expect(resolve({}, { env: { NEMOCLAW_AGENT: "hermes" }, listAgents }).agent).toBeNull();
+    expect(resolve({}, { env: { NEMOCLAW_AGENT: "nemohermes" }, listAgents }).agent).toBeNull();
+    expect(resolve({}, { env: {}, listAgents }).agent).toBeNull();
+  });
+
+  it("prefers the --agent flag over NEMOCLAW_AGENT for validation", () => {
+    const listAgents = () => ["openclaw", "hermes"];
+    // Flag is valid even when the env var is bogus — flag takes precedence.
+    expect(
+      resolve({ agent: "hermes" }, { env: { NEMOCLAW_AGENT: "bogus" }, listAgents }).agent,
+    ).toBe("hermes");
+  });
+
   it("runs onboard with resolved options", async () => {
     const runOnboard = vi.fn(async () => {});
     await runOnboardCommand({
@@ -152,6 +186,36 @@ describe("onboard command options", () => {
     });
 
     expect(runOnboard).toHaveBeenCalledWith(expect.objectContaining({ resume: true }));
+  });
+
+  it("treats a prompt EOF during onboarding as cancellation and exits non-zero (#5976)", async () => {
+    const errors: string[] = [];
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw Object.assign(new Error("Prompt closed before input"), { code: "EOF" });
+        },
+        error: (message = "") => errors.push(message),
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Installation cancelled");
+  });
+
+  it("rethrows non-cancellation onboarding failures unchanged (#5976)", async () => {
+    await expect(
+      runOnboardCommand({
+        flags: {},
+        env: {},
+        runOnboard: async () => {
+          throw new Error("docker is not reachable");
+        },
+        error: () => {},
+        exit: exitWithCode,
+      }),
+    ).rejects.toThrow("docker is not reachable");
   });
 
   it("sets the Ollama autostart override before onboarding", async () => {

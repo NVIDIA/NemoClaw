@@ -5,6 +5,7 @@
 // Extracted verbatim from onboard.setupInference (#767).
 
 import type { HermesAuthMethod } from "../hermes-auth";
+import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
 import type { HermesDeps, SetupInferenceResult } from "./types";
 
 export async function setupHermesProviderInference(
@@ -28,6 +29,43 @@ export async function setupHermesProviderInference(
     hermesAuthMethod,
     hermesToolGateways,
   } = args;
+  // A null/absent endpointUrl is intentionally accepted: the Hermes
+  // managed/OAuth path supplies the endpoint later (using the default managed
+  // inference route), so SSRF validation only applies to an explicitly-supplied
+  // custom endpoint.
+  let resolvedEndpointUrl = endpointUrl;
+  if (endpointUrl) {
+    let parsedEndpoint: URL;
+    try {
+      parsedEndpoint = new URL(endpointUrl);
+    } catch {
+      throw new Error(`Inference endpoint URL is not a valid URL.`);
+    }
+    if (parsedEndpoint.protocol !== "http:" && parsedEndpoint.protocol !== "https:") {
+      throw new Error(
+        `Inference endpoint URL uses an unsupported scheme. Only http and https are allowed.`,
+      );
+    }
+    if (parsedEndpoint.username || parsedEndpoint.password) {
+      throw new Error(
+        `Inference endpoint URL must not contain credentials. Remove the username and password from the URL.`,
+      );
+    }
+    // DNS-resolving + pinning validation closes the DNS-rebinding gap a
+    // string-only hostname check leaves open. For HTTP this returns the
+    // pinned-IP URL. DNS-backed HTTPS fails closed until NemoClaw has a
+    // runtime-aware transport that can preserve TLS SNI/Host while pinning the
+    // resolved peer IP across the downstream OpenShell boundary.
+    try {
+      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
+      resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Inference endpoint URL points to a private or internal address, or could not be resolved: ${message}`,
+      );
+    }
+  }
   const {
     runOpenshell,
     upsertProvider: _upsertProvider, // intentionally unused; matches inline branch
@@ -88,12 +126,12 @@ export async function setupHermesProviderInference(
           ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
               apiKey: resolveHermesNousApiKey(),
               runOpenshell,
-              baseUrl: endpointUrl || undefined,
+              baseUrl: resolvedEndpointUrl || undefined,
             })
           : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
               allowInteractiveLogin: !isNonInteractive(),
               runOpenshell,
-              baseUrl: endpointUrl || undefined,
+              baseUrl: resolvedEndpointUrl || undefined,
               toolGatewayPresets: hermesToolGateways,
             });
       if (!state) {
@@ -129,7 +167,7 @@ export async function setupHermesProviderInference(
   }
 
   verifyInferenceRoute(provider, model);
-  verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
+  verifyOnboardInferenceSmoke({ provider, model, endpointUrl: resolvedEndpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }

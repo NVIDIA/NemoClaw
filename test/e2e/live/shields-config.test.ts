@@ -178,7 +178,7 @@ async function cleanupSandbox(
 
 async function findSandboxContainer(host: HostCliClient): Promise<string> {
   const result = await docker(host, ["ps", "--filter", `name=openshell-${SANDBOX_NAME}`, "-q"], {
-    artifactName: "phase-5b-docker-ps-sandbox-container",
+    artifactName: "docker-ps-sandbox-container",
     timeoutMs: 30_000,
   });
   expect(result.exitCode, resultText(result)).toBe(0);
@@ -235,6 +235,7 @@ RUN_SHIELDS_TEST(
       contracts: [
         "source install creates a live OpenClaw sandbox",
         "default config starts mutable with unified .openclaw layout",
+        "documented nemoclaw exec doctor path preserves 2770/660 and gateway writes",
         "shields up locks config/workspace and config get redacts secrets",
         "host-root chmod-write-chmod tamper is detected as content drift",
         "shields down restores mutable modes and records audit JSONL",
@@ -294,6 +295,56 @@ RUN_SHIELDS_TEST(
     const dirDefault = await statPath(sandbox, CONFIG_DIR, "phase-2-config-dir-perms-default");
     expect(dirDefault.mode).toBe("2770");
     expect(dirDefault.owner).toBe("sandbox:sandbox");
+
+    const doctor = await runNemoclaw(
+      host,
+      [
+        SANDBOX_NAME,
+        "exec",
+        "--",
+        "bash",
+        "-c",
+        'openclaw doctor --fix; rc=$?; printf "doctor_exit:%s\\n" "$rc"; stat -c "doctor_file_mode:%a" /sandbox/.openclaw/openclaw.json; stat -c "doctor_dir_mode:%a" /sandbox/.openclaw',
+      ],
+      {
+        artifactName: "phase-2b-documented-exec-doctor-fix",
+        timeoutMs: 5 * 60_000,
+      },
+    );
+    expect(doctor.exitCode, resultText(doctor)).toBe(0);
+    expect(resultText(doctor)).toMatch(/doctor_exit:\d+/);
+    expect(resultText(doctor)).toContain("doctor_file_mode:600");
+    expect(resultText(doctor)).toContain("doctor_dir_mode:700");
+
+    const configAfterDoctor = await statPath(
+      sandbox,
+      CONFIG_PATH,
+      "phase-2b-config-perms-after-doctor",
+    );
+    expect(configAfterDoctor).toMatchObject({ mode: "660", owner: "sandbox:sandbox" });
+    const dirAfterDoctor = await statPath(
+      sandbox,
+      CONFIG_DIR,
+      "phase-2b-config-dir-perms-after-doctor",
+    );
+    expect(dirAfterDoctor).toMatchObject({ mode: "2770", owner: "sandbox:sandbox" });
+
+    const containerId = await findSandboxContainer(host);
+    const gatewayWrite = await docker(
+      host,
+      ["exec", "-u", "gateway", containerId, "sh", "-c", `printf ' ' >>${CONFIG_PATH}`],
+      {
+        artifactName: "phase-2b-gateway-config-append-after-doctor",
+        timeoutMs: 30_000,
+      },
+    );
+    expect(gatewayWrite.exitCode, resultText(gatewayWrite)).toBe(0);
+    const refreshHash = await sandboxShell(
+      sandbox,
+      `cd ${CONFIG_DIR} && sha256sum openclaw.json >.config-hash`,
+      { artifactName: "phase-2b-refresh-hash-after-gateway-write" },
+    );
+    expect(refreshHash.exitCode, resultText(refreshHash)).toBe(0);
 
     const statusDefault = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
       artifactName: "phase-2-shields-status-default",
@@ -376,7 +427,6 @@ RUN_SHIELDS_TEST(
     expect(statusUp.exitCode, resultText(statusUp)).toBe(0);
     expect(statusUp.stdout).toContain("Shields: UP");
 
-    const containerId = await findSandboxContainer(host);
     const originalConfig = path.join(os.tmpdir(), `nemoclaw-shields-orig-${process.pid}.json`);
     await readOriginalConfig(host, containerId, originalConfig);
     try {
@@ -588,6 +638,7 @@ RUN_SHIELDS_TEST(
       assertions: {
         install: true,
         mutableDefault: true,
+        documentedExecDoctorPreservesGatewayWrites: true,
         shieldsUpLock: true,
         configGetRedaction: true,
         contentDriftDetection: true,

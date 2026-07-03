@@ -21,11 +21,17 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
+import { requireInferenceLocalCompletionText } from "./network-policy-inference.ts";
 import {
   POLICY_ADD_EXPECT_SCRIPT,
   requirePolicyPresetNumber,
 } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import {
+  ensureDockerAvailable,
+  runRestrictedOnboardWithRetry,
+} from "./restricted-onboard-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -37,6 +43,7 @@ const PERMISSIVE_POLICY = path.join(
   "openclaw-sandbox-permissive.yaml",
 );
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-net-policy-${process.pid}`;
+const SUPPRESSION_SANDBOX_NAME = `${SANDBOX_NAME}-suppression`;
 const RUN_NETWORK_POLICY_TEST = shouldRunLiveE2E() ? test : test.skip;
 
 const TEST_TIMEOUT_MS = 65 * 60_000;
@@ -46,6 +53,9 @@ const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
 const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
+const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
+const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
 type NemoEnv = NodeJS.ProcessEnv;
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -173,6 +183,22 @@ async function curlStatus(
   return text(result).trim();
 }
 
+async function waitForDeniedReasonLog(host: HostCliClient) {
+  return pollDeniedReasonLog({
+    attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
+    endpoint: DENIED_REASON_ENDPOINT,
+    readLogs: async (attempt) => {
+      const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
+        artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
+        timeoutMs: 60_000,
+      });
+      expect(logs.exitCode, text(logs)).toBe(0);
+      return text(logs);
+    },
+    settle: () => sleep(1_000),
+  });
+}
+
 async function startMarkerServer(
   marker: string,
 ): Promise<{ port: number; close: () => Promise<void> }> {
@@ -225,6 +251,38 @@ network_policies:
       - { path: /usr/local/bin/openclaw }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+`,
+    "utf8",
+  );
+  return target;
+}
+
+// A user-supplied preset that pins allowed_ips on a NON-bridge host. The guard
+// must reject this on a real sandbox even though the host.openshell.internal
+// exemption exists — the exemption must not become a blanket allowed_ips bypass
+// (#6073). Mirrors the writeHostGatewayPolicy shape but targets an arbitrary
+// private host.
+function writeEvilAllowedIpsPolicy(artifacts: ArtifactSink): string {
+  const target = artifacts.pathFor("policies/evil-allowed-ips.yaml");
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(
+    target,
+    `preset:
+  name: e2e-evil-allowed-ips
+  description: "Network-policy E2E allowed_ips SSRF-bypass rejection probe"
+
+network_policies:
+  e2e_evil_allowed_ips:
+    name: e2e_evil_allowed_ips
+    endpoints:
+      - host: 10.200.0.2
+        port: 18789
+        protocol: rest
+        enforcement: enforce
+        allowed_ips:
+          - 10.0.0.0/8
+        rules:
+          - allow: { method: GET, path: "/**" }
 `,
     "utf8",
   );
@@ -374,6 +432,7 @@ RUN_NETWORK_POLICY_TEST(
       boundary: "live-sandbox-network-policy",
       contracts: [
         "deny-by-default egress",
+        "OpenShell 0.0.72 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
         "read-only preset allowlist behavior",
         "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
         "live policy-add and dry-run behavior",
@@ -409,6 +468,7 @@ RUN_NETWORK_POLICY_TEST(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
+    expect(text(openshellVersion)).toContain("0.0.72");
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
@@ -488,6 +548,35 @@ RUN_NETWORK_POLICY_TEST(
     }
     expect(onboard?.exitCode, onboard ? text(onboard) : "onboard did not run").toBe(0);
 
+    // Invalid state: prior bugs left `openclaw-pricing` (and, under
+    // `NEMOCLAW_OPENCLAW_OTEL=1` with a local endpoint,
+    // `openclaw-diagnostics-otel-local`) live on restricted OpenClaw sandboxes
+    // even though the restricted tier promises zero third-party network access.
+    // Source boundary: live OpenShell `policy-list` after a successful
+    // restricted onboard and before any operator mutation (`policy-add brew`).
+    // This scenario enables `NEMOCLAW_WEB_SEARCH_ENABLED=1` so the later brave
+    // probe has a preset to allow, so the assertion below only proves the two
+    // OpenClaw-agent suppressed presets are absent. The authoritative
+    // source-of-truth for the linked issue's literal "zero applied presets"
+    // clause is the dedicated `restricted-openclaw-policy-suppression`
+    // scenario below — it onboards a default restricted sandbox (no
+    // web-search, no OpenClaw OTEL) and asserts the `policy-list` output has
+    // no `●`-bulleted entries; that scenario must remain the gate even if
+    // this scenario's assertion is ever weakened.
+    const policyListAfterOnboard = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
+      artifactName: "tc-net-01-policy-list-after-onboard",
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    });
+    expect(policyListAfterOnboard.exitCode, text(policyListAfterOnboard)).toBe(0);
+    expect(
+      policyListAfterOnboard.stdout,
+      `restricted onboard must not leave openclaw-pricing applied: ${text(policyListAfterOnboard)}`,
+    ).not.toMatch(/^[\s]*●[\s]+openclaw-pricing\b/m);
+    expect(
+      policyListAfterOnboard.stdout,
+      `restricted onboard must not leave openclaw-diagnostics-otel-local applied: ${text(policyListAfterOnboard)}`,
+    ).not.toMatch(/^[\s]*●[\s]+openclaw-diagnostics-otel-local\b/m);
+
     const denyDefault = await fetchStatus(
       sandbox,
       "https://example.com/",
@@ -496,6 +585,31 @@ RUN_NETWORK_POLICY_TEST(
     expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
       /STATUS_403|ERROR_/,
     );
+
+    const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
+      artifactName: "tc-net-4760-denied-long-hostname",
+    });
+    expect(
+      longHostnameDenial.exitCode !== 0 || /403|denied|forbidden/i.test(text(longHostnameDenial)),
+      `long-hostname egress probe must be denied: ${text(longHostnameDenial)}`,
+    ).toBe(true);
+
+    const deniedReason = await waitForDeniedReasonLog(host);
+    expect(deniedReason.reason, deniedReason.line).toContain(DENIED_REASON_ENDPOINT);
+    expect(deniedReason.reason, deniedReason.line).toMatch(
+      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i,
+    );
+    expect(deniedReason.reason, deniedReason.line).not.toContain("...");
+    const policyField = deniedReason.line.match(/\[policy:([^\s\]]+)/u)?.[1] ?? "";
+    const hasCompletePolicyDisposition =
+      (policyField !== "" && policyField !== "-") ||
+      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i.test(
+        deniedReason.reason,
+      );
+    expect(
+      hasCompletePolicyDisposition,
+      `DENIED log must retain a named policy or the explicit any-policy rejection: ${deniedReason.line}`,
+    ).toBe(true);
 
     const weatherApply = await applyPreset(host, "weather");
     expect(weatherApply.exitCode, text(weatherApply)).toBe(0);
@@ -725,9 +839,8 @@ printf '\n'
   -d '{"model":"nvidia/nemotron-3-super-120b-a12b","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":50}'`,
       { artifactName: "tc-net-07-inference-local", timeoutMs: 90_000 },
     );
-    const inferenceContent = JSON.parse(inference.stdout).choices?.[0]?.message?.content;
-    expect(typeof inferenceContent).toBe("string");
-    expect(inferenceContent.trim().length).toBeGreaterThan(0);
+    expect(inference.exitCode, text(inference)).toBe(0);
+    expect(requireInferenceLocalCompletionText(inference.stdout).length).toBeGreaterThan(0);
     const directProvider = await fetchStatus(
       sandbox,
       "https://inference-api.nvidia.com/v1/models",
@@ -754,6 +867,22 @@ printf '\n'
         { artifactName: "tc-net-10-host-gateway-policy-add", timeoutMs: SANDBOX_EXEC_TIMEOUT_MS },
       );
       expect(hostGatewayApply.exitCode, text(hostGatewayApply)).toBe(0);
+
+      // #6073: the same policy-add --from-file path must still reject
+      // allowed_ips on a non-bridge host on this real sandbox, proving the
+      // host.openshell.internal exemption is not a blanket allowed_ips bypass.
+      const evilPolicyFile = writeEvilAllowedIpsPolicy(artifacts);
+      const evilApply = await runNemoclaw(
+        host,
+        [SANDBOX_NAME, "policy-add", "--from-file", evilPolicyFile, "--yes"],
+        {
+          artifactName: "tc-net-10-evil-allowed-ips-rejection",
+          timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+        },
+      );
+      expect(evilApply.exitCode, text(evilApply)).not.toBe(0);
+      expect(text(evilApply)).toMatch(/allowed_ips|not permitted/i);
+
       await sleep(POLICY_SETTLE_MS);
 
       const approvedDirect = await fetchStatus(
@@ -822,5 +951,125 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
         permissiveMode: true,
       },
     });
+  },
+);
+
+// Invalid state: a default restricted OpenClaw onboard (no web-search, no
+// OpenClaw OTEL) used to leave `openclaw-pricing` applied, contradicting the
+// linked issue's "zero presets" acceptance clause. Source boundary: live
+// OpenShell `policy-list` after onboard and before any operator mutation.
+// Source-fix constraint: unit/handler tests stub policy APIs and the
+// brave-enabled `network-policy` scenario above probes the suppressed
+// preset names only, so neither proves the post-onboard applied set is
+// literally empty. Regression test: this scenario onboards a default
+// restricted OpenClaw sandbox and asserts `policy-list` shows no `●`
+// bullets. Removal condition: when the agent-required addition list moves
+// into per-agent declarative metadata so tier filtering happens at the
+// metadata layer (see `src/lib/onboard/policy-tier-suppression.ts`).
+//
+// Acceptance note (`NEMOCLAW_OPENCLAW_OTEL=1`): the OTEL-enabled live
+// variant is deferred to a follow-up nightly extension to keep this
+// scenario's wall-clock to a single onboard. The OTEL suppression contract
+// is covered by `test/policy-tiers-onboard.test.ts` and
+// `test/policy-tiers-onboard-restricted-stale-otel.test.ts` against the
+// real CLI through a stubbed policy API, and by the brave-enabled scenario
+// above which proves `openclaw-diagnostics-otel-local` is absent through the
+// live OpenShell `policy-list`. A regression in `requiredOpenclawOtelPolicyPresets()`
+// or the merge boundary would surface in both layers.
+//
+// Acceptance note (`policy-add` escape hatch): the documented escape hatch —
+// `nemoclaw <sandbox> policy-add <preset>` to re-apply a suppressed preset on
+// a restricted sandbox — does not change behavior in this PR. `policy-add`
+// invokes `policies.applyPreset` directly and is independent of the onboarding
+// suggestion / preservation / resume paths the suppression module touches, so
+// existing CLI coverage for `policy-add` continues to gate it. A dedicated
+// live re-add scenario was considered but deferred to keep this scenario's
+// wall-clock to a single onboard; if the escape hatch ever stops working on
+// restricted, a regression would surface in the CLI `policy-add` tests rather
+// than here.
+RUN_NETWORK_POLICY_TEST(
+  "network-policy: default restricted OpenClaw onboard leaves policy-list with zero active presets",
+  { timeout: TEST_TIMEOUT_MS },
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+    await artifacts.writeJson("scenario.json", {
+      id: "restricted-openclaw-policy-suppression",
+      runner: "vitest",
+      boundary: "live-sandbox-network-policy",
+      contracts: ["restricted tier applies zero presets"],
+    });
+
+    expect(
+      fs.existsSync(CLI_DIST_ENTRYPOINT),
+      "run `npm run build:cli` before live repo CLI scenarios",
+    ).toBe(true);
+
+    await ensureDockerAvailable({
+      host,
+      artifactName: "prereq-docker-info-restricted-zero-presets",
+      skip,
+      scenarioLabel: "restricted-zero-presets",
+    });
+
+    const openshellVersion = await host.command("openshell", ["--version"], {
+      artifactName: "prereq-openshell-version-restricted-zero-presets",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
+
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+
+    cleanup.add(`destroy restricted-zero-presets sandbox ${SUPPRESSION_SANDBOX_NAME}`, async () => {
+      await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
+        artifactName: "cleanup-nemoclaw-destroy-restricted-zero-presets",
+        env: baseEnv(),
+        timeoutMs: 120_000,
+      });
+      await sandbox.openshell(["sandbox", "delete", SUPPRESSION_SANDBOX_NAME], {
+        artifactName: "cleanup-openshell-delete-restricted-zero-presets",
+        env: baseEnv(),
+        timeoutMs: 60_000,
+      });
+    });
+
+    await runNemoclaw(host, [SUPPRESSION_SANDBOX_NAME, "destroy", "--yes"], {
+      artifactName: "pre-cleanup-nemoclaw-destroy-restricted-zero-presets",
+      env: baseEnv(),
+      timeoutMs: 120_000,
+    });
+
+    const onboard = await runRestrictedOnboardWithRetry({
+      host,
+      artifacts,
+      skip,
+      sandboxName: SUPPRESSION_SANDBOX_NAME,
+      apiKey,
+      scenarioLabel: "restricted-zero-presets",
+      scenarioSlug: "restricted-zero-presets",
+      preCleanupArtifactPrefix: "pre-cleanup-nemoclaw-destroy-restricted-zero-presets",
+      onboardArtifactPrefix: "onboard-restricted-zero-presets",
+      onboardTimeoutMs: ONBOARD_TIMEOUT_MS,
+      preCleanupTimeoutMs: 120_000,
+      runNemoclaw,
+      baseEnv,
+    });
+    expect(onboard.exitCode, text(onboard)).toBe(0);
+
+    const policyListAfterOnboard = await runNemoclaw(
+      host,
+      [SUPPRESSION_SANDBOX_NAME, "policy-list"],
+      {
+        artifactName: "restricted-zero-presets-policy-list-after-onboard",
+        timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+      },
+    );
+    expect(policyListAfterOnboard.exitCode, text(policyListAfterOnboard)).toBe(0);
+    const activeBullets = (policyListAfterOnboard.stdout.match(/^[\s]*●[\s]+(\S+)/gm) ?? []).map(
+      (line) => line.replace(/^[\s]*●[\s]+/, "").trim(),
+    );
+    expect(
+      activeBullets,
+      `restricted tier must apply zero presets; got ${JSON.stringify(activeBullets)} from:\n${text(policyListAfterOnboard)}`,
+    ).toEqual([]);
   },
 );

@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-contributor-update-docs
-description: Scan recent git commits for changes that affect user-facing behavior, then draft or update the corresponding documentation pages for release prep. Use when docs have fallen behind code changes, after a batch of features lands, during daily release prep, or when preparing a release. Trigger keywords - update docs, draft docs, docs from commits, sync docs, catch up docs, doc debt, docs behind, docs drift, release prep docs.
+description: Scan recent git commits for changes that affect user-facing behavior, then draft or update the corresponding documentation pages for release prep. Use when docs have fallen behind code changes, after a batch of features lands, during daily release prep, before cutting a release tag, or when recovering missed post-release docs. Trigger keywords - update docs, draft docs, docs from commits, sync docs, catch up docs, doc debt, docs behind, docs drift, release prep docs, pre-tag docs, release note docs.
 ---
 
 # Update Docs from Commits
@@ -16,7 +16,10 @@ Scan recent git history for commits that affect user-facing behavior and draft d
 
 - After a batch of features or fixes has landed and docs may be stale.
 - Before a release, to catch any doc gaps.
-- During daily release prep, before opening the docs refresh PR.
+- During daily release prep, before opening the release-note docs PR.
+- Before cutting a release tag, so release-note docs land on the same release train.
+- When maintainers run `/nemoclaw-contributor-update-docs for vX.Y.Z`, treat it as pre-tag release-prep docs for `vX.Y.Z` unless the tag already exists.
+- After a release only when maintainers missed the pre-tag docs step and need a catch-up PR.
 - When a contributor asks "what docs need updating?"
 
 ## Step 0: Load the Skip List
@@ -38,10 +41,12 @@ Keep the loaded skip list in memory for use throughout the skill execution and t
 
 ## Step 0.5: Find Release Announcement Notes
 
-When the user asks for release-prep or post-release docs for a specific version `n` (for example `0.0.63`), find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
-Use the announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
+When the user asks for release-prep docs for a specific version `n` (for example `0.0.63`), first determine whether this is pre-tag release prep or post-release recovery.
+For pre-tag release prep, use the draft release plan, maintainer context, PR list, and commit scan as source context because the announcement may not exist yet.
+For post-release recovery, find the NemoClaw GitHub discussion announcement for that release before drafting release notes.
+Use any available announcement as source context alongside the commit scan, especially for release themes, PR grouping, contributor thanks, and maintainer wording.
 
-Search recent discussions and select the announcement whose title or body references `v<n>` or `NemoClaw v<n>`:
+For post-release recovery, or when the user says the announcement already exists, search recent discussions and select the announcement whose title or body references `v<n>` or `NemoClaw v<n>`:
 
 ```bash
 gh api graphql -f owner=NVIDIA -f name=NemoClaw -f query='
@@ -62,7 +67,8 @@ query($owner: String!, $name: String!) {
 ```
 
 Prefer discussions in the `Announcements` category. If the discussion body is unavailable through `gh api`, use the GitHub discussion URL supplied by the user or fetch the discussion page content through the available tools.
-If no matching discussion exists, continue from the commit scan and report the missing announcement in the final summary.
+If no matching discussion exists during pre-tag release prep, continue from the commit scan and report that no announcement source was used.
+If no matching discussion exists during post-release recovery, continue from the commit scan and report the missing announcement in the final summary.
 
 ## Step 1: Identify Relevant Commits
 
@@ -94,7 +100,7 @@ git log v0.1.0..HEAD --oneline --no-merges --name-only
 For each relevant commit, determine which doc page(s) it affects. Use this mapping as a starting point:
 
 | Code area | Likely doc page(s) |
-|---|---|
+| --- | --- |
 | `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.mdx` |
 | `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.mdx` |
 | `nemoclaw/src/blueprint/` | `docs/reference/architecture.mdx` |
@@ -202,10 +208,12 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Determine the documented release version `n` from the user's request. For post-release documentation refreshes, label the PR with the next patch release label, not the documented release label. Release labels use `vX.Y.Z` format. For example, a docs refresh for release `0.0.63` uses label `v0.0.64`. Increment only the patch component; if the version is nonstandard or pre-release, ask before choosing a label. If the user did not provide a release version, ask for it before opening the release-prep PR.
-2. Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the release changes the AI-agent documentation entry points or routing guidance.
+1. Determine the documented release version `n` from the user's request. If the user did not provide a release version, ask for it before opening the release-prep PR.
+2. For the default pre-tag path, label the PR with the release being prepared. Release labels use `vX.Y.Z` format. For example, release-note docs for release `0.0.63` use label `v0.0.63`.
+3. Use the next patch release label only as a post-release recovery fallback when the release tag or announcement already exists and maintainers missed the pre-tag docs step. For example, a catch-up docs PR after release `0.0.63` uses label `v0.0.64`. Increment only the patch component; if the version is nonstandard or pre-release, ask before choosing a label.
+4. Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the release changes the AI-agent documentation entry points or routing guidance.
 
-## Step 9: Build and Verify
+## Step 8: Build and Verify
 
 After making changes, build the docs locally:
 
@@ -220,7 +228,7 @@ Check for:
 - Correct rendering of new content.
 - Markdown documentation routes and navigation still match the changed source pages.
 
-## Step 10: Open the Docs PR
+## Step 9: Open the Docs PR
 
 Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
@@ -228,9 +236,9 @@ Commit changes and open a pull request with a concise summary of the doc updates
 - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `area: docs` and next-patch release label so reviewers can identify doc-only changes for the next train.
+Apply the `area: docs` label and the correct release label so reviewers can identify doc-only changes for the intended release train.
 Add `area: skills` only if the PR changes a file under `.agents/skills/`.
-When creating the PR with `gh pr create`, pass the labels, for example a post-release docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
+When creating the PR with `gh pr create`, pass the labels. For example, a pre-tag release-note docs PR for `0.0.63` uses `--label "area: docs" --label v0.0.63`. A post-release recovery docs refresh for `0.0.63` uses `--label "area: docs" --label v0.0.64`.
 If the release label does not exist, report that instead of substituting another label.
 Follow `nemoclaw-contributor-create-pr` for the PR mechanics, including [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) and [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md).
 
@@ -250,18 +258,18 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 2. Filter to `feat`, `fix`, `refactor`, `perf` commits touching user-facing code.
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
-5. For release-specific docs, find the matching GitHub discussion announcement and use it as source context.
+5. For release-specific docs, use the draft release plan, maintainer context, PR list, commit scan, and any available announcement as source context.
 6. Draft doc updates reflecting the source code changes in the commits following the style guide.
-7. **Release prep only:** Determine the next-patch release label from the user-requested documented release version.
-   For a post-release docs refresh for `0.0.63`, use label `v0.0.64`.
-8. **Release prep only:** Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the AI-agent documentation entry points or routing guidance changed.
-9. Present the summary.
-10. Build with `npm run docs` to verify.
-11. **Release prep only:** Commit changes and open a pull request with the `area: docs` and next-patch release label. Include `area: skills` only if the PR changes `.agents/skills/`. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+7. **Release prep only:** Determine the release label from the user-requested documented release version. For the default pre-tag path, use the release being prepared, such as `v0.0.63` for release `0.0.63`.
+8. **Post-release recovery only:** If maintainers missed the pre-tag docs step and the release already shipped, use the next patch release label. For a post-release docs refresh for `0.0.63`, use label `v0.0.64`.
+9. **Release prep only:** Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only if the AI-agent documentation entry points or routing guidance changed.
+10. Present the summary.
+11. Build with `npm run docs` to verify.
+12. **Release prep only:** Commit changes and open a pull request with the `area: docs` label and the selected release label. Use the current release label for pre-tag release-note docs, and use the next patch label only for post-release recovery. Include `area: skills` only if the PR changes `.agents/skills/`. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
    - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-   If the next-patch release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
+   If the selected release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.
    Follow up after PR creation using [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md); use [Git and GitHub Access Hard Stop](../_shared/git-github-hard-stop.md) if access or authentication blocks progress.

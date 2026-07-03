@@ -22,7 +22,6 @@ export const teamsManifest = {
       kind: "config",
       required: true,
       envKey: "MSTEAMS_APP_ID",
-      envAliases: ["TEAMS_CLIENT_ID"],
       statePath: "teamsConfig.appId",
       prompt: {
         label: "Microsoft Teams Client ID",
@@ -34,7 +33,6 @@ export const teamsManifest = {
       kind: "secret",
       required: true,
       envKey: "MSTEAMS_APP_PASSWORD",
-      envAliases: ["TEAMS_CLIENT_SECRET"],
       prompt: {
         label: "Microsoft Teams Client Secret",
         help: "Use the CLIENT_SECRET printed by `teams app create`. It is shown once; rotate it in Entra ID if it was lost.",
@@ -45,7 +43,6 @@ export const teamsManifest = {
       kind: "config",
       required: true,
       envKey: "MSTEAMS_TENANT_ID",
-      envAliases: ["TEAMS_TENANT_ID"],
       statePath: "teamsConfig.tenantId",
       prompt: {
         label: "Microsoft Teams Tenant ID",
@@ -57,7 +54,6 @@ export const teamsManifest = {
       kind: "config",
       required: false,
       envKey: "TEAMS_ALLOWED_USERS",
-      envAliases: ["MSTEAMS_ALLOWED_USERS"],
       statePath: "allowedIds.teams",
       prompt: {
         label: "Microsoft Teams AAD Object IDs (comma-separated allowlist)",
@@ -69,7 +65,6 @@ export const teamsManifest = {
       kind: "config",
       required: false,
       envKey: "MSTEAMS_PORT",
-      envAliases: ["TEAMS_PORT"],
       statePath: "teamsConfig.webhookPort",
       defaultValue: "3978",
       prompt: {
@@ -183,6 +178,20 @@ export const teamsManifest = {
         configKeys: ["msteams"],
         logPatterns: ["msteams", "teams"],
       },
+      nodePreloads: [
+        {
+          module: "msteams-message-hints",
+          injectInto: ["boot", "connect"],
+          // Require the packaged asset at setup time. The preload itself fails
+          // open at runtime so an upstream shape change preserves Teams with a
+          // bounded warning instead of preventing the gateway from starting.
+          optional: false,
+          installMessage:
+            "[channels] Installing Microsoft Teams message hint patch (native mentions)",
+          installedMessage:
+            "[channels] Microsoft Teams message hint patch installed (NODE_OPTIONS updated)",
+        },
+      ],
     },
   },
   agentPackages: [
@@ -209,34 +218,6 @@ export const teamsManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      teamsConfig: ["appId", "tenantId", "webhookPort", "requireMention"],
-      allowedIds: ["allowedUsers"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "teamsConfig.appId",
-        env: "MSTEAMS_APP_ID",
-      },
-      {
-        statePath: "teamsConfig.tenantId",
-        env: "MSTEAMS_TENANT_ID",
-      },
-      {
-        statePath: "allowedIds.teams",
-        env: "TEAMS_ALLOWED_USERS",
-      },
-      {
-        statePath: "teamsConfig.webhookPort",
-        env: "MSTEAMS_PORT",
-      },
-      {
-        statePath: "teamsConfig.requireMention",
-        env: "TEAMS_REQUIRE_MENTION",
-      },
-    ],
-  },
   hooks: [
     {
       id: "teams-host-forward-port-conflict",

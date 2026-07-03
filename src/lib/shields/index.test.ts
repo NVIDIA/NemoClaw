@@ -20,7 +20,7 @@ vi.mock("../runner", () => ({
 }));
 
 vi.mock("../policy", () => ({
-  buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--full", name]),
+  buildPolicyGetCommand: vi.fn((name) => ["openshell", "policy", "get", "--base", name]),
   buildPolicySetCommand: vi.fn((file, name) => [
     "openshell",
     "policy",
@@ -54,7 +54,13 @@ vi.mock("./audit", () => ({
 }));
 
 vi.mock("child_process", () => ({
-  fork: vi.fn(() => ({ pid: 12345, disconnect: vi.fn(), unref: vi.fn() })),
+  fork: vi.fn(() => ({
+    pid: 12345,
+    disconnect: vi.fn(),
+    unref: vi.fn(),
+    send: vi.fn(() => true),
+    kill: vi.fn(() => true),
+  })),
   execFileSync: vi.fn(),
   spawnSync: vi.fn(() => ({
     status: 0,

@@ -1,0 +1,364 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+
+const repoRoot = path.join(import.meta.dirname, "..");
+const scriptUnderTest = path.join(repoRoot, "scripts", "dev-setup.sh");
+const tempRoots: string[] = [];
+
+type Fixture = {
+  cliArtifact: string;
+  env: NodeJS.ProcessEnv;
+  fakeBin: string;
+  pluginArtifact: string;
+  repo: string;
+};
+
+function writeExecutable(filePath: string, contents = "#!/usr/bin/env bash\nexit 0\n"): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, contents, { mode: 0o755 });
+}
+
+function writeTool(fakeBin: string, name: string, body: string): void {
+  writeExecutable(path.join(fakeBin, name), `#!/usr/bin/env bash\nset -u\n${body}\n`);
+}
+
+function createFixture(): Fixture {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dev-doctor-"));
+  tempRoots.push(tmp);
+  const repo = path.join(tmp, "NemoClaw");
+  const fakeBin = path.join(tmp, "bin");
+  const hooksDir = path.join(repo, ".git", "hooks");
+  const globalRoot = path.join(tmp, "global-node-modules");
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.mkdirSync(hooksDir, { recursive: true });
+  fs.mkdirSync(globalRoot, { recursive: true });
+  fs.writeFileSync(path.join(repo, "package.json"), "{}\n");
+  fs.writeFileSync(path.join(repo, "AGENTS.md"), "# Agent Instructions\n");
+
+  for (const file of [
+    "node_modules/.bin/tsc",
+    "node_modules/.bin/prek",
+    "nemoclaw/node_modules/.bin/tsc",
+    "bin/nemoclaw.js",
+    ".venv/bin/python",
+  ]) {
+    writeExecutable(
+      path.join(repo, file),
+      file === ".venv/bin/python" ? '#!/usr/bin/env bash\necho "Python 3.12.1"\n' : undefined,
+    );
+  }
+  const cliArtifact = path.join(repo, "build-fixture", "cli.js");
+  const pluginArtifact = path.join(repo, "build-fixture", "plugin.js");
+  fs.mkdirSync(path.dirname(cliArtifact), { recursive: true });
+  fs.writeFileSync(cliArtifact, "// built\n");
+  fs.writeFileSync(pluginArtifact, "// built\n");
+  for (const hook of ["pre-commit", "commit-msg", "pre-push"]) {
+    writeExecutable(path.join(hooksDir, hook));
+  }
+
+  writeTool(fakeBin, "node", 'echo "v22.16.0"');
+  writeTool(
+    fakeBin,
+    "npm",
+    `if [ "\${1:-}" = "root" ] && [ "\${2:-}" = "-g" ]; then
+  echo "${globalRoot}"
+else
+  echo "10.9.0"
+fi`,
+  );
+  writeTool(fakeBin, "python3", 'echo "Python 3.12.1"');
+  writeTool(fakeBin, "uv", 'echo "uv 0.11.0"');
+  writeTool(fakeBin, "hadolint", 'echo "Haskell Dockerfile Linter 2.14.0"');
+  writeTool(
+    fakeBin,
+    "git",
+    `case " $* " in
+  *" --version "*) echo "git version 2.50.0" ;;
+  *" config --get user.name "*)
+    if [ "\${FAKE_GIT_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi
+    echo "Test Contributor"
+    ;;
+  *" config --get user.email "*)
+    if [ "\${FAKE_GIT_IDENTITY_MISSING:-}" = "1" ]; then exit 1; fi
+    echo "contributor@example.com"
+    ;;
+  *" config --get commit.gpgsign "*)
+    if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
+    echo "true"
+    ;;
+  *" config --get gpg.format "*)
+    if [ "\${FAKE_GIT_SIGN_FORMAT_UNSET:-}" = "1" ]; then exit 1; fi
+    echo "\${FAKE_GIT_SIGN_FORMAT-ssh}"
+    ;;
+  *" config --get user.signingkey "*)
+    if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
+    echo "test-signing-key"
+    ;;
+  *" config --get core.hooksPath "*) exit 1 ;;
+  *" rev-parse --git-path hooks "*) echo "${hooksDir}" ;;
+  *) exit 1 ;;
+esac`,
+  );
+  writeTool(
+    fakeBin,
+    "gh",
+    `if [ "\${1:-}" = "--version" ]; then
+  echo "gh version 2.95.0"
+elif [ "\${1:-}" = "auth" ] && [ "\${2:-}" = "status" ]; then
+  if [ "\${FAKE_GH_AUTH_FAIL:-}" = "1" ]; then
+    echo "token=should-not-appear" >&2
+    exit 1
+  fi
+else
+  exit 1
+fi`,
+  );
+  writeTool(
+    fakeBin,
+    "docker",
+    `if [ "\${FAKE_DOCKER_FAIL:-}" = "1" ]; then
+  echo "credential=should-not-appear" >&2
+  exit 1
+fi
+if [ "\${1:-}" = "info" ]; then
+  echo "29.6.1|\${FAKE_DOCKER_CPUS:-4}|\${FAKE_DOCKER_MEMORY:-17179869184}|overlay2"
+else
+  echo "Docker version 29.6.1"
+fi`,
+  );
+  writeTool(
+    fakeBin,
+    "nemoclaw",
+    `# Managed checkout launcher: ${repo}/bin/nemoclaw.js
+echo "nemoclaw v0.1.0"`,
+  );
+
+  return {
+    cliArtifact,
+    env: {
+      HOME: path.join(tmp, "home"),
+      NEMOCLAW_DEV_DOCTOR_CLI_ARTIFACT: cliArtifact,
+      NEMOCLAW_DEV_DOCTOR_PLUGIN_ARTIFACT: pluginArtifact,
+      NEMOCLAW_DEV_DOCTOR_REPO_ROOT: repo,
+      PATH: `${fakeBin}:/usr/bin:/bin`,
+    },
+    fakeBin,
+    pluginArtifact,
+    repo,
+  };
+}
+
+function runDoctor(
+  fixture: Fixture,
+  env: NodeJS.ProcessEnv = {},
+): {
+  output: string;
+  status: number;
+} {
+  const result = spawnSync("/bin/bash", [scriptUnderTest, "--doctor"], {
+    cwd: fixture.repo,
+    encoding: "utf-8",
+    env: { ...fixture.env, ...env },
+  });
+  return {
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+    status: result.status ?? -1,
+  };
+}
+
+afterEach(() => {
+  for (const tempRoot of tempRoots.splice(0)) {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+describe("contributor environment doctor", () => {
+  it("reports a ready environment without mutating the fixture", () => {
+    const fixture = createFixture();
+    const before = fs.readdirSync(fixture.repo, { recursive: true }).sort();
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Ready to create a feature branch.");
+    expect(result.output).toContain("Python repository environment 3.12.1");
+    expect(result.output).toContain("Git commit signing configured (ssh)");
+    expect(result.output).toContain("Docker 29.6.1: 4 vCPU, 16.0 GiB, overlay2 storage");
+    expect(result.output).toContain("0 failed");
+    expect(fs.readdirSync(fixture.repo, { recursive: true }).sort()).toEqual(before);
+  });
+
+  it("rejects unsupported tool versions with a precise remediation", () => {
+    const fixture = createFixture();
+    writeTool(fixture.fakeBin, "node", 'echo "v20.15.0"');
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Node.js 20.15.0 is below 22.16.0");
+    expect(result.output).toContain("Next: Install Node.js 22.16 or newer.");
+  }, 30_000);
+
+  it("requires the uv-managed repository Python environment", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.repo, ".venv"), { recursive: true });
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Python repository environment: missing");
+    expect(result.output).toContain("Next: Run: uv sync --python 3.11");
+  });
+
+  it("rejects build artifacts older than their source trees", () => {
+    const fixture = createFixture();
+    const oldTime = new Date(Date.now() - 10_000);
+    fs.utimesSync(fixture.cliArtifact, oldTime, oldTime);
+    const changedSource = path.join(fixture.repo, "src", "changed.ts");
+    fs.mkdirSync(path.dirname(changedSource), { recursive: true });
+    fs.writeFileSync(changedSource, "export {};\n");
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("CLI build artifacts: stale");
+    expect(result.output).toContain("Next: Run: npm run build:cli");
+  });
+
+  it("redacts failed GitHub and Docker command output", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, {
+      FAKE_DOCKER_FAIL: "1",
+      FAKE_GH_AUTH_FAIL: "1",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("GitHub authentication failed");
+    expect(result.output).toContain("Docker daemon is not reachable");
+    expect(result.output).not.toContain("should-not-appear");
+  });
+
+  it("reports missing signing configuration and required hooks", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.repo, ".git", "hooks", "pre-push"));
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGNING_MISSING: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Git commit signing is incomplete");
+    expect(result.output).toContain("Git pre-push hook is missing");
+  });
+
+  it("rejects an unsupported git signing format with a precise remediation", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: "bogus" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).toContain("Git commit signing format is unsupported (bogus)");
+    expect(result.output).toContain(
+      "Next: Set gpg.format to openpgp, ssh, or x509, or run: git config --unset gpg.format",
+    );
+  });
+
+  it("accepts an unset git signing format and reports the openpgp default", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT_UNSET: "1" });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Git commit signing configured (openpgp)");
+  });
+
+  it("rejects an explicitly empty git signing format", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: "" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).not.toContain("Ready to create a feature branch.");
+    expect(result.output).toContain("Git commit signing format is unsupported (empty)");
+  });
+
+  it.each(["openpgp", "x509"])("accepts the %s git signing format", (format) => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: format });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`Git commit signing configured (${format})`);
+  });
+
+  it("reports missing commands, dependencies, artifacts, and contributor identity", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.fakeBin, "hadolint"));
+    fs.rmSync(path.join(fixture.repo, "node_modules", ".bin", "tsc"));
+    fs.rmSync(fixture.pluginArtifact);
+
+    const result = runDoctor(fixture, { FAKE_GIT_IDENTITY_MISSING: "1" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("hadolint: not found");
+    expect(result.output).toContain("Root TypeScript dependencies: missing or not executable");
+    expect(result.output).toContain("Plugin build artifacts: missing");
+    expect(result.output).toContain("Git contributor identity is incomplete");
+  });
+
+  it("rejects a NemoClaw CLI linked to another checkout", () => {
+    const fixture = createFixture();
+    writeTool(fixture.fakeBin, "nemoclaw", 'echo "nemoclaw v0.1.0"');
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("NemoClaw CLI resolves to a different installation");
+  });
+
+  it("rejects Docker resources below the documented sandbox minimum", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, {
+      FAKE_DOCKER_CPUS: "2",
+      FAKE_DOCKER_MEMORY: "4294967296",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("below the minimum 4 vCPU and 8 GiB");
+    expect(result.output).toContain("Increase container-runtime resources before sandbox builds.");
+  });
+
+  it("warns without failing when Docker memory is below the recommendation", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, {
+      FAKE_DOCKER_CPUS: "4",
+      FAKE_DOCKER_MEMORY: "8589934592",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Docker memory is below the recommended 16 GiB");
+    expect(result.output).toContain("1 warning(s)");
+  });
+
+  it("rejects unsupported modes with usage and exit status 2", () => {
+    const fixture = createFixture();
+    const result = spawnSync("/bin/bash", [scriptUnderTest, "--repair"], {
+      cwd: fixture.repo,
+      encoding: "utf-8",
+      env: fixture.env,
+    });
+
+    expect(result.status).toBe(2);
+    expect(result.stdout).toContain("Usage: ./scripts/dev-setup.sh --doctor");
+  });
+});

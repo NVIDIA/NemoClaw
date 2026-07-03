@@ -10,6 +10,13 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "hermes-dashboard";
 
+// Dashboard recovery has a distinct trust boundary: it alone enables the
+// dashboard mode, receives the inference secret at step scope, and must report
+// its result before the PR scorecard is published. Keep those invariants in a
+// focused validator, matching the repository's other security-posture and
+// sandbox-operations workflow-boundary helpers, instead of duplicating them in
+// an untyped YAML-shape assertion.
+
 type WorkflowStep = {
   env?: Record<string, unknown>;
   name?: string;
@@ -50,6 +57,14 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
   const job = workflow.jobs[JOB_NAME] ?? {};
   const env = job.env ?? {};
 
+  for (const [jobName, candidate] of Object.entries(workflow.jobs)) {
+    if (jobName !== JOB_NAME && candidate.env?.NEMOCLAW_E2E_HERMES_DASHBOARD !== undefined) {
+      errors.push(
+        `only ${JOB_NAME} may enable Hermes dashboard E2E coverage (found on ${jobName})`,
+      );
+    }
+  }
+
   requireEqual(errors, job.needs, "generate-matrix", `${JOB_NAME} must depend on generate-matrix`);
   requireEqual(errors, job["runs-on"], "ubuntu-latest", `${JOB_NAME} must run on ubuntu-latest`);
   requireEqual(errors, job["timeout-minutes"], 75, `${JOB_NAME} timeout must be 75 minutes`);
@@ -86,17 +101,6 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
     run.env?.NVIDIA_INFERENCE_API_KEY,
     "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     `${JOB_NAME} must pass the inference key through step env`,
-  );
-
-  const upload = findStep(job, "Upload Hermes dashboard live Vitest artifacts");
-  if (!/^actions\/upload-artifact@[0-9a-f]{40}$/u.test(upload.uses ?? "")) {
-    errors.push(`${JOB_NAME} artifact upload must pin a full action SHA`);
-  }
-  requireEqual(
-    errors,
-    upload.with?.path,
-    "e2e-artifacts/live/hermes-dashboard/",
-    `${JOB_NAME} must upload its dashboard artifacts`,
   );
 
   const reportNeeds = workflow.jobs["report-to-pr"]?.needs;

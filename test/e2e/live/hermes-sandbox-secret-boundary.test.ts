@@ -14,6 +14,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const BUILD_TIMEOUT_MS = 10 * 60_000;
 const RUN_TIMEOUT_MS = 60_000;
+const CONTROL_NONCE = "0".repeat(64);
 const RAW_SECRET_SENTINEL = "SENTINEL_RAW_SECRET_VALUE";
 const RAW_REFRESH_TOKEN = "raw-refresh-token";
 
@@ -281,10 +282,6 @@ if missing_config:
 
 const RUNTIME_API_KEY_PROBE_SCRIPT = String.raw`
 	set -euo pipefail
-	if ! /usr/local/bin/nemoclaw-start true >/tmp/nemoclaw-start-api-key-probe.log 2>&1; then
-	  cat /tmp/nemoclaw-start-api-key-probe.log >&2
-	  exit 1
-	fi
 	python3 - <<'PY'
 import hashlib
 import json
@@ -495,6 +492,61 @@ async function inspectImageBoundary(probe: DockerProbe, image: string): Promise<
   ).toBe(0);
 }
 
+async function inspectGatewayControlBoundary(probe: DockerProbe, image: string): Promise<void> {
+  const rootProbe = await probe.run(
+    [
+      "run",
+      "--rm",
+      "--user",
+      "root",
+      "--entrypoint",
+      "/bin/sh",
+      image,
+      "-lc",
+      String.raw`
+set -eu
+[ "$(stat -c '%U:%G %a' /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
+[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
+[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/state-dir-guard.py)" = "root:root 500" ]
+[ "$(stat -c '%U:%G %a' /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
+id -nG gateway | tr ' ' '\n' | grep -qx sandbox
+id -nG root | tr ' ' '\n' | grep -qx sandbox
+rc=0
+/usr/local/bin/nemoclaw-gateway-control probe '${CONTROL_NONCE}' >/tmp/gateway-control-probe.out 2>&1 || rc=$?
+cat /tmp/gateway-control-probe.out
+[ "$rc" -ne 0 ]
+grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control-probe.out
+`,
+    ],
+    { artifactName: "inspect-hermes-gateway-control-root-boundary", timeoutMs: RUN_TIMEOUT_MS },
+  );
+  expect(
+    rootProbe.exitCode,
+    `Hermes image should preserve root-only helper modes, group access, and root probe execution\n${resultText(rootProbe)}`,
+  ).toBe(0);
+
+  const sandboxProbe = await probe.run(
+    [
+      "run",
+      "--rm",
+      "--user",
+      "sandbox",
+      "--entrypoint",
+      "/usr/local/bin/nemoclaw-gateway-control",
+      image,
+      "probe",
+      CONTROL_NONCE,
+    ],
+    { artifactName: "inspect-hermes-gateway-control-sandbox-refusal", timeoutMs: RUN_TIMEOUT_MS },
+  );
+  expect(
+    sandboxProbe.exitCode,
+    "Hermes sandbox user must not execute the root-only gateway control helper",
+  ).not.toBe(0);
+  expect(resultText(sandboxProbe)).toMatch(/permission denied/iu);
+  expect(resultText(sandboxProbe)).not.toContain("PRIVILEGED_CONTROL_UNAVAILABLE");
+}
+
 async function inspectManagedToolBoundary(probe: DockerProbe, image: string): Promise<void> {
   const result = await probe.run(
     ["run", "--rm", "--entrypoint", "python3", image, "-c", MANAGED_TOOL_INSPECTION_SCRIPT],
@@ -621,7 +673,16 @@ async function probeRuntimeApiServerKey(
   label: string,
 ): Promise<RuntimeApiKeyProbe> {
   const result = await probe.run(
-    ["run", "--rm", "--entrypoint", "/bin/bash", image, "-lc", RUNTIME_API_KEY_PROBE_SCRIPT],
+    [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "/usr/local/bin/nemoclaw-start",
+      image,
+      "/bin/bash",
+      "-lc",
+      RUNTIME_API_KEY_PROBE_SCRIPT,
+    ],
     {
       artifactName: `runtime-api-server-key-${label}`,
       returnRaw: true,
@@ -678,7 +739,7 @@ liveTest(
     const baseImage =
       process.env.NEMOCLAW_HERMES_BASE_IMAGE ??
       process.env.HERMES_BASE_IMAGE ??
-      `nemoclaw-hermes-secret-boundary-base:${runId}`;
+      `nemoclaw-hermes-sandbox-base-local:secret-boundary-${runId}`;
     const managedImage =
       process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE ??
       `nemoclaw-hermes-secret-boundary-managed:${runId}`;
@@ -700,6 +761,7 @@ liveTest(
         "Hermes .env in the sandbox image is a real file with no baked API_SERVER_KEY or raw external secret-shaped values",
         "Hermes final image imports python-multipart from /opt/hermes/.venv and has no gcc, g++, or make commands",
         "Hermes final image can allocate a PTY through /dev/pts",
+        "Hermes final image enforces root-only gateway-control modes and sandbox group membership",
         "Hermes startup mints a unique API_SERVER_KEY per sandbox and refreshes strict and compatibility config hashes",
         "Hermes config preserves api_server remote platform toolsets and does not use no_mcp",
         "managed-tool image keeps gateway auth tokens out of sandbox env/config while preserving gateway URLs/config",
@@ -742,6 +804,7 @@ liveTest(
     });
 
     await inspectImageBoundary(probe, image);
+    await inspectGatewayControlBoundary(probe, image);
     await inspectManagedToolBoundary(probe, managedImage);
     await expectRuntimeApiServerKeyPerSandbox(probe, image);
     await expectStartupRejectsEnvFileEntry(
@@ -786,6 +849,7 @@ liveTest(
       managedImage,
       assertions: {
         imageEnvSecretBoundaryVerified: true,
+        gatewayControlImageBoundaryVerified: true,
         runtimeApiServerKeyPerSandboxVerified: true,
         imageRemoteToolsetsVerified: true,
         managedToolGatewayAuthBoundaryVerified: true,

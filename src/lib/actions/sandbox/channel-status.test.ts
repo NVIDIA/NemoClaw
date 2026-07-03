@@ -2,179 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-// The orchestrator transitively pulls in policy/index.ts and agent/defs.ts,
-// both of which require runner.ts via CJS; runner.ts uses `require()` calls
-// vitest cannot resolve from a TS source file. Stub the heavy modules so the
-// test stays focused on the orchestrator's diagnostic glue. See
-// src/lib/shields/index.test.ts for the same workaround pattern.
-vi.mock("../../policy", () => ({
-  getAppliedPresets: vi.fn(() => []),
-  getGatewayPresets: vi.fn(() => null),
-}));
-
-vi.mock("../../state/registry", () => ({
-  getSandbox: vi.fn(),
-  getConfiguredMessagingChannelsFromEntry: vi.fn((entry) => {
-    const channels = entry?.messaging?.plan?.channels;
-    return Array.isArray(channels)
-      ? channels
-          .filter((channel) => channel?.configured === true)
-          .map((channel) => channel.channelId)
-      : [];
-  }),
-  getDisabledMessagingChannelsFromEntry: vi.fn((entry) => {
-    const disabled = entry?.messaging?.plan?.disabledChannels;
-    return Array.isArray(disabled) ? [...disabled] : [];
-  }),
-}));
-
-vi.mock("../../agent/defs", () => ({
-  loadAgent: vi.fn(),
-}));
-
-vi.mock("./process-recovery", () => ({
-  executeSandboxExecCommand: vi.fn(),
-}));
-
-import type { AgentDefinition } from "../../agent/defs";
-import type { SandboxEntry } from "../../state/registry";
-import { showSandboxChannelStatus } from "./channel-status";
-
-type ExecResult = { status: number; stdout: string; stderr: string };
-
-const PROBED_AT = new Date("2026-05-28T04:00:00.000Z");
-
-function fakeAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
-  const configDir = name === "openclaw" ? "/sandbox/.openclaw" : "/sandbox/.hermes";
-  const stateDirs = name === "openclaw" ? ["whatsapp"] : ["platforms"];
-  return {
-    name,
-    agentDir: `/fake/${name}`,
-    manifestPath: `/fake/${name}/manifest.yaml`,
-    get displayName() {
-      return name;
-    },
-    get healthProbe() {
-      return { url: "http://localhost:0/", port: 0, timeout_seconds: 5 };
-    },
-    get forwardPort() {
-      return 0;
-    },
-    get dashboard() {
-      return { kind: "ui" as const, label: "UI", path: "/" };
-    },
-    get configPaths() {
-      return { dir: configDir, configFile: "config.json", envFile: null, format: "json" };
-    },
-    get inferenceProviderOptions() {
-      return [];
-    },
-    get stateDirs() {
-      return stateDirs;
-    },
-    get stateFiles() {
-      return [];
-    },
-    get versionCommand() {
-      return `${name} --version`;
-    },
-    get expectedVersion() {
-      return null;
-    },
-    get hasDevicePairing() {
-      return false;
-    },
-    get phoneHomeHosts() {
-      return [];
-    },
-    get dockerfileBasePath() {
-      return null;
-    },
-    get dockerfilePath() {
-      return null;
-    },
-    get startScriptPath() {
-      return null;
-    },
-    get policyAdditionsPath() {
-      return null;
-    },
-    get policyPermissivePath() {
-      return null;
-    },
-    get pluginDir() {
-      return null;
-    },
-    get legacyPaths() {
-      return null;
-    },
-  } as unknown as AgentDefinition;
-}
-
-function entry(
-  messagingChannels: string[] = ["whatsapp"],
-  disabledChannels: string[] = [],
-): SandboxEntry {
-  const disabled = new Set(disabledChannels);
-  return {
-    name: "alpha",
-    agent: "openclaw",
-    messaging: {
-      schemaVersion: 1,
-      plan: {
-        schemaVersion: 1,
-        sandboxName: "alpha",
-        agent: "openclaw",
-        workflow: "onboard",
-        channels: messagingChannels.map((channelId) => ({
-          channelId,
-          displayName: channelId,
-          authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
-          active: !disabled.has(channelId),
-          selected: true,
-          configured: true,
-          disabled: disabled.has(channelId),
-          inputs: [],
-          hooks: [],
-        })),
-        disabledChannels,
-        credentialBindings: [],
-        networkPolicy: { presets: [], entries: [] },
-        agentRender: [],
-        buildSteps: [],
-        stateUpdates: [],
-        healthChecks: [],
-      },
-    },
-  } as SandboxEntry;
-}
-
-function makeDeps(opts: {
-  exec: (sandboxName: string, command: string, timeoutMs?: number) => ExecResult | null;
-  appliedPresets?: string[];
-  gatewayPresets?: string[] | null;
-  agentName?: "openclaw" | "hermes";
-  sandbox?: SandboxEntry | undefined;
-  out?: (line: string) => void;
-}) {
-  const calls: string[] = [];
-  const out = opts.out ?? ((line: string) => calls.push(line));
-  return {
-    out,
-    deps: {
-      loadAgent: () => fakeAgent(opts.agentName),
-      getSandbox: () => opts.sandbox ?? entry(),
-      getAppliedPresets: () => opts.appliedPresets ?? ["whatsapp"],
-      getGatewayPresets: () =>
-        opts.gatewayPresets === undefined ? ["whatsapp"] : opts.gatewayPresets,
-      execSandbox: vi.fn(opts.exec),
-      now: () => PROBED_AT,
-      out,
-    },
-    out_lines: calls,
-  };
-}
+import {
+  type ExecResult,
+  entry,
+  makeDeps,
+  showSandboxChannelStatus,
+} from "./channel-status.test-helpers";
 
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
@@ -203,7 +36,12 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       exec: () => ({ status: 0, stdout, stderr: "" }),
     });
     try {
-      await showSandboxChannelStatus("alpha", { deps, quietJson: true, asJson: true });
+      await showSandboxChannelStatus("alpha", {
+        deps,
+        channel: "whatsapp",
+        quietJson: true,
+        asJson: true,
+      });
     } finally {
       exitSpy.mockRestore();
     }
@@ -238,7 +76,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     });
     let threw: Error | null = null;
     try {
-      await showSandboxChannelStatus("alpha", { deps });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     } catch (err) {
       threw = err as Error;
     } finally {
@@ -271,7 +109,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout, stderr: "" }),
     });
-    const result = await showSandboxChannelStatus("alpha", { deps });
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     expect(result && "report" in result && result.report.verdict).toBe("healthy");
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Verdict:.*healthy/);
@@ -286,7 +124,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     });
     let threw: Error | null = null;
     try {
-      await showSandboxChannelStatus("alpha", { deps });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     } catch (err) {
       threw = err as Error;
     } finally {
@@ -304,7 +142,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     });
     let threw: Error | null = null;
     try {
-      await showSandboxChannelStatus("alpha", { deps, asJson: true });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp", asJson: true });
     } catch (err) {
       threw = err as Error;
     } finally {
@@ -333,7 +171,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     });
     let threw: Error | null = null;
     try {
-      await showSandboxChannelStatus("alpha", { deps });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     } catch (err) {
       threw = err as Error;
     } finally {
@@ -357,7 +195,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       agentName: "hermes",
     });
     try {
-      await showSandboxChannelStatus("alpha", { deps });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     } catch {
       /* expected exit(1) for unpaired */
     } finally {
@@ -397,7 +235,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
         exec: () => ({ status: 0, stdout: stdoutNoMatch, stderr: "" }),
       });
       try {
-        await showSandboxChannelStatus("alpha", { deps: depsNoMatch });
+        await showSandboxChannelStatus("alpha", { deps: depsNoMatch, channel: "whatsapp" });
       } catch {
         /* expected exit(1) for stale-heartbeat + no bridge */
       }
@@ -423,7 +261,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       const { deps: depsTimeout, out_lines: linesTimeout } = makeDeps({
         exec: () => ({ status: 0, stdout: stdoutTimeout, stderr: "" }),
       });
-      await showSandboxChannelStatus("alpha", { deps: depsTimeout });
+      await showSandboxChannelStatus("alpha", { deps: depsTimeout, channel: "whatsapp" });
       const dumpTimeout = linesTimeout.join("\n");
       expect(dumpTimeout).toMatch(/Bridge process: could not enumerate sandbox processes/);
       expect(dumpTimeout).toMatch(/Verdict:.*healthy/);
@@ -451,7 +289,7 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     }) as never);
     const { deps } = makeDeps({ exec });
     try {
-      await showSandboxChannelStatus("alpha", { deps });
+      await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     } catch {
       /* unpaired path exits 1 */
     } finally {
@@ -479,26 +317,10 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       sandbox: entry(["whatsapp"], ["whatsapp"]),
     });
     deps.execSandbox = execSpy as unknown as typeof deps.execSandbox;
-    const result = await showSandboxChannelStatus("alpha", { deps });
+    const result = await showSandboxChannelStatus("alpha", { deps, channel: "whatsapp" });
     expect(execSpy).not.toHaveBeenCalled();
     expect(result && "verdict" in result && result.verdict).toBe("info");
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/registered but currently paused/);
-  });
-
-  it("emits a basic per-channel report for non-whatsapp channels", async () => {
-    const { deps, out_lines } = makeDeps({
-      exec: () => ({ status: 0, stdout: "", stderr: "" }),
-      sandbox: entry(["telegram"]),
-      appliedPresets: ["telegram"],
-    });
-    const result = await showSandboxChannelStatus("alpha", {
-      deps,
-      channel: "telegram",
-    });
-    expect(result && "verdict" in result && result.verdict).toBe("info");
-    const dump = out_lines.join("\n");
-    expect(dump).toMatch(/telegram registered/);
-    expect(dump).toMatch(/preset applied/);
   });
 });

@@ -13,6 +13,8 @@ const destroyModulePath = "./destroy.js";
 type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
   destroySandbox: DestroySandbox;
+  events: string[];
+  killTimerSpy: MockInstance;
   killStaleProxySpy: MockInstance;
   logSpy: MockInstance;
   removeSandboxSpy: MockInstance;
@@ -21,12 +23,15 @@ type DestroyHarness = {
   stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
+  shieldsUpSpy: MockInstance;
 };
 
 type DestroyHarnessOptions = {
+  activeTimer?: boolean;
   deleteStatus?: number;
   deleteOutput?: string;
   registeredSandboxCount?: number;
+  shieldsUpError?: Error;
 };
 
 const sandboxEntry = {
@@ -41,6 +46,7 @@ const sandboxEntry = {
 
 function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
   delete require.cache[requireDist.resolve(destroyModulePath)];
+  const events: string[] = [];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -56,6 +62,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
   const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
@@ -73,13 +80,22 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     const session = { sandboxName: "alpha" };
-    if (typeof mutator === "function") (mutator as (value: typeof session) => void)(session);
+    typeof mutator === "function" && (mutator as (value: typeof session) => void)(session);
     return session;
   });
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
-    if (argv[0] === "sandbox" && argv[1] === "delete") {
-      return { status: options.deleteStatus ?? 0, stdout: options.deleteOutput ?? "", stderr: "" };
+    switch (`${String(argv[0])} ${String(argv[1])}`) {
+      case "sandbox exec":
+        events.push("wipe");
+        break;
+      case "sandbox delete":
+        events.push("delete");
+        return {
+          status: options.deleteStatus ?? 0,
+          stdout: options.deleteOutput ?? "",
+          stderr: "",
+        };
     }
     return { status: 0, stdout: "", stderr: "" };
   });
@@ -90,8 +106,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
     .mockImplementation(() => undefined);
-  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockReturnValue({
-    failures: [],
+  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
+    events.push("detach");
+    return { failures: [] };
   });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
@@ -107,13 +124,39 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
   const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
-  vi.spyOn(timerControl, "killTimer").mockReturnValue({ warnings: [] });
+  vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
+    options.activeTimer
+      ? {
+          pid: 4242,
+          sandboxName: "alpha",
+          snapshotPath: "/tmp/policy.yaml",
+          restoreAt: "2026-06-27T06:00:00.000Z",
+          processToken: "a".repeat(32),
+        }
+      : null,
+  );
+  const shieldsUpSpy = vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
+    events.push("harden");
+    const shieldsUpError = options.shieldsUpError;
+    switch (shieldsUpError) {
+      case undefined:
+        break;
+      default:
+        throw shieldsUpError;
+    }
+  });
+  const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
+    events.push("timer-cleanup");
+    return { warnings: [] };
+  });
 
   logSpy.mockClear();
 
   return {
     cleanupGatewaySpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
+    events,
+    killTimerSpy,
     killStaleProxySpy,
     logSpy,
     removeSandboxSpy,
@@ -122,6 +165,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
+    shieldsUpSpy,
   };
 }
 
@@ -202,5 +246,34 @@ describe("destroySandbox flow", () => {
     expect(harness.stopAllSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
+    const harness = createDestroyHarness({ activeTimer: true });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toEqual(
+      expect.arrayContaining(["wipe", "harden", "detach", "delete", "timer-cleanup"]),
+    );
+    expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
+    expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+  });
+
+  it("does not delete when active-window hardening fails after the wipe", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      shieldsUpError: new Error("injected hardening failure"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "injected hardening failure",
+    );
+
+    expect(harness.events).toContain("wipe");
+    expect(harness.events).toContain("harden");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.killTimerSpy).not.toHaveBeenCalled();
   });
 });

@@ -17,12 +17,10 @@ This page documents each configurable control, its default, what it protects, th
 
 For background on how the layers fit together, refer to [How It Works](../about/how-it-works).
 
-{/* TODO: uncomment after the OpenShell docs are published
 <Note>
 OpenShell enforces the platform-level mechanisms that NemoClaw configures, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication.
 For the full platform-level controls reference, refer to [OpenShell Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html).
 </Note>
-*/}
 
 ## Protection Layers at a Glance
 
@@ -95,8 +93,8 @@ flowchart TB
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets you approve or deny requests in real time.
 Network policy allowlists do not disable OpenShell's SSRF guard; refer to [Customize the Network Policy](/network-policy/customize-network-policy) for the interaction between egress rules and internal-address blocking.
 
-{/* OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
-Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices. */}
+OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
+Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices.
 
 ### Deny-by-Default Egress
 
@@ -108,6 +106,49 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 | What you can change | Add endpoints to the policy file (static) or with `openshell policy set` (dynamic). |
 | Risk if relaxed | Each allowed endpoint is a potential data exfiltration path. The agent can send workspace content, credentials, or conversation history to any reachable host. |
 | Recommendation | Add only endpoints the agent needs for its task. Prefer operator approval for one-off requests over permanently widening the baseline. |
+
+### Credential Discovery Boundaries
+
+Credential probes are active network behavior, not harmless fallback checks.
+NemoClaw allows a credential source only in the process that is intended to hold those credentials and can reach that source.
+
+| Execution path | Rule |
+|---|---|
+| Host-brokered provider | Discover and use host credentials only in the host adapter. The sandbox receives a narrow `inference.local` interface, not the host credentials. |
+| Sandbox-direct provider | Keep only credential sources that are deliberately provisioned and reachable inside the sandbox. |
+| Ambient metadata provider | Disable SDK discovery when the metadata endpoint cannot exist across the sandbox boundary. Do not make an internal or link-local endpoint reachable merely to satisfy an automatic probe. |
+| New agent or provider | Declare the enabled credential sources and add agent-specific tests proving that unavailable sources are not probed. |
+
+Network policy remains a second enforcement layer, not a substitute for disabling an impossible credential provider.
+Adding support for a new metadata-backed source requires a separately designed broker and explicit credential-boundary review.
+
+<AgentOnly variant="openclaw">
+
+#### OpenClaw EC2 Instance Metadata Credential Discovery
+
+NemoClaw forces `AWS_EC2_METADATA_DISABLED` to `true` for every OpenClaw process because OpenShell blocks the link-local EC2 Instance Metadata Service endpoint.
+This disables only EC2 instance-role credential discovery inside the sandbox.
+Static access keys, bearer tokens, shared profiles, SSO and process credentials, web identity, and ECS container credentials remain eligible.
+NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credential-discovery boundary and remains unaffected.
+
+| Aspect | Detail |
+|---|---|
+| Default | OpenClaw images, gateway processes, child processes, cron jobs, and connected shells receive `AWS_EC2_METADATA_DISABLED=true`. |
+| What you can change | This is a NemoClaw sandbox invariant, not a user-facing setting. |
+| Risk if relaxed | Probing `169.254.169.254` cannot succeed through the OpenShell network boundary, and approving the link-local address would weaken SSRF protection. |
+| Recommendation | Do not add `169.254.169.254` to a network policy or override this environment variable. Removing the defense requires a separately designed, brokered IMDS credential flow. |
+
+</AgentOnly>
+
+<AgentOnly variant="hermes">
+
+#### Hermes Managed Inference Credential Discovery
+
+NemoClaw configures Hermes with a custom provider through `inference.local`, and the shipped Hermes image does not install the optional native Bedrock dependency.
+AWS credential discovery for supported Bedrock inference therefore remains in NemoClaw's host-local adapter, outside the sandbox.
+If direct Hermes Bedrock support is added later, it must apply the same unavailable-metadata rule and include Hermes-specific credential-probe acceptance tests before it is enabled.
+
+</AgentOnly>
 
 ### Binary-Scoped Endpoint Rules
 
@@ -184,8 +225,8 @@ Review the preset's YAML file before applying to understand the endpoints, metho
 
 NemoClaw restricts which paths the agent can read and write, protecting system binaries, configuration files, and gateway credentials.
 
-{/* OpenShell covers additional filesystem enforcement details, including `hard_requirement` compatibility mode for Landlock and policy path validation rules.
-Refer to the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices. */}
+OpenShell covers additional filesystem enforcement details, including `hard_requirement` compatibility mode for Landlock and policy path validation rules.
+Refer to the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices.
 
 ### Read-Only System Paths
 
@@ -210,7 +251,12 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config or high-risk state entry points.
-The immutability workflow locks high-risk state directories (`skills`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` with `chmod -R go-w`.
+The immutability workflow locks high-risk state directories (`skills`, `agent`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` and removes group and world write access.
+The root-only helper traverses from opened directory descriptors with no-follow semantics instead of using recursive pathname `chown` or `chmod`.
+Read-only preflight and unlock operations reject unsafe external symlinks, hardlinks, special files, cross-device entries, and entries that race the traversal without modifying them.
+After the top-level config binding is frozen, lockdown makes containment monotonic.
+It removes unsafe symlinks, special entries, and protected-root names that are not directories through descriptor-relative operations without following their targets.
+For protected regular files, lockdown publishes a fresh inode, severing hardlinks while preserving file content, read/execute mode, timestamps, and supported extended attributes; this also revokes write authority held through a descriptor opened before `shields up`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
 The same workflow also locks the secret-bearing directories (`credentials`, `identity`, `pairing`) to `root:root 700` with `chmod -R go-rwX`.
 Neither the sandbox user nor the gateway can read those secrets while the lock is active.
@@ -220,8 +266,9 @@ The lock helper silently skips dirs that are not present in a given agent's conf
 Two exemption kinds keep runtime data writable.
 The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`.
 The lock helper never touches those paths.
-Inside a locked tree, the helper restores `agents/<agent-id>/sessions/` to `sandbox:sandbox 2770` after the surrounding `agents/` lock so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
-If any high-risk state-dir root is a symlink when the lock runs, the lock helper refuses to proceed and reports "Config not locked: state dir root is a symlink" instead of following the link with privileged `chown -R` / `chmod -R`.
+Inside a locked tree, the helper keeps each `agents/<agent-id>/sessions/` root at `sandbox:sandbox 2770` so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
+It validates the carve-out root but deliberately does not traverse or rewrite live session descendants.
+Cross-device entries, detected traversal races, or failures to remove or replace an unsafe entry make lockdown fail closed with the exact path and reason.
 
 - **DAC permissions (default).**
   The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly.
@@ -292,8 +339,8 @@ Landlock is a Linux Security Module that enforces filesystem access rules at the
 
 NemoClaw limits the capabilities, user privileges, and resource quotas available to processes inside the sandbox.
 
-{/* OpenShell enforces additional process-level controls not covered here, including seccomp BPF socket domain filters and a specific enforcement application order (namespace entry, privilege drop, Landlock, seccomp).
-Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices. */}
+OpenShell enforces additional process-level controls not covered here, including seccomp BPF socket domain filters and a specific enforcement application order (namespace entry, privilege drop, Landlock, seccomp).
+Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices.
 
 ### Capability Drops
 
@@ -318,7 +365,7 @@ The container runtime spawns a `$$nemoclaw connect` shell outside that tree, so 
 
 <AgentOnly variant="openclaw">
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose.
-Refer to [Sandbox Hardening](../deployment/sandbox-hardening).
+Refer to [Sandbox Hardening](../manage-sandboxes/sandbox-hardening).
 </AgentOnly>
 
 | Aspect | Detail |
@@ -330,14 +377,16 @@ Refer to [Sandbox Hardening](../deployment/sandbox-hardening).
 
 ### Gateway Process Isolation
 
-The in-sandbox gateway runs as a separate `gateway` user, not as the `sandbox` user that runs the agent.
+Gateway and agent UID isolation depends on the container process topology.
+A direct root-entrypoint container runs the gateway as the separate `gateway` user and the agent as the `sandbox` user.
+An OpenShell-managed container has OpenShell as PID 1 and launches nonroot `nemoclaw-start`, so the supervisor, gateway, and agent all use the `sandbox` UID.
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint starts the gateway process using `gosu gateway`, isolating it from the agent's `sandbox` user. |
-| What you can change | This is not a user-facing knob. The entrypoint enforces it when running as root. In non-root mode (when OpenShell sets `no-new-privileges`), gateway process isolation does not work because `gosu` cannot change users. |
-| Risk if relaxed | If the gateway and agent run as the same user, the agent can kill the gateway process and restart it with a tampered configuration (the "fake-HOME" attack). |
-| Recommendation | No action needed. The entrypoint handles this automatically. Be aware that non-root mode disables this isolation. |
+| Default | Direct root entrypoints use `gosu gateway` for UID isolation. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
+| What you can change | This is not a user-facing knob. The selected container topology determines whether the entrypoint can step down from root to the gateway UID. |
+| Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
+| Recommendation | Use a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat the managed controller as authenticated lifecycle and exact-target safety, not as a same-UID provenance boundary. |
 
 ### No New Privileges
 
@@ -348,7 +397,7 @@ The `no-new-privileges` flag prevents processes from gaining additional privileg
 | Default | OpenShell sets `PR_SET_NO_NEW_PRIVS` using `prctl()` inside the sandbox process as part of the seccomp filter setup. The NemoClaw Compose example also shows the equivalent `security_opt: no-new-privileges:true` setting. |
 | What you can change | OpenShell's seccomp path enforces this inside the sandbox. It is not a user-facing knob. |
 | Risk if relaxed | Without this flag, a compromised process could execute a setuid binary to escalate to root inside the container, then attempt container escape techniques. |
-| Recommendation | No action needed. OpenShell enforces this automatically when the sandbox network policy is active. This flag prevents `gosu` from switching users, so non-root mode disables gateway process isolation in the NemoClaw entrypoint. |
+| Recommendation | No action needed. OpenShell enforces this automatically when the sandbox network policy is active. In the OpenShell-managed topology, this flag also means the nonroot entrypoint and gateway remain under the sandbox UID. |
 
 ### Process Limit
 
@@ -461,9 +510,22 @@ NemoClaw binds the OpenShell gateway to loopback by default.
 | Aspect | Detail |
 |---|---|
 | Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
-| What you can change | Set `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` before onboarding to listen on all IPv4 interfaces. |
-| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. |
-| Recommendation | Keep the loopback default unless the gateway must be reachable from another host. |
+| What you can change | Keep Docker-driver gateways on loopback. Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` for remote dashboard/API access. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway; Docker-driver gateways on OpenShell 0.0.72 reject wildcard gateway binds while gateway JWT auth is active. |
+| Recommendation | Keep the gateway loopback default and expose only the dashboard forward when remote access is needed. |
+
+### Gateway Compatibility Container
+
+On Linux hosts whose glibc is older than the OpenShell gateway binary requires, NemoClaw can run `openshell-gateway` in a Docker compatibility container so the Docker-driver gateway still starts. This path requires the explicit opt-in `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`.
+
+| Aspect | Detail |
+|---|---|
+| Default | NemoClaw does not auto-enable the compatibility container on ABI mismatch. If `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` is set, the container keeps the main gateway listener on `127.0.0.1`, uses host networking so OpenShell computes the same Docker bridge callback addresses as a host-side gateway, mounts the Docker socket read-only, drops Linux capabilities, sets `no-new-privileges`, and publishes no extra Docker ports. |
+| What you can change | Opt in with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`, keep the path disabled with `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=0`, or run on a host/OpenShell build combination where the gateway binary launches directly. |
+| Risk if relaxed | The Docker socket remains a privileged host API even when bind-mounted read-only. Treat this mode as equivalent to trusting the host user that can drive Docker, and do not enable it on untrusted shared hosts. |
+| Recommendation | Prefer a host with glibc 2.28 or newer, which OpenShell 0.0.72 supports directly, and use the compatibility container only as an explicit local bridge on an older trusted host. |
+
+See [OpenShell 0.0.72 Compatibility Review](./openshell-0.0.72-compatibility-review) for source-of-truth boundaries and contract coverage.
 
 ### Insecure Auth Derivation
 
@@ -629,6 +691,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Limitation | Impact | Mitigation |
 |-----------|--------|------------|
 | Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
+| Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the exact observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config also has managed cold-start trust and time-of-check/time-of-use limits unless it is root-owned and locked. | Use a direct root-entrypoint deployment when UID isolation and the root restart seal are required. Lock managed config before treating the strict hash as a trust anchor, and recreate a sandbox after suspected same-UID compromise. |
 | Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
 | Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 
@@ -638,8 +701,8 @@ The following patterns weaken security without providing meaningful benefit.
 - [Customize the Network Policy](../network-policy/customize-network-policy) for static and dynamic policy changes.
 - [Approve or Deny Network Requests](../network-policy/approve-network-requests) for the operator approval flow.
 <AgentOnly variant="openclaw">
-- [Sandbox Hardening](../deployment/sandbox-hardening) for container-level security measures.
+- [Sandbox Hardening](../manage-sandboxes/sandbox-hardening) for container-level security measures.
 </AgentOnly>
 - [Inference Options](../inference/inference-options) for provider configuration details.
 - [How It Works](../about/how-it-works) for the protection layer architecture.
-{/* - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. */}
+- OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication.

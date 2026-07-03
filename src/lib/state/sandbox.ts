@@ -39,6 +39,7 @@ import {
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
 import type { CustomPolicyEntry } from "./registry.js";
+import { isSshTransportFailure } from "./ssh-transport.js";
 import * as registry from "./registry.js";
 import { runTarListing } from "./tar-listing.js";
 
@@ -121,6 +122,10 @@ export interface BackupResult {
   error?: string;
   backedUpFiles: string[];
   failedFiles: string[];
+  // Set when a failure stems from an SSH transport failure against a running
+  // sandbox (see isSshTransportFailure), as opposed to an audit rejection or
+  // a partial tar read error.
+  unreachable?: boolean;
 }
 
 export interface RestoreResult {
@@ -844,13 +849,25 @@ function buildStateFileBackupCommand(dir: string, spec: StateFileSpec): string {
   ].join("; ");
 }
 
+type StateFileBackupOutcome = "backed_up" | "missing" | "failed";
+
+interface StateFileBackupResult {
+  outcome: StateFileBackupOutcome;
+  // Set on "failed" when the SSH probe itself failed at the transport level
+  // (exit 255, signal-killed, spawn error). The caller (backupSandboxState)
+  // propagates this into BackupResult.unreachable so that
+  // NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 activates for state-file
+  // failures too, not only the initial dir probe. See #6188.
+  unreachable: boolean;
+}
+
 function backupStateFile(
   configFile: string,
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
-): "backed_up" | "missing" | "failed" {
+): StateFileBackupResult {
   const command = buildStateFileBackupCommand(dir, spec);
   _log(`Backing up state file ${spec.path} (${spec.strategy})`);
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
@@ -859,14 +876,14 @@ function backupStateFile(
     maxBuffer: 256 * 1024 * 1024,
   });
 
-  if (result.status === 2) return "missing";
+  if (result.status === 2) return { outcome: "missing", unreachable: false };
   if (result.status !== 0 || result.error || result.signal || !result.stdout) {
     const detail =
       (result.stderr?.toString() || "").trim() ||
       result.error?.message ||
       (result.signal ? `signal ${result.signal}` : `exit ${String(result.status)}`);
     _log(`FAILED: state file backup ${spec.path}: ${detail.substring(0, 200)}`);
-    return "failed";
+    return { outcome: "failed", unreachable: isSshTransportFailure(result) };
   }
 
   const localPath = path.join(backupPath, spec.path);
@@ -876,7 +893,7 @@ function backupStateFile(
   rejectSymlinksOnPath(localPath);
   writeFileSync(localPath, result.stdout);
   chmodSync(localPath, 0o600);
-  return "backed_up";
+  return { outcome: "backed_up", unreachable: false };
 }
 
 export function buildStateFileRestoreCommand(
@@ -1018,6 +1035,12 @@ function restoreStateFile(
  * Back up all state directories from a running sandbox.
  * Uses the agent manifest to determine which directories contain state.
  */
+
+// isSshTransportFailure lives in ./ssh-transport now. Re-exported here for
+// backwards compatibility with callers that used to import it from this
+// module. Prefer importing directly from ./ssh-transport in new code.
+export { isSshTransportFailure };
+
 export function backupSandboxState(sandboxName: string, options: BackupOptions = {}): BackupResult {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
@@ -1107,6 +1130,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const failedDirs: string[] = [];
   const backedUpFiles: string[] = [];
   const failedFiles: string[] = [];
+  let unreachable = false;
 
   if (stateDirs.length === 0 && stateFiles.length === 0) {
     _log("WARNING: Agent manifest declares no state_dirs or state_files — nothing to back up");
@@ -1119,6 +1143,10 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   const sshConfig = getSshConfig(sandboxName);
   if (!sshConfig) {
     _log("FAILED: Could not get SSH config");
+    // For a sandbox the registry reported as running, an unreachable
+    // `openshell sandbox ssh-config` lookup is a transport-level failure —
+    // treat it the same as the initial dir probe and propagate `unreachable`
+    // so NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 can activate. (#6188)
     return {
       success: false,
       manifest,
@@ -1126,6 +1154,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
       failedDirs: [...stateDirs],
       backedUpFiles,
       failedFiles: stateFiles.map((f) => f.path),
+      unreachable: true,
     };
   }
   _log(`SSH config obtained (${sshConfig.length} bytes)`);
@@ -1168,6 +1197,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         );
         return {
           success: false,
+          unreachable: isSshTransportFailure(existResult),
           manifest,
           backedUpDirs,
           failedDirs: [...stateDirs],
@@ -1214,6 +1244,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
           _log(`FAILED: Pre-backup audit command failed — ${detail}`);
           return {
             success: false,
+            unreachable: isSshTransportFailure(auditResult),
             manifest,
             backedUpDirs,
             failedDirs: [...existingDirs],
@@ -1281,6 +1312,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         _log(
           `SSH+tar download: exit=${result.status}, stdout=${result.stdout ? result.stdout.length + " bytes" : "null"}, stderr=${(result.stderr?.toString() || "").substring(0, 200)}`,
         );
+        if (isSshTransportFailure(result)) unreachable = true;
 
         // GNU tar exit codes: 0 = success, 1 = files changed during archive,
         // 2 = errors (e.g. permission denied) but archive still written to stdout.
@@ -1347,10 +1379,14 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
     for (const spec of stateFiles) {
       const result = backupStateFile(configFile, sandboxName, dir, spec, backupPath);
-      if (result === "backed_up") {
+      if (result.outcome === "backed_up") {
         backedUpFiles.push(spec.path);
-      } else if (result === "failed") {
+      } else if (result.outcome === "failed") {
         failedFiles.push(spec.path);
+        // Any transport-level failure at the state-file phase must promote to
+        // the sandbox-level unreachable flag so the skip flag can activate
+        // for state-file failures — not only the initial dir probe. (#6188)
+        if (result.unreachable) unreachable = true;
       }
     }
   } finally {
@@ -1385,6 +1421,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 
   return {
     success: failedDirs.length === 0 && failedFiles.length === 0,
+    unreachable,
     manifest,
     backedUpDirs,
     failedDirs,
@@ -1642,6 +1679,82 @@ function readManifest(backupPath: string): RebuildManifest | null {
 }
 
 // ── Listing ────────────────────────────────────────────────────────
+
+export type RebuildRecoveryManifestValidation =
+  | { ok: true; manifest: RebuildManifest }
+  | { ok: false; reason: string };
+
+/**
+ * Re-read and validate a prepared rebuild backup before a destructive recovery.
+ *
+ * `getLatestBackup()` validates the manifest schema. Recovery additionally pins
+ * the backup to the target sandbox's own timestamped directory and requires the
+ * persisted sandbox/agent identity to match the registry entry. This keeps an
+ * installer recovery from deleting a sandbox based on a renamed, copied, or
+ * otherwise mismatched manifest.
+ */
+export function validateRebuildRecoveryManifest(
+  sandboxName: string,
+  agentName: string | null | undefined,
+  candidate: RebuildManifest,
+): RebuildRecoveryManifestValidation {
+  const expectedAgent = String(agentName || "openclaw").trim() || "openclaw";
+  const sandboxBackupRoot = path.resolve(REBUILD_BACKUPS_DIR, sandboxName);
+  const expectedBackupPath = path.resolve(sandboxBackupRoot, candidate.timestamp);
+  const candidateBackupPath = path.resolve(candidate.backupPath);
+
+  if (
+    candidateBackupPath !== expectedBackupPath ||
+    path.dirname(candidateBackupPath) !== sandboxBackupRoot ||
+    path.basename(candidateBackupPath) !== candidate.timestamp
+  ) {
+    return {
+      ok: false,
+      reason: `backup path does not match '${sandboxName}' and timestamp '${candidate.timestamp}'`,
+    };
+  }
+
+  const persisted = readManifest(candidateBackupPath);
+  if (!persisted || persisted.version !== MANIFEST_VERSION) {
+    return { ok: false, reason: "latest backup manifest is missing, malformed, or unsupported" };
+  }
+  if (persisted.sandboxName !== sandboxName) {
+    return {
+      ok: false,
+      reason: `manifest sandbox '${persisted.sandboxName}' does not match '${sandboxName}'`,
+    };
+  }
+  if (persisted.agentType !== expectedAgent) {
+    return {
+      ok: false,
+      reason: `manifest agent '${persisted.agentType}' does not match registry agent '${expectedAgent}'`,
+    };
+  }
+  if (
+    persisted.timestamp !== candidate.timestamp ||
+    path.resolve(persisted.backupPath) !== candidateBackupPath
+  ) {
+    return { ok: false, reason: "persisted backup identity changed during validation" };
+  }
+
+  return { ok: true, manifest: persisted };
+}
+
+/**
+ * Confirm that a registry entry carries positive NemoClaw-managed image
+ * provenance. Managed images built by current releases receive a non-empty
+ * `nemoclawVersion` fingerprint, while custom images do not.
+ *
+ * `agentVersion` is not provenance: a live version probe can populate it for a
+ * legacy custom image, and backup then copies that value into the manifest.
+ * Pre-fingerprint entries therefore fail closed instead of inferring image
+ * ownership from matching agent versions.
+ */
+export function hasPositiveManagedImageEvidence(
+  sandbox: Pick<registry.SandboxEntry, "nemoclawVersion">,
+): boolean {
+  return Boolean(String(sandbox.nemoclawVersion || "").trim());
+}
 
 /**
  * List available backups for a sandbox, newest first, each enriched with a

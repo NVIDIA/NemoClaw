@@ -31,6 +31,23 @@ function findApprovalExec(sandboxExecCalls: string[][]): string[] | undefined {
   });
 }
 
+function findGatewayControlExec(dockerCalls: string[][]): string[] | undefined {
+  return dockerCalls.find((call) => {
+    const userIndex = call.indexOf("--user");
+    return (
+      call[0] === "exec" &&
+      userIndex > 1 &&
+      call.includes("LD_PRELOAD=") &&
+      call.includes("PYTHONUSERBASE=") &&
+      call.includes("PYTHONNOUSERSITE=1") &&
+      call[userIndex + 1] === "root" &&
+      call[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
+      call[userIndex + 4] === "recover" &&
+      call.length === userIndex + 6
+    );
+  });
+}
+
 describe("sandbox connect auto-pair approval pass (#4263)", () => {
   it(
     "runs a bounded openclaw devices approval pass before opening SSH",
@@ -49,7 +66,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       );
 
       const result = runConnect(tmpDir, sandboxName);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const script = extractApprovalPassScript(stateFile, sandboxName);
       // Hardened script content: source the proxy env, require local tools,
@@ -94,7 +111,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       );
 
       const result = runConnect(tmpDir, sandboxName);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const script = extractApprovalPassScript(stateFile, sandboxName);
       // Disallowed/malformed/unknown requests are skipped by the policy before
       // an approve is even attempted (they `continue` before the attempt
@@ -172,7 +189,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
     );
 
     const result = runConnect(tmpDir, sandboxName);
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const script = extractApprovalPassScript(stateFile, sandboxName);
     const run = runApprovalPassScript(
       script,
@@ -214,7 +231,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const result = runConnect(tmpDir, sandboxName, {
         NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1",
       });
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       // Approval-pass exec was attempted (and the fake openshell exited
       // non-zero for it, per the hook above).
@@ -244,9 +261,9 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
     "runs the approval pass on the --probe-only (recover) path",
     testTimeoutOptions(20_000),
     () => {
-      // The probe takes the wasRunning branch (the fake openshell health probe
-      // reports RUNNING), so the recover path must run the sweep — and must NOT
-      // open an SSH session.
+      // The probe starts with a stopped gateway, recovers it through the
+      // root-only PID 1 control helper, then runs the sweep without opening an
+      // SSH session.
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
           name: "probe-approval-sandbox",
@@ -257,12 +274,27 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         },
         "anthropic-prod",
         "claude-sonnet-4-20250514",
+        { gatewaySupervisorRecovery: true },
       );
 
       const result = runConnect(tmpDir, sandboxName, {}, ["--probe-only"]);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      const controlExec = findGatewayControlExec(state.dockerCalls as string[][]);
+      const userIndex = controlExec?.indexOf("--user") ?? -1;
+      expect(controlExec?.slice(userIndex, userIndex + 5)).toEqual([
+        "--user",
+        "root",
+        `openshell-${sandboxName}-fixture`,
+        "/usr/local/bin/nemoclaw-gateway-control",
+        "recover",
+      ]);
+      expect(controlExec).toContain("LD_PRELOAD=");
+      expect(controlExec).toContain("PYTHONUSERBASE=");
+      expect(controlExec).toContain("PYTHONNOUSERSITE=1");
+      expect(controlExec?.[userIndex + 5]).toMatch(/^[0-9a-f]{64}$/);
+      expect(state.gatewayRunning).toBe(true);
       const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
       expect(approvalExec).toBeDefined();
       expect(approvalExec).toContain("sandbox");
@@ -290,12 +322,13 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         },
         "anthropic-prod",
         "claude-sonnet-4-20250514",
+        { gatewaySupervisorRecovery: true },
       );
 
       const result = runConnect(tmpDir, sandboxName, { NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1" }, [
         "--probe-only",
       ]);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
@@ -355,10 +388,11 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         },
         "anthropic-prod",
         "claude-sonnet-4-20250514",
+        { gatewaySupervisorRecovery: true },
       );
 
       const result = runConnect(tmpDir, sandboxName, {}, ["--probe-only"]);
-      expect(result.status).toBe(0);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const script = extractApprovalPassScript(stateFile, sandboxName);
       expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
@@ -393,6 +427,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
         },
         "anthropic-prod",
         "claude-sonnet-4-20250514",
+        { gatewaySupervisorRecovery: true },
       );
 
       const result = runConnect(tmpDir, sandboxName, {}, ["--probe-only"]);

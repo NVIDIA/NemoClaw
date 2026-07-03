@@ -68,6 +68,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
@@ -101,15 +110,6 @@ jobs:
           name: hermes-sandbox-secret-boundary-log
           path: /tmp/nemoclaw-hermes-sandbox-secret-boundary.log
           if-no-files-found: ignore
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
 
       - name: Run Hermes root entrypoint smoke Vitest test
         env:

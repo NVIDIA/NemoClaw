@@ -159,7 +159,9 @@ function expectHostTelegramConfig(context: string): void {
 }
 
 function expectHostTelegramPlan(expected: "active" | "removed", context: string): void {
-  const plan = messagingPlan();
+  const state = readSandboxEntry().messaging;
+  const plan =
+    expected === "active" || (state?.schemaVersion === 1 && state.plan) ? messagingPlan() : {};
   const channels = planArray(plan, "channels");
   const channel = channels.find((item) => item.channelId === "telegram");
   const disabledChannels = stringArray(plan.disabledChannels);

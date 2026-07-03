@@ -13,6 +13,10 @@ content:
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
 
+<Note>
+The diagnostic commands on this page assume `$$nemoclaw` is on your `PATH` (re-source your shell profile after an nvm- or fnm-managed install) and that your user can reach the Docker socket — either as a member of the `docker` group or by running the Docker commands with `sudo`.
+</Note>
+
 <Warning title="Get Help">
 
 If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community.
@@ -125,6 +129,19 @@ To avoid these issues, install the prerequisites in the following order before r
 
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
+
+### `docker` is missing after installing Colima
+
+Homebrew Colima does not install the Docker CLI binary.
+If you install only Colima, `colima start` can succeed while later `docker` commands fail with `command not found`.
+
+Install both packages, start Colima with enough resources for the sandbox image build, and verify Docker before onboarding:
+
+```bash
+brew install colima docker
+colima start --cpu 4 --memory 8
+docker info
+```
 
 ### Permission errors during installation
 
@@ -245,13 +262,26 @@ For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free no
 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Remote/headless hosts can bind the OpenShell gateway to all IPv4 interfaces:
+Remote/headless hosts should keep the OpenShell gateway on loopback and bind the dashboard forward instead:
 
 ```bash
-NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
+NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the network should be able to reach the gateway.
+Docker-driver gateways on OpenShell 0.0.72 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+
+Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
+
+### Older-glibc gateway compatibility container
+
+OpenShell 0.0.72 directly supports Linux hosts with glibc 2.28 or newer.
+On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
+Leave it unset on supported hosts.
+
+The compatibility container uses host networking and mounts the host Docker socket read-only.
+A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
+The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
+See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
@@ -361,6 +391,24 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+### Sandbox build fails during OpenClaw plugin install
+
+During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
+If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
+
+Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin.
+For example, if the plugin is for web search, disable that feature and resume onboarding:
+
+```bash
+NEMOCLAW_WEB_SEARCH_ENABLED=0 $$nemoclaw onboard --resume
+```
+
+If you want the feature, fix the network or policy path first, then resume onboarding:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
 ### Sandbox containers cannot reach the gateway
 
 On native Linux Docker-driver hosts, `$$nemoclaw onboard` verifies the route that sandbox containers use to reach the OpenShell gateway.
@@ -394,6 +442,19 @@ $$nemoclaw <name> connect
 
 Run `$$nemoclaw status` for a broader gateway health report.
 
+<AgentOnly variant="hermes">
+If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
+Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, leaves an otherwise healthy gateway untouched, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
+
+Re-image the sandbox with a current Hermes build before retrying recovery:
+
+```bash
+nemohermes <sandbox-name> rebuild --yes
+nemohermes <sandbox-name> recover
+```
+
+</AgentOnly>
+
 ### Sandbox container reports `(unhealthy)` while the agent gateway process is still alive
 
 The in-sandbox OpenClaw gateway can drop its HTTP listener while its process stays alive.
@@ -410,7 +471,7 @@ For example, `openclaw plugins install` logs that message until the gateway rest
 Apply them with a supervised restart:
 
 ```bash
-$$nemoclaw <name> recover
+$$nemoclaw <name> gateway restart
 ```
 
 or rebuild the sandbox for changes that affect provisioning:
@@ -561,7 +622,56 @@ As a last resort, you can also delete the session file directly and re-run the i
 rm ~/.nemoclaw/onboard-session.json
 ```
 
+### Kubernetes namespace not ready
+
+If onboarding fails with `Kubernetes namespace not ready`, a previous failed or interrupted setup may have left stale OpenShell or NemoClaw state behind.
+Clean up the failed installation before re-running the installer:
+
+```bash
+$$nemoclaw uninstall --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The normal uninstall path keeps user data under `~/.nemoclaw/`, including sandbox registry metadata, backups, and saved credentials unless you explicitly remove them.
+If `$$nemoclaw uninstall` reports that the local uninstall script is missing, follow the CLI's security boundary: download the versioned NVIDIA/NemoClaw tag URL that it prints, inspect the script locally, run that local copy, and then retry the installer.
+
+```bash
+curl -fsSLo uninstall.sh <versioned-uninstall-url>
+less uninstall.sh
+bash uninstall.sh --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
 ## Runtime
+
+<AgentOnly variant="openclaw">
+
+### OpenShell gateway and OpenClaw gateway startup order
+
+NemoClaw uses two gateway layers for OpenClaw sandboxes:
+
+- The OpenShell gateway runs on the host side and owns sandbox lifecycle, provider routes, port forwards, and `openshell sandbox list` / `status` queries.
+- The OpenClaw gateway runs inside the sandbox container and serves the OpenClaw dashboard, agent API, and sub-agent WebSocket traffic.
+
+Start and recover them in this order: container runtime, OpenShell gateway, sandbox container, then the in-sandbox OpenClaw gateway.
+
+<Warning>
+Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy.
+NemoClaw cannot select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+</Warning>
+
+If the host rebooted or the OpenShell gateway is down, first run:
+
+```bash
+$$nemoclaw <name> status
+```
+
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox.
+If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell.
+After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards.
+Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+
+</AgentOnly>
 
 ### Reconnect after a host reboot
 
@@ -623,6 +733,98 @@ If the sandbox was intentionally deleted and you want a clean setup instead, run
 Create a snapshot first when the sandbox is reachable enough to back up state. For details, refer to [Back Up and Restore](../manage-sandboxes/backup-restore).
 </Warning>
 
+### `gateway restart` or `recover` reports `privileged control unavailable`
+
+Built-in OpenClaw and Hermes lifecycle commands require a running direct sandbox container that belongs to the named NemoClaw registry entry.
+The host uses registry-scoped privileged direct-container control to send an authenticated request to the controller for the live topology.
+It does not fall back to ordinary `openshell sandbox exec`, SSH, or a manual in-sandbox relaunch.
+
+Current built-in images support two direct-container shapes.
+A direct root-entrypoint container uses the root PID 1 supervisor.
+An OpenShell-managed container uses `/opt/openshell/bin/openshell-sandbox` as PID 1, exactly one nonroot `nemoclaw-start` supervisor, and the installed root-owned mode `0500` managed controller.
+An arbitrary nonroot entrypoint that does not match that managed process shape fails with `privileged control unavailable`.
+Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
+Run the lifecycle command from a supported direct-container deployment rather than trying to launch the gateway by hand.
+
+On a direct-container deployment, first confirm that the sandbox is running:
+
+```bash
+$$nemoclaw <name> status
+```
+
+When `recover` repairs a stopped built-in gateway, NemoClaw automatically retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
+It does not retry other status or output combinations.
+If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
+If the error mentions `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
+The managed controller also refuses an ambiguous or changing process tree instead of guessing which same-UID process is the gateway.
+Rebuild the image before retrying:
+
+```bash
+$$nemoclaw <name> rebuild --yes
+```
+
+For a custom image, update its Dockerfile to preserve the current NemoClaw entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library before rebuilding.
+
+### Hermes config or shields reports a mutation already in progress
+
+Hermes host config writes, shields transitions, and lifecycle seals use the same root-only mutation lock.
+A host-side config write is bound to the SHA-256 digest of the matching read, installs fresh sealed config inodes, refreshes both config hashes, and restores the prior permissions before releasing that lock.
+For shields changes, the lock remains held through recursive state-directory updates, config verification, and content-seal capture.
+If a concurrent config or shields command reports `Hermes config mutation is already in progress`, do not remove `/run/nemoclaw/hermes-config-mutation.lock` manually.
+Wait for the active config, shields, recovery, or restart command to finish, then retry.
+If the command says shields are up, run `$$nemoclaw <name> shields down` before `config set` or `inference set`.
+
+### Hermes startup reports `HERMES_CONFIG_MUTATION_ORPHANED`
+
+This refusal means a root-owned config or shields transaction stopped without a safely recoverable complete state.
+NemoClaw intentionally does not guess whether a partially updated recursive state tree should be locked or mutable, and it does not treat a leftover lock file as permission to continue.
+Do not delete `/run/nemoclaw/hermes-config-mutation.lock`, the restart state, or the persistent transaction marker manually.
+The config root remains sealed from the sandbox identity, so an ordinary in-place `rebuild` cannot create a new trustworthy backup and will stop before deleting the sandbox.
+If you already have a trusted host-side snapshot, record its selector, destroy the sealed sandbox, re-onboard the same sandbox name from trusted host configuration, and then restore that snapshot:
+
+```bash
+$$nemoclaw <name> snapshot list
+$$nemoclaw <name> destroy
+$$nemoclaw onboard --name <name> --agent hermes
+$$nemoclaw <name> snapshot restore <selector>
+```
+
+Destroying the sealed sandbox permanently discards any state newer than the selected snapshot, so verify that the host-side snapshot exists before confirming destruction.
+Without a trusted pre-incident snapshot, automatic state-preserving recovery is not available.
+Recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
+
+### Hermes startup reports `HERMES_RESTART_SEAL_ORPHANED`
+
+This refusal means a container recreation discarded the root-only restart metadata under `/run` while the persistent `/sandbox` tree still carries the frozen transaction marker, or a non-root entrypoint found a root transaction it cannot safely restore.
+NemoClaw cannot safely infer the original ownership, modes, or inode flags from a partial seal, so startup fails closed even when `config.yaml` and `.env` still look readable.
+Do not repair the paths with manual `chown`, `chmod`, or hash regeneration.
+An ordinary `rebuild` cannot safely back up a sealed tree.
+Restore a trusted snapshot into a new sandbox as shown above, or recreate from host-side onboarding configuration if no state-preserving recovery is required.
+
+### Hermes startup reports `HERMES_LOCKED_PARENT_UNPROTECTED`
+
+This refusal means Hermes config files look shields-locked but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.hermes` lock root.
+`shields up` cannot repair this after PID 1 has refused startup.
+Do not change the parent ownership manually or accept the current bytes as a new seal.
+Restore a trusted pre-incident snapshot into a new sandbox, or recreate the sandbox from host-side onboarding configuration.
+
+### OpenClaw startup reports `OPENCLAW_LOCKED_PARENT_UNPROTECTED`
+
+This refusal means the OpenClaw config directory is root-owned but `/sandbox` is not `root:sandbox 1775`, so the sandbox identity could rename the entire `.openclaw` lock root.
+PID 1 refuses startup before migration or config reads, and `shields up` cannot repair the parent after that refusal.
+Do not change the parent ownership manually or accept the current bytes as a new seal.
+If you have a trusted host-side snapshot from before the incident, record its selector, destroy the refused sandbox, re-onboard the same sandbox name from trusted host configuration, and restore that snapshot:
+
+```bash
+$$nemoclaw <name> snapshot list
+$$nemoclaw <name> destroy
+$$nemoclaw onboard --name <name> --agent openclaw
+$$nemoclaw <name> snapshot restore <selector>
+```
+
+Destroying the refused sandbox permanently discards state newer than the selected snapshot, so confirm that the host-side snapshot exists before destruction.
+Without a trusted pre-incident snapshot, recreate the sandbox from host-side onboarding configuration only if you accept losing the inaccessible in-sandbox state.
+
 ### Sandbox is running an outdated agent version
 
 After upgrading NemoClaw, `$$nemoclaw <name> connect` and `$$nemoclaw <name> status` warn if the sandbox is running an older agent version than the current image.
@@ -643,8 +845,44 @@ $$nemoclaw <name> rebuild
 
 ### Sandbox shows as stopped
 
-The sandbox may have been stopped or deleted.
-Run `$$nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
+When status reports `sandbox_container_stopped`, Docker still has a container for the sandbox, but the container is not running.
+Use the lightest recovery path first instead of rebuilding immediately.
+
+1. Confirm Docker can still see the labeled container.
+
+   ```bash
+   docker ps -a --filter "label=openshell.ai/sandbox-name=<name>"
+   ```
+
+   If a container is listed, start it:
+
+   ```bash
+   docker start <container-name>
+   ```
+
+1. Run status recovery from the host.
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
+   A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
+
+1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
+
+   ```bash
+   $$nemoclaw <name> recover
+   ```
+
+1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
+
+   ```bash
+   $$nemoclaw <name> rebuild --yes
+   ```
+
+   Rebuild recreates the sandbox from recorded metadata and preserves supported workspace and agent state.
+   If the sandbox was intentionally deleted and you want a clean setup, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
 
 ### Sandbox is registered locally but missing from the gateway
 
@@ -669,13 +907,46 @@ It also forwards standard CA bundle variables for subprocesses, including `GIT_S
 If Git still reports `server certificate verification failed`, reconnect to the sandbox and check that the CA variables are present:
 
 ```bash
-env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE' || true
 ```
+
+`grep` exits non-zero when it finds no matches, so empty output (with the trailing `|| true`) simply means none of these CA variables are set in the current shell.
 
 If they are missing on an older sandbox, upgrade NemoClaw and run:
 
 ```bash
 $$nemoclaw <name> rebuild
+```
+
+### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
+
+Sandbox outbound network access is denied by default and enforced by the OpenShell proxy.
+When a request targets a host that no applied policy preset allows, the proxy refuses the tunnel and tools surface only the protocol-level error:
+
+```text
+fatal: unable to access 'https://example.com/foo/bar/': CONNECT tunnel failed, response 403
+curl: (56) CONNECT tunnel failed, response 403
+```
+
+This is a network-policy denial, not a tool or certificate problem.
+
+The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this denial signature and the `logs` command below.
+The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
+Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.
+If the reported sandbox name contains characters that are not valid in a sandbox name (uppercase letters, underscores, control characters, and similar) or exceeds 63 characters, the reminder shows the `<name>` placeholder for safety rather than echoing the untrusted value.
+The reminder is intentionally proactive: the denial itself is surfaced by the OpenShell proxy, so the `curl`/`git` error text is left unchanged and the reminder points you to the logs instead.
+
+To see which rule denied the request, read the merged logs from the host:
+
+```bash
+$$nemoclaw <name> logs --tail 50
+```
+
+If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
+
+```bash
+$$nemoclaw <name> policy-add <preset>
 ```
 
 ### Sandbox creation reports a TLS certificate mismatch
@@ -699,6 +970,41 @@ Instead:
 1. Upgrade to a NemoClaw release that includes the newer `openclaw` version.
 2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
 3. Run `$$nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
+
+<AgentOnly variant="openclaw">
+
+### AWS EC2 Instance-Role Credential Discovery Is Unavailable
+
+This is expected in an OpenClaw sandbox.
+NemoClaw forces `AWS_EC2_METADATA_DISABLED=true` because OpenShell blocks the link-local EC2 Instance Metadata Service endpoint.
+Existing sandboxes must use a current NemoClaw image before they receive this environment invariant.
+
+Upgrade NemoClaw and rebuild the sandbox:
+
+```bash
+$$nemoclaw update --yes
+$$nemoclaw <name> rebuild --yes
+```
+
+Reconnect and verify the value:
+
+```bash
+$$nemoclaw <name> connect
+printenv AWS_EC2_METADATA_DISABLED
+```
+
+Expected output:
+
+```text
+true
+```
+
+Only EC2 instance-role discovery is disabled.
+Static access keys, bearer tokens, shared profiles, SSO and process credentials, web identity, and ECS container credentials remain eligible.
+NemoClaw's host-local Amazon Bedrock adapter is outside the sandbox credential-discovery boundary and remains available.
+Do not add `169.254.169.254` to a network policy or override the variable.
+
+</AgentOnly>
 
 ### Inference requests time out
 
@@ -774,6 +1080,32 @@ openshell sandbox list
 $$nemoclaw <name> status
 ```
 
+### Sandbox onboard fails with "entered Error phase before it became ready"
+
+Onboarding ends with:
+
+```text
+  Sandbox 'my-assistant' entered Error phase before it became ready (waited up to 180s).
+```
+
+On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready` — seen on DGX Spark, where the dashboard port fallback and supervisor restart race the sandbox bootstrap.
+
+NemoClaw tolerates a bounded run of consecutive `Error` polls (default 30 polls / ~60s) so this transient recovers on its own; only `Error` that persists past the debounce window is treated as terminal. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
+
+If your host needs a longer window (slower re-registration), raise the debounce; to fail fast on the first `Error` poll, set it to `1`:
+
+```bash
+export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=60   # tolerate ~120s of transient Error
+$$nemoclaw onboard
+```
+
+If the failure persists after the debounce, the sandbox is genuinely stuck — inspect the retained diagnostics and gateway state:
+
+```bash
+openshell sandbox list
+$$nemoclaw <name> status
+```
+
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
 Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their
@@ -817,6 +1149,8 @@ When that happens, OpenClaw commands may report that the config is empty instead
 
 Current NemoClaw sandboxes capture a known-good config baseline after a successful startup.
 On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline.
+Recovery validates the config tree and selected source before atomically replacing `openclaw.json` and `.config-hash`.
+If it detects an unsafe link, unexpected owner, or path change, startup fails closed without following or modifying the unsafe target.
 If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
 
 ```bash
@@ -910,14 +1244,27 @@ Current NemoClaw rebuilds bake Telegram in the account-based layout and set Tele
 In a mutable NemoClaw sandbox, the gateway UID and the sandbox UID share the `sandbox` group, so `/sandbox/.openclaw` is setgid and group-writable (`2770`) and `openclaw.json` is group-writable (`660`).
 OpenClaw's `openclaw doctor --fix` enforces its own single-user `700/600` layout, so running it inside the sandbox strips group write and breaks gateway-side config writes (for example, control-UI toggles that mutate `openclaw.json`).
 
-Repair the mutable contract without rebuilding:
+When you invoke the command through the host-side one-shot path, NemoClaw restores the mutable contract as the command exits:
 
 ```bash
-nemoclaw <sandbox> doctor --fix
+$$nemoclaw <sandbox> exec -- openclaw doctor --fix
 ```
 
-`nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
-Restarting the sandbox repairs the same drift automatically, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+When cleanup succeeds, `exec` preserves the `openclaw doctor --fix` exit code.
+If cleanup cannot inspect, restore, or verify the mutable config permission contract, it returns a cleanup failure instead and prints `OpenClaw permission cleanup failed (...)` with the command and cleanup statuses.
+Do not recursively change ownership or permissions over a config tree that failed this safety check.
+Inspect the reported condition and rebuild from trusted host-side configuration if the tree or image boundary is not the expected NemoClaw layout.
+
+If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an older sandbox image, repair the mutable contract without rebuilding:
+
+```bash
+$$nemoclaw <sandbox> doctor --fix
+```
+
+`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
+Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
 When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
 
@@ -933,7 +1280,7 @@ A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw
 
 - **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
 - **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
-- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
 
 ### Discord bot logs in, but the channel still does not work
 
@@ -1063,6 +1410,16 @@ For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.
 Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
 Running `$$nemoclaw onboard` automatically upgrades OpenShell to 0.0.24 or later during the preflight check.
 After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
+
+### DNS-backed HTTPS endpoint is not supported
+
+NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
+This can appear during a direct blueprint run, Hermes Provider custom-endpoint setup, `$$nemoclaw inference set`, or a host-side `config set` write.
+
+Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
+If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address.
+Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly.
+For the full endpoint rules, refer to [Inference Options](../inference/inference-options#custom-endpoint-url-validation).
 
 ### Agent cannot reach external hosts through a proxy
 
@@ -1387,7 +1744,9 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 ### Docker GPU patch failed during sandbox create
 
-On Linux Docker-driver gateways, NemoClaw may create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU flags.
+On ordinary native Linux Docker-driver hosts with usable CDI, NemoClaw uses OpenShell native GPU injection by default.
+On Docker Desktop WSL and Jetson/Tegra, NemoClaw uses the compatibility patch by default, which creates the sandbox first and then recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to force this compatibility path on ordinary native Linux for diagnostics or older host compatibility.
 If that compatibility patch fails, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
 
 <Note>
@@ -1403,7 +1762,8 @@ openshell sandbox delete <sandbox-name>
 
 Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
-Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=0` to select native OpenShell GPU injection on ordinary native Linux or Jetson/Tegra.
+Use this override on Jetson/Tegra only for troubleshooting because it bypasses the compatibility path's `/dev/nvmap` and `/dev/nvhost-*` group propagation, so CUDA may not initialize.
 On Docker Desktop WSL, the patch is required for GPU passthrough.
 `NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.
 To skip GPU passthrough entirely on Docker Desktop WSL, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX_GPU=0`.
@@ -1453,7 +1813,8 @@ Download the latest official WSL `.msi` package from the [Microsoft WSL releases
 
 The bootstrap script checks `wsl --status` before it installs or opens Ubuntu.
 If Windows reports that the WSL runtime is not installed, the script attempts `wsl --install --no-distribution` automatically.
-If the repair command succeeds, reboot when prompted and let the bootstrap resume after sign-in.
+If the repair command succeeds and WSL reports that the changes require a reboot, reboot and let the bootstrap resume after sign-in.
+If the repair command succeeds but WSL still cannot be verified and the output does not request a reboot, follow the printed repair guidance instead of rebooting by default.
 If the repair command fails, follow the printed repair steps.
 If the repair command returns `Forbidden (403)` or remains blocked, install WSL manually with Microsoft's [offline install guidance](https://learn.microsoft.com/en-us/windows/wsl/install#offline-install).
 Download the latest official WSL `.msi` package from the [Microsoft WSL releases page](https://github.com/microsoft/WSL/releases/latest), choose the matching `.x64.msi` or `.arm64.msi`, install it, reboot if Windows requests it, then rerun the bootstrap script.
@@ -1468,8 +1829,12 @@ Manual WSL installation only helps when the WSL runtime is missing or the online
 
 ### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
 
-The Ubuntu package was installed with `--no-launch` but never registered.
-Run `ubuntu.exe install --root` from PowerShell to register it, or reinstall without `--no-launch`:
+The Ubuntu package was installed with `--no-launch` but never registered, or Windows finished the install command before the distribution appeared in `wsl -l`.
+When this happens during the NemoClaw bootstrap, the script prints a sanitized `WSL install output` block.
+PowerShell transcript headers, footers, temporary transcript paths, and status-file paths are redacted before display so you can paste the useful WSL output into a bug report with less local machine metadata.
+
+If the sanitized output says a reboot is required, reboot and rerun the bootstrap.
+If it does not request a reboot, register the distro manually or reinstall without `--no-launch`:
 
 ```bash
 wsl --unregister Ubuntu
@@ -1638,6 +2003,30 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 
 The issues below are common problems you may encounter when running Hermes through `nemohermes`.
 For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart).
+
+### Hermes restart reports `config hash mismatch`
+
+A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
+The direct root-entrypoint supervisor always uses the strict hash at `/etc/nemoclaw/hermes.config-hash`.
+The OpenShell-managed controller uses that hash when both config inputs are root-owned and locked.
+Mutable config in the managed topology has no durable root-owned hash anchor, so restart retains the same trust and time-of-check/time-of-use limits as managed cold start and cannot use this error to prove direct drift.
+Both controllers validate the secret boundary and supervisor runtime environment before they stop the tracked gateway.
+They do not recompute a trusted strict hash to adopt direct edits made inside the sandbox.
+
+For intended changes, use supported host commands such as `nemohermes <name> config set` and `nemohermes inference set` so NemoClaw updates the config and its strict and compatibility hashes together.
+Do not edit either hash file manually.
+
+If direct edits have already caused a mismatch, restore the original config and environment files or rebuild from the registered configuration:
+
+```bash
+nemohermes <name> rebuild --yes
+```
+
+If the command instead reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
+Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
+The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
+In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
+The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
 

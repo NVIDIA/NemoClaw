@@ -24,9 +24,10 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../openshell-sandbox-list";
-import { parseReadySandboxNames } from "../runtime-recovery";
+import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
+import * as sandboxState from "../state/sandbox";
 import { rebuildSandbox } from "./sandbox/rebuild";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
@@ -78,6 +79,53 @@ function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
   return parts.join("; ");
 }
 
+type PreparedBackupRecovery = {
+  sandbox: registry.SandboxEntry;
+  manifest: sandboxState.RebuildManifest;
+};
+
+type RejectedBackupRecovery = {
+  sandbox: registry.SandboxEntry;
+  reason: string;
+};
+
+function prepareBackupRecovery(
+  sandbox: registry.SandboxEntry,
+): PreparedBackupRecovery | RejectedBackupRecovery {
+  try {
+    const latest = sandboxState.getLatestBackup(sandbox.name);
+    if (!latest) {
+      return { sandbox, reason: "no validated pre-upgrade backup was found" };
+    }
+
+    const validation = sandboxState.validateRebuildRecoveryManifest(
+      sandbox.name,
+      sandbox.agent,
+      latest,
+    );
+    if (!validation.ok) {
+      return { sandbox, reason: validation.reason };
+    }
+    if (!sandboxState.hasPositiveManagedImageEvidence(sandbox)) {
+      return {
+        sandbox,
+        reason:
+          "registry has no NemoClaw-managed image fingerprint (pre-fingerprint and custom images are not auto-recreated)",
+      };
+    }
+    return { sandbox, manifest: validation.manifest };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { sandbox, reason: `backup recovery assessment failed: ${detail}` };
+  }
+}
+
+function isPreparedBackupRecovery(
+  candidate: PreparedBackupRecovery | RejectedBackupRecovery,
+): candidate is PreparedBackupRecovery {
+  return "manifest" in candidate;
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -116,6 +164,16 @@ export async function upgradeSandboxes(
     process.exit(liveResult.status || 1);
   }
   const liveNames = parseReadySandboxNames(liveResult.output || "");
+  // Absence from the selected gateway is not evidence of failure: a registered
+  // sandbox may be Ready on another recorded gateway. Only an explicitly
+  // observed, known non-Ready phase is eligible for prepared-backup recovery.
+  const nonReadyLiveNames = new Set(
+    parseLiveSandboxEntries(liveResult.output || "")
+      .filter(
+        (entry) => entry.phase !== null && entry.phase !== "Ready" && entry.phase !== "Running",
+      )
+      .map((entry) => entry.name),
+  );
 
   // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw
   // build so a NemoClaw image/build change is detected even when the agent
@@ -127,7 +185,35 @@ export async function upgradeSandboxes(
     { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
   );
 
-  if (stale.length === 0 && unknown.length === 0) {
+  // Source boundary (#6114): a v0.0.55/legacy-OpenShell install can leave its
+  // already-registered sandboxes in Provisioning/Error after the host upgrade.
+  // That state comes from the already-installed legacy CLI/gateway and cannot be
+  // prevented at its source by this candidate. install.sh exports this signal only
+  // after that CLI completes backup-all, or after an operator asserts prepared
+  // upgrade state. Recovery remains limited to registry entries with a managed-image
+  // fingerprint; pre-fingerprint entries cannot prove provenance and fail closed.
+  // upgrade-sandboxes-recovery.test.ts and
+  // install-preexisting-sandbox-recovery.test.ts guard the handoff. Remove this
+  // bridge with onboard's matching consumer once prepared-backup installer recovery
+  // is no longer supported.
+  const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+  const backupRecoveryAssessments = recoverPreparedBackups
+    ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)
+    : [];
+  const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
+  const rejectedRecoveries = backupRecoveryAssessments.filter(
+    (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),
+  );
+  const assessedRecoveryNames = new Set(
+    backupRecoveryAssessments.map((candidate) => candidate.sandbox.name),
+  );
+
+  if (
+    stale.length === 0 &&
+    unknown.length === 0 &&
+    preparedRecoveries.length === 0 &&
+    rejectedRecoveries.length === 0
+  ) {
     console.log("  All sandboxes are up to date.");
     return;
   }
@@ -146,6 +232,20 @@ export async function upgradeSandboxes(
       console.log(`    ${s.name}  v? → v${s.expected}  (${status})`);
     }
   }
+  if (preparedRecoveries.length > 0) {
+    console.log(`\n  ${B}Prepared backup recovery:${R}`);
+    for (const recovery of preparedRecoveries) {
+      console.log(
+        `    ${recovery.sandbox.name}  ${D}${recovery.manifest.timestamp}${R}  (non-Ready)`,
+      );
+    }
+  }
+  if (rejectedRecoveries.length > 0) {
+    console.log(`\n  ${YW}Backup recovery blocked:${R}`);
+    for (const recovery of rejectedRecoveries) {
+      console.error(`    ${recovery.sandbox.name}  ${recovery.reason}`);
+    }
+  }
   console.log("");
 
   if (checkOnly) {
@@ -155,35 +255,67 @@ export async function upgradeSandboxes(
         `  ${unknown.length} sandbox(es) could not be version-checked; start them and rerun, or rebuild manually.`,
       );
     }
+    if (preparedRecoveries.length > 0) {
+      console.log(
+        `  ${preparedRecoveries.length} non-Ready sandbox(es) have a validated pre-upgrade backup.`,
+      );
+    }
+    if (rejectedRecoveries.length > 0) {
+      console.log(
+        `  ${rejectedRecoveries.length} non-Ready sandbox(es) cannot be recovered automatically.`,
+      );
+    }
     console.log(`  Run \`${CLI_NAME} upgrade-sandboxes\` to rebuild them.`);
     return;
   }
 
   const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
-  if (stopped.length > 0) {
-    console.log(`  ${D}Skipping ${stopped.length} stopped sandbox(es) — start them first.${R}`);
+  const notObservedReadyOrNonReady = stopped.filter(
+    (sandbox) => !assessedRecoveryNames.has(sandbox.name),
+  );
+  if (notObservedReadyOrNonReady.length > 0) {
+    console.log(
+      `  ${D}Skipping ${notObservedReadyOrNonReady.length} sandbox(es) not observed on the selected gateway — verify their recorded gateway or start them first.${R}`,
+    );
   }
-  if (rebuildable.length === 0) {
+  if (
+    rebuildable.length === 0 &&
+    preparedRecoveries.length === 0 &&
+    rejectedRecoveries.length === 0
+  ) {
     console.log("  No running stale sandboxes to rebuild.");
     return;
   }
 
   let rebuilt = 0;
-  let failed = 0;
-  for (const s of rebuildable) {
+  let failed = rejectedRecoveries.length;
+  const work = [
+    ...rebuildable.map((sandbox) => ({ sandbox, manifest: null })),
+    ...preparedRecoveries.map((recovery) => ({
+      sandbox: { name: recovery.sandbox.name },
+      manifest: recovery.manifest,
+    })),
+  ];
+  for (const item of work) {
+    const { sandbox, manifest } = item;
     if (!skipConfirm) {
-      const answer = await askPrompt(`  Rebuild '${s.name}'? [y/N]: `);
+      const verb = manifest ? "Recover" : "Rebuild";
+      const answer = await askPrompt(`  ${verb} '${sandbox.name}'? [y/N]: `);
       if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-        console.log(`  Skipped '${s.name}'.`);
+        console.log(`  Skipped '${sandbox.name}'.`);
         continue;
       }
     }
     try {
-      await rebuildSandbox(s.name, ["--yes"], { throwOnError: true });
+      await rebuildSandbox(sandbox.name, ["--yes"], {
+        throwOnError: true,
+        recoveryManifest: manifest ?? undefined,
+      });
       rebuilt++;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`  ${YW}⚠${R} Failed to rebuild '${s.name}': ${errorMessage}`);
+      const verb = manifest ? "recover" : "rebuild";
+      console.error(`  ${YW}⚠${R} Failed to ${verb} '${sandbox.name}': ${errorMessage}`);
       failed++;
     }
   }
