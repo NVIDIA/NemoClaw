@@ -19,14 +19,31 @@ export function isMissingSandboxDeleteOutput(output = ""): boolean {
   );
 }
 
+/**
+ * True when a `sandbox delete` failure is a gateway transport error (the
+ * OpenShell gateway at 127.0.0.1:8080 is not listening) rather than a real
+ * delete rejection. When the gateway process is down every gateway call gets a
+ * connection-refused/transport error, which used to make `destroy` fatal with
+ * no bypass (#6046).
+ */
+export function isGatewayUnreachableDeleteOutput(output = ""): boolean {
+  return /connection refused|os error (?:61|111)|tcp connect error|error trying to connect|transport error|failed to connect to|connect(?:ion)? timed out|deadline has elapsed|connection reset/i.test(
+    stripAnsi(output),
+  );
+}
+
 export function getSandboxDeleteOutcome(deleteResult: SpawnLikeResult): {
   output: string;
   alreadyGone: boolean;
+  gatewayUnreachable: boolean;
 } {
   const output = `${deleteResult.stdout || ""}${deleteResult.stderr || ""}`.trim();
+  const failed = deleteResult.status !== 0;
+  const alreadyGone = failed && isMissingSandboxDeleteOutput(output);
   return {
     output,
-    alreadyGone: deleteResult.status !== 0 && isMissingSandboxDeleteOutput(output),
+    alreadyGone,
+    gatewayUnreachable: failed && !alreadyGone && isGatewayUnreachableDeleteOutput(output),
   };
 }
 

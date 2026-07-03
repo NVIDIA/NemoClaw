@@ -41,7 +41,7 @@ let upsertMock: MockInstance;
 let updateSandboxMock: MockInstance;
 let runOpenshellMock: MockInstance;
 let applyPresetMock: MockInstance;
-let loadPresetMock: MockInstance;
+let loadPresetForSandboxMock: MockInstance;
 let saveCredentialMock: MockInstance;
 let getCredentialMock: MockInstance;
 let promptMock: MockInstance;
@@ -68,8 +68,8 @@ beforeEach(() => {
   runOpenshellMock = vi
     .spyOn(runtime, "runOpenshell")
     .mockReturnValue({ status: 0, stdout: "", stderr: "" });
-  loadPresetMock = vi
-    .spyOn(policy, "loadPreset")
+  loadPresetForSandboxMock = vi
+    .spyOn(policy, "loadPresetForSandbox")
     .mockReturnValue("network_policies:\n  stub: {}\n");
   vi.spyOn(policy, "parsePresetPolicyKeys").mockReturnValue(["stub"]);
   vi.spyOn(policy, "listPresets").mockReturnValue([]);
@@ -106,7 +106,7 @@ describe("addSandboxChannel agent gate", () => {
     expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
     expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
-    expect(loadPresetMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(upsertMock).not.toHaveBeenCalled();
     expect(updateSandboxMock).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe("addSandboxChannel agent gate", () => {
     }
 
     expect(exitCodeFromError(caught)).toBe(1);
-    expect(loadPresetMock).not.toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
     expect(upsertMock).not.toHaveBeenCalled();
     expect(updateSandboxMock).not.toHaveBeenCalled();
@@ -153,7 +153,7 @@ describe("addSandboxChannel agent gate", () => {
       .map((call) => call.map(String).join(" "))
       .join("\n");
     expect(errorText).not.toMatch(/does not support agent/);
-    expect(loadPresetMock).toHaveBeenCalled();
+    expect(loadPresetForSandboxMock).toHaveBeenCalled();
     void caught;
     void exitMock;
     void logSpy;

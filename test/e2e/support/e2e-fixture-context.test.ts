@@ -56,7 +56,7 @@ describe("E2E fixture primitives", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-e2e-live-artifacts-"));
     const previousArtifactDir = process.env.E2E_ARTIFACT_DIR;
     const targetId = "ubuntu-repo-cloud-openclaw";
-    const artifactParent = path.join(tmp, "e2e-artifacts", "vitest");
+    const artifactParent = path.join(tmp, "e2e-artifacts", "live");
     const allowlistedFiles = [
       "run-plan.json",
       "target.json",
@@ -64,6 +64,7 @@ describe("E2E fixture primitives", () => {
       "environment.result.json",
       "onboarding.result.json",
       "state-validation.result.json",
+      "cloud-onboard-trace-timing-summary.json",
     ];
     const shellEvidenceFiles = [
       "shell/command-evidence.result.json",

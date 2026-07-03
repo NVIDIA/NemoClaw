@@ -327,9 +327,46 @@ async function destroySandboxUnlocked(
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
+    if (destructiveResult.gatewayUnreachable) {
+      if (destructiveResult.mcpOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
+        );
+      } else {
+        console.error(
+          `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
+        );
+        console.error(
+          `  or re-run with --force to remove the local sandbox record without the gateway.`,
+        );
+      }
+    }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone } = destructiveResult;
+  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
+    destructiveResult;
+
+  if (forcedLocalCleanup) {
+    if (deleteOutput) {
+      console.error(`  ${deleteOutput}`);
+    }
+    console.warn(
+      `  ${YW}⚠${R} OpenShell gateway unreachable; removing the local record for '${sandboxName}' (--force).`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} If the gateway comes back, the sandbox may still exist — re-run destroy or remove it via openshell.`,
+    );
+  }
+
+  // Forced local cleanup removes the registry entry/local artifacts but cannot
+  // confirm the gateway-side delete, so it must not trigger shared host-service
+  // or gateway teardown: the sandbox may still exist on the (unreachable)
+  // gateway. Gate that teardown on the *confirmed* delete state only — never on
+  // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
+  // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,

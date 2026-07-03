@@ -96,6 +96,10 @@ beforeEach(() => {
   vi.spyOn(policies, "loadPreset").mockImplementation((name: unknown) => {
     return `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`;
   });
+  vi.spyOn(policies, "loadPresetForSandbox").mockImplementation(
+    (_sandboxName: unknown, name: unknown) =>
+      `network_policies:\n  ${String(name)}:\n    host: ${String(name)}.example.com\n`,
+  );
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
   applyPresetContentMock = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);

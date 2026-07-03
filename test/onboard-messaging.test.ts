@@ -461,7 +461,7 @@ const { createSandbox } = require(${onboardPath});
       assert.ok(payload.createCommand.command.includes("sandbox create"));
       assert.match(payload.createCommand.command, /--provider my-assistant-slack-bridge/);
       assert.match(payload.createCommand.command, /--provider my-assistant-slack-app/);
-      assert.doesNotMatch(payload.createCommand.policyPath, /nemoclaw-initial-policy/);
+      assert.match(payload.createCommand.policyPath, /nemoclaw-initial-policy/);
       assert.equal(payload.createCommand.policyReadError, null);
       assert.deepEqual(payload.registeredPolicies, ["slack"]);
       assert.deepEqual(payload.slackBinaryPaths, [

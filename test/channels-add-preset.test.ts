@@ -176,12 +176,14 @@ const appliedCalls = [];
 const removedCalls = [];
 const callOrder = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
-policies.loadPreset = (name) => {
+function stubPresetContent(name) {
   if (${JSON.stringify(presetFileMissing)}) return null;
   if (${JSON.stringify(presetMissingNetworkPolicies)}) return "name: " + name + "\ndescription: \"stub preset without network_policies\"\n";
   if (${JSON.stringify(presetMalformedYaml)}) return "network_policies:\n  - [unclosed\n";
   return "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
-};
+}
+policies.loadPreset = (name) => stubPresetContent(name);
+policies.loadPresetForSandbox = (sandboxName, name) => { callOrder.push("loadPresetForSandbox:" + sandboxName + ":" + name); return stubPresetContent(name); };
 policies.applyPreset = (sandboxName, presetName) => {
   appliedCalls.push({ sandboxName, presetName });
   callOrder.push("applyPreset:" + presetName);
@@ -339,10 +341,8 @@ const ctx = module.exports;
         [{ sandboxName: "test-sb", presetName: channel }],
         `expected applyPreset("test-sb", "${channel}") exactly once; got ${JSON.stringify(payload.appliedCalls)}`,
       );
+      assert.ok(payload.callOrder.includes(`loadPresetForSandbox:test-sb:${channel}`));
 
-      // Contract 2: ordering invariant — preset apply must precede rebuild,
-      // otherwise the rebuild's backup manifest will not capture it and
-      // Step 5.5 of rebuild.ts has nothing to restore.
       const applyIdx = payload.callOrder.indexOf(`applyPreset:${channel}`);
       const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
       assert.ok(

@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import * as registry from "../../state/registry";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { validatedRebuildRegistryUpdate } from "./rebuild-durable-config";
 import {
@@ -13,6 +15,7 @@ import {
   type RebuildSandboxEntry,
 } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import { checkRebuildGatewaySchemaPreflight } from "./rebuild-preflight-guards";
 import {
@@ -81,6 +84,17 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
   );
+  // Detect cross-sandbox credential conflicts immediately after staging the
+  // exact rebuild plan, before host/runtime probes and every destructive phase.
+  await preflightRebuildMessagingConflicts(messagingPlan, {
+    sandboxName,
+    gatewayName: getSandboxTargetGatewayName(sandboxName),
+    registry,
+    cliName: () => CLI_NAME,
+    log: (message) => console.log(message),
+    error: (message) => console.error(message),
+    bail,
+  });
   if (
     !(await preflightAuthoritativeOnboardRuntime(sandboxName, resumeConfig, recreateOptions, bail))
   ) {

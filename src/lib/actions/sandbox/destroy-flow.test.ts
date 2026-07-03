@@ -107,6 +107,50 @@ describe("destroySandbox flow", () => {
     });
   });
 
+  it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
+    // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
+    // the local record is removed but the gateway-side delete was never
+    // confirmed, so the sandbox may still exist. Even as the only registered
+    // sandbox, that must not tear down shared host services (CodeRabbit #6050).
+    const harness = createDestroyHarness({
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      registeredSandboxCount: 1,
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+
+    // Local cleanup still proceeds...
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    // ...but shared host services are preserved on the unconfirmed delete.
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed and restores MCP state when --force cannot confirm sandbox deletion", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      mcpServers: ["github"],
+      registeredSandboxCount: 1,
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expectMcpRestoreAfterDeleteFailure(harness);
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errorOutput).toContain("MCP ownership required for exact provider cleanup");
+    expect(errorOutput).toContain("--force cannot safely discard MCP ownership");
+    expect(errorOutput).not.toContain("re-run with --force to remove the local sandbox record");
+  });
+
   it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
     const harness = createDestroyHarness({ activeTimer: true });
 

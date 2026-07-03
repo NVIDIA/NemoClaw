@@ -23,11 +23,11 @@ type Preset = { name: string; access?: string };
 type PoliciesApi = {
   setupPolicyPresetSupported(
     name: string,
-    options?: { webSearchSupported?: boolean | null },
+    options?: { webSearchSupported?: boolean | null; agent?: string | null },
   ): boolean;
   listSetupPolicyPresets(
     sandboxName: string,
-    options?: { webSearchSupported?: boolean | null },
+    options?: { webSearchSupported?: boolean | null; agent?: string | null },
   ): Preset[];
   listCustomPresets(sandboxName: string): Preset[];
   getAppliedPresets(sandboxName: string): string[];
@@ -54,7 +54,7 @@ export function preparePolicyPresetResumeSelection(
     tierName?: string | null;
   },
 ): PreparedPolicyResumeSelection {
-  const supportOptions = { webSearchSupported: options.webSearchSupported };
+  const supportOptions = { webSearchSupported: options.webSearchSupported, agent: options.agent };
   const appliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
   const selectablePolicyPresets = [
     ...filterSetupPolicyPresetsForAgent(
