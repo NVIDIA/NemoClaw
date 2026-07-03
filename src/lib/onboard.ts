@@ -560,7 +560,6 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 
 import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
-import { failLine, warnLine } from "./cli/terminal-style";
 import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
@@ -1594,7 +1593,7 @@ type PreflightOptions = Pick<
 // running bridge/DNS diagnostics that would be misleading.
 function rejectUnsupportedContainerRuntime(host: ReturnType<typeof assessHost>): void {
   if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
-    console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));
+    console.error(`  ✗ ${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`);
     console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
     console.error("    Switch to Docker Engine and rerun onboarding.");
     process.exit(1);
@@ -1655,10 +1654,8 @@ async function preflight(
     }
     const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
     console.warn(
-      warnLine(
-        `Container runtime under-provisioned: ${detectedStr} detected ` +
-          `(recommended: ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
-      ),
+      `  ⚠ Container runtime under-provisioned: ${detectedStr} detected ` +
+        `(recommended: ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
     );
     console.warn("    The sandbox build will be slow and may stall on default Colima settings.");
     if (host.runtime === "colima") {
@@ -1913,10 +1910,8 @@ async function preflight(
     const mem = getMemoryInfo();
     if (mem) {
       if (mem.totalMB < 12000) {
-        console.warn(
-          warnLine(
-            `Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`,
-          ),
+        console.log(
+          `  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`,
         );
 
         let proceedWithSwap: boolean = false;
@@ -1943,8 +1938,8 @@ async function preflight(
               console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
             }
           } else {
-            console.warn(warnLine(`Could not create swap: ${swapResult.reason}`));
-            console.warn("    Sandbox creation may fail with OOM on low-memory systems.");
+            console.log(`  ⚠ Could not create swap: ${swapResult.reason}`);
+            console.log("  Sandbox creation may fail with OOM on low-memory systems.");
           }
         }
       } else {
@@ -3246,9 +3241,9 @@ async function createSandbox(
   // cannot be verified via CLI yet — only gateway-level existence is checked).
   for (const p of messagingProviders) {
     if (!providerExistsInGateway(p)) {
-      console.warn(warnLine(`Messaging provider '${p}' was not found in the gateway.`));
-      console.warn(`    The credential may not be available inside the sandbox.`);
-      console.warn(
+      console.error(`  ⚠ Messaging provider '${p}' was not found in the gateway.`);
+      console.error(`    The credential may not be available inside the sandbox.`);
+      console.error(
         `    To fix: openshell provider create --name ${p} --type generic --credential <KEY>`,
       );
     }
