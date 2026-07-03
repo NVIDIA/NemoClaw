@@ -14,6 +14,11 @@ import {
 const originalReasoning = process.env.NEMOCLAW_REASONING;
 const originalDockerGpuPatchNetwork = process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
 
+function restoreEnv(name: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, name);
+  Object.assign(process.env, value === undefined ? {} : { [name]: value });
+}
+
 function dcodeInput(
   overrides: Partial<RebuildImagePreflightInput> = {},
 ): RebuildImagePreflightInput {
@@ -41,13 +46,8 @@ function dcodeInput(
 }
 
 afterEach(() => {
-  if (originalReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
-  else process.env.NEMOCLAW_REASONING = originalReasoning;
-  if (originalDockerGpuPatchNetwork === undefined) {
-    delete process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
-  } else {
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = originalDockerGpuPatchNetwork;
-  }
+  restoreEnv("NEMOCLAW_REASONING", originalReasoning);
+  restoreEnv("NEMOCLAW_DOCKER_GPU_PATCH_NETWORK", originalDockerGpuPatchNetwork);
   vi.restoreAllMocks();
 });
 
@@ -112,10 +112,38 @@ describe("preflightRebuildImage", () => {
       suppressOutput: true,
     });
     expect(cleanupBuildCtx).not.toHaveBeenCalled();
-    if (result.ok) cleanupPreparedRebuildBuildContext(result.preparedBuildContext);
+    const preparedBuildContext = result.ok ? result.preparedBuildContext : null;
+    expect(preparedBuildContext).not.toBeNull();
+    cleanupPreparedRebuildBuildContext(preparedBuildContext!);
     expect(cleanupBuildCtx).toHaveBeenCalledOnce();
     expect(process.env.NEMOCLAW_REASONING).toBe("true");
     expect(process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe(originalDockerGpuPatchNetwork);
+  });
+
+  it("does not capture a hostile ambient host network when patching makes no decision", async () => {
+    process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = "host";
+    const cleanupBuildCtx = vi.fn(() => true);
+
+    const result = await preflightRebuildImage(dcodeInput(), {
+      stageBuildContext: vi.fn(() => ({
+        buildCtx: "/tmp/dcode-rebuild-hostile-network",
+        stagedDockerfile: "/tmp/dcode-rebuild-hostile-network/Dockerfile",
+        cleanupBuildCtx,
+      })),
+      prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+      buildImage: vi.fn(() => ({ status: 0 }) as never),
+      removeImage: vi.fn(() => ({ status: 0 }) as never),
+      createImageTag: () => "nemoclaw-rebuild-preflight:hostile-network",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      preparedBuildContext: { dockerGpuPatchNetwork: null },
+    });
+    expect(process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
+    const preparedBuildContext = result.ok ? result.preparedBuildContext : null;
+    cleanupPreparedRebuildBuildContext(preparedBuildContext!);
+    expect(cleanupBuildCtx).toHaveBeenCalledOnce();
   });
 
   it("reports buffered build diagnostics and cleans temporary state on failure (#6195)", async () => {
@@ -203,7 +231,7 @@ describe("preflightRebuildImage", () => {
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
     ) => {
-      if (eventName === "SIGINT") sigintHandler = listener;
+      sigintHandler = eventName === "SIGINT" ? listener : sigintHandler;
       return process;
     }) as typeof process.once);
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
@@ -246,7 +274,7 @@ describe("preflightRebuildImage", () => {
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
     ) => {
-      if (eventName === "SIGTERM") sigtermHandler = listener;
+      sigtermHandler = eventName === "SIGTERM" ? listener : sigtermHandler;
       return process;
     }) as typeof process.once);
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);

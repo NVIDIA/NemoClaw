@@ -28,10 +28,10 @@ describe("atomic rebuild Brave Search preflight", () => {
       stderr: "rejected brv-secret-value-that-is-long-enough",
     }));
     const result = preflightRebuildBraveSearchRoute("alpha", { execute });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.detail).toContain("401");
-      expect(result.detail).not.toContain("brv-secret-value-that-is-long-enough");
-    }
+    expect(result).toEqual({
+      ok: false,
+      detail: "existing sandbox Brave Search probe returned HTTP 401",
+    });
+    expect(JSON.stringify(result)).not.toContain("brv-secret-value-that-is-long-enough");
   });
 });

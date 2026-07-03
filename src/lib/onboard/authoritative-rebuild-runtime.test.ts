@@ -47,7 +47,10 @@ const target = {
   authoritativeResourceProfile: null,
 };
 
-function harness(isDockerDriverGatewayHttpReady = async () => true) {
+function harness(
+  isDockerDriverGatewayHttpReady = async () => true,
+  previousLocalTlsDir: string | null = "/tmp/original-tls",
+) {
   const previous: RuntimeState = {
     dashboardPort: 4444,
     gatewayName: "previous",
@@ -55,7 +58,10 @@ function harness(isDockerDriverGatewayHttpReady = async () => true) {
     nonInteractive: false,
   };
   let state = { ...previous };
-  const env = { OPENSHELL_GATEWAY: "original" } as NodeJS.ProcessEnv;
+  const env = {
+    OPENSHELL_GATEWAY: "original",
+    ...(previousLocalTlsDir === null ? {} : { OPENSHELL_LOCAL_TLS_DIR: previousLocalTlsDir }),
+  } as NodeJS.ProcessEnv;
   const getDockerDriverGatewayRuntimeDrift = vi.fn(() => null);
   const preflight = createAuthoritativeRebuildRuntimePreflight({
     getRuntimeState: () => ({ ...state }),
@@ -119,5 +125,17 @@ describe("authoritative rebuild runtime preflight", () => {
 
     expect(test.state()).toEqual(test.previous);
     expect(test.env.OPENSHELL_GATEWAY).toBe("original");
+    expect(test.env.OPENSHELL_LOCAL_TLS_DIR).toBe("/tmp/original-tls");
+  });
+
+  it("removes target TLS state after rejection when the caller had none (#6195)", async () => {
+    const test = harness(async () => false, null);
+
+    await expect(test.preflight(target)).rejects.toThrow(
+      "Target gateway 'nemoclaw-31818' is not HTTPS/mTLS-ready.",
+    );
+
+    expect(test.state()).toEqual(test.previous);
+    expect(test.env.OPENSHELL_LOCAL_TLS_DIR).toBeUndefined();
   });
 });

@@ -139,6 +139,7 @@ export async function preflightRebuildImage(
   const previousDockerGpuPatchNetwork = process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
 
   try {
+    delete process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
     if (input.provider === "compatible-endpoint") {
       process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
     } else {

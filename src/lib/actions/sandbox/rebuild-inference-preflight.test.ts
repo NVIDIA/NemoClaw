@@ -33,11 +33,11 @@ describe("atomic rebuild inference preflight", () => {
     }));
     const result = preflightRebuildInferenceRoute(input, { execute });
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.detail).toContain("401");
-      expect(result.detail).not.toContain("sk-secret-value-that-is-long-enough");
-    }
+    expect(result).toEqual({
+      ok: false,
+      detail: "existing sandbox inference probe returned HTTP 401",
+    });
+    expect(JSON.stringify(result)).not.toContain("sk-secret-value-that-is-long-enough");
   });
 
   it("never reports an arbitrary echoed response body", () => {

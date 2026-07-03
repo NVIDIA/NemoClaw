@@ -32,9 +32,13 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
   } satisfies AuthoritativeRebuildTargetDeps;
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, name);
+  Object.assign(process.env, value === undefined ? {} : { [name]: value });
+}
+
 afterEach(() => {
-  if (originalGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-  else process.env.OPENSHELL_GATEWAY = originalGateway;
+  restoreEnv("OPENSHELL_GATEWAY", originalGateway);
   vi.restoreAllMocks();
 });
 

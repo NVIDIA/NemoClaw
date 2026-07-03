@@ -94,10 +94,6 @@ import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { normalizeHermesToolGatewaySelections } from "../../onboard/hermes-managed-tools";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
-import {
-  attachNamedSandboxProviders,
-  detachNamedSandboxProviders,
-} from "../../onboard/sandbox-provider-cleanup";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import { parseLiveSandboxNames, parseReadySandboxNames } from "../../runtime-recovery";
@@ -131,6 +127,7 @@ import {
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { preflightRebuildInferenceRoute } from "./rebuild-inference-preflight";
+import { beginRebuildProviderDetachOrBail } from "./rebuild-provider-detach-transaction";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
@@ -1283,127 +1280,6 @@ function restoreRegistrySnapshotForRetry(
   }
 }
 
-type ExactProviderDetachFailure = { name: string; output: string };
-type SuccessfulExactProviderDetachTransaction = {
-  ok: true;
-  commit(): void;
-  rollback(): ExactProviderDetachFailure[];
-};
-type ExactProviderDetachTransaction =
-  | SuccessfulExactProviderDetachTransaction
-  | { ok: false; failure: ExactProviderDetachFailure };
-
-function beginExactProviderDetachTransaction(options: {
-  sandboxName: string;
-  providerNames: string[];
-  relock: () => void;
-}): ExactProviderDetachTransaction {
-  const providerNames = [...new Set(options.providerNames.filter(Boolean))];
-  const detachedProviderNames: string[] = [];
-  let rollbackArmed = true;
-  let onSigint: (() => void) | null = null;
-  let onSigterm: (() => void) | null = null;
-  const reportFailures = (failures: ExactProviderDetachFailure[]) => {
-    for (const failure of failures) {
-      console.error(
-        `  ${YW}⚠${R} Failed to reattach provider '${failure.name}': ${redact(failure.output)}`,
-      );
-    }
-  };
-  const onExit = () => {
-    if (!rollbackArmed) return;
-    options.relock();
-    rollbackArmed = false;
-    reportFailures(
-      attachNamedSandboxProviders(options.sandboxName, detachedProviderNames, { runOpenshell })
-        .failures,
-    );
-  };
-  const removeHandlers = () => {
-    process.removeListener("exit", onExit);
-    if (onSigint) process.removeListener("SIGINT", onSigint);
-    if (onSigterm) process.removeListener("SIGTERM", onSigterm);
-  };
-  const rollback = (): ExactProviderDetachFailure[] => {
-    if (!rollbackArmed) return [];
-    rollbackArmed = false;
-    removeHandlers();
-    const result = attachNamedSandboxProviders(options.sandboxName, detachedProviderNames, {
-      runOpenshell,
-    });
-    reportFailures(result.failures);
-    return result.failures;
-  };
-  const commit = () => {
-    rollbackArmed = false;
-    removeHandlers();
-  };
-  const rollbackForSignal = () => {
-    options.relock();
-    rollback();
-  };
-  // The rebuild lifecycle lock's exit handler was registered before this
-  // transaction. Prepend provider rollback so gateway attachments are restored
-  // while that lock is still held.
-  process.prependOnceListener("exit", onExit);
-  onSigint = rollbackForSignal;
-  onSigterm = rollbackForSignal;
-  process.prependOnceListener("SIGINT", onSigint);
-  process.prependOnceListener("SIGTERM", onSigterm);
-
-  if (providerNames.length === 0) return { ok: true, commit, rollback };
-
-  let result: ReturnType<typeof detachNamedSandboxProviders>;
-  try {
-    result = detachNamedSandboxProviders(options.sandboxName, providerNames, {
-      runOpenshell,
-      onDetached: (providerName) => detachedProviderNames.push(providerName),
-    });
-  } catch (error) {
-    options.relock();
-    rollback();
-    throw error;
-  }
-  if (result.failures.length === 0) return { ok: true, commit, rollback };
-  options.relock();
-  rollback();
-  return { ok: false, failure: result.failures[0] };
-}
-
-function beginRebuildProviderDetachOrBail(options: {
-  sandboxName: string;
-  messagingReuse: AuthoritativeMessagingReuse | undefined;
-  hermesToolProvider: string | null;
-  staleRecovery: boolean;
-  relock: () => void;
-  bail: RebuildBail;
-}): SuccessfulExactProviderDetachTransaction {
-  if (!options.messagingReuse) {
-    options.relock();
-    options.bail("Authoritative messaging provider attachments were not prepared.");
-  }
-  const transaction = options.staleRecovery
-    ? ({ ok: true, commit: () => undefined, rollback: () => [] } as const)
-    : beginExactProviderDetachTransaction({
-        sandboxName: options.sandboxName,
-        providerNames: [
-          ...options.messagingReuse.detachProviders,
-          ...(options.hermesToolProvider ? [options.hermesToolProvider] : []),
-        ],
-        relock: options.relock,
-      });
-  if (transaction.ok) return transaction;
-
-  const { failure } = transaction;
-  console.error("");
-  console.error(
-    `  ${_RD}Rebuild preflight failed:${R} could not detach retained provider '${failure.name}'.`,
-  );
-  console.error(`  ${redact(failure.output)}`);
-  console.error("  Sandbox was not deleted; detached providers were restored where possible.");
-  options.bail(`Failed to detach retained provider '${failure.name}'.`);
-}
-
 export async function rebuildSandbox(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
@@ -1656,6 +1532,7 @@ async function rebuildSandboxInner(
           relockShieldsIfNeeded(true);
         },
         bail,
+        runOpenshell,
       });
 
       // Step 3: Delete sandbox without tearing down gateway or session.

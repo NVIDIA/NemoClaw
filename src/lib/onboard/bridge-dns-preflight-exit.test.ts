@@ -35,16 +35,17 @@ const savedEnv = new Map(proxyKeys.map((key) => [key, process.env[key]]));
 const savedProvider = process.env.NEMOCLAW_PROVIDER;
 const savedSkip = process.env.NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT;
 
+function restoreEnv(name: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, name);
+  Object.assign(process.env, value === undefined ? {} : { [name]: value });
+}
+
 afterEach(() => {
   for (const key of proxyKeys) {
-    const value = savedEnv.get(key);
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
+    restoreEnv(key, savedEnv.get(key));
   }
-  if (savedProvider === undefined) delete process.env.NEMOCLAW_PROVIDER;
-  else process.env.NEMOCLAW_PROVIDER = savedProvider;
-  if (savedSkip === undefined) delete process.env.NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT;
-  else process.env.NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT = savedSkip;
+  restoreEnv("NEMOCLAW_PROVIDER", savedProvider);
+  restoreEnv("NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT", savedSkip);
   vi.restoreAllMocks();
   vi.clearAllMocks();
 });

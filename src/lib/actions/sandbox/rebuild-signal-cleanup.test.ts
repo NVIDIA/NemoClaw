@@ -33,22 +33,30 @@ describe("rebuild signal cleanup", () => {
     expect(events.listenerCount("SIGTERM")).toBe(0);
   });
 
-  it("allows later signal handlers to run when prepended recovery throws (#6195)", () => {
+  it("lets retained cleanup re-raise the exact signal after prepended recovery throws (#6195)", () => {
     const events = fakeProcessEvents();
-    const laterHandler = vi.fn();
+    const retainedCleanup = vi.fn();
+    const kill = vi.fn();
     const reportError = vi.fn();
+    installRetainedResourceSignalCleanup(retainedCleanup, {
+      events,
+      kill,
+      pid: 42,
+      reportError,
+    });
     installPrependedExitAndSignalRecovery(
       () => {
         throw new Error("relock failed");
       },
       { events, reportError },
     );
-    events.once("SIGTERM", laterHandler);
 
     events.emit("SIGTERM");
 
     expect(reportError).toHaveBeenCalledWith("relock failed");
-    expect(laterHandler).toHaveBeenCalledOnce();
+    expect(retainedCleanup).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith(42, "SIGTERM");
     expect(events.listenerCount("exit")).toBe(0);
   });
 

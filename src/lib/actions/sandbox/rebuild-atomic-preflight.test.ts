@@ -51,8 +51,8 @@ function snapshotEnvironment(): () => void {
   const saved = ambientEnvNames.map((name) => [name, process.env[name]] as const);
   return () => {
     for (const [name, value] of saved) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
+      Reflect.deleteProperty(process.env, name);
+      Object.assign(process.env, value === undefined ? {} : { [name]: value });
     }
   };
 }
@@ -94,6 +94,12 @@ function createAtomicRebuildHarness(failureStage: FailureStage): AtomicRebuildHa
   const rebuildShields = requireSource("./rebuild-shields.js");
 
   const events: string[] = [];
+  const finishTargetPreflight =
+    failureStage === "target"
+      ? () => {
+          throw new Error("fatal target preflight failed");
+        }
+      : () => undefined;
   const sandboxEntry = {
     name: "dcode-workspace",
     agent: "langchain-deepagents-code",
@@ -201,7 +207,7 @@ function createAtomicRebuildHarness(failureStage: FailureStage): AtomicRebuildHa
           targetGatewayPort,
         }),
       );
-      if (failureStage === "target") throw new Error("fatal target preflight failed");
+      finishTargetPreflight();
       return {
         gpu: null,
         host: { dockerReachable: true, runtime: "docker", notes: [] },
@@ -289,7 +295,7 @@ function createAtomicRebuildHarness(failureStage: FailureStage): AtomicRebuildHa
     .spyOn(openshellRuntime, "runOpenshell")
     .mockImplementation((...callArgs: unknown[]) => {
       const args = callArgs[0] as string[];
-      if (args[0] === "sandbox" && args[1] === "delete") events.push("sandbox-delete");
+      events.push(...(args.slice(0, 2).join(" ") === "sandbox delete" ? ["sandbox-delete"] : []));
       return { status: 0, output: "" };
     });
   const removeRegistrySpy = vi

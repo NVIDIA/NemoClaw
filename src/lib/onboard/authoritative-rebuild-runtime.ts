@@ -60,6 +60,8 @@ export function createAuthoritativeRebuildRuntimePreflight(deps: AuthoritativeRe
       gatewayPort: authoritativeGateway.port,
       nonInteractive: true,
     });
+    const previousLocalTlsDir = env.OPENSHELL_LOCAL_TLS_DIR;
+    let transportPreflightCompleted = false;
     let runtimeResult: fatalRuntimePreflight.FatalRuntimePreflightResult | null = null;
     const fail = (message: string): never => {
       throw new Error(message);
@@ -167,9 +169,14 @@ export function createAuthoritativeRebuildRuntimePreflight(deps: AuthoritativeRe
       if (!runtimeResult) {
         throw new Error("Authoritative runtime preflight did not return a result");
       }
+      transportPreflightCompleted = true;
       return runtimeResult;
     } finally {
       deps.setRuntimeState(previous);
+      if (!transportPreflightCompleted) {
+        if (previousLocalTlsDir === undefined) delete env.OPENSHELL_LOCAL_TLS_DIR;
+        else env.OPENSHELL_LOCAL_TLS_DIR = previousLocalTlsDir;
+      }
     }
   };
 }

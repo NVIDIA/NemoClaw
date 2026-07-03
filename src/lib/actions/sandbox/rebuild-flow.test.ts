@@ -13,6 +13,11 @@ import {
   snapshotEnv,
 } from "./rebuild-flow.test-support";
 
+function restoreEnv(name: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, name);
+  Object.assign(process.env, value === undefined ? {} : { [name]: value });
+}
+
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -21,11 +26,7 @@ describe("rebuildSandbox flow", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     delete require.cache[requireDist.resolve(rebuildModulePath)];
-    if (originalSandboxName === undefined) {
-      delete process.env.NEMOCLAW_SANDBOX_NAME;
-    } else {
-      process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
-    }
+    restoreEnv("NEMOCLAW_SANDBOX_NAME", originalSandboxName);
   });
 
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
@@ -395,10 +396,9 @@ describe("rebuildSandbox flow", () => {
     });
     harness.runOpenshellSpy.mockImplementation((args: string[]) => {
       const command = args.join(" ");
-      if (command === "sandbox provider detach alpha b-provider") {
-        return { status: 1, stderr: "status: Internal, gateway timeout", stdout: "" } as never;
-      }
-      return { status: 0, stderr: "", stdout: "" } as never;
+      return command === "sandbox provider detach alpha b-provider"
+        ? ({ status: 1, stderr: "status: Internal, gateway timeout", stdout: "" } as never)
+        : ({ status: 0, stderr: "", stdout: "" } as never);
     });
 
     await expect(
@@ -423,17 +423,19 @@ describe("rebuildSandbox flow", () => {
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
     ) => {
-      if (eventName === "exit") providerExitHandler = listener;
+      providerExitHandler = eventName === "exit" ? listener : providerExitHandler;
       return process;
     }) as typeof process.prependOnceListener);
     const harness = createRebuildFlowHarness({ extraProviders: ["a-provider", "b-provider"] });
     harness.runOpenshellSpy.mockImplementation((args: string[]) => {
       const command = args.join(" ");
-      if (command === "sandbox provider detach alpha b-provider") {
+      const failure = () => {
         providerExitHandler?.();
         return { status: 1, stderr: "status: Internal, gateway timeout", stdout: "" } as never;
-      }
-      return { status: 0, stderr: "", stdout: "" } as never;
+      };
+      return command === "sandbox provider detach alpha b-provider"
+        ? failure()
+        : ({ status: 0, stderr: "", stdout: "" } as never);
     });
 
     await expect(
@@ -456,14 +458,16 @@ describe("rebuildSandbox flow", () => {
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
     ) => {
-      if (eventName === "SIGINT" && !shieldsSigintHandler) shieldsSigintHandler = listener;
+      shieldsSigintHandler =
+        eventName === "SIGINT" ? (shieldsSigintHandler ?? listener) : shieldsSigintHandler;
       return process;
     }) as typeof process.prependOnceListener);
     vi.spyOn(process, "once").mockImplementation(((
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
     ) => {
-      if (eventName === "SIGINT") retainedCleanupSigintHandler = listener;
+      retainedCleanupSigintHandler =
+        eventName === "SIGINT" ? listener : retainedCleanupSigintHandler;
       return process;
     }) as typeof process.once);
     const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
@@ -1184,6 +1188,45 @@ describe("rebuildSandbox flow", () => {
     expect(errors).toContain("original registry entry was restored");
   });
 
+  it("restores, relocks, and re-raises SIGTERM during post-delete recreate", async () => {
+    let retainedSigtermHandler: (() => void) | null = null;
+    let postDeleteSigtermHandler: (() => void) | null = null;
+    vi.spyOn(process, "once").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      retainedSigtermHandler = eventName === "SIGTERM" ? listener : retainedSigtermHandler;
+      return process;
+    }) as typeof process.once);
+    vi.spyOn(process, "prependOnceListener").mockImplementation(((
+      eventName: string | symbol,
+      listener: (...args: unknown[]) => void,
+    ) => {
+      postDeleteSigtermHandler = eventName === "SIGTERM" ? listener : postDeleteSigtermHandler;
+      return process;
+    }) as typeof process.prependOnceListener);
+    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
+    const harness = createRebuildFlowHarness({
+      onboard: () => {
+        postDeleteSigtermHandler?.();
+        retainedSigtermHandler?.();
+        throw new Error("interrupted after delete");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow();
+
+    expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha" }),
+      { reclaimDefault: "alpha" },
+    );
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(killSpy).toHaveBeenCalledOnce();
+    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGTERM");
+  });
+
   it("relocks a replacement sandbox when onboarding fails after create", async () => {
     const harness = createRebuildFlowHarness({
       onboard: () => {
@@ -1213,10 +1256,11 @@ describe("rebuildSandbox flow", () => {
         throw new Error("post-create finalization failed");
       },
     });
-    harness.captureOpenshellSpy.mockImplementation((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "list") process.exit(1);
-      return { status: 0, output: "" } as never;
-    });
+    harness.captureOpenshellSpy.mockImplementation((args: string[]) =>
+      args.slice(0, 2).join(" ") === "sandbox list"
+        ? process.exit(1)
+        : ({ status: 0, output: "" } as never),
+    );
 
     await expect(
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),

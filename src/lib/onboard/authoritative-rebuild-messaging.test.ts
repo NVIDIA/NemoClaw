@@ -58,6 +58,11 @@ function helpers() {
   });
 }
 
+function restoreEnv(name: string, value: string | undefined): void {
+  Reflect.deleteProperty(process.env, name);
+  Object.assign(process.env, value === undefined ? {} : { [name]: value });
+}
+
 describe("authoritative rebuild messaging", () => {
   const previousGateway = process.env.OPENSHELL_GATEWAY;
 
@@ -71,8 +76,7 @@ describe("authoritative rebuild messaging", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
-    if (previousGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = previousGateway;
+    restoreEnv("OPENSHELL_GATEWAY", previousGateway);
   });
 
   it("keeps the target gateway scoped across awaited conflict hooks (#6195)", async () => {
