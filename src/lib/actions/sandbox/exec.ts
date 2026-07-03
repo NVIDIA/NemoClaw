@@ -8,10 +8,7 @@ import type {
   MutableConfigRepairResult,
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
-import {
-  type ExecPolicyDenialHintIntegrationDeps,
-  prepareExecPolicyDenialHint,
-} from "./exec-policy-hint-integration";
+import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -380,9 +377,7 @@ export type ExecSandboxDeps = {
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
   run?: SandboxExecRunner;
-  // Group the post-exec timestamp, log probe, and stderr seams so tests can
-  // exercise the integration without touching real host state.
-  policyHint?: ExecPolicyDenialHintIntegrationDeps;
+  policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
 };
 
@@ -408,7 +403,7 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
-  const emitPolicyDenialHint = prepareExecPolicyDenialHint(CLI_NAME, sandboxName, deps.policyHint);
+  const emitPolicyDenialHint = preparePolicyHint(CLI_NAME, sandboxName, deps.policyHint);
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
@@ -433,8 +428,6 @@ export async function execSandbox(
   if (completion.cleanupError) {
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
-  // Emit after the child and cleanup diagnostics without mixing observability
-  // logic into this dispatch path.
   await emitPolicyDenialHint(completion);
   process.exit(completion.code);
 }

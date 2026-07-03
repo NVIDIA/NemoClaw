@@ -3,7 +3,7 @@
 
 import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
 
-export type ExecPolicyDenialHintIntegrationDeps = PolicyDenialHintDeps & {
+export type ExecPolicyHintDeps = PolicyDenialHintDeps & {
   now?: () => number;
 };
 
@@ -14,13 +14,13 @@ type ExecPolicyDenialHintCompletion = {
 
 /**
  * Capture the denial cutoff before dispatch, then return the post-exec emitter.
- * Keeping this orchestration outside exec.ts prevents observability concerns
- * from growing the command-dispatch module.
+ * This is the boundary for post-exec observability so timing and diagnostic
+ * dependencies do not accumulate in the command-dispatch module.
  */
-export function prepareExecPolicyDenialHint(
+export function preparePolicyHint(
   cliName: string,
   sandboxName: string,
-  deps: ExecPolicyDenialHintIntegrationDeps = {},
+  deps: ExecPolicyHintDeps = {},
 ): (completion: ExecPolicyDenialHintCompletion) => Promise<void> {
   const { now = Date.now, ...hintDeps } = deps;
   const commandStartedAtMs = now();

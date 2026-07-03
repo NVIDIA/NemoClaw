@@ -100,18 +100,29 @@ function isSafeEndpoint(candidate: string): boolean {
 // allowed event with unrelated text such as `[message=DENIED count 0]` from
 // being mistaken for a denial.
 const OCSF_NETWORK_DENIAL_RE = /\bNET:OPEN\b\]?(?:\s+\[[^\]\r\n]*\])*\s+DENIED(?=\s|$)/;
+const PROXY_DENIAL_DETAIL_RE =
+  /^CONNECT\s+(\[[^\]\s]+\]:\d{1,5}|[^\s:]+:\d{1,5})\s+not\s+(?:allowed|permitted)\s+by\s+(?:any\s+)?policy$/i;
 
+// Source-of-truth for structured proxy JSON:
+// - Invalid state: OpenShell reports the policy refusal only in its CONNECT 403
+//   JSON while the child tool receives opaque protocol text.
+// - Source boundary/fix constraint: the payload is emitted by the external
+//   OpenShell proxy, so NemoClaw can only translate it after exec returns.
+// - Regression coverage: prefixed, unprefixed, malformed, and near-miss JSON
+//   payloads live in exec-policy-hint-detection.test.ts.
+// - Removal condition: delete this fallback when OpenShell provides a typed
+//   exec-denial result. Until then, require both the exact error code and the
+//   complete safely bounded CONNECT detail so unrelated JSON cannot match.
 function isStructuredJsonPolicyDenial(line: string): boolean {
   const jsonStart = line.indexOf("{");
   if (jsonStart === -1) return false;
   try {
     const parsed: unknown = JSON.parse(line.slice(jsonStart));
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      (parsed as Record<string, unknown>).error === "policy_denied"
-    );
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+    const payload = parsed as Record<string, unknown>;
+    if (payload.error !== "policy_denied" || typeof payload.detail !== "string") return false;
+    const detail = payload.detail.match(PROXY_DENIAL_DETAIL_RE);
+    return Boolean(detail && isSafeEndpoint(detail[1]));
   } catch {
     return false;
   }
@@ -168,13 +179,20 @@ export function extractDeniedEndpoint(line: string): string | null {
 
 export type PolicyDenialMatch = { endpoint: string | null };
 
-// Timestamp-correlation source boundary: OpenShell owns the audit stamp while
-// NemoClaw owns the pre-dispatch cutoff. A second-precision stamp represents
-// any instant in its displayed second, so +999 ms is the smallest bound that
-// cannot discard a fresh denial. Millisecond stamps stay exact because both
-// processes share the host kernel clock and the child cannot emit its denial
-// before NemoClaw records the cutoff. The detection tests cover both precision
-// levels; remove this compensation if OpenShell guarantees millisecond stamps.
+// Source-of-truth for timestamp correlation:
+// - Invalid state: a denial from a prior command must not be attributed to the
+//   current failed exec.
+// - Source boundary/fix constraint: OpenShell owns the audit timestamp while
+//   NemoClaw owns the pre-dispatch cutoff; both processes share the host kernel
+//   clock, and the child cannot request egress before that cutoff is recorded.
+// - Precision rule: +999 ms is the exact representation bound of a timestamp
+//   with no fractional seconds, not a measured skew or tuning heuristic.
+//   Millisecond timestamps therefore use zero backward tolerance.
+// - Evidence/coverage: PR #6238's restricted-sandbox curl, Python, and git runs
+//   recorded denials after dispatch; tests pin exact, 1 ms-stale, and both
+//   second-precision boundary cases.
+// - Removal condition: remove the precision compensation if OpenShell
+//   guarantees millisecond timestamps or returns a typed denial for this exec.
 const SECOND_PRECISION_EPOCH_RE = /^\s*\[\d+\]/;
 const SECOND_PRECISION_ISO_RE =
   /^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?(?!\.\d)/;

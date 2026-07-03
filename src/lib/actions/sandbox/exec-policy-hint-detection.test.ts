@@ -65,6 +65,11 @@ describe("isPolicyDenialLine (#5978)", () => {
       '{"detail":"policy_denied is documented here","error":"configuration_notice"}',
       false,
     ],
+    [
+      "exact JSON error code without the structured CONNECT denial detail",
+      '{"detail":"policy_denied is configured here","error":"policy_denied"}',
+      false,
+    ],
     ["unrelated log line", "[123.0] [sandbox] [INFO ] flushed activity summary", false],
     ["empty line", "", false],
   ])("classifies %s", (_label, line, expected) => {
