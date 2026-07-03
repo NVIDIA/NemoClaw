@@ -949,7 +949,7 @@ An IPv6 target is named in its RFC 3986 bracketed form:
 nemoclaw: recent network policy denial detected for [2001:db8::1]:443 inside sandbox 'oc-fresh'.
 ```
 
-The tool's own stdout/stderr bytes and its exit code are left unchanged. The breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial. A command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb, and `NEMOCLAW_NO_POLICY_HINT=1` suppresses it entirely.
+The tool's own stdout/stderr bytes and its exit code are left unchanged. The breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial. A command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb. Set `NEMOCLAW_NO_POLICY_HINT` to any non-empty value other than `0` or `false` to suppress it entirely.
 
 The first interactive `$$nemoclaw <name> connect` shell also prints a one-line reminder of this denial signature and the `logs` command below.
 The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).

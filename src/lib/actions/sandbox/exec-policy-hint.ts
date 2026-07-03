@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { captureOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
   buildEnableSandboxAuditLogsArgs,
@@ -46,9 +47,10 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
  *     cannot be fixed from this repo. This breadcrumb is therefore a deliberately
  *     localized translation of the denial OpenShell already recorded into
  *     NemoClaw guidance, on the NemoClaw-owned exec boundary.
- *   - Regression coverage: `isPolicyDenialLine`, `extractDeniedEndpoint`,
- *     `findRecentPolicyDenial`, `buildPolicyDenialExecHint`, and
- *     `maybeEmitPolicyDenialHint` in exec-policy-hint.test.ts, plus the
+ *   - Regression coverage: detection and timestamp cases in
+ *     exec-policy-hint-detection.test.ts, rendering/probe cases in
+ *     exec-policy-hint.test.ts, the real adapter seam in
+ *     exec-policy-hint-runtime.test.ts, plus the
  *     `execSandbox policy-denial hint wiring (#5978)` suite in exec.test.ts
  *     (exit-code preservation + no hint on success/unrelated failure).
  *   - Removal condition: drop this module and its `execSandbox` call once
@@ -77,25 +79,27 @@ const SAFE_ENDPOINT_RE =
 // token may reach the terminal" guarantee holds: no shell metacharacters,
 // control bytes, or TTY escapes can pass this allowlist.
 const SAFE_IPV6_ENDPOINT_RE = /^\[[0-9A-Fa-f:.]{2,45}\]:\d{1,5}$/;
+const MAX_DNS_HOST_LENGTH = 253;
+const MAX_NETWORK_PORT = 65_535;
 
 // True when a candidate is a safe `host:port` — a DNS/IPv4 host or a bracketed
 // IPv6 literal. Anything else is dropped so a malformed or crafted line falls
 // back to the generic hint rather than echoing an untrusted token.
 function isSafeEndpoint(candidate: string): boolean {
-  return SAFE_ENDPOINT_RE.test(candidate) || SAFE_IPV6_ENDPOINT_RE.test(candidate);
+  const separator = candidate.lastIndexOf(":");
+  if (separator === -1) return false;
+  const port = Number(candidate.slice(separator + 1));
+  if (!Number.isInteger(port) || port < 1 || port > MAX_NETWORK_PORT) return false;
+  if (SAFE_IPV6_ENDPOINT_RE.test(candidate)) return true;
+  if (!SAFE_ENDPOINT_RE.test(candidate)) return false;
+  return candidate.slice(0, separator).length <= MAX_DNS_HOST_LENGTH;
 }
 
 // Match the OCSF decision token in its structural position: immediately after
 // NET:OPEN's optional bracketed metadata. Requiring that position prevents an
 // allowed event with unrelated text such as `[message=DENIED count 0]` from
 // being mistaken for a denial.
-const OCSF_NETWORK_DENIAL_RE = /\bNET:OPEN\b(?:\s+\[[^\]\r\n]*\])*\s+DENIED(?=\s|$)/;
-
-// Some proxy surfaces return a bare, human-readable reason rather than OCSF or
-// JSON. Keep that fallback narrow: the whole line must be the known endpoint
-// denial shape and its endpoint must pass the same terminal-output allowlist.
-const BARE_ENDPOINT_POLICY_DENIAL_RE =
-  /^\s*endpoint\s+(\S+)\s+is\s+not\s+(?:allowed|permitted)\s+by\s+(?:any\s+)?policy\s*$/i;
+const OCSF_NETWORK_DENIAL_RE = /\bNET:OPEN\b\]?(?:\s+\[[^\]\r\n]*\])*\s+DENIED(?=\s|$)/;
 
 function isStructuredJsonPolicyDenial(line: string): boolean {
   const jsonStart = line.indexOf("{");
@@ -115,16 +119,15 @@ function isStructuredJsonPolicyDenial(line: string): boolean {
 
 /**
  * True when a log line records a network policy denial. Matches only the
- * structured OpenShell OCSF decision, an exact proxy JSON error code, or the
- * complete bare endpoint-reason shape. Loose policy-related prose and config
- * keys are deliberately ignored so an unrelated failed exec cannot inherit a
- * misleading breadcrumb from nearby log text.
+ * structured OpenShell OCSF decision or an exact proxy JSON error code. Loose
+ * policy-related prose and config keys are deliberately ignored so an
+ * unrelated failed exec cannot inherit a misleading breadcrumb from nearby
+ * log text. These are the two structured denial surfaces OpenShell exposes;
+ * remove this detector once OpenShell provides a typed exec-denial result.
  */
 export function isPolicyDenialLine(line: string): boolean {
   if (OCSF_NETWORK_DENIAL_RE.test(line)) return true;
-  if (isStructuredJsonPolicyDenial(line)) return true;
-  const bareReason = line.match(BARE_ENDPOINT_POLICY_DENIAL_RE);
-  return Boolean(bareReason && isSafeEndpoint(bareReason[1]));
+  return isStructuredJsonPolicyDenial(line);
 }
 
 // A leading log timestamp is stripped before the generic host:port fallback so
@@ -165,11 +168,13 @@ export function extractDeniedEndpoint(line: string): string | null {
 
 export type PolicyDenialMatch = { endpoint: string | null };
 
-// parseLineTimestamp floors a second-precision timestamp (an epoch or ISO stamp
-// with no fractional part) to `.000`, so its true instant can be up to 999 ms
-// later than the parsed value. These patterns detect that missing sub-second
-// precision so the recency check can compare against the latest instant the
-// line could represent.
+// Timestamp-correlation source boundary: OpenShell owns the audit stamp while
+// NemoClaw owns the pre-dispatch cutoff. A second-precision stamp represents
+// any instant in its displayed second, so +999 ms is the smallest bound that
+// cannot discard a fresh denial. Millisecond stamps stay exact because both
+// processes share the host kernel clock and the child cannot emit its denial
+// before NemoClaw records the cutoff. The detection tests cover both precision
+// levels; remove this compensation if OpenShell guarantees millisecond stamps.
 const SECOND_PRECISION_EPOCH_RE = /^\s*\[\d+\]/;
 const SECOND_PRECISION_ISO_RE =
   /^\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?(?!\.\d)/;
@@ -262,12 +267,10 @@ export type PolicyDenialLogProbe = (sandboxName: string) => string;
 export type PolicyDenialAuditEnabler = (sandboxName: string) => void;
 
 // A denial that just caused the failure is written by the proxy before the tool
-// even sees its 403, so it is almost always present on the first read. These
-// small, bounded retries only cover the rare case where the audit event has not
-// yet flushed to the queryable log the instant the child is reaped — matching
-// why the live `pollDeniedReasonLog` helper polls. Audit logging is enabled once
-// before the loop, and only the read is retried, so an ordinary (non-denial)
-// failure adds at most a couple of quick log reads plus a few hundred ms.
+// even sees its 403, so it is almost always present on the first read. Match the
+// live `pollDeniedReasonLog` behavior with two 120 ms settling retries: three
+// total reads cap the added settling delay at 240 ms. Audit logging is enabled
+// once before the loop, and only the read is retried.
 export const POLICY_HINT_PROBE_ATTEMPTS = 3;
 export const POLICY_HINT_PROBE_RETRY_MS = 120;
 
@@ -282,9 +285,9 @@ export type PolicyDenialHintDeps = {
 };
 
 // The timer is intentionally NOT unref'd: this sleep runs between the child's
-// exit and the final process.exit, when no other handle keeps the event loop
-// alive. An unref'd timer would let Node drain the loop and exit early with the
-// default code 0 mid-retry, silently dropping the real command's exit code.
+// exit and execSandbox's final process.exit, when no other handle keeps the
+// event loop alive. An unref'd timer would let Node drain the loop and exit
+// early with code 0 mid-retry, dropping the real command's exit code.
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -296,9 +299,7 @@ function defaultSleep(ms: number): Promise<void> {
 // them. Best-effort: a failure just means we read whatever is already retained,
 // and it can never affect the exec's exit code.
 function defaultEnableAudit(sandboxName: string): void {
-  const runtime =
-    require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
-  runtime.captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName), {
+  captureOpenshell(buildEnableSandboxAuditLogsArgs(sandboxName), {
     ignoreError: true,
     includeStderr: true,
     timeout: getLogsProbeTimeoutMs(),
@@ -310,14 +311,12 @@ function defaultEnableAudit(sandboxName: string): void {
 // than surface — the exec's own exit code must never be affected. `ignoreError`
 // keeps a failed read from throwing; any absent output becomes "".
 function defaultProbeLogs(sandboxName: string): string {
-  const runtime =
-    require("../../adapters/openshell/runtime") as typeof import("../../adapters/openshell/runtime");
   const options: SandboxLogsOptions = {
     follow: false,
     lines: String(POLICY_HINT_TAIL_LINES),
     since: null,
   };
-  const result = runtime.captureOpenshell(buildSandboxLogsArgs(sandboxName, options), {
+  const result = captureOpenshell(buildSandboxLogsArgs(sandboxName, options), {
     ignoreError: true,
     includeStderr: true,
     timeout: getLogsProbeTimeoutMs(),
@@ -355,7 +354,8 @@ export async function maybeEmitPolicyDenialHint(
   try {
     enableAudit(sandboxName);
   } catch {
-    // Enabling audit logging is a convenience; proceed to read regardless.
+    // Deliberately silent: diagnostic setup must not add stderr to the command
+    // we are trying to preserve. Read whatever audit data is already retained.
   }
 
   let match: PolicyDenialMatch | null = null;
@@ -364,6 +364,8 @@ export async function maybeEmitPolicyDenialHint(
     try {
       logOutput = probeLogs(sandboxName);
     } catch {
+      // A failed optional probe is indistinguishable from no hint; surfacing a
+      // second diagnostic here would violate native stderr preservation.
       return null;
     }
     match = findRecentPolicyDenial(logOutput, commandStartedAtMs);
@@ -383,8 +385,8 @@ export async function maybeEmitPolicyDenialHint(
     (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
     return hint;
   } catch {
-    // Hint rendering and stderr output are best-effort diagnostics. Neither may
-    // replace the command's native exit behavior with a hinting failure.
+    // Do not recursively report a failure in the optional diagnostic sink.
+    // Native command stderr and exit behavior remain the only output contract.
     return null;
   }
 }

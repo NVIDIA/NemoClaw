@@ -8,7 +8,10 @@ import type {
   MutableConfigRepairResult,
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
-import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
+import {
+  type ExecPolicyDenialHintIntegrationDeps,
+  prepareExecPolicyDenialHint,
+} from "./exec-policy-hint-integration";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -377,32 +380,11 @@ export type ExecSandboxDeps = {
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
   run?: SandboxExecRunner;
-  // Injected so the post-exec policy-denial hint stays hermetic in tests. `now`
-  // stamps the command start time used to reject stale denials; `policyHint`
-  // overrides the log probe and stderr sink; `cleanupDeps` overrides the
-  // registry/shields lookups so the exec wiring can be exercised end to end
-  // without touching real host state.
-  now?: () => number;
-  policyHint?: PolicyDenialHintDeps;
+  // Group the post-exec timestamp, log probe, and stderr seams so tests can
+  // exercise the integration without touching real host state.
+  policyHint?: ExecPolicyDenialHintIntegrationDeps;
   cleanupDeps?: SandboxExecCleanupDeps;
 };
-
-async function emitPostExecPolicyDenialHint(
-  cliName: string,
-  sandboxName: string,
-  completion: SandboxExecCompletion,
-  commandStartedAtMs: number,
-  deps?: PolicyDenialHintDeps,
-): Promise<void> {
-  await maybeEmitPolicyDenialHint(
-    cliName,
-    sandboxName,
-    completion.commandCode,
-    Boolean(completion.invocationError),
-    commandStartedAtMs,
-    deps,
-  );
-}
 
 export async function execSandbox(
   sandboxName: string,
@@ -426,9 +408,7 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
-  // Stamp the command start BEFORE dispatch so the post-exec hint only reacts to
-  // policy denials logged by THIS command, not a stale one from a prior run.
-  const commandStartedAtMs = (deps.now ?? Date.now)();
+  const emitPolicyDenialHint = prepareExecPolicyDenialHint(CLI_NAME, sandboxName, deps.policyHint);
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
@@ -453,14 +433,8 @@ export async function execSandbox(
   if (completion.cleanupError) {
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
-  // Emit after the child and cleanup diagnostics. The helper's no-throw
-  // contract keeps this best-effort breadcrumb separate from exec's outcome.
-  await emitPostExecPolicyDenialHint(
-    CLI_NAME,
-    sandboxName,
-    completion,
-    commandStartedAtMs,
-    deps.policyHint,
-  );
+  // Emit after the child and cleanup diagnostics without mixing observability
+  // logic into this dispatch path.
+  await emitPolicyDenialHint(completion);
   process.exit(completion.code);
 }

@@ -268,9 +268,9 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
           options.onRun?.();
           return { status, ...(options.error ? { error: options.error } : {}) };
         },
-        now: options.now ?? (() => START_MS),
         cleanupDeps: cleanupSkipped,
         policyHint: {
+          now: options.now ?? (() => START_MS),
           env: {},
           probeLogs,
           enableAudit,
