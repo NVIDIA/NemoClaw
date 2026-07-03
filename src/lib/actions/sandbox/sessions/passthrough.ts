@@ -28,15 +28,26 @@ export function hasSessionsPassthroughHelpToken(args: readonly string[]): boolea
 
 export function printSessionsPassthroughHelp(verb?: SessionsPassthroughVerb): void {
   const usageSuffix = verb ? ` ${verb}` : "";
-  const flagsToken = verb ? `openclaw-sessions-${verb}-flags` : "openclaw-sessions-flags";
+  const flagsToken = verb ? `sessions-${verb}-flags` : "sessions-flags";
   console.log("");
   console.log(`  Usage: ${CLI_NAME} <name> sessions${usageSuffix} [${flagsToken}...]`);
   console.log("");
   console.log(
-    `  Pass-through to \`openclaw sessions${usageSuffix} ...\` inside the sandbox via \`openshell sandbox exec\`.`,
+    `  Pass-through to the sandbox agent's \`sessions${usageSuffix} ...\` command inside the sandbox`,
   );
-  console.log("  Internal NemoClaw onboard warm-up sessions are hidden from default list output.");
-  console.log("  All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim.");
+  console.log(
+    "  via `openshell sandbox exec` — `openclaw sessions ...` for OpenClaw sandboxes, `hermes",
+  );
+  console.log(
+    "  sessions ...` for Hermes sandboxes; the in-sandbox binary is picked from the sandbox's agent.",
+  );
+  console.log(
+    "  On OpenClaw sandboxes, internal NemoClaw onboard warm-up sessions are hidden from default",
+  );
+  console.log(
+    "  list output and OpenClaw-specific flags are forwarded verbatim. Hermes sandboxes pass",
+  );
+  console.log("  through their native output unchanged.");
   console.log("");
 }
 
@@ -207,6 +218,13 @@ export async function runSessionsPassthrough(
   // `openclaw` binary, and `openclaw` does not exist inside them (#6247).
   // Route the passthrough at the in-sandbox agent's own binary name and
   // bypass the OpenClaw-specific warm-up filter for non-OpenClaw agents.
+  //
+  // Trust boundary: `registry.getSandbox()` reads the local user-owned
+  // sandbox registry (~/.nemoclaw/state/*), which is written only by
+  // NemoClaw CLI commands (onboard, sandbox create, upgrade-sandboxes).
+  // Sandbox processes cannot mutate it, so the `agent` field here is a
+  // trusted configuration input; unknown / missing values fall through
+  // to the default `openclaw` branch below.
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
   const inSandboxBinary = sandboxAgent === "hermes" ? "hermes" : "openclaw";
   const command = [inSandboxBinary, "sessions"];

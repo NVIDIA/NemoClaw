@@ -22,6 +22,7 @@ import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import {
   filterWarmupSessionsListJson,
   filterWarmupSessionsListText,
+  printSessionsPassthroughHelp,
   runSessionsPassthrough,
 } from "./passthrough";
 
@@ -171,6 +172,42 @@ describe("filterWarmupSessionsListText", () => {
         "",
       ].join("\n"),
     );
+  });
+});
+
+describe("printSessionsPassthroughHelp", () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+  });
+
+  function capturedHelpText(): string {
+    return logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+  }
+
+  it("does not promise OpenClaw-only passthrough for the generic sessions command (#6247)", () => {
+    printSessionsPassthroughHelp();
+    const help = capturedHelpText();
+
+    expect(help).not.toMatch(/Pass-through to `openclaw sessions/i);
+    expect(help).toMatch(/openclaw/i);
+    expect(help).toMatch(/hermes/i);
+    // Warm-up filtering is documented as OpenClaw-specific, not universal.
+    expect(help).toMatch(/warm-up[^\n]*OpenClaw|OpenClaw[^\n]*warm-up/i);
+  });
+
+  it("scopes the list-verb help to per-agent binaries and OpenClaw-only filtering (#6247)", () => {
+    printSessionsPassthroughHelp("list");
+    const help = capturedHelpText();
+
+    expect(help).not.toMatch(/Pass-through to `openclaw sessions list/i);
+    expect(help).toMatch(/sessions list/);
+    expect(help).toMatch(/hermes/i);
   });
 });
 
@@ -378,6 +415,32 @@ describe("runSessionsPassthrough", () => {
 
     expect(captureMock).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--json"]);
+  });
+
+  it("defaults to the openclaw binary + filter path when the registry has no entry (#6247)", async () => {
+    getSandboxMock.mockReturnValue(null);
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
+  });
+
+  it("defaults to the openclaw binary for an unknown agent value (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "custom-future-agent" });
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
   });
 
   it("prints captured output when OpenClaw exits non-zero", async () => {
