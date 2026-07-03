@@ -15,6 +15,11 @@
 import { failLine, warnLine } from "../cli/terminal-style";
 import { cliDisplayName } from "./branding";
 
+/** Docker cannot be reached, so onboarding cannot continue. */
+export function printDockerNotReachableError(): void {
+  console.error(failLine("Docker is not reachable. Please fix Docker and try again."));
+}
+
 /** Podman under the Linux Docker-driver path is unsupported. */
 export function printUnsupportedRuntimeError(): void {
   console.error(failLine(`${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`));

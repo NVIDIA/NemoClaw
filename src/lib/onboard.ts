@@ -593,6 +593,7 @@ import {
 } from "./onboard/policy-selection";
 import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
 import {
+  printDockerNotReachableError,
   printLowMemoryWarning,
   printMessagingProviderMissing,
   printSwapCreationFailed,
@@ -1614,7 +1615,7 @@ async function preflight(
 
   // Docker / runtime
   if (!host.dockerReachable) {
-    console.error("  Docker is not reachable. Please fix Docker and try again.");
+    printDockerNotReachableError();
     printRemediationActions(planHostRemediation(host));
     process.exit(1);
   }

@@ -3,6 +3,11 @@
 
 import { styleText } from "node:util";
 
+/**
+ * Legacy color constants (`G`, `B`, `D`, `R`, `RD`, `YW`) are frozen at module
+ * import time; import after `NO_COLOR` and TTY state are configured. Prefer the
+ * call-time severity helpers below for new output.
+ */
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");

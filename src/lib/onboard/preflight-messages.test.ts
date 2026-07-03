@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  printDockerNotReachableError,
   printLowMemoryWarning,
   printMessagingProviderMissing,
   printSwapCreationFailed,
@@ -18,6 +19,13 @@ function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
 describe("onboard preflight severity messages (#6004)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("prints the Docker-unreachable failure to stderr with a ✗ marker", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    printDockerNotReachableError();
+    expect(err).toHaveBeenCalledOnce();
+    expect(lines(err)[0]).toBe("  ✗ Docker is not reachable. Please fix Docker and try again.");
   });
 
   it("prints the unsupported-runtime failure to stderr with a ✗ marker", () => {
