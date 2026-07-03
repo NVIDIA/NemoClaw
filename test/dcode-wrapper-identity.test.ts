@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { SECRET_BLOCK_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+
 const WRAPPER = path.join(
   import.meta.dirname,
   "..",
@@ -38,6 +40,17 @@ const SAMPLE_CONFIG = [
 
 const OPAQUE = "Zx3Qw9Lp7Rt2Vn5Bd8Kf1Mh6Cg4Js0Ay";
 const CANONICAL_TLS_KEY_PATH = "/etc/openshell/tls/client/tls.key";
+
+function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
+  const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
+  return [
+    ["-----BEGIN", label].join(" "),
+    newline,
+    "opaque-test-body",
+    newline,
+    ["-----END", label].join(" "),
+  ].join("");
+}
 
 type Fixture = { wrapperPath: string; ranMarker: string; envFile: string; configDir: string };
 
@@ -239,6 +252,8 @@ describe.skipIf(!canRun)(
           `tvly-${OPAQUE}`,
           "API_KEY=opaquevalue12345",
           "TOKEN:opaquevalue12345",
+          fakePrivateKeyBlock(),
+          fakePrivateKeyBlock("RSA"),
           agentSecret,
         ];
         for (const secret of secretValues) {
@@ -258,6 +273,29 @@ describe.skipIf(!canRun)(
           expect(run.stdout).not.toContain("Model:");
         }
       });
+    });
+
+    it("keeps private-key block filtering aligned with the canonical secret contract", () => {
+      expect(SECRET_BLOCK_PATTERNS.map((pattern) => `${pattern.source}::${pattern.flags}`)).toEqual(
+        [
+          "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
+        ],
+      );
+
+      const samples = [fakePrivateKeyBlock("", "\n"), fakePrivateKeyBlock("RSA")];
+      for (const [index, sample] of samples.entries()) {
+        withTempDir((dir) => {
+          const fixture = buildFixture(dir, SAMPLE_CONFIG);
+          const varName = `NEMOCLAW_PARITY_BLOB_${index}`;
+          const run = runBashWrapper(fixture, ["status"], { [varName]: sample });
+
+          expect(run.status).not.toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stderr).toContain(varName);
+          expect(run.stderr).not.toContain(sample);
+          expect(run.stderr).not.toContain("opaque-test-body");
+        });
+      }
     });
 
     it("does not write unsafe endpoint values from mutable sources", () => {

@@ -25,6 +25,17 @@ function containsTokenShapedSecret(value: string): boolean {
   });
 }
 
+function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
+  const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
+  return [
+    ["-----BEGIN", label].join(" "),
+    newline,
+    "opaque-test-body",
+    newline,
+    ["-----END", label].join(" "),
+  ].join("");
+}
+
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const headlessCheckPath = path.join(
   process.cwd(),
@@ -855,6 +866,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
         name: "SLACK_BOT_TOKEN",
         value: `xoxb-lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
       },
+      {
+        name: "SLACK_APP_TOKEN",
+        value: `xapp-${fakePrivateKeyBlock()}`,
+      },
     ];
 
     for (const { name, value } of cases) {
@@ -878,6 +893,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
       {
         name: "SLACK_APP_TOKEN",
         value: `xapp-lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
+      {
+        name: "SLACK_BOT_TOKEN",
+        value: `xoxb-${fakePrivateKeyBlock("RSA")}`,
       },
     ];
 

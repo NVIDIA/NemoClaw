@@ -28,14 +28,17 @@ run_dcode() {
 # - Source boundary: upstream `deepagents_code` is third-party Python; the
 #   canonical secret-pattern contract lives at src/lib/security/secret-patterns.ts.
 #   Neither is callable from the Bash wrapper before exec, so this matcher
-#   mirrors canonical TOKEN_PREFIX_PATTERNS plus the Bearer- and name-context
-#   semantics from CONTEXT_PATTERNS that apply to a name=value boundary.
+#   mirrors canonical TOKEN_PREFIX_PATTERNS and SECRET_BLOCK_PATTERNS plus the
+#   Bearer- and name-context semantics from CONTEXT_PATTERNS that apply to a
+#   name=value boundary.
 # - Source-fix constraint: the upstream maintainer surface is independent; a
 #   Node shim at this boundary would double the process count and add another
 #   supply-chain hop. Bash is the only entrypoint available before exec.
 # - Scope:
 #     * Token-prefix and Bearer-prefix matches operate as unanchored substring
 #       regex (catches embedded/wrapped tokens).
+#     * Private-key block matching rejects canonical BEGIN/END markers across
+#       raw or escaped bodies before mutable metadata can reach status output.
 #     * Name-context rejection fires case-insensitively when the variable name
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
 #       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
@@ -52,9 +55,10 @@ run_dcode() {
 #       identifiers (e.g. with hyphens) are still classified.
 # - Regression: the parity tests in
 #   test/langchain-deepagents-code-image.test.ts pin the canonical
-#   TOKEN_PREFIX_PATTERNS and CONTEXT_PATTERNS fingerprints (source + flags) and
-#   feed representative samples through the wrapper; any canonical change trips
-#   the fingerprint test and forces this matcher (and its samples) to update.
+#   TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and SECRET_BLOCK_PATTERNS
+#   fingerprints (source + flags) and feed representative samples through the
+#   wrapper; any canonical change trips the fingerprint test and forces this
+#   matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
@@ -68,8 +72,23 @@ has_context_secret_shape() {
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
 }
 
+has_private_key_block_shape() {
+  local value="$1"
+  local begin_marker="-----BEGIN "
+  local end_marker="-----END "
+  case "$value" in
+    *"$begin_marker"*"PRIVATE KEY-----"*"$end_marker"*"PRIVATE KEY-----"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 has_non_slack_secret_shape() {
   local value="$1"
+  if has_private_key_block_shape "$value"; then
+    return 0
+  fi
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
@@ -158,6 +177,9 @@ trim_whitespace() {
 
 is_secret_shaped_value() {
   local value="$1"
+  if has_private_key_block_shape "$value"; then
+    return 0
+  fi
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
