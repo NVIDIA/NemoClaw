@@ -22,6 +22,7 @@ import {
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import * as registry from "../../state/registry";
+import { buildSubprocessEnv } from "../../subprocess-env";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   ensureSandboxPortForward,
@@ -65,6 +66,10 @@ export type SandboxCommandResult = {
   status: number;
   stdout: string;
   stderr: string;
+};
+
+export type SandboxExecCommandOptions = {
+  allowLocalDockerFallback?: boolean;
 };
 
 const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
@@ -130,7 +135,12 @@ export function executeSandboxCommand(
         `openshell-${sandboxName}`,
         command,
       ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+      {
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15000,
+      },
     );
     return {
       status: result.status ?? 1,
@@ -180,6 +190,7 @@ function executeLocalDockerSandboxCommand(
   try {
     const result = dockerSpawnSync(argv, {
       encoding: "utf-8",
+      env: buildSubprocessEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       timeout,
     });
@@ -193,6 +204,7 @@ export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
   timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS,
+  options: SandboxExecCommandOptions = {},
 ): SandboxCommandResult | null {
   const markedCommand = buildSandboxExecMarkedCommand(command);
   const effectiveTimeout = resolveSandboxExecTimeout(timeout);
@@ -203,7 +215,7 @@ export function executeSandboxExecCommand(
       {
         cwd: ROOT,
         encoding: "utf-8",
-        env: process.env,
+        env: buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: effectiveTimeout,
       },
@@ -213,6 +225,7 @@ export function executeSandboxExecCommand(
   } catch {
     // OpenShell transport failed; try the trusted direct-container fallback.
   }
+  if (options.allowLocalDockerFallback === false) return null;
   // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
   // refusal cannot be caught and retried against changing container state.
   return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);

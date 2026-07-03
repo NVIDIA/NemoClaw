@@ -1170,28 +1170,8 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
 
   const pluginEntries: JsonObject = {
-    acpx: { enabled: false },
     bonjour: { enabled: false },
-    qqbot: { enabled: false },
   };
-  const bundledProviderPlugins: Record<string, Set<string>> = {
-    "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
-    "amazon-bedrock-mantle": new Set(["amazon-bedrock-mantle"]),
-    anthropic: new Set(["anthropic"]),
-    "anthropic-vertex": new Set(["anthropic-vertex"]),
-    fireworks: new Set(["fireworks"]),
-    google: new Set(["google", "google-gemini-cli"]),
-    kimi: new Set(["kimi"]),
-    lmstudio: new Set(["lmstudio"]),
-    ollama: new Set(["ollama", "ollama-local"]),
-    openai: new Set(["openai"]),
-    xai: new Set(["xai"]),
-  };
-  for (const [pluginId, providerKeys] of Object.entries(bundledProviderPlugins)) {
-    if (!providerKeys.has(providerKey)) {
-      pluginEntries[pluginId] = { enabled: false };
-    }
-  }
   const openclawOtel = buildOpenClawOtelConfig(env);
   if (openclawOtel) {
     pluginEntries["diagnostics-otel"] = { enabled: true };

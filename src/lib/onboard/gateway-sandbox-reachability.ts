@@ -479,9 +479,9 @@ export function formatSandboxBridgeUnreachableMessage(
 interface SandboxBridgeVerifierOptions {
   skip?: boolean;
   port?: number;
-  reachabilityImpl?: () =>
-    | Promise<SandboxBridgeReachabilityResult>
-    | SandboxBridgeReachabilityResult;
+  reachabilityImpl?: (options?: {
+    port: number;
+  }) => Promise<SandboxBridgeReachabilityResult> | SandboxBridgeReachabilityResult;
   autoApplyImpl?: (
     reach: SandboxBridgeReachabilityResult,
   ) => Promise<UfwAutoApplyResult> | UfwAutoApplyResult;
@@ -523,7 +523,7 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
     ((result: SandboxBridgeReachabilityResult) =>
       tryAutoApplyUfwRule(result, { optedIn: true, port }));
 
-  let reach = await reachability();
+  let reach = await reachability({ port });
   if (reach.ok) return;
   const retryAttempts = options.retryAttempts ?? DEFAULT_HOST_GATEWAY_RETRY_ATTEMPTS;
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_HOST_GATEWAY_RETRY_DELAY_MS;
@@ -537,7 +537,7 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
       `  Docker-driver sandbox bridge probe attempt ${attempt - 1}/${retryAttempts} failed (${reach.reason}); retrying in ${retryDelayMs} ms...`,
     );
     await sleep(retryDelayMs);
-    reach = await reachability();
+    reach = await reachability({ port });
     if (reach.ok) {
       console.log(
         `  ✓ Docker-driver sandbox bridge reachable on attempt ${attempt}/${retryAttempts}`,
@@ -558,7 +558,7 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
           ? `allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`
           : `allow sandbox bridge traffic to port ${port}/tcp`;
       console.log(`  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): ${ruleDescription}`);
-      reach = await reachability();
+      reach = await reachability({ port });
       if (reach.ok) return;
     } else if (!SILENT_UFW_AUTO_APPLY_REASONS.has(autoApplyResult.reason)) {
       console.warn(

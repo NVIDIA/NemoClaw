@@ -40,10 +40,15 @@ export type DcodeRebuildOrchestrator = {
   run<T>(action: () => Promise<T>): Promise<T>;
   runSync<T>(action: () => T): T;
   preflightCredentials(): Promise<boolean>;
-  prepareImage(resumeConfig: RebuildResumeConfig, skipLiveRoute: boolean): Promise<boolean>;
+  prepareImage(
+    resumeConfig: RebuildResumeConfig,
+    skipLiveRoute: boolean,
+    gatewayPort: number,
+  ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
     skipLiveRoute: boolean,
+    gatewayPort: number,
   ): Promise<boolean>;
   clearManagedCustomDockerfile(session: Session): void;
   storedDockerfile(sessionMatchesSandbox: boolean, session: Session | null): string | null;
@@ -102,7 +107,7 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, skipLiveRoute) =>
+    prepareImage: (resumeConfig, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return deps.ensureAgentBaseImage(rebuildAgent, scope.bail);
         const replacement = await prepareDcodeReplacementBeforeMutation({
@@ -110,6 +115,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           skipLiveRoute,
+          gatewayPort,
           log,
           bail: scope.bail,
           checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),
@@ -121,7 +127,7 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, skipLiveRoute) =>
+    revalidateBeforeDelete: (resumeConfig, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -131,6 +137,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           skipLiveRoute,
+          gatewayPort,
           log,
           bail: scope.bail,
           checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, scope.bail),

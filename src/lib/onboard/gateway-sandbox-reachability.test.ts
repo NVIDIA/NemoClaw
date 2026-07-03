@@ -626,11 +626,13 @@ describe("verifySandboxBridgeGatewayReachableOrExit host-gateway retry", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {
       await verifySandboxBridgeGatewayReachableOrExit(true, {
+        port: 19080,
         reachabilityImpl,
         retryAttempts: 3,
         retryDelayMs: 25,
         sleepMsImpl,
       });
+      expect(reachabilityImpl).toHaveBeenCalledWith({ port: 19080 });
       expect(reachabilityImpl).toHaveBeenCalledTimes(2);
       expect(sleepMsImpl).toHaveBeenCalledTimes(1);
       expect(sleepMsImpl).toHaveBeenCalledWith(25);

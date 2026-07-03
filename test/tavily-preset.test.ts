@@ -54,6 +54,14 @@ describe("tavily opt-in preset", () => {
       { path: "/usr/local/bin/curl" },
       { path: "/usr/bin/curl" },
     ]);
+    expect(policy?.binaries).not.toEqual(
+      expect.arrayContaining([
+        { path: "/usr/bin/python3*" },
+        { path: "/usr/local/bin/python3*" },
+        { path: "/sandbox/**/bin/python3*" },
+      ]),
+    );
+    expect(policy).not.toHaveProperty("access", "full");
     expect(policy?.endpoints?.[0]).not.toHaveProperty("access");
     expect(policy?.endpoints?.[0]).not.toHaveProperty("tls", "skip");
   });

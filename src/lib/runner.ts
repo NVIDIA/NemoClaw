@@ -6,13 +6,14 @@ import type {
   SpawnSyncOptionsWithStringEncoding,
   SpawnSyncReturns,
 } from "node:child_process";
-import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 
-const { spawnSync } = require("child_process");
-const path = require("path");
-const { detectDockerHost } = require("./platform");
-const { shellQuote } = require("./core/shell-quote") as typeof import("./core/shell-quote");
-const { buildSubprocessEnv } = require("./subprocess-env") as typeof import("./subprocess-env");
+import { shellQuote } from "./core/shell-quote";
+import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "./name-validation";
+import { detectDockerHost } from "./platform";
+import { redact, redactError, writeRedactedResult } from "./security/redact";
+import { buildSubprocessEnv } from "./subprocess-env";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -284,16 +285,12 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
       throw new Error(`Command failed with status ${result.status}`);
     }
 
-    const stdout = result.stdout || "";
-    return (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim();
+    return (result.stdout || "").trim();
   } catch (err) {
     if (ignoreError) return "";
     throw redactError(err);
   }
 }
-
-// Unified redaction — see redact.ts (#2381).
-const { redact, redactError, writeRedactedResult } = require("./security/redact");
 
 /** Structured result returned by runCaptureEx. */
 export interface CaptureResult {
@@ -342,11 +339,9 @@ function runCaptureEx(
     const timedOut =
       (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
       result.status === 28;
-    const stdout = result.stdout || "";
-    const stderr = result.stderr || "";
     return {
-      stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
-      stderr: (typeof stderr === "string" ? stderr : stderr.toString("utf-8")).trim(),
+      stdout: (result.stdout || "").trim(),
+      stderr: (result.stderr || "").trim(),
       exitCode: result.status,
       timedOut,
     };

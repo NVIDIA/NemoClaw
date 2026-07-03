@@ -6,11 +6,13 @@ import {
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
   webSearchConfigsEqual,
+  webSearchEnvFor,
   webSearchLabelFor,
   webSearchProviderForConfig,
 } from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
 import { withSandboxPhaseTrace } from "../../tracing";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
@@ -30,6 +32,8 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
+  authoritativeResumeConfig?: boolean;
   resumeAgentChanged: boolean;
   session: Session | null;
   sandboxName: string | null;
@@ -44,6 +48,7 @@ export interface SandboxStateOptions<
   preferredInferenceApi: string | null;
   sandboxGpuConfig: SandboxGpuConfig;
   hermesToolGateways: string[];
+  hermesAuthMethod: HermesAuthMethod | null;
   controlUiPort: number | null;
   rootDir: string;
   env: NodeJS.ProcessEnv;
@@ -76,6 +81,7 @@ export interface SandboxStateOptions<
     getSandboxReuseState(sandboxName: string | null): string;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
+    getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): void;
@@ -123,6 +129,7 @@ export interface SandboxStateOptions<
       sandboxGpuConfig: SandboxGpuConfig,
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
+      hermesAuthMethod: HermesAuthMethod | null,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -144,6 +151,7 @@ export interface SandboxStateOptions<
         metadata?: Record<string, unknown> | null;
       },
     ): Promise<Session>;
+    withSandboxMutationLock?<T>(sandboxName: string, action: () => Promise<T>): Promise<T>;
     error(message?: string): void;
     exitProcess(code: number): never;
   };
@@ -174,11 +182,29 @@ interface SandboxStepState<WebSearchConfig> {
 function resolveRequestedWebSearchConfig<WebSearchConfig>(
   current: WebSearchConfig | null,
   env: NodeJS.ProcessEnv,
+  authoritative: boolean,
 ): WebSearchConfig | null {
+  if (authoritative) return current;
   const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
   if (!explicit.specified) return current;
   if (!explicit.provider) return null;
   return { fetchEnabled: true, provider: explicit.provider } as WebSearchConfig;
+}
+
+function missingWebSearchFidelity(
+  existing: SandboxEntry | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+): Partial<SandboxEntry> {
+  const fidelity: Partial<SandboxEntry> = {};
+  if (existing?.webSearchEnabled === undefined) {
+    fidelity.webSearchEnabled = Boolean(webSearchConfig);
+  }
+  if (existing?.webSearchProvider === undefined) {
+    fidelity.webSearchProvider = webSearchConfig
+      ? webSearchProviderForConfig(webSearchConfig)
+      : null;
+  }
+  return fidelity;
 }
 
 function knownAgentSupportsWebSearchProvider(
@@ -202,6 +228,32 @@ function effectiveHermesToolGatewaysForWebSearch(
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
+
+function mcpRegistryRemovalBlockReason(
+  decision: SandboxCreationDecision,
+  sandboxName: string | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+  getSandboxRegistryEntry: (sandboxName: string) => SandboxEntry | null,
+): string | null {
+  if (decision.kind !== "recreate") return null;
+  if (!decision.removeRegistryEntry) return null;
+  if (!sandboxName) return null;
+  const mcpState = getSandboxRegistryEntry(sandboxName)?.mcp;
+  if (!mcpState) return null;
+
+  const selectedProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
+  if (selectedProvider) {
+    const credentialEnv = webSearchEnvFor(selectedProvider);
+    const collidingBridge = Object.values(mcpState.bridges).find((entry) =>
+      entry.env.includes(credentialEnv),
+    );
+    if (collidingBridge) {
+      return `  Cannot enable ${webSearchLabelFor(selectedProvider)}: MCP server '${collidingBridge.server}' already owns ${credentialEnv}. Use a distinct credential name.`;
+    }
+  }
+
+  return `  Sandbox '${sandboxName}' has managed MCP state. Use the transactional rebuild command before changing settings that recreate the sandbox.`;
+}
 
 class SandboxStateFlow<
   Gpu,
@@ -245,6 +297,7 @@ class SandboxStateFlow<
     const requestedWebSearchConfig = resolveRequestedWebSearchConfig(
       this.options.webSearchConfig,
       this.options.env,
+      this.options.authoritativeResumeConfig === true,
     );
     const webSearchConfigChanged = !webSearchConfigsEqual(
       this.options.session?.webSearchConfig,
@@ -357,6 +410,7 @@ class SandboxStateFlow<
         return current;
       });
     }
+    this.backfillReusedSandboxFidelity(state);
     this.deps.skippedStepMessage("sandbox", state.sandboxName);
     const skippedSession = await this.deps.recordStateSkipped("sandbox", {
       reason: "resume",
@@ -369,10 +423,32 @@ class SandboxStateFlow<
     };
   }
 
+  private backfillReusedSandboxFidelity(state: SandboxStepState<WebSearchConfig>): void {
+    if (!state.sandboxName) return;
+    const existing = this.deps.getSandboxRegistryEntry(state.sandboxName);
+    const fidelity = missingWebSearchFidelity(
+      existing,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+    );
+    if (
+      existing?.fromDockerfile === undefined &&
+      (this.options.fromDockerfile || existing?.nemoclawVersion)
+    ) {
+      fidelity.fromDockerfile = this.options.fromDockerfile;
+    }
+    if (existing?.hermesAuthMethod === undefined && this.options.hermesAuthMethod) {
+      fidelity.hermesAuthMethod = this.options.hermesAuthMethod;
+    }
+    if (Object.keys(fidelity).length > 0) {
+      this.deps.updateSandboxRegistry(state.sandboxName, fidelity);
+    }
+  }
+
   private async resolveWebSearchForCreation(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<WebSearchConfig | null> {
     if (!state.webSearchConfig) {
+      if (this.options.authoritativeResumeConfig) return null;
       return this.deps.configureWebSearch(
         null,
         this.options.agent,
@@ -427,6 +503,7 @@ class SandboxStateFlow<
           this.options.sandboxGpuConfig,
           resourceProfile,
           effectiveHermesToolGateways,
+          this.options.hermesAuthMethod,
         ),
     );
     // createSandbox() owns the build fingerprint. In particular, reusing an
@@ -461,6 +538,16 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
+    const mcpBlockReason = mcpRegistryRemovalBlockReason(
+      decision,
+      state.sandboxName,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.deps.getSandboxRegistryEntry,
+    );
+    if (mcpBlockReason) {
+      this.deps.error(mcpBlockReason);
+      return this.deps.exitProcess(1);
+    }
     const webSearchConfig = await this.resolveWebSearchForCreation(state);
     const webSearchConfigChanged =
       state.webSearchConfigChanged ||
@@ -567,5 +654,8 @@ export async function handleSandboxState<
     ResourceProfile
   >,
 ): Promise<SandboxStateResult<WebSearchConfig>> {
-  return new SandboxStateFlow(options).run();
+  const run = () => new SandboxStateFlow(options).run();
+  return options.sandboxName && options.deps.withSandboxMutationLock
+    ? options.deps.withSandboxMutationLock(options.sandboxName, run)
+    : run();
 }

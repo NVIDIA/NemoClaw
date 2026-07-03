@@ -26,7 +26,7 @@ interface ListenerCaptureResult {
 }
 
 export interface DockerDriverGatewayPortListenerDeps {
-  gatewayPort: number;
+  gatewayPort: number | (() => number);
   runCaptureEx(args: readonly string[]): ListenerCaptureResult;
   isPidAlive(pid: number): boolean;
   isDockerDriverGatewayProcess(
@@ -59,6 +59,9 @@ export function createDockerDriverGatewayPortListenerHelpers(
     opts?: DockerDriverGatewayPortListenerOptions,
   ): boolean;
 } {
+  const currentGatewayPort = () =>
+    typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
+
   function getDockerDriverGatewayPortListenerPid(
     portCheck: PortProbeResult,
     opts: DockerDriverGatewayPortListenerOptions = {},
@@ -93,7 +96,7 @@ export function createDockerDriverGatewayPortListenerHelpers(
 
     let result: ListenerCaptureResult;
     try {
-      result = deps.runCaptureEx(["lsof", "-ti", `:${deps.gatewayPort}`, "-sTCP:LISTEN"]);
+      result = deps.runCaptureEx(["lsof", "-ti", `:${currentGatewayPort()}`, "-sTCP:LISTEN"]);
     } catch {
       result = { stdout: "", exitCode: null, timedOut: false };
     }

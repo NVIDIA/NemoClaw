@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../../inference/web-search";
-import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
 
@@ -13,7 +13,7 @@ export interface ProviderSelectionResult {
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
@@ -30,12 +30,14 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
+  /** Trust the rebuild-preflighted session selection even if its old step marker is incomplete. */
+  authoritativeResumeConfig?: boolean;
   initial: {
     model: string | null;
     provider: string | null;
     endpointUrl: string | null;
     credentialEnv: string | null;
-    hermesAuthMethod: string | null;
+    hermesAuthMethod: HermesAuthMethod | null;
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     compatibleEndpointReasoning: string | null;
@@ -46,11 +48,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   env: NodeJS.ProcessEnv;
   constants: {
     hermesProviderName: string;
-    hermesApiKeyAuthMethod: string;
+    hermesApiKeyAuthMethod: HermesAuthMethod;
     hermesApiKeyCredentialEnv: string;
   };
   deps: {
-    normalizeHermesAuthMethod(value: string | null | undefined): string | null;
+    normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
       sandboxName: string | null,
@@ -63,7 +65,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
-      hermesAuthMethod: string | null,
+      hermesAuthMethod: HermesAuthMethod | null,
       hermesToolGateways: string[],
       options?: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean },
     ): Promise<ProviderInferenceRetry>;
@@ -142,7 +144,7 @@ export interface ProviderInferenceStateResult {
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: HermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
@@ -214,6 +216,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
+  authoritativeResumeConfig = false,
   initial,
   selectedMessagingChannels,
   env,
@@ -247,7 +250,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const resumeProviderSelection =
       !forceProviderSelection &&
       effectiveResume &&
-      session?.steps?.provider_selection?.status === "complete" &&
+      (authoritativeResumeConfig || session?.steps?.provider_selection?.status === "complete") &&
       typeof provider === "string" &&
       typeof model === "string";
     let shouldRecordProviderSelection = false;
@@ -261,6 +264,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         provider,
         model,
       });
+      // Rebuild may be resuming a legacy session whose step marker was never
+      // completed even though the pre-delete registry selection was validated
+      // and rewritten into the session. Persist that trusted selection so a
+      // later plain `onboard --resume` recovery cannot fall back to ambient or
+      // default provider selection if the recreate fails after this point.
+      shouldRecordProviderSelection = authoritativeResumeConfig;
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's

@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs hermes-gpu-startup, openshell-gateway-auth-contract, jetson-nvmap-gpu, and sandbox-rlimits-connect are skipped unless selected."
+        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, mcp-bridge-dev, hermes-gpu-startup, sandbox-rlimits-connect, and jetson-nvmap-gpu are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -518,6 +518,205 @@ jobs:
       - name: Upload OpenShell gateway auth contract artifacts
         if: always()
         uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  mcp-bridge:
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',mcp-bridge,') || contains(format(',{0},', inputs.targets), ',mcp-bridge,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Three destructive agent scenarios each have a 45-minute Vitest budget,
+    # plus pinned OpenShell installation and cold image setup.
+    timeout-minutes: 180
+    env:
+      E2E_JOB: "1"
+      E2E_TARGET_ID: "mcp-bridge"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_OPENSHELL_CHANNEL: stable
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Install and verify cloudflared prerequisite
+        # Update posture: maintainers review upstream cloudflared releases and
+        # update the version and reviewed SHA256 together in both explicit MCP
+        # lanes; mutable package repositories and unreviewed latest releases
+        # are intentionally rejected by the workflow-contract tests.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/install-openshell.sh
+
+      - name: Run MCP OpenShell provider live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-live \
+            test/e2e/live/mcp-bridge.test.ts \
+            --silent=false --reporter=default
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        run: >-
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
+          e2e-artifacts/live/mcp-bridge
+
+      - name: Upload MCP server artifacts
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-mcp-bridge
+          path: e2e-artifacts/live/mcp-bridge/
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+  mcp-bridge-dev:
+    needs: generate-matrix
+    # Moving OpenShell dev artifacts are compatibility evidence only and must
+    # never enter scheduled or default manual runs without explicit selection.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',mcp-bridge-dev,') || contains(format(',{0},', inputs.targets), ',mcp-bridge-dev,') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 180
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "mcp-bridge-dev"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/mcp-bridge-dev
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_MCP_BRIDGE_AGENT_MATRIX: "1"
+      NEMOCLAW_OPENSHELL_CHANNEL: dev
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - *dockerhub-auth
+
+      - name: Prepare E2E workspace
+        uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
+
+      - name: Install and verify cloudflared prerequisite
+        # Update posture: keep this dev compatibility lane on the same reviewed
+        # version/SHA256 pair as the stable lane; workflow-contract tests fail
+        # if the pins diverge or installation becomes mutable.
+        env:
+          CLOUDFLARED_VERSION: "2026.6.1"
+          CLOUDFLARED_DEB_SHA256: "ccd02ec216c62bfa573395d8f72cb2e91e95cbdf8726a8acc06b3e2d9aa31526"
+        run: |
+          set -euo pipefail
+          cloudflared_deb="${RUNNER_TEMP}/cloudflared-${CLOUDFLARED_VERSION}-linux-amd64.deb"
+          curl -fL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64.deb" -o "${cloudflared_deb}"
+          printf '%s  %s\n' "${CLOUDFLARED_DEB_SHA256}" "${cloudflared_deb}" | sha256sum -c -
+          package="$(dpkg-deb -f "${cloudflared_deb}" Package)"
+          version="$(dpkg-deb -f "${cloudflared_deb}" Version)"
+          architecture="$(dpkg-deb -f "${cloudflared_deb}" Architecture)"
+          if [[ "${package}" != "cloudflared" || "${version}" != "${CLOUDFLARED_VERSION}" || "${architecture}" != "amd64" ]]; then
+            printf 'Unexpected cloudflared package metadata: package=%s version=%s architecture=%s\n' "${package}" "${version}" "${architecture}" >&2
+            exit 1
+          fi
+          sudo dpkg -i "${cloudflared_deb}"
+          cloudflared --version | grep -F "cloudflared version ${CLOUDFLARED_VERSION}"
+
+      - name: Generate MCP test TLS
+        run: bash test/e2e/setup-mcp-test-tls.sh
+
+      - name: Revoke Docker auth before unverified dev tooling
+        shell: bash
+        run: bash .github/scripts/docker-auth-cleanup.sh
+
+      - name: Install OpenShell CLI
+        env:
+          NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1"
+          NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/install-openshell.sh
+
+      - name: Run MCP OpenShell provider live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell >/dev/null 2>&1; then
+            OPENSHELL_BIN="$(command -v openshell)"
+          elif [ -x "$HOME/.local/bin/openshell" ]; then
+            OPENSHELL_BIN="$HOME/.local/bin/openshell"
+          else
+            echo "::error::OpenShell CLI not found after install"
+            exit 1
+          fi
+          export OPENSHELL_BIN
+          "$OPENSHELL_BIN" --version
+          npx vitest run --project e2e-live \
+            test/e2e/live/mcp-bridge.test.ts \
+            --silent=false --reporter=default
+
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
+        if: always()
+        run: >-
+          npx tsx tools/e2e/assert-mcp-artifact-secrets-absent.mts
+          e2e-artifacts/live/mcp-bridge-dev
+
+      - name: Upload MCP server artifacts
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
+        uses: NVIDIA/NemoClaw/.github/actions/upload-e2e-artifacts@7768e15eb90d3ee2d33432f481dfe8747e4f6d57
+        with:
+          name: e2e-mcp-bridge-dev
+          path: e2e-artifacts/live/mcp-bridge-dev/
 
       - name: Clean up Docker auth
         if: always()
@@ -4376,6 +4575,8 @@ jobs:
         live,
         openshell-version-pin,
         openshell-gateway-auth-contract,
+        mcp-bridge,
+        mcp-bridge-dev,
         onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,
@@ -4474,6 +4675,11 @@ jobs:
                 job: 'openshell-gateway-auth-contract',
                 target: 'openshell-gateway-auth-contract',
                 reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
+              },
+              'mcp-bridge-dev': {
+                job: 'mcp-bridge-dev',
+                target: 'mcp-bridge-dev',
+                reason: 'default dispatch excludes moving OpenShell dev artifacts unless explicitly selected',
               },
               'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
@@ -4605,7 +4811,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `hermes-gpu-startup`, `openshell-gateway-auth-contract`, `jetson-nvmap-gpu`, and `sandbox-rlimits-connect` are skipped unless selected)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `mcp-bridge-dev`, `hermes-gpu-startup`, `sandbox-rlimits-connect`, and `jetson-nvmap-gpu` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',

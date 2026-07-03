@@ -113,4 +113,17 @@ describe("Docker-driver gateway port listener discovery", () => {
       pids: [],
     });
   });
+
+  it("resolves a dynamic gateway port for every listener scan", () => {
+    let gatewayPort = 18080;
+    const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
+    const { helpers } = makeHelpers({ gatewayPort: () => gatewayPort, runCaptureEx });
+
+    helpers.getDockerDriverGatewayPortListenerScan({ ok: true });
+    gatewayPort = 18081;
+    helpers.getDockerDriverGatewayPortListenerScan({ ok: true });
+
+    expect(runCaptureEx).toHaveBeenNthCalledWith(1, ["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
+    expect(runCaptureEx).toHaveBeenNthCalledWith(2, ["lsof", "-ti", ":18081", "-sTCP:LISTEN"]);
+  });
 });

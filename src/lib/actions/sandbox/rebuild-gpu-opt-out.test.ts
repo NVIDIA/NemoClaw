@@ -3,7 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildRebuildRecreateOnboardOpts, rebuildShouldOptOutGpu } from "./rebuild-gpu-opt-out";
+import {
+  buildRebuildRecreateOnboardOpts,
+  getRebuildSandboxGpuOverrides,
+  rebuildShouldOptOutGpu,
+} from "./rebuild-gpu-opt-out";
 
 describe("rebuildShouldOptOutGpu", () => {
   it("returns false when the registry entry is null", () => {
@@ -102,25 +106,69 @@ describe("rebuildShouldOptOutGpu", () => {
   });
 });
 
+describe("getRebuildSandboxGpuOverrides", () => {
+  it("pins forced GPU mode and its recorded device", () => {
+    expect(
+      getRebuildSandboxGpuOverrides({
+        sandboxGpuMode: "1",
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: "nvidia.com/gpu=2",
+      }),
+    ).toEqual({
+      sandboxGpu: "enable",
+      sandboxGpuDevice: "nvidia.com/gpu=2",
+      sessionGpuPassthrough: true,
+    });
+  });
+
+  it("pins opt-out while keeping auto distinct from cached enabled state", () => {
+    expect(getRebuildSandboxGpuOverrides({ sandboxGpuMode: "0" })).toEqual({
+      sandboxGpu: "disable",
+      sandboxGpuDevice: null,
+      sessionGpuPassthrough: false,
+    });
+    expect(
+      getRebuildSandboxGpuOverrides({ sandboxGpuMode: "auto", sandboxGpuEnabled: true }),
+    ).toEqual({
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
+      sessionGpuPassthrough: false,
+    });
+  });
+
+  it("does not treat legacy effective-enabled fields as forced sandbox GPU", () => {
+    expect(getRebuildSandboxGpuOverrides({ sandboxGpuEnabled: true, gpuEnabled: true })).toEqual({
+      sandboxGpu: null,
+      sandboxGpuDevice: null,
+      sessionGpuPassthrough: false,
+    });
+  });
+});
+
 describe("buildRebuildRecreateOnboardOpts", () => {
   const baseArgs = {
     rebuildAgent: "openclaw",
     storedFromDockerfile: null,
     autoYes: true,
+    usageNoticeAccepted: true as const,
   };
+  const dashboard = { dashboardPort: 18789 };
 
   it("forwards noGpu:true when the recorded sandboxGpuMode is the explicit opt-out '0'", () => {
     const opts = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
-      sb: { sandboxGpuMode: "0", sandboxGpuEnabled: false },
+      sb: { ...dashboard, sandboxGpuMode: "0", sandboxGpuEnabled: false },
     });
     expect(opts.noGpu).toBe(true);
     expect(opts).toMatchObject({
       resume: true,
       nonInteractive: true,
       recreateSandbox: true,
+      authoritativeResumeConfig: true,
       agent: "openclaw",
       fromDockerfile: null,
+      sandboxGpu: "disable",
+      sandboxGpuDevice: null,
       autoYes: true,
     });
   });
@@ -128,7 +176,7 @@ describe("buildRebuildRecreateOnboardOpts", () => {
   it("forwards noGpu:true for legacy entries with gpuEnabled:false and no sandboxGpuMode", () => {
     const opts = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
-      sb: { gpuEnabled: false },
+      sb: { ...dashboard, gpuEnabled: false },
     });
     expect(opts.noGpu).toBe(true);
   });
@@ -136,30 +184,41 @@ describe("buildRebuildRecreateOnboardOpts", () => {
   it("omits noGpu for auto-mode CPU fallback so resume stays auto", () => {
     const opts = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
-      sb: { sandboxGpuMode: "auto", sandboxGpuEnabled: false },
+      sb: { ...dashboard, sandboxGpuMode: "auto", sandboxGpuEnabled: false },
     });
     expect(opts).not.toHaveProperty("noGpu");
+    expect(opts.sandboxGpu).toBeNull();
+    expect(opts.sandboxGpuDevice).toBeNull();
   });
 
   it("omits noGpu when sandboxGpuMode is '1'", () => {
     const opts = buildRebuildRecreateOnboardOpts({
       ...baseArgs,
-      sb: { sandboxGpuMode: "1", sandboxGpuEnabled: true },
+      sb: {
+        ...dashboard,
+        sandboxGpuMode: "1",
+        sandboxGpuEnabled: true,
+        sandboxGpuDevice: "nvidia.com/gpu=2",
+      },
     });
     expect(opts).not.toHaveProperty("noGpu");
+    expect(opts.sandboxGpu).toBe("enable");
+    expect(opts.sandboxGpuDevice).toBe("nvidia.com/gpu=2");
   });
 
-  it("omits noGpu when no sandbox entry is captured", () => {
-    const opts = buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: null });
-    expect(opts).not.toHaveProperty("noGpu");
+  it("fails closed when a dashboard-managed sandbox has no durable port", () => {
+    expect(() => buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: null })).toThrow(
+      "without its persisted dashboard port",
+    );
   });
 
   it("preserves storedFromDockerfile and autoYes regardless of GPU opt-out", () => {
     const opts = buildRebuildRecreateOnboardOpts({
-      sb: { sandboxGpuMode: "0" },
+      sb: { ...dashboard, sandboxGpuMode: "0" },
       rebuildAgent: "hermes",
       storedFromDockerfile: "/sandbox/.openclaw/Dockerfile.custom",
       autoYes: false,
+      usageNoticeAccepted: true,
     });
     expect(opts.agent).toBe("hermes");
     expect(opts.fromDockerfile).toBe("/sandbox/.openclaw/Dockerfile.custom");

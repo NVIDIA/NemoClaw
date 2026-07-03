@@ -56,7 +56,7 @@ function runWrapper(args: string[]): WrapperRun {
         /export PATH="([^"]*)"/,
         (_match, managedPath: string) => `export PATH=${JSON.stringify(`${bin}:${managedPath}`)}`,
       )
-      .replace("/opt/venv/bin/python3 -I", "python3 -I");
+      .replaceAll("/opt/venv/bin/python3 -I", "python3 -I");
     expect(wrapperFixture).not.toBe(wrapperSource);
     fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
 

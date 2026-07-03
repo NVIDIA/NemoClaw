@@ -189,14 +189,76 @@ export interface GatewayNameBoundClassifiers {
  */
 export function createGatewayNameBoundClassifiers(
   state: typeof import("../state/gateway"),
-  gatewayName: string,
+  gatewayName: string | (() => string),
 ): GatewayNameBoundClassifiers {
+  const currentGatewayName = () =>
+    typeof gatewayName === "function" ? gatewayName() : gatewayName;
   return {
-    hasStaleGateway: (gwInfoOutput = "") => state.hasStaleGateway(gwInfoOutput, gatewayName),
-    isSelectedGateway: (statusOutput = "") => state.isSelectedGateway(statusOutput, gatewayName),
+    hasStaleGateway: (gwInfoOutput = "") =>
+      state.hasStaleGateway(gwInfoOutput, currentGatewayName()),
+    isSelectedGateway: (statusOutput = "") =>
+      state.isSelectedGateway(statusOutput, currentGatewayName()),
     isGatewayHealthy: (statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") =>
-      state.isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName),
+      state.isGatewayHealthy(
+        statusOutput,
+        gwInfoOutput,
+        activeGatewayInfoOutput,
+        currentGatewayName(),
+      ),
     getGatewayReuseState: (statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") =>
-      state.getGatewayReuseState(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName),
+      state.getGatewayReuseState(
+        statusOutput,
+        gwInfoOutput,
+        activeGatewayInfoOutput,
+        currentGatewayName(),
+      ),
+  };
+}
+
+export interface DynamicGatewayRuntimeDeps {
+  getGatewayName(): string;
+  getGatewayPort(): number;
+  getDockerDriverGatewayEndpoint: typeof import("./docker-driver-gateway-env").getDockerDriverGatewayEndpoint;
+  getGatewayClusterImageDrift: typeof import("../adapters/openshell/gateway-drift").getGatewayClusterImageDrift;
+  probeGatewayHttpReady: typeof import("./gateway-http-readiness").isGatewayHttpReady;
+  probeDockerDriverGatewayHttpReady: typeof import("./gateway-http-readiness").isDockerDriverGatewayHttpReady;
+  waitForGatewayHttpReadyBase: typeof import("./gateway-http-readiness").waitForGatewayHttpReady;
+  probeGatewayTcpReady: typeof import("./gateway-tcp-readiness").isGatewayTcpReady;
+}
+
+/** Bind gateway probes and drift checks to the process-local dynamic gateway target. */
+export function createDynamicGatewayRuntimeHelpers(deps: DynamicGatewayRuntimeDeps) {
+  const getDockerDriverGatewayEndpoint = () =>
+    deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort());
+  const getGatewayClusterImageDrift = () =>
+    deps.getGatewayClusterImageDrift({ gatewayName: deps.getGatewayName() });
+  const isGatewayHttpReady = (timeoutMs?: number, url?: string, method?: "GET" | "POST") =>
+    deps.probeGatewayHttpReady(
+      timeoutMs,
+      url ?? `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/`,
+      method,
+    );
+  const isDockerDriverGatewayHttpReady = (timeoutMs?: number, url?: string) =>
+    deps.probeDockerDriverGatewayHttpReady(
+      timeoutMs,
+      url ??
+        `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/openshell.v1.OpenShell/Health`,
+    );
+  const waitForGatewayHttpReady = (
+    opts: import("./gateway-http-readiness").WaitForGatewayHttpReadyOpts = {},
+  ) =>
+    deps.waitForGatewayHttpReadyBase({
+      ...opts,
+      probe: opts.probe ?? (() => isGatewayHttpReady()),
+    });
+  const isGatewayTcpReady = (timeoutMs?: number) =>
+    deps.probeGatewayTcpReady(deps.getGatewayPort(), timeoutMs);
+  return {
+    getDockerDriverGatewayEndpoint,
+    getGatewayClusterImageDrift,
+    isGatewayHttpReady,
+    isDockerDriverGatewayHttpReady,
+    waitForGatewayHttpReady,
+    isGatewayTcpReady,
   };
 }

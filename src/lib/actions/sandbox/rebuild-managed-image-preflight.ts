@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import type { AgentDefinition } from "../../agent/defs";
+import { GATEWAY_PORT } from "../../core/ports";
 import { createAgentSandbox } from "../../agent/onboard";
 import {
   type PreparedSandboxBuildContext,
@@ -28,6 +29,7 @@ export type ManagedDcodeRebuildImageInput = {
   provider: string;
   preferredInferenceApi: string | null;
   sandboxGpuConfig: SandboxGpuConfig;
+  gatewayPort?: number;
 };
 
 export type ManagedDcodeRebuildImageDeps = {
@@ -256,6 +258,7 @@ export async function prepareManagedDcodeRebuildImage(
       webSearchConfig: null,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
+      gatewayPort: input.gatewayPort ?? GATEWAY_PORT,
       log: () => {},
       warn: () => {},
     });

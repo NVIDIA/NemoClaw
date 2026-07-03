@@ -24,6 +24,13 @@ function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
 
+const MANAGED_MCP_VALIDATOR_INVOCATION = [
+  'managed_mcp_config="$(',
+  "  /opt/venv/bin/python3 -I -c \\",
+  "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
+  ')"',
+].join("\n");
+
 function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: string } {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
@@ -31,6 +38,7 @@ function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: 
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
   const fixture = readAgentFile("dcode-wrapper.sh")
+    .replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""')
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
