@@ -323,6 +323,7 @@ describe("runUpdateAction", () => {
           ...process.env,
           BASH_ENV: "/tmp/review-bash-env",
           ENV: "/tmp/review-env",
+          NEMOCLAW_FRESH: "1",
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
           NEMOCLAW_INSTALL_TAG: "not-maintained",
         },
@@ -339,6 +340,7 @@ describe("runUpdateAction", () => {
     const options = calls[0]?.[2];
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.ENV).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_FRESH).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });

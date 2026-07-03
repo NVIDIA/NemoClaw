@@ -25,7 +25,7 @@ describe("nemoclaw update command", () => {
     const output = execSync(`node "${CLI}" help`, { encoding: "utf-8" });
     expect(output).toContain("Upgrade");
     expect(output).toMatch(
-      /nemoclaw update\s+Run the maintained NemoClaw installer update flow\s+\(--check, --yes\|-y\)/,
+      /nemoclaw update\s+Run the maintained NemoClaw installer update flow\s+\(--check, --fresh, --yes\|-y\)/,
     );
   });
 
@@ -39,7 +39,7 @@ describe("nemoclaw update command", () => {
   it("renders NemoHermes command names and product copy for the Hermes alias", () => {
     const rootHelp = execSync(`node "${HERMES_CLI}" help`, { encoding: "utf-8" });
     expect(rootHelp).toMatch(
-      /nemohermes update\s+Run the maintained NemoHermes installer update flow\s+\(--check, --yes\|-y\)/,
+      /nemohermes update\s+Run the maintained NemoHermes installer update flow\s+\(--check, --fresh, --yes\|-y\)/,
     );
 
     const updateHelp = execSync(`node "${HERMES_CLI}" update --help`, { encoding: "utf-8" });
@@ -52,7 +52,7 @@ describe("nemoclaw update command", () => {
   it("renders NemoDeepAgents command names and product copy for the Deep Agents alias", () => {
     const rootHelp = execSync(`"${DEEPAGENTS_CLI}" help`, { encoding: "utf-8" });
     expect(rootHelp).toMatch(
-      /nemo-deepagents update\s+Run the maintained NemoDeepAgents installer update flow\s+\(--check, --yes\|-y\)/,
+      /nemo-deepagents update\s+Run the maintained NemoDeepAgents installer update flow\s+\(--check, --fresh, --yes\|-y\)/,
     );
 
     const updateHelp = execSync(`"${DEEPAGENTS_CLI}" update --help`, {

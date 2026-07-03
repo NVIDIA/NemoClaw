@@ -205,6 +205,7 @@ function updateInstallerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const next = { ...env };
   delete next.BASH_ENV;
   delete next.ENV;
+  delete next.NEMOCLAW_FRESH;
   delete next.NEMOCLAW_INSTALL_REF;
   delete next.NEMOCLAW_INSTALL_TAG;
   return next;
