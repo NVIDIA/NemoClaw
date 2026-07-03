@@ -303,6 +303,9 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
     runtimeJob,
     "Run runtime overrides test against production image",
   );
+  if (runtime["timeout-minutes"] !== 45) {
+    errors.push("runtime overrides must retain its 45-minute probe budget");
+  }
   if (
     build.run !==
     "docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production ."

@@ -300,6 +300,7 @@ jobs:
       - *load-isolation-image
 
       - name: Run runtime overrides test against production image
+        timeout-minutes: 45
         run: |
           npx vitest run --project e2e-live \
             test/e2e/live/runtime-overrides.test.ts \

@@ -114,6 +114,7 @@ describe("sandbox image workflow boundary", () => {
     const runtime = runtimeSteps.find(
       (step) => step.name === "Run runtime overrides test against production image",
     )!;
+    runtime["timeout-minutes"] = 30;
     runtime.run = `${runtime.run}\ndocker build -t nemoclaw-runtime-overrides-rebuilt .`;
     producer.steps!.push({ ...runtime });
     producer.steps!.push({ ...runtimeSteps.find((step) => step.name === "Set up Node")! });
@@ -152,6 +153,7 @@ describe("sandbox image workflow boundary", () => {
         "OpenClaw producer must upload the saved production image exactly once",
         "runtime overrides must consume the prebuilt OpenClaw production image",
         "runtime overrides must retain its canonical target id",
+        "runtime overrides must retain its 45-minute probe budget",
         "runtime overrides must not authenticate to Docker Hub",
         "runtime overrides step must not rebuild the prebuilt image",
         "runtime overrides must download the saved OpenClaw production image",
