@@ -23,7 +23,16 @@
  *   - If the local build is ineligible or fails for any reason, we return the
  *     original create args unchanged so onboarding falls back to today's
  *     behavior — a slow build, never a broken one.
- *   - Opt out entirely with `NEMOCLAW_SANDBOX_PREBUILD=0`; force on with `=1`.
+ *   - Opt out entirely with `NEMOCLAW_SANDBOX_PREBUILD=0`. Force on with `=1`
+ *     (this only overrides the Vitest-inert gate; a locally-built image is still
+ *     invisible to a remote gateway, so `=1` is meaningful only on a
+ *     Docker-driver host — on a remote gateway prefer the default/`=0`).
+ *
+ * Removal condition: this whole module (and its call site in onboard.ts) exists
+ * only because openshell builds the sandbox image with the classic Docker
+ * builder and exposes no way to select BuildKit. When openshell builds with
+ * BuildKit by default, or accepts a builder/BuildKit flag on `sandbox create`,
+ * delete the prebuild and pass the Dockerfile straight to `--from` again.
  */
 
 import { streamSandboxCreate } from "../sandbox/create-stream";
