@@ -41,8 +41,8 @@ export interface ConfirmGatewayPortResult {
  * Bind loopback in a child so this synchronous stop path can prove the port is
  * free. Node's in-process net.Server reports bind success/failure
  * asynchronously; using it here would require making the full stop API async.
- * The child performs one bind only, and confirmGatewayPortReleased caps the
- * caller at 20 attempts.
+ * The child performs one bind and confirmGatewayPortReleased invokes it only
+ * once, after any authoritative listener scan has cleared.
  */
 export function defaultProbePortFree(port: number): boolean {
   try {
@@ -61,34 +61,33 @@ export function defaultProbePortFree(port: number): boolean {
  * Confirm both observation layers agree: lsof sees no listener (when
  * available) and an independent bind succeeds. The bind is required even
  * after an empty lsof result because unprivileged lsof can hide root-owned
- * listeners. Polling is bounded by both deadline and attempt count.
+ * listeners. Listener polling is bounded by both deadline and attempt count;
+ * the independent bind subprocess runs exactly once.
  */
 export function confirmGatewayPortReleased(
   options: ConfirmGatewayPortOptions,
 ): ConfirmGatewayPortResult {
   let remaining: number[] = [];
-  const released = waitUntil(
-    () => {
-      if (options.listeningPids) {
-        const pids = options.listeningPids();
-        if (pids === null) return false;
-        remaining = pids;
-        if (pids.length > 0) return false;
-      }
-      return options.probePortFree(options.port);
-    },
-    {
-      deadlineMs: options.now() + options.timeoutMs,
-      // defaultProbePortFree uses one short-lived Node child per attempt. This
-      // hard cap bounds a stop invocation to at most 20 children and roughly
-      // the configured 2-second default confirmation window.
-      maxAttempts: 20,
-      initialIntervalMs: options.pollIntervalMs,
-      maxIntervalMs: options.pollIntervalMs,
-      backoffFactor: 1,
-      now: options.now,
-      ...(options.sleep ? { sleep: options.sleep } : {}),
-    },
-  );
-  return { released, remaining };
+  const listeningPids = options.listeningPids;
+  const listenersReleased = listeningPids
+    ? waitUntil(
+        () => {
+          const pids = listeningPids();
+          if (pids === null) return false;
+          remaining = pids;
+          return pids.length === 0;
+        },
+        {
+          deadlineMs: options.now() + options.timeoutMs,
+          maxAttempts: 20,
+          initialIntervalMs: options.pollIntervalMs,
+          maxIntervalMs: options.pollIntervalMs,
+          backoffFactor: 1,
+          now: options.now,
+          ...(options.sleep ? { sleep: options.sleep } : {}),
+        },
+      )
+    : true;
+  if (!listenersReleased) return { released: false, remaining };
+  return { released: options.probePortFree(options.port), remaining };
 }
