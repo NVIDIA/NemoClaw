@@ -11,7 +11,7 @@ import {
   revalidateDcodeReplacementAtMutationEdge,
 } from "./rebuild-dcode-preflight";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildAgentBaseImageOptions, RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 type DcodeRebuildOrchestratorDeps = {
@@ -22,7 +22,11 @@ type DcodeRebuildOrchestratorDeps = {
     log: (message: string) => void,
     bail: DcodeRebuildPreflightBail,
   ): boolean;
-  ensureAgentBaseImage(agentName: string | null, bail: DcodeRebuildPreflightBail): boolean;
+  ensureAgentBaseImage(
+    agentName: string | null,
+    bail: DcodeRebuildPreflightBail,
+    options?: RebuildAgentBaseImageOptions,
+  ): boolean;
 };
 
 type CreateDcodeRebuildOrchestratorOptions = {
@@ -40,7 +44,11 @@ export type DcodeRebuildOrchestrator = {
   run<T>(action: () => Promise<T>): Promise<T>;
   runSync<T>(action: () => T): T;
   preflightCredentials(): Promise<boolean>;
-  prepareImage(resumeConfig: RebuildResumeConfig, skipLiveRoute: boolean): Promise<boolean>;
+  prepareImage(
+    resumeConfig: RebuildResumeConfig,
+    skipLiveRoute: boolean,
+    baseImageOptions?: RebuildAgentBaseImageOptions,
+  ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
     skipLiveRoute: boolean,
@@ -102,9 +110,11 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, skipLiveRoute) =>
+    prepareImage: (resumeConfig, skipLiveRoute, baseImageOptions) =>
       run(async () => {
-        if (!scope.enabled) return deps.ensureAgentBaseImage(rebuildAgent, scope.bail);
+        if (!scope.enabled) {
+          return deps.ensureAgentBaseImage(rebuildAgent, scope.bail, baseImageOptions);
+        }
         const replacement = await prepareDcodeReplacementBeforeMutation({
           sandboxName,
           entry,

@@ -3,6 +3,7 @@
 
 import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 
 export type RebuildGpuOptOutEntry = {
   sandboxGpuMode?: string | null;
@@ -37,6 +38,7 @@ export type RebuildRecreateOnboardOpts = {
   fromDockerfile: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
+  baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
   noGpu?: true;
 };
 
@@ -46,6 +48,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   storedFromDockerfile: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
+  baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
 }): RebuildRecreateOnboardOpts {
   return {
     resume: true,
@@ -55,6 +58,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     fromDockerfile: args.storedFromDockerfile,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
+    baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };
 }

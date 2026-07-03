@@ -52,12 +52,14 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
+import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import { redact } from "../../security/redact";
 import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
@@ -578,9 +580,9 @@ async function reapplyMessagingManifestAfterOpenClawDoctor(
 /**
  * Rebuild a live sandbox while preserving registered agent state and policies.
  *
- * Agent sandboxes force-refresh their base image before backup/delete so local
- * `Dockerfile.base` changes fail before destructive work and are applied to the
- * recreated sandbox image.
+ * Agent sandboxes validate their recorded base image before backup/delete.
+ * Changed local `Dockerfile.base` inputs invalidate the resolution key and
+ * trigger a rebuild before destructive work.
  */
 interface RebuildSandboxExecutionOptions {
   throwOnError?: boolean;
@@ -693,6 +695,8 @@ export async function rebuildSandbox(
 
   const sb = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sb) return;
+  const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sb.imageTag);
+  const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
 
   let recoveryManifest: sandboxState.RebuildManifest | null = null;
   if (opts.recoveryManifest) {
@@ -829,8 +833,11 @@ export async function rebuildSandbox(
   );
 
   // DCode prebuilds and seals the managed replacement inputs; other agents retain the
-  // existing base-image-only preflight.
-  const imageReady = await dcodePreflight.prepareImage(resumeConfig, recoveryRecreate);
+  // existing base-image-only preflight, including validated warm-cache reuse.
+  const imageReady = await dcodePreflight.prepareImage(resumeConfig, recoveryRecreate, {
+    resolutionHint: baseImageResolutionHint,
+    forceBaseImageRefresh,
+  });
   if (!imageReady) {
     dcodePreflight.cleanup();
     return;
@@ -1055,6 +1062,7 @@ export async function rebuildSandbox(
       storedFromDockerfile,
       preparedDcodeRebuild: dcodePreflight.preparedReplacement ?? undefined,
       autoYes: skipConfirm || rebuildConfirmed,
+      baseImageResolutionHint,
     });
     // #5735: isolate ambient onboard-selection env only for the duration of the
     // recreate. The session was just pinned to the registry agent/provider/

@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { WebSearchConfig } from "../inference/web-search";
+import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 type DockerRunResult = { status: number | null };
@@ -36,6 +37,9 @@ export type PrepareSandboxDockerfilePatchInput = {
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
+  resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+  preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
+  forceBaseImageRefresh?: boolean;
   log?: (message: string) => void;
   warn?: (message: string) => void;
   deps?: SandboxDockerfilePatchDeps;
@@ -95,6 +99,9 @@ export async function prepareSandboxDockerfilePatch({
   webSearchConfig,
   hermesToolGateways,
   sandboxGpuConfig,
+  resolutionHint = null,
+  preResolvedBaseImageMetadata = null,
+  forceBaseImageRefresh = false,
   log = console.log,
   warn = console.warn,
   deps = {},
@@ -105,6 +112,8 @@ export async function prepareSandboxDockerfilePatch({
   const resolved = shouldResolveBaseImage
     ? (deps.pullAndResolveBaseImageDigest ?? pullAndResolveBaseImageDigest)({
         requireOpenshellSandboxAbi: getDockerDriverGateway(),
+        ...(resolutionHint ? { resolutionHint } : {}),
+        ...(forceBaseImageRefresh ? { forceRefresh: true } : {}),
       })
     : null;
   if (resolved?.digest) {
@@ -159,7 +168,13 @@ export async function prepareSandboxDockerfilePatch({
     darwinVmCompat,
     null,
     hermesToolGateways,
-    { buildIdPolicy },
+    (() => {
+      const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
+      return {
+        buildIdPolicy,
+        ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),
+      };
+    })(),
   );
 
   return { buildId, resolvedBaseImage: resolved };
