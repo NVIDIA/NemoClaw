@@ -189,7 +189,8 @@ Re-invoke the MCP tool and the CONNECT tunnel to `mcp.example.com:443` succeeds.
 
 <Note>
 The `binaries` list must include every process that opens the connection.
-OpenClaw and its Node runtime execute as `/usr/local/bin/node` and `/usr/local/bin/openclaw`, and MCP client tools invoked from a shell (for example `curl`) need `/usr/bin/curl`.
+OpenClaw and its Node runtime typically execute as `/usr/local/bin/node` and `/usr/local/bin/openclaw`, and MCP client tools invoked from a shell (for example `curl`) need `/usr/bin/curl`.
+Confirm the actual paths on your system with `which node` and `which openclaw`, since install method (for example `nvm` or a user-local install) can change these locations.
 A preset that lists only the endpoint but no matching binary widens the allowlist but no process is authorized to use it, so requests still fail.
 </Note>
 
