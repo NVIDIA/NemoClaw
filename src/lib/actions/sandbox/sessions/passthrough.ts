@@ -3,6 +3,7 @@
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import * as registry from "../../../state/registry";
 import { buildOpenshellExecArgs, computeExitCode, execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
@@ -202,10 +203,16 @@ export async function runSessionsPassthrough(
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
-  const command = ["openclaw", "sessions"];
+  // Hermes sandboxes ship the `hermes` binary in place of OpenClaw's
+  // `openclaw` binary, and `openclaw` does not exist inside them (#6247).
+  // Route the passthrough at the in-sandbox agent's own binary name and
+  // bypass the OpenClaw-specific warm-up filter for non-OpenClaw agents.
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const inSandboxBinary = sandboxAgent === "hermes" ? "hermes" : "openclaw";
+  const command = [inSandboxBinary, "sessions"];
   if (verb) command.push(verb);
   for (const arg of extraArgs) command.push(arg);
-  if (isFilterableListPassthrough(verb)) {
+  if (isFilterableListPassthrough(verb) && inSandboxBinary === "openclaw") {
     const result = captureOpenshell(buildOpenshellExecArgs(sandboxName, command), {
       ignoreError: true,
       includeStreams: true,

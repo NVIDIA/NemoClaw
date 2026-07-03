@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const captureMock = vi.hoisted(() => vi.fn());
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
+const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string } | null));
 
 vi.mock("../../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureMock,
@@ -15,6 +16,7 @@ vi.mock("../exec", async () => {
   return { ...actual, execSandbox: execMock };
 });
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
+vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
 
 import { WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
 import {
@@ -181,6 +183,8 @@ describe("runSessionsPassthrough", () => {
     captureMock.mockReset();
     execMock.mockClear();
     ensureLiveMock.mockClear();
+    getSandboxMock.mockReset();
+    getSandboxMock.mockReturnValue(null);
     stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -340,6 +344,40 @@ describe("runSessionsPassthrough", () => {
     );
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--agent"));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--limit"));
+  });
+
+  it("routes to the hermes binary and skips warm-up filtering on hermes sandboxes (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "hermes" });
+
+    await runSessionsPassthrough("hermes", { extraArgs: [] });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions"]);
+  });
+
+  it("uses openclaw binary for openclaw-agent sandboxes (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "openclaw" });
+    captureMock.mockReturnValueOnce({ status: 0, output: "Sessions listed: 0\n" });
+
+    await runSessionsPassthrough("alpha", { extraArgs: [] });
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(captureMock).toHaveBeenCalledWith(
+      ["sandbox", "exec", "--name", "alpha", "--", "openclaw", "sessions"],
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 * 1024 },
+    );
+  });
+
+  it("routes hermes `sessions list` with forwarded flags via execSandbox (#6247)", async () => {
+    getSandboxMock.mockReturnValue({ agent: "hermes" });
+
+    await runSessionsPassthrough("hermes", {
+      verb: "list",
+      extraArgs: ["--json"],
+    });
+
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--json"]);
   });
 
   it("prints captured output when OpenClaw exits non-zero", async () => {
