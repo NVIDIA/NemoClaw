@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
 import "./nim";
+import { fittableOllamaModelTags, largestFittableOllamaModelTag } from "./ollama-model-registry";
 
 const require = createRequire(import.meta.url);
 const NIM_DIST_PATH = require.resolve("./nim");
@@ -26,6 +27,28 @@ function withFirmwareModel(model: string, fn: () => void): void {
     fn();
   } finally {
     fs.readFileSync = orig;
+  }
+}
+
+// Jetson/Tegra firmware: no DMI product_name, a devicetree model, and the
+// /dev/nvhost-gpu node present. Kept branch-free via a lookup table.
+function withJetsonFirmware(model: string, fn: () => void): void {
+  const origRead = fs.readFileSync;
+  const origExists = fs.existsSync;
+  const readers: Record<string, () => string> = {
+    "/sys/class/dmi/id/product_name": () => {
+      throw new Error("ENOENT");
+    },
+    "/sys/firmware/devicetree/base/model": () => model,
+  };
+  fs.readFileSync = (p: string, ...args: unknown[]) =>
+    p in readers ? readers[p]() : origRead(p, ...args);
+  fs.existsSync = (p: string) => p === "/dev/nvhost-gpu" || origExists(p);
+  try {
+    fn();
+  } finally {
+    fs.readFileSync = origRead;
+    fs.existsSync = origExists;
   }
 }
 
@@ -61,11 +84,20 @@ function nvidiaSmiRunner(smiOutput: string): Mock {
   );
 }
 
+// Jetson path has no nvidia-smi; memory comes from `free -m`.
+function freeMemoryRunner(freeOutput: string): Mock {
+  return vi.fn((cmd: string | string[]) => {
+    const argv = Array.isArray(cmd) ? cmd : [];
+    return `${argv[0] ?? ""} ${argv[1] ?? ""}`.trim() === "free -m" ? freeOutput : "";
+  });
+}
+
 // #3707: the Windows-ARM N1X iGPU (the denylisted JMJWOA-Generic placeholder
 // that clears the bounded Docker CUDA proof) is memory-shared like Jetson and
 // cannot serve a computeIntensive model in-loop, so detectGpu tags it
-// computeConstrained. A genuine discrete NVIDIA GPU never reaches that path and
-// must stay untagged.
+// computeConstrained and the Ollama bootstrap-model selector skips the
+// computeIntensive 30B/35B entries. A genuine discrete NVIDIA GPU never reaches
+// that path and must stay untagged.
 describe("detectGpu computeConstrained tagging (#3707)", () => {
   // detectGpu applies an ARM64-Linux kernel-interface trust gate; pin
   // /proc/driver/nvidia present so genuine discrete GPUs are trusted on the
@@ -95,6 +127,48 @@ describe("detectGpu computeConstrained tagging (#3707)", () => {
           type: "nvidia",
           name: "JMJWOA-Generic-GPU",
           wslDockerDesktopGpuProofPassed: true,
+          computeConstrained: true,
+        });
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("excludes the computeIntensive Ollama defaults for the proof-passed N1X iGPU", () => {
+    const { nimModule, restore } = loadNimWithMockedRunner(
+      nvidiaSmiRunner("JMJWOA-Generic-GPU, 65471, 65000\n"),
+    );
+    const proveArm64WslDockerDesktopGpu = vi.fn(() => ({
+      passed: true,
+      timedOut: false,
+      exitCode: 0,
+      diagnostic: "",
+    }));
+    try {
+      withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+        const gpu = nimModule.detectGpu({ proveArm64WslDockerDesktopGpu });
+        const fittable = fittableOllamaModelTags(gpu);
+        expect(fittable).not.toContain("qwen3.6:35b");
+        expect(fittable).not.toContain("nemotron-3-nano:30b");
+        expect(largestFittableOllamaModelTag(gpu)).toBe("qwen3.5:9b");
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("marks a Jetson/Tegra GPU computeConstrained", () => {
+    const free =
+      "              total        used        free      shared  buff/cache   available\n" +
+      "Mem:          65536        4096       50000         512       10928       60000\n" +
+      "Swap:             0           0           0";
+    const { nimModule, restore } = loadNimWithMockedRunner(freeMemoryRunner(free));
+    try {
+      withJetsonFirmware("NVIDIA Jetson AGX Orin\0", () => {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          platform: "jetson",
           computeConstrained: true,
         });
       });
