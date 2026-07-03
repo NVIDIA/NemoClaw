@@ -63,7 +63,7 @@ Install the following before you begin.
 - Node.js 22.16+ and npm 10+
 - Python 3.11+ (for documentation tooling)
 - Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for Python dependency management)
+- [uv](https://docs.astral.sh/uv/) (for Python dependency management — install with `curl -LsSf https://astral.sh/uv/install.sh | sh`, or `brew install uv` on macOS)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
 
 ## Getting Started
@@ -117,6 +117,9 @@ If you followed the build step above, you are still inside `nemoclaw/` and must 
 ```bash
 cd ..                   # back to the repo root (from nemoclaw/ subdirectory)
 npm link
+# npm links the CLI into $(npm prefix -g)/bin; add it to PATH so `nemoclaw`
+# resolves (append to ~/.bashrc / ~/.zshrc to persist):
+export PATH="$(npm prefix -g)/bin:$PATH"
 nemoclaw --version      # verify the linked version
 ```
 
