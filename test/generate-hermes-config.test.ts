@@ -261,6 +261,20 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(configYaml).not.toContain("maxSearchLimit:");
   });
 
+  it("restores direct tool exposure through the agent-neutral override", () => {
+    const { config } = runConfigScript({ NEMOCLAW_TOOL_DISCLOSURE: "direct" });
+    expect(config.tools?.tool_search).toEqual({
+      ...HERMES_STRUCTURED_TOOL_SEARCH,
+      enabled: "off",
+    });
+  });
+
+  it("rejects unknown tool-disclosure modes", () => {
+    const result = runConfigScriptRaw({ NEMOCLAW_TOOL_DISCLOSURE: "sometimes" });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
+  });
+
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 

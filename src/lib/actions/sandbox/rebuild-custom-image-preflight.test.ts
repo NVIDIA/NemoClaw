@@ -18,6 +18,7 @@ function input(fromDockerfile: string | null) {
     preferredInferenceApi: null,
     compatibleEndpointReasoning: null,
     webSearchConfig: null,
+    toolDisclosure: "progressive" as const,
     hermesToolGateways: [],
     sandboxGpuConfig: {
       mode: "0" as const,

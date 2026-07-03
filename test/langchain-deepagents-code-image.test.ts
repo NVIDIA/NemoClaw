@@ -289,6 +289,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "rm -f /opt/nemoclaw-deepagents-code/deepagents-progressive-disclosure-runtime.py",
     );
     expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
+    expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
+    expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
+    expect(dockerfile).toContain("progressive|direct)");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(dockerfile).toContain(

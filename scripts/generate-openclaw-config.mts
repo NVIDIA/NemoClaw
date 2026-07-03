@@ -13,6 +13,7 @@
 //   NEMOCLAW_INFERENCE_BASE_URL, NEMOCLAW_INFERENCE_API,
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
+//   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
@@ -112,6 +113,12 @@ function coercePositiveInt(env: Env, name: string, defaultValue: number): number
       `-- skipping override, falling back to default (${defaultValue})`,
   );
   return defaultValue;
+}
+
+function readToolDisclosure(env: Env): "progressive" | "direct" {
+  const value = (env.NEMOCLAW_TOOL_DISCLOSURE || "progressive").trim().toLowerCase();
+  if (value === "progressive" || value === "direct") return value;
+  throw new Error("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
 }
 
 function isLoopback(hostname: string): boolean {
@@ -1023,6 +1030,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
+  const toolDisclosure = readToolDisclosure(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")
@@ -1084,13 +1092,22 @@ export function buildConfig(env: Env = process.env): JsonObject {
   // Model-specific manifests intentionally remain boolean-only and replace this
   // value wholesale: false disables Tool Search; true restores upstream code
   // mode. Do not shallow-merge a boolean override into the structured object.
+  const structuredToolSearch: JsonObject = {
+    mode: "tools",
+    searchDefaultLimit: 8,
+    maxSearchLimit: 20,
+  };
   const openclawTools: JsonObject = {
-    toolSearch: {
-      mode: "tools",
-      searchDefaultLimit: 8,
-      maxSearchLimit: 20,
-    },
     ...openclawToolOverrides,
+    // An explicit direct request is authoritative. Compatibility manifests may
+    // downgrade progressive mode to false, but may never re-enable search over
+    // a user's direct selection.
+    toolSearch:
+      toolDisclosure === "direct"
+        ? false
+        : "toolSearch" in openclawToolOverrides
+          ? openclawToolOverrides.toolSearch
+          : structuredToolSearch,
   };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {

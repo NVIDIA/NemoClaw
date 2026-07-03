@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
 import * as registry from "../../state/registry";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { validatedRebuildRegistryUpdate } from "./rebuild-durable-config";
@@ -41,10 +42,12 @@ export async function prepareRebuildTargetPreflights(args: {
   sandboxEntry: RebuildSandboxEntry;
   rebuildAgent: string | null;
   autoYes: boolean;
+  requestedToolDisclosure?: ToolDisclosure;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
-  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, log, bail } = args;
+  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, requestedToolDisclosure, log, bail } =
+    args;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
@@ -55,6 +58,7 @@ export async function prepareRebuildTargetPreflights(args: {
     rebuildAgent,
     log,
     bail,
+    requestedToolDisclosure,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
@@ -66,6 +70,10 @@ export async function prepareRebuildTargetPreflights(args: {
     bail,
   );
   if (!recreateOptions) return null;
+  // The durable resolver may recover a legacy row's choice from its matching
+  // session. Use that authoritative value for both preflight and inner onboard,
+  // never the raw registry fallback used while constructing generic options.
+  recreateOptions.toolDisclosure = durableConfig.toolDisclosure;
   if (
     !stageRebuildHermesDashboardConfig(
       rebuildAgent,

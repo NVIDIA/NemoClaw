@@ -30,6 +30,8 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   modelRuntimeOwnedFields: ["id", "name"],
   /** Durable user-owned top-level sections are inherited from the backup. */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
+  /** NemoClaw's cross-agent disclosure selection owns this generated key. */
+  currentGeneratedToolFields: ["toolSearch"],
 } as const;
 
 const MANAGED_OPENCLAW_CHANNELS = new Set<string>(
@@ -233,6 +235,25 @@ function mergeOpenClawPlugins(backupPlugins: unknown, currentPlugins: unknown): 
   return merged;
 }
 
+function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
+  if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
+  if (!isPlainJsonObject(currentTools)) {
+    if (currentTools !== undefined && currentTools !== null) return cloneJson(currentTools);
+    const restored = cloneJson(backupTools);
+    for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
+      delete restored[field];
+    }
+    return restored;
+  }
+
+  const merged = mergeJsonObjects(currentTools, backupTools);
+  for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
+    if (field in currentTools) merged[field] = cloneJson(currentTools[field]);
+    else delete merged[field];
+  }
+  return merged;
+}
+
 export function mergeOpenClawRestoredConfig(
   backedUpConfig: unknown,
   currentConfig: unknown,
@@ -250,6 +271,7 @@ export function mergeOpenClawRestoredConfig(
   merged.channels = mergeOpenClawChannels(backedUpConfig.channels, currentConfig.channels);
   merged.models = mergeOpenClawModels(backedUpConfig.models, currentConfig.models);
   merged.plugins = mergeOpenClawPlugins(backedUpConfig.plugins, currentConfig.plugins);
+  merged.tools = mergeOpenClawTools(backedUpConfig.tools, currentConfig.tools);
 
   return merged;
 }

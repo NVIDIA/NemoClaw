@@ -4,6 +4,7 @@
 import { loadAgent } from "../../agent/defs";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import {
   type RebuildDurableConfig,
@@ -68,6 +69,15 @@ function validateRebuildDurableConfig(
     );
     return false;
   }
+  if (durableConfig.toolDisclosureError) {
+    printRebuildPreflightFailure(
+      "recorded tool-disclosure state is invalid.",
+      durableConfig.toolDisclosureError,
+      "Recorded tool-disclosure state is invalid",
+      bail,
+    );
+    return false;
+  }
   if (durableConfig.fromDockerfileError) {
     printRebuildPreflightFailure(
       "recorded custom Dockerfile is invalid.",
@@ -100,15 +110,22 @@ export function prepareRebuildTargetConfig(
   rebuildAgent: string | null,
   log: (message: string) => void,
   bail: RebuildBail,
+  requestedToolDisclosure?: ToolDisclosure,
 ): RebuildTargetConfig | null {
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return null;
   const sessionSnapshot = onboardSession.loadSession();
   const sessionMatchesSandbox = sessionSnapshot?.sandboxName === sandboxName;
-  const durableConfig = resolveRebuildDurableConfig(sandboxName, sb, sessionSnapshot, {
-    provider: resumeConfig.provider,
-    model: resumeConfig.model,
-  });
+  const durableConfig = resolveRebuildDurableConfig(
+    sandboxName,
+    sb,
+    sessionSnapshot,
+    {
+      provider: resumeConfig.provider,
+      model: resumeConfig.model,
+    },
+    requestedToolDisclosure,
+  );
   if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
 
   const dockerfile = resolveRebuildDockerfile(durableConfig.fromDockerfile);

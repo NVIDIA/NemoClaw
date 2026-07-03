@@ -66,6 +66,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       policies: ["discord", "slack"],
+      toolDisclosure: "progressive",
       webSearchEnabled: true,
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "api_key",
@@ -140,6 +141,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.webSearchEnabled).toBe(false);
     expect(entry.fromDockerfile).toBeNull();
     expect(entry.hermesAuthMethod).toBeNull();
+    expect(entry.toolDisclosure).toBe("progressive");
   });
 
   it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
@@ -213,6 +215,35 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     });
 
     expect(entry.preferredInferenceApi).toBeNull();
+  });
+
+  it("records an explicit direct tool-disclosure selection", () => {
+    const entry = buildCreatedSandboxRegistryEntry({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "llama",
+        provider: "compatible-endpoint",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      toolDisclosure: "direct",
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+
+    expect(entry.toolDisclosure).toBe("direct");
   });
 });
 

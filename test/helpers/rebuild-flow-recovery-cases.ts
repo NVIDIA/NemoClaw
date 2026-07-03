@@ -182,6 +182,7 @@ export function registerRebuildFlowRecoveryTests(): void {
       const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
       const harness = createRebuildFlowHarness({
         defaultSandbox: "alpha",
+        sandboxEntry: { toolDisclosure: "progressive" },
         mcpPreparation: {
           entries: [mcpEntry],
           detachedProviderEntries: [mcpEntry],
@@ -193,15 +194,25 @@ export function registerRebuildFlowRecoveryTests(): void {
       });
 
       await expect(
-        harness.rebuildSandbox("alpha", ["--yes"], {
-          throwOnError: true,
-          recoveryManifest: makePreparedRecoveryManifest(),
-        }),
+        harness.rebuildSandbox(
+          "alpha",
+          { yes: true, toolDisclosure: "direct" },
+          {
+            throwOnError: true,
+            recoveryManifest: makePreparedRecoveryManifest(),
+          },
+        ),
       ).rejects.toThrow("Recreate failed");
 
       expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
-        [expect.objectContaining({ name: "alpha" }), { reclaimDefault: "alpha" }],
+        [
+          expect.objectContaining({ name: "alpha", toolDisclosure: "progressive" }),
+          { reclaimDefault: "alpha" },
+        ],
       ]);
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("rebuild --yes --tool-disclosure direct"),
+      );
     });
 
     it("blocks installer recovery when MCP post-restore verification is incomplete", async () => {

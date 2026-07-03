@@ -116,6 +116,7 @@ export async function preflightRebuildTargetRuntime(
     preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
     compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
     webSearchConfig: target.durableConfig.webSearchConfig,
+    toolDisclosure: target.durableConfig.toolDisclosure,
     hermesToolGateways: target.hermesToolGateways,
     sandboxGpuConfig,
     gatewayPort: recreateOptions.targetGatewayPort,

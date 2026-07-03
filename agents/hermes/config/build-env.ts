@@ -11,6 +11,7 @@ export type HermesBuildSettings = {
   providerKey: string;
   upstreamProvider: string;
   inferenceApi: string;
+  toolDisclosure: "progressive" | "direct";
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -31,12 +32,19 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
     upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
+    toolDisclosure: readToolDisclosure(env),
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
       presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
   };
+}
+
+function readToolDisclosure(env: NodeJS.ProcessEnv): "progressive" | "direct" {
+  const value = (env.NEMOCLAW_TOOL_DISCLOSURE || "progressive").trim().toLowerCase();
+  if (value === "progressive" || value === "direct") return value;
+  throw new Error("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {

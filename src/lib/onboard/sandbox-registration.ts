@@ -7,6 +7,7 @@ import { inferenceSelectionRegistryFields } from "../inference/selection";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -33,6 +34,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   appliedPolicies: string[];
+  toolDisclosure?: ToolDisclosure;
   webSearchEnabled?: boolean;
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
@@ -100,6 +102,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
+    toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     webSearchEnabled: input.webSearchEnabled === true,
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,

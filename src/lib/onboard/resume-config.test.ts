@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { normalizeSession } from "../state/onboard-session";
 import { getResumeConfigConflicts } from "./resume-config";
 
 afterEach(() => {
@@ -29,5 +30,36 @@ describe("authoritative rebuild resume config", () => {
     expect(process.env.NEMOCLAW_PROVIDER).toBe("");
     expect(process.env.NEMOCLAW_MODEL).toBe("");
     expect(process.env.COMPATIBLE_API_KEY).toBe("");
+  });
+
+  it("reports an explicit tool-disclosure mismatch against recorded resume state", () => {
+    expect(
+      getResumeConfigConflicts(
+        {
+          sandboxName: "demo",
+          provider: "nvidia-prod",
+          model: "test-model",
+          toolDisclosure: "progressive",
+        },
+        { toolDisclosure: "direct" },
+      ),
+    ).toContainEqual({
+      field: "tool disclosure",
+      requested: "direct",
+      recorded: "progressive",
+    });
+  });
+
+  it("fails closed for a corrupt persisted tool-disclosure value", () => {
+    const corrupt = normalizeSession({
+      version: 1,
+      toolDisclosure: "everything",
+    } as never);
+
+    expect(getResumeConfigConflicts(corrupt, {})).toContainEqual({
+      field: "tool disclosure",
+      requested: null,
+      recorded: "invalid",
+    });
   });
 });

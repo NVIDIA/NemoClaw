@@ -3,6 +3,7 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { WebSearchConfig } from "../inference/web-search";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 type DockerRunResult = { status: number | null };
@@ -34,6 +35,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   provider: string | null;
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
@@ -94,6 +96,7 @@ export async function prepareSandboxDockerfilePatch({
   provider,
   preferredInferenceApi,
   webSearchConfig,
+  toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
   hermesToolGateways,
   sandboxGpuConfig,
   gatewayPort,
@@ -162,7 +165,11 @@ export async function prepareSandboxDockerfilePatch({
     darwinVmCompat,
     null,
     hermesToolGateways,
-    { buildIdPolicy },
+    {
+      buildIdPolicy,
+      toolDisclosure,
+      requireToolDisclosureContract: Boolean(fromDockerfile),
+    },
   );
 
   return { buildId, resolvedBaseImage: resolved };

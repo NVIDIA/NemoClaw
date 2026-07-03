@@ -3,10 +3,111 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession } from "../../state/onboard-session";
+import { createSession, normalizeSession } from "../../state/onboard-session";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
+  it("keeps the registry tool-disclosure selection authoritative", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "direct", nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("lets an explicit transactional rebuild override the recorded selection", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "progressive", nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
+      undefined,
+      "direct",
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("recovers tool disclosure from a matching legacy session", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: "0.1.0" },
+      createSession({
+        sandboxName: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        toolDisclosure: "direct",
+      }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("defaults missing legacy tool-disclosure state to progressive", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      null,
+    );
+
+    expect(config.toolDisclosure).toBe("progressive");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("fails closed for corrupt durable tool-disclosure state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      null,
+    );
+
+    expect(config.toolDisclosure).toBe("progressive");
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("does not let an explicit override mask corrupt durable state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      null,
+      undefined,
+      "direct",
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("fails closed for corrupt matching-session state when the registry value is missing", () => {
+    const session = normalizeSession({
+      version: 1,
+      sandboxName: "alpha",
+      toolDisclosure: "everything",
+    } as never);
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      session,
+    );
+
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("uses a matching direct session when a legacy registry stores null", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: null as never, nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "direct" }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
   it("uses a legacy built-in Brave policy for a nonmatching session", () => {
     const session = createSession({ sandboxName: "other", webSearchConfig: null });
     const config = resolveRebuildDurableConfig(

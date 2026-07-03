@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.metadata
+import os
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from deepagents_code.progressive_tool_disclosure import (
     MAX_SEARCH_QUERY_LENGTH,
     ProgressiveToolDisclosureMiddleware,
     SearchToolsInput,
+    progressive_tool_disclosure_enabled,
 )
 from langchain.agents import create_agent
 from langchain.agents.middleware.types import AgentMiddleware
@@ -108,6 +110,16 @@ class ScriptedModel(GenericFakeChatModel):
                     ],
                 )
             return AIMessage(content="guessed tool complete")
+
+        if self.scenario == "direct":
+            if step == 0:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        _call("direct_visible_probe", "direct-call", value="proof")
+                    ],
+                )
+            return AIMessage(content="direct tool complete")
 
         if self.scenario == "checkpoint":
             if step in (0, 3):
@@ -253,6 +265,58 @@ def _validate_guessed_tool_execution() -> None:
     assert "guessed_hidden_probe" in audit.seen
 
 
+def _validate_direct_mode_execution() -> None:
+    executions: list[str] = []
+
+    @tool("direct_visible_probe")
+    def direct_probe(value: str) -> str:
+        """Return a direct-mode proof through the standard executor stack."""
+        executions.append(value)
+        return "direct-proof"
+
+    info = MCPServerInfo(
+        name="direct-runtime-validator",
+        transport="http",
+        tools=(
+            MCPToolInfo(
+                name=direct_probe.name,
+                description=direct_probe.description,
+            ),
+        ),
+    )
+    model = ScriptedModel(scenario="direct")
+    previous = os.environ.get("NEMOCLAW_TOOL_DISCLOSURE")
+    os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
+    try:
+        assert not progressive_tool_disclosure_enabled()
+        with tempfile.TemporaryDirectory(prefix="deepagents-direct-runtime-") as cwd:
+            agent, _backend = create_cli_agent(
+                model=model,
+                assistant_id="direct-runtime-validator",
+                tools=[direct_probe],
+                cwd=Path(cwd),
+                interactive=False,
+                auto_approve=True,
+                enable_ask_user=False,
+                enable_memory=False,
+                enable_skills=False,
+                enable_shell=False,
+                mcp_server_info=[info],
+            )
+            agent.invoke(
+                {"messages": [HumanMessage(content="Call the directly visible tool.")]}
+            )
+    finally:
+        if previous is None:
+            os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
+        else:
+            os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = previous
+
+    assert "direct_visible_probe" in model.bound_tools[0]
+    assert "search_tools" not in model.bound_tools[0]
+    assert executions == ["proof"]
+
+
 def _validate_checkpoints_and_threads() -> None:
     @tool("weather_checkpoint_probe")
     def weather_probe() -> str:
@@ -389,6 +453,7 @@ def _validate_local_subagent_isolation() -> None:
 def main() -> None:
     _validate_versions_and_schema()
     _validate_guessed_tool_execution()
+    _validate_direct_mode_execution()
     _validate_checkpoints_and_threads()
     _validate_concurrent_discovery()
     asyncio.run(_validate_async_discovery())

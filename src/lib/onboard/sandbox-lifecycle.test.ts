@@ -58,7 +58,7 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
           isAffirmativeAnswer: () => false,
         });
 
-        expect(() => helpers.reconcileSandboxForCreate("alpha")).toThrow(
+        expect(() => helpers.inspectSandboxForCreate("alpha")).toThrow(
           /incomplete MCP destroy transaction.*finish cleanup before recreating/i,
         );
         expect(runCaptureOpenshell).not.toHaveBeenCalled();
@@ -67,4 +67,23 @@ describe("sandbox lifecycle MCP destroy boundaries", () => {
       });
     }
   }
+
+  it("inspects a stale registry entry without pruning it", () => {
+    const runCaptureOpenshell = vi.fn(() => null);
+    registryState.sandbox = { name: "alpha", agent: "openclaw" };
+    const helpers = createSandboxLifecycleHelpers({
+      runCaptureOpenshell,
+      fetchGatewayAuthTokenFromSandbox: () => null,
+      agentProductName: () => "OpenClaw",
+      prompt: async () => "no",
+      isAffirmativeAnswer: () => false,
+    });
+
+    expect(helpers.inspectSandboxForCreate("alpha")).toMatchObject({
+      existingEntry: registryState.sandbox,
+      liveExists: false,
+      preservedMcpState: undefined,
+    });
+    expect(registryState.removeSandbox).not.toHaveBeenCalled();
+  });
 });

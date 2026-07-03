@@ -93,14 +93,25 @@ describe("registry", () => {
     registry.registerSandbox({
       name: "alpha",
       webSearchEnabled: true,
+      toolDisclosure: "direct",
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "oauth",
     });
     expect(registry.getSandbox("alpha")).toMatchObject({
       webSearchEnabled: true,
+      toolDisclosure: "direct",
       fromDockerfile: "/tmp/Dockerfile.custom",
       hermesAuthMethod: "oauth",
     });
+  });
+
+  it("preserves missing tool-disclosure state on reconstructed legacy rows", () => {
+    registry.registerSandbox({ name: "legacy" });
+
+    const entry = registry.getSandbox("legacy");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(entry.toolDisclosure).toBeUndefined();
+    expect(data.sandboxes.legacy.toolDisclosure).toBeUndefined();
   });
 
   it("stores normalized compatible-endpoint reasoning state", () => {

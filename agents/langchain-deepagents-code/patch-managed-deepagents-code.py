@@ -38,6 +38,7 @@ AGENT_IMPORT_PATCH = (
     AGENT_IMPORT_ANCHOR
     + """from deepagents_code.progressive_tool_disclosure import (
     ProgressiveToolDisclosureMiddleware,
+    progressive_tool_disclosure_enabled,
 )
 """
 )
@@ -46,7 +47,7 @@ AGENT_ACTIVATION_ANCHOR = """    tools = tools or []
     effective_cwd = (
 """
 AGENT_ACTIVATION_PATCH = """    tools = tools or []
-    progressive_tool_disclosure_enabled = any(
+    progressive_tool_disclosure_active = progressive_tool_disclosure_enabled() and any(
         info.tools for info in mcp_server_info or ()
     )
     effective_cwd = (
@@ -56,7 +57,7 @@ AGENT_SUBAGENT_ANCHOR = """        return middleware
 
     for subagent_meta in list_subagents(
 """
-AGENT_SUBAGENT_PATCH = """        if progressive_tool_disclosure_enabled:
+AGENT_SUBAGENT_PATCH = """        if progressive_tool_disclosure_active:
             middleware.append(ProgressiveToolDisclosureMiddleware())
         return middleware
 
@@ -72,7 +73,7 @@ AGENT_MAIN_ANCHOR = """    agent_middleware.append(
 AGENT_MAIN_PATCH = """    agent_middleware.append(
         create_summarization_tool_middleware(model, composite_backend)
     )
-    if progressive_tool_disclosure_enabled:
+    if progressive_tool_disclosure_active:
         agent_middleware.append(ProgressiveToolDisclosureMiddleware())
 
     # Create the agent

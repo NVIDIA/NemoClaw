@@ -4,6 +4,7 @@
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import * as registry from "../../state/registry";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   prepareMcpBridgesForAbsentSandboxRebuild,
   prepareMcpBridgesForRebuild,
@@ -69,9 +70,11 @@ export function restoreMcpRegistryForRebuildRetry(
 export function printMcpRebuildRetryCommand(
   sandboxName: string,
   entries: McpRebuildPreparation["entries"],
+  toolDisclosure?: ToolDisclosure,
 ): void {
   if (entries.length > 0) {
-    console.error(`    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes`);
+    const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
+    console.error(`    2. Run: ${CLI_NAME} ${sandboxName} rebuild --yes${disclosureArg}`);
     console.error(
       `       This will recreate sandbox '${sandboxName}' and restore its MCP bridges.`,
     );

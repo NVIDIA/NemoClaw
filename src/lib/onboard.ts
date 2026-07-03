@@ -33,6 +33,7 @@ const {
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
+const toolDisclosureConfig: typeof import("./tool-disclosure") = require("./tool-disclosure");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
@@ -42,6 +43,7 @@ const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-key
 const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
+const dockerfilePatch: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
@@ -1000,7 +1002,7 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
 }
 
 const {
-  reconcileSandboxForCreate,
+  inspectSandboxForCreate,
   pruneStaleSandboxEntry,
   confirmRecreateForSelectionDrift,
   isOpenclawReady,
@@ -2554,7 +2556,51 @@ async function createSandbox(
     },
   );
 
-  const { existingEntry, preservedMcpState, liveExists } = reconcileSandboxForCreate(sandboxName);
+  const { existingEntry, preservedMcpState, liveExists } = inspectSandboxForCreate(sandboxName);
+  let effectiveToolDisclosure: import("./tool-disclosure").ToolDisclosure;
+  try {
+    effectiveToolDisclosure = toolDisclosureConfig.resolveSandboxToolDisclosure({
+      requested: toolDisclosureConfig.resolveToolDisclosureRequest(null, process.env),
+      recorded: existingEntry?.toolDisclosure,
+      session: onboardSession.loadSession()?.toolDisclosure,
+      sandboxExists: liveExists,
+      recreate: isRecreateSandbox(),
+    });
+  } catch (error) {
+    console.error(`  Tool disclosure configuration is invalid: ${String(error)}`);
+    console.error(
+      `  Re-run with --recreate-sandbox --tool-disclosure ${toolDisclosureConfig.DEFAULT_TOOL_DISCLOSURE}.`,
+    );
+    process.exit(1);
+  }
+  if (fromDockerfile) {
+    try {
+      dockerfilePatch.assertToolDisclosureDockerfileContract(
+        path.resolve(fromDockerfile),
+        effectiveToolDisclosure,
+      );
+    } catch (error) {
+      console.error(
+        `  Custom Dockerfile tool-disclosure contract is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (existingEntry && !liveExists && !preservedMcpState) {
+    registry.removeSandbox(sandboxName);
+  }
+  onboardSession.updateSession((current: Session) => {
+    current.toolDisclosure = effectiveToolDisclosure;
+    return current;
+  });
+  // A legacy managed image predates this registry field and may still expose
+  // every tool directly. Never backfill it as progressive while that image is
+  // live; force the normal state-preserving recreation path so registration is
+  // written only after the new image is ready. Arbitrary --from images own
+  // their runtime contract and are not auto-migrated here.
+  const toolDisclosureMigrationNeeded = Boolean(
+    liveExists && existingEntry && existingEntry.toolDisclosure === undefined,
+  );
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2645,7 +2691,8 @@ async function createSandbox(
       !sandboxGpuDrift &&
       !credentialRotation.changed &&
       !hermesToolGatewayDrift &&
-      !hermesDashboardDrift
+      !hermesDashboardDrift &&
+      !toolDisclosureMigrationNeeded
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2796,6 +2843,10 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (hermesDashboardDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
+    } else if (toolDisclosureMigrationNeeded) {
+      note(
+        `  Sandbox '${sandboxName}' exists — recreating to apply ${effectiveToolDisclosure} tool disclosure.`,
+      );
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -2809,7 +2860,7 @@ async function createSandbox(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2948,6 +2999,7 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
+    toolDisclosure: effectiveToolDisclosure,
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     gatewayPort: GATEWAY_PORT,
@@ -3125,6 +3177,7 @@ async function createSandbox(
     agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
+    toolDisclosure: effectiveToolDisclosure,
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     ...sandboxRegistration.creationFidelity(webSearchConfig?.fetchEnabled === true, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
     plannedMessagingState,
@@ -4620,6 +4673,19 @@ async function preflightAuthoritativeRebuildTarget(
 
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  let requestedToolDisclosure: import("./tool-disclosure").ToolDisclosure | null = null;
+  try {
+    requestedToolDisclosure = toolDisclosureConfig.resolveToolDisclosureRequest(
+      opts.toolDisclosure,
+      process.env,
+    );
+  } catch (error) {
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  if (requestedToolDisclosure) {
+    process.env[toolDisclosureConfig.TOOL_DISCLOSURE_ENV] = requestedToolDisclosure;
+  }
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
@@ -4757,6 +4823,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedToolDisclosure,
       },
       {
         loadSession: onboardSession.loadSession,

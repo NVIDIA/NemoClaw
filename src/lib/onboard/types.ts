@@ -71,6 +71,7 @@ export type OnboardOptions = {
   sandboxGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
+  toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

@@ -47,22 +47,30 @@ The common failure mode is:
 This is different from a network or policy block.
 `nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while tool dispatch still fails inside the conversation.
 
-### Structured Tool Search by Agent
+### Progressive Tool Disclosure by Agent
 
-OpenClaw and Hermes both expose `tool_search`, `tool_describe`, and `tool_call` as structured model tools, but each agent keeps its native configuration schema and search limits.
-The keys and enum values are not interchangeable.
+Progressive disclosure is enabled by default across the supported agents, but each agent keeps its native mechanism and configuration schema.
+The keys, tool names, and result limits are not interchangeable.
 
-| Agent | NemoClaw-generated native configuration | Default results | Maximum results |
+| Agent | NemoClaw-generated mechanism | Default results | Maximum results |
 |---|---|---:|---:|
 | OpenClaw | `tools.toolSearch.mode: "tools"` with `searchDefaultLimit` and `maxSearchLimit` | 8 | 20 |
 | Hermes | `tools.tool_search.enabled: "on"` with `search_default_limit` and `max_search_limit` | 5 | 20 |
+| Deep Agents Code | NemoClaw `ProgressiveToolDisclosureMiddleware` and the `search_tools` model tool | All matches | All matches |
 
 For OpenClaw, `mode: "tools"` selects its structured bridge instead of the JavaScript-based `tool_search_code` bridge.
 A model-specific `toolSearch: false` override still disables Tool Search entirely.
 For Hermes, `enabled: "on"` activates its native bridge whenever the session has at least one deferrable MCP or non-core plugin tool, even when that catalog is small; Hermes core tools remain directly visible.
+For Deep Agents Code, the middleware activates only after at least one MCP tool loads successfully.
+It initially exposes `search_tools` and the core filesystem, shell, user-input, and todo tools; a case-insensitive name or description match makes discovered tools visible for the rest of that graph thread.
+Main-agent and local-subagent discoveries use separate middleware instances.
 
-Both agents build their own policy-scoped catalog and route the final call through their normal execution, policy, approval, and hook paths.
-Sharing the three model-facing tool names does not mean they share a runtime implementation, configuration format, or result-limit default.
+All three agents keep their full executor registry and route final calls through their normal execution, policy, approval, and hook paths.
+Progressive disclosure is a model-context optimization, not an authorization boundary.
+
+Use `nemoclaw onboard --tool-disclosure direct` (or `NEMOCLAW_TOOL_DISCLOSURE=direct`) to present all registered tools directly.
+For an existing sandbox with managed MCP servers, use `nemoclaw <name> rebuild --tool-disclosure direct`; the transactional rebuild preserves MCP providers and adapter state while changing the mode.
+An explicit `direct` selection is authoritative; model-specific safety settings may disable progressive search for a model, but cannot re-enable it over that selection.
 
 ### Nemotron Managed Inference
 

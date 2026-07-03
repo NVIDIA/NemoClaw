@@ -6,6 +6,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
@@ -95,6 +96,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
   webSearchEnabled?: boolean;
+  /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
+  toolDisclosure?: ToolDisclosure;
   agent?: string | null;
   agentVersion?: string | null;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
@@ -459,6 +462,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       policyTier: entry.policyTier || null,
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
+      // Preserve absence on reconstructed legacy rows. Only a freshly built
+      // sandbox registration may claim the new progressive default.
+      toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a

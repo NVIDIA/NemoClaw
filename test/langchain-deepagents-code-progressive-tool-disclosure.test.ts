@@ -221,9 +221,15 @@ print('managed-posture-ok')`,
 
     const wiring = spawnSync("python3", [harnessPath, "wiring", fixture.agentPath], {
       encoding: "utf8",
+      env: { ...process.env, NEMOCLAW_TOOL_DISCLOSURE: "progressive" },
     });
     expect(wiring.status, wiring.stderr).toBe(0);
-    expect(JSON.parse(wiring.stdout)).toEqual({ main: 1, subagents: 2 });
+    expect(JSON.parse(wiring.stdout)).toEqual({
+      main: 1,
+      subagents: 2,
+      direct_main: 0,
+      direct_subagents: 0,
+    });
   });
 
   it.each(

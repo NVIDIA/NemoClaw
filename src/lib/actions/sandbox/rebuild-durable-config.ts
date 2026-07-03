@@ -16,7 +16,13 @@ import {
 } from "../../hermes-provider-auth";
 import type { WebSearchConfig } from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import type { Session } from "../../state/onboard-session";
+import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
+import {
+  DEFAULT_TOOL_DISCLOSURE,
+  invalidRecordedToolDisclosure,
+  normalizeToolDisclosure,
+  type ToolDisclosure,
+} from "../../tool-disclosure";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
@@ -27,6 +33,8 @@ export type RebuildDurableConfig = {
   hermesAuthMethodError: string | null;
   webSearchConfig: WebSearchConfig | null;
   webSearchError: string | null;
+  toolDisclosure: ToolDisclosure;
+  toolDisclosureError: string | null;
 };
 
 export const REBUILD_HERMES_DASHBOARD_ENV_KEYS = [
@@ -104,6 +112,7 @@ export function resolveRebuildDurableConfig(
     provider: entry.provider ?? null,
     model: entry.model ?? null,
   },
+  requestedToolDisclosure?: ToolDisclosure,
 ): RebuildDurableConfig {
   const matchingSession =
     session?.sandboxName === sandboxName &&
@@ -122,6 +131,20 @@ export function resolveRebuildDurableConfig(
     entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean"
       ? "recorded webSearchEnabled value is not boolean"
       : null;
+  const recordedToolDisclosure =
+    entry.toolDisclosure !== undefined && entry.toolDisclosure !== null
+      ? entry.toolDisclosure
+      : matchingSession?.toolDisclosure;
+  const toolDisclosureError =
+    invalidRecordedToolDisclosure(recordedToolDisclosure) ||
+    ((entry.toolDisclosure === undefined || entry.toolDisclosure === null) &&
+      hasInvalidSessionToolDisclosure(matchingSession))
+      ? "recorded toolDisclosure value must be progressive or direct"
+      : null;
+  const toolDisclosure =
+    requestedToolDisclosure ??
+    normalizeToolDisclosure(recordedToolDisclosure) ??
+    DEFAULT_TOOL_DISCLOSURE;
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined
       ? entry.fromDockerfile
@@ -161,6 +184,8 @@ export function resolveRebuildDurableConfig(
     hermesAuthMethodError,
     webSearchConfig: webSearchEnabled ? { fetchEnabled: true } : null,
     webSearchError,
+    toolDisclosure,
+    toolDisclosureError,
   };
 }
 

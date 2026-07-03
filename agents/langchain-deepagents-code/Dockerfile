@@ -46,10 +46,16 @@ ARG NEMOCLAW_PROVIDER_KEY=inference
 ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
+
+RUN case "$NEMOCLAW_TOOL_DISCLOSURE" in \
+        progressive|direct) ;; \
+        *) echo "ERROR: NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct" >&2; exit 1 ;; \
+    esac
 
 # The launcher and startup script read these root-owned files instead of
 # trusting process-level environment overrides for inference routing. Invoking
@@ -71,6 +77,7 @@ ENV HOME=/sandbox \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \
     DEEPAGENTS_CODE_AUTO_UPDATE=0 \

@@ -10,6 +10,7 @@ credential, and sandbox controls remain responsible for governing execution.
 """
 
 from collections.abc import Awaitable, Callable, Sequence
+import os
 from typing import Annotated, Any, NotRequired, cast
 
 from langchain.agents.middleware.types import (
@@ -53,6 +54,14 @@ is matched against registered tool names and descriptions. Matching tools become
 available for the rest of this conversation thread. An empty query discovers
 nothing; use a specific capability keyword such as "database" or "calendar".
 """
+
+
+def progressive_tool_disclosure_enabled() -> bool:
+    """Return the image-selected disclosure policy, rejecting invalid modes."""
+    mode = os.environ.get("NEMOCLAW_TOOL_DISCLOSURE", "progressive").strip().casefold()
+    if mode not in {"progressive", "direct"}:
+        raise RuntimeError("NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'")
+    return mode == "progressive"
 
 
 def _merge_discovered_tools(
@@ -274,4 +283,5 @@ __all__ = [
     "MAX_SEARCH_QUERY_LENGTH",
     "ProgressiveToolDisclosureMiddleware",
     "ProgressiveToolDisclosureState",
+    "progressive_tool_disclosure_enabled",
 ]
