@@ -22,6 +22,16 @@ For capabilities, architecture, security controls, and the full feature list, se
 
 ## Get Started
 
+### Start with Your Coding Agent
+
+Use the starter prompt when you want Cursor, Claude Code, Codex, Copilot, or another local coding agent to install NemoClaw with you.
+
+**[Copy the NemoClaw starter prompt](https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.html#from-your-coding-agent)**.
+
+The prompt tells your agent to use NemoClaw docs and skills, ask one question at a time, run commands only with your approval, and keep secrets out of chat.
+
+### Install Using the Interactive Installer in Your Terminal
+
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
 For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the `nemohermes` alias after install.
 
