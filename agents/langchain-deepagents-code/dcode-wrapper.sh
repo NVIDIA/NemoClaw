@@ -606,8 +606,17 @@ prompt_is_blank() {
   esac
 }
 
-# Reject non-interactive prompts that ask dcode to read or disclose credentials
-# before the agent process can launch tools (#6187).
+# SECURITY: dcode non-interactive prompt credential guard.
+# - Invalid state: a headless prompt can ask upstream dcode to read or disclose
+#   credentials before NemoClaw can rely on model-side safety reasoning.
+# - Source boundary: upstream `deepagents_code` owns agent behavior, but this
+#   wrapper is the last NemoClaw-controlled boundary before tool launch.
+# - Source-fix constraint: prompt inspection must run before `run_dcode`; a
+#   later tool or model refusal can already have touched credential files.
+# - Regression: test/dcode-wrapper-empty-prompt.test.ts covers the argv forms
+#   and asserts the dcode stub is not launched.
+# - Removal condition: drop this guard when upstream dcode rejects credential
+#   access/exfiltration prompts before tool use.
 prompt_mentions_sensitive_credential() {
   local lower_prompt="${1,,}"
   case "$lower_prompt" in
@@ -623,12 +632,18 @@ prompt_mentions_sensitive_credential() {
     *"~/.netrc"* | *".netrc"* | *".npmrc"* | *"credential file"* | *"credentials file"*)
       return 0
       ;;
+    *".deepagents/.env"* | *" .env"* | *"/.env"*)
+      return 0
+      ;;
   esac
   return 1
 }
 
 prompt_mentions_generic_secret() {
   local lower_prompt="${1,,}"
+  if is_secret_shaped_value "$1"; then
+    return 0
+  fi
   case "$lower_prompt" in
     *"api key"* | *"api token"* | *"access token"* | *"bearer token"* | *"password"* | *"secret"*)
       return 0
@@ -637,23 +652,31 @@ prompt_mentions_generic_secret() {
   return 1
 }
 
-prompt_requests_credential_access() {
+prompt_has_action_word() {
   local lower_prompt="${1,,}"
-  case "$lower_prompt" in
-    *"read "* | *"cat "* | *"print "* | *"show "* | *"display "* | *"dump "* | *"copy "* | *"open "*)
+  local word="$2"
+  local pattern="(^|[^[:alnum:]_])${word}([^[:alnum:]_]|$)"
+  [[ "$lower_prompt" =~ $pattern ]]
+}
+
+prompt_requests_credential_access() {
+  local word
+  for word in read cat print show display dump copy open fetch; do
+    if prompt_has_action_word "$1" "$word"; then
       return 0
-      ;;
-  esac
+    fi
+  done
   return 1
 }
 
 prompt_requests_credential_disclosure() {
-  local lower_prompt="${1,,}"
-  case "$lower_prompt" in
-    *"print "* | *"show "* | *"display "* | *"dump "* | *"copy "* | *"send "* | *"post "* | *"upload "* | *"exfiltrat"* | *"leak "* | *"curl "* | *"wget "*)
+  local word
+  for word in print show display dump copy send post upload leak disclose reveal email curl wget; do
+    if prompt_has_action_word "$1" "$word"; then
       return 0
-      ;;
-  esac
+    fi
+  done
+  case "${1,,}" in *exfiltrat*) return 0 ;; esac
   return 1
 }
 
@@ -667,12 +690,12 @@ reject_if_credential_exposure_prompt() {
   local flag="$1"
   local prompt="$2"
   if prompt_mentions_sensitive_credential "$prompt"; then
+    reject_credential_exposure_prompt "$flag"
+  fi
+  if prompt_mentions_generic_secret "$prompt"; then
     if prompt_requests_credential_access "$prompt" || prompt_requests_credential_disclosure "$prompt"; then
       reject_credential_exposure_prompt "$flag"
     fi
-  fi
-  if prompt_mentions_generic_secret "$prompt" && prompt_requests_credential_disclosure "$prompt"; then
-    reject_credential_exposure_prompt "$flag"
   fi
 }
 
