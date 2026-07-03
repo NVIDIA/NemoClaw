@@ -623,6 +623,22 @@ export function stopAll(opts: ServiceOptions = {}): void {
   info("All services stopped.");
 }
 
+/**
+ * Sandbox name for tunnel-origin registration: same option/env precedence as
+ * the other service commands, gated on the safe-name rules, but without the
+ * registry default-sandbox fallback (registration is skipped rather than
+ * guessed when no name is explicitly available).
+ */
+function resolveTunnelOriginSandboxName(opts: ServiceOptions): string | null {
+  const raw =
+    opts.sandboxName ??
+    process.env.NEMOCLAW_SANDBOX_NAME ??
+    process.env.NEMOCLAW_SANDBOX ??
+    process.env.SANDBOX_NAME;
+  if (!raw || !SAFE_NAME_RE.test(raw) || raw.includes("..")) return null;
+  return raw;
+}
+
 export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const pidDir = resolvePidDir(opts);
   const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
@@ -677,14 +693,10 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   if (tunnelUrl) {
-    const rawSandboxName =
-      opts.sandboxName ??
-      process.env.NEMOCLAW_SANDBOX_NAME ??
-      process.env.NEMOCLAW_SANDBOX ??
-      process.env.SANDBOX_NAME;
-    if (rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")) {
+    const sandboxName = resolveTunnelOriginSandboxName(opts);
+    if (sandboxName) {
       try {
-        registerTunnelOrigin(rawSandboxName, tunnelUrl, { info, warn });
+        registerTunnelOrigin(sandboxName, tunnelUrl, { info, warn });
       } catch (err) {
         warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
       }

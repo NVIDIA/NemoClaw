@@ -161,11 +161,11 @@ export function registerTunnelOrigin(
   const origin = tunnelUrlToOrigin(tunnelUrl);
   if (origin === null) return;
 
-  const resolved = resolveDeps(deps);
-  const info = resolved.info;
-  const warn = resolved.warn;
+  const info = deps.info ?? (() => {});
+  const warn = deps.warn ?? (() => {});
 
   try {
+    const resolved = resolveDeps(deps);
     const target = resolved.resolveAgentConfig(sandboxName);
     if (target.agentName !== "openclaw") {
       info(`tunnel-origin auto-registration is OpenClaw-only; skipping for ${target.agentName}.`);
