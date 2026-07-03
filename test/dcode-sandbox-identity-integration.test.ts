@@ -21,9 +21,7 @@ const WRAPPER = path.join(
 );
 
 function replaceOrThrow(source: string, search: string, replacement: string): string {
-  if (!source.includes(search)) {
-    throw new Error(`dcode-wrapper.sh fixture patch target not found: ${search}`);
-  }
+  expect(source, `dcode-wrapper.sh fixture patch target not found: ${search}`).toContain(search);
   return source.replace(search, replacement);
 }
 
