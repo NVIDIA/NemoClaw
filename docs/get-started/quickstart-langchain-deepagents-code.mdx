@@ -126,7 +126,8 @@ nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ### Optional Tracing (LangSmith)
 
 NemoClaw does not support LangSmith tracing for this managed harness yet.
-`start.sh` forwards the non-secret `LANGSMITH_TRACING`/`LANGSMITH_PROJECT` toggles if set, but no policy preset opens `api.smith.langchain.com` and no supported mechanism injects `LANGSMITH_API_KEY`.
+`start.sh` does not persist `LANGSMITH_TRACING`, `LANGSMITH_PROJECT`, `DEEPAGENTS_CODE_LANGSMITH_PROJECT`, or `LANGSMITH_API_KEY` in the shared shell environment.
+No policy preset opens `api.smith.langchain.com`, and no supported mechanism injects `LANGSMITH_API_KEY`.
 If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy).
 Treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
 
@@ -140,6 +141,8 @@ nemo-deepagents <sandbox-name> logs --follow
 nemo-deepagents <sandbox-name> rebuild
 nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
+
+If you upgrade from a release that persisted LangSmith environment values, rebuild each existing Deep Agents Code sandbox so its image includes the corrected `start.sh`.
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.

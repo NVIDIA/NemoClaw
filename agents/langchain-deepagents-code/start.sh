@@ -137,9 +137,8 @@ prepare_runtime_env() {
     write_export_if_set SSL_CERT_FILE
     write_export_if_set REQUESTS_CA_BUNDLE
     write_export_if_set NODE_EXTRA_CA_CERTS
-    write_export_if_set LANGSMITH_TRACING
-    write_export_if_set LANGSMITH_PROJECT
-    write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
+    # LangSmith values are intentionally excluded because any inherited variable
+    # can be misconfigured with a token and this shared file is readable.
     write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"
   # Dcode intentionally runs as the non-root sandbox user, unlike the
