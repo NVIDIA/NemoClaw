@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { resultText } from "../fixtures/clients/index.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -154,6 +155,28 @@ export function parseInferenceRoute(text: string): { provider: string; model: st
   const provider = plain.match(/^\s*Provider:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
   const model = plain.match(/^\s*Model:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
   return { provider, model };
+}
+
+export function expectHostedBaselineCredential(enabled: boolean, apiKey: string): void {
+  if (!enabled) return;
+  expect(apiKey).toMatch(/^nvapi-/u);
+}
+
+export async function expectHostedBaselineRoute(
+  enabled: boolean,
+  sandbox: SandboxClient,
+): Promise<void> {
+  if (!enabled) return;
+  const route = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+    artifactName: "openshell-inference-route-before-switch",
+    env: env(),
+    timeoutMs: 30_000,
+  });
+  expect(route.exitCode, resultText(route)).toBe(0);
+  expect(parseInferenceRoute(resultText(route))).toEqual({
+    provider: HOSTED_BASELINE_PROVIDER,
+    model: HOSTED_BASELINE_MODEL,
+  });
 }
 
 export function chatContent(raw: string): string {
@@ -575,6 +598,23 @@ export function registryState(): { registry: Record<string, any>; session: Recor
       fs.readFileSync(path.join(os.homedir(), ".nemoclaw", "onboard-session.json"), "utf8"),
     ),
   };
+}
+
+export function expectCompatibleRecoveryMetadata(
+  state: { registry: Record<string, any>; session: Record<string, any> },
+  endpointUrl: string | null,
+  hostedEndpointUrl: string | null,
+): void {
+  if (!endpointUrl) return;
+  const expectedCredentialEnv = hostedEndpointUrl
+    ? "COMPATIBLE_API_KEY"
+    : "COMPATIBLE_ANTHROPIC_API_KEY";
+  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl).toBe(endpointUrl);
+  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(expectedCredentialEnv);
+  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(SWITCH_API);
+  expect(state.session.endpointUrl).toBe(endpointUrl);
+  expect(state.session.credentialEnv).toBe(expectedCredentialEnv);
+  expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
 }
 
 function quotePayload(payload: string): string {

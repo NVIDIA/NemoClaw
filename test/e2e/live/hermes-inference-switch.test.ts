@@ -17,8 +17,11 @@ import {
   env,
   envHash,
   expectAuthenticatedBaselineRequest,
+  expectCompatibleRecoveryMetadata,
   expectedApiMode,
   expectedBaseUrl,
+  expectHostedBaselineCredential,
+  expectHostedBaselineRoute,
   HOSTED_BASELINE_MODEL,
   HOSTED_BASELINE_PROVIDER,
   hashCheck,
@@ -98,9 +101,7 @@ test.skipIf(!shouldRunLiveE2E())(
       : mockBaseline
         ? MOCK_BASELINE_API_KEY
         : switchApiKey;
-    if (hostedCompatibleSwitch) {
-      expect(baselineApiKey).toMatch(/^nvapi-/u);
-    }
+    expectHostedBaselineCredential(hostedCompatibleSwitch, baselineApiKey);
     const installEnv: NodeJS.ProcessEnv = hostedCompatibleSwitch
       ? {
           NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "0",
@@ -123,18 +124,7 @@ test.skipIf(!shouldRunLiveE2E())(
     });
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineRequest(mockBaseline, MOCK_BASELINE_MODEL);
-    if (hostedCompatibleSwitch) {
-      const baselineRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-        artifactName: "openshell-inference-route-before-switch",
-        env: env(),
-        timeoutMs: 30_000,
-      });
-      expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
-      expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
-        provider: HOSTED_BASELINE_PROVIDER,
-        model: HOSTED_BASELINE_MODEL,
-      });
-    }
+    await expectHostedBaselineRoute(hostedCompatibleSwitch, sandbox);
     const hostedSwitchEndpointUrl = await ensureCompatibleHostedSwitchProvider(host, switchApiKey);
     const anthropicSwitchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
     const switchEndpointUrl = hostedSwitchEndpointUrl ?? anthropicSwitchEndpointUrl;
@@ -223,17 +213,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(state.session.agent).toBe("hermes");
     expect(state.session.provider).toBe(SWITCH_PROVIDER);
     expect(state.session.model).toBe(SWITCH_MODEL);
-    if (switchEndpointUrl) {
-      const expectedCredentialEnv = hostedSwitchEndpointUrl
-        ? "COMPATIBLE_API_KEY"
-        : "COMPATIBLE_ANTHROPIC_API_KEY";
-      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl).toBe(switchEndpointUrl);
-      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(expectedCredentialEnv);
-      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(SWITCH_API);
-      expect(state.session.endpointUrl).toBe(switchEndpointUrl);
-      expect(state.session.credentialEnv).toBe(expectedCredentialEnv);
-      expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
-    }
+    expectCompatibleRecoveryMetadata(state, switchEndpointUrl, hostedSwitchEndpointUrl);
 
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
