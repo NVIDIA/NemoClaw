@@ -623,6 +623,9 @@ Name: deepagents-code
 Version: ${version}
 `,
   );
+  const managedBaseUrlFile = path.join(tempDir, "managed-inference-base-url");
+  fs.writeFileSync(managedBaseUrlFile, "https://inference.local/v1\n", "utf8");
+  fs.chmodSync(managedBaseUrlFile, 0o444);
   return tempDir;
 }
 
@@ -631,10 +634,6 @@ function patchFixture(tempDir: string): void {
     env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
   });
   const managedBaseUrlFile = path.join(tempDir, "managed-inference-base-url");
-  if (!fs.existsSync(managedBaseUrlFile)) {
-    fs.writeFileSync(managedBaseUrlFile, "https://inference.local/v1\n", "utf8");
-    fs.chmodSync(managedBaseUrlFile, 0o444);
-  }
   const helperPath = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
   const helper = fs
     .readFileSync(helperPath, "utf8")
