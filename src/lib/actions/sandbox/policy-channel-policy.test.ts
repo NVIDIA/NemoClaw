@@ -235,38 +235,35 @@ describe("addSandboxPolicy", () => {
     expect(applyPresetMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    "telegram",
-    "discord",
-    "slack",
-    "wechat",
-    "whatsapp",
-  ])("rejects Deep Agents policy-add %s with unsupported-agent wording before preview or prompt (#6185)", async (preset) => {
-    arrangeSandbox("langchain-deepagents-code");
-    vi.spyOn(policies, "listPresets").mockReturnValue([
-      { name: "npm", description: "npm and Yarn registry access" },
-      { name: "pypi", description: "Python Package Index access" },
-      { name: "tavily", description: "Tavily Search API access" },
-    ]);
+  it.each(["telegram", "discord", "slack", "wechat", "whatsapp"])(
+    "rejects Deep Agents policy-add %s with unsupported-agent wording before preview or prompt (#6185)",
+    async (preset) => {
+      arrangeSandbox("langchain-deepagents-code");
+      vi.spyOn(policies, "listPresets").mockReturnValue([
+        { name: "npm", description: "npm and Yarn registry access" },
+        { name: "pypi", description: "Python Package Index access" },
+        { name: "tavily", description: "Tavily Search API access" },
+      ]);
 
-    await expect(
-      captureExit(() => addSandboxPolicy("test-sandbox", { preset, yes: true })),
-    ).resolves.toBe(1);
+      await expect(
+        captureExit(() => addSandboxPolicy("test-sandbox", { preset, yes: true })),
+      ).resolves.toBe(1);
 
-    const output = printedText();
-    expect(output).toContain(
-      `Preset '${preset}' is not a supported channel for agent 'langchain-deepagents-code'`,
-    );
-    expect(output).toContain("Channels supported by agent 'langchain-deepagents-code': (none)");
-    expect(output).not.toContain("Unknown preset");
-    expect(output).not.toContain("Valid presets");
-    expect(output).not.toContain("Preset not found");
-    expect(output).not.toContain("Endpoints that would be opened");
-    expect(output).not.toContain(`Apply '${preset}'`);
-    expect(promptMock).not.toHaveBeenCalled();
-    expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
-    expect(applyPresetMock).not.toHaveBeenCalled();
-  });
+      const output = printedText();
+      expect(output).toContain(
+        `Preset '${preset}' is not a supported channel for agent 'langchain-deepagents-code'`,
+      );
+      expect(output).toContain("Channels supported by agent 'langchain-deepagents-code': (none)");
+      expect(output).not.toContain("Unknown preset");
+      expect(output).not.toContain("Valid presets");
+      expect(output).not.toContain("Preset not found");
+      expect(output).not.toContain("Endpoints that would be opened");
+      expect(output).not.toContain(`Apply '${preset}'`);
+      expect(promptMock).not.toHaveBeenCalled();
+      expect(loadPresetForSandboxMock).not.toHaveBeenCalled();
+      expect(applyPresetMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     {
