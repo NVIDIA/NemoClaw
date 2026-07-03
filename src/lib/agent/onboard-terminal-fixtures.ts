@@ -9,7 +9,7 @@ export function recordSuccessfulDeepAgentsRuntimeCall(args: string[], calls: str
     return "NEMOCLAW_AGENT_BINARY_CHECK:ok";
   }
   if (command.includes("dcode --version")) {
-    return "dcode 0.1.12\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
+    return "dcode 0.1.30\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
   }
   if (command.includes("/sandbox/.deepagents/config.toml")) {
     return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
