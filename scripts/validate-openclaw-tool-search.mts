@@ -11,7 +11,92 @@ const RUNTIME_FUNCTION_NAMES = [
   "resolveToolSearchConfig",
   "createOpenClawCodingTools",
   "applyToolSearchCatalog",
-];
+] as const;
+type RuntimeFunctionName = (typeof RUNTIME_FUNCTION_NAMES)[number];
+type ExpectedMode = "progressive" | "direct";
+interface JsonRecord {
+  [key: string]: unknown;
+}
+
+interface RuntimeCandidate {
+  filePath: string;
+  source: string;
+}
+
+interface CatalogRef {
+  current?: unknown;
+}
+
+type ToolExecute = (
+  toolCallId: string,
+  args: JsonRecord,
+  signal?: AbortSignal,
+  onUpdate?: unknown,
+) => unknown | Promise<unknown>;
+
+interface Tool {
+  name: string;
+  label?: string;
+  description?: string;
+  parameters?: JsonRecord;
+  execute: ToolExecute;
+}
+
+interface ToolResult extends JsonRecord {
+  content?: unknown;
+  details?: unknown;
+}
+
+interface RuntimeToolConstructionPlan {
+  includeBaseCodingTools: false;
+  includeShellTools: false;
+  includeChannelTools: false;
+  includeOpenClawTools: false;
+  includePluginTools: false;
+}
+
+interface RuntimeToolOptions {
+  config: JsonRecord;
+  workspaceDir: string;
+  includeCoreTools: false;
+  includeToolSearchControls: true;
+  toolSearchCatalogRef: CatalogRef;
+  runId: string;
+  sessionId: string;
+  toolConstructionPlan: RuntimeToolConstructionPlan;
+}
+
+interface CatalogParams {
+  config: JsonRecord;
+  tools: Tool[];
+  catalogRef: CatalogRef;
+  runId: string;
+  sessionId: string;
+}
+
+type ResolveToolSearchConfig = (config: JsonRecord) => unknown;
+type CreateOpenClawCodingTools = (options: RuntimeToolOptions) => unknown;
+type ApplyToolSearchCatalog = (params: CatalogParams) => unknown;
+
+interface RuntimeFunctions {
+  resolveToolSearchConfig: ResolveToolSearchConfig;
+  createOpenClawCodingTools: CreateOpenClawCodingTools;
+  applyToolSearchCatalog: ApplyToolSearchCatalog;
+}
+
+interface ValidationOptions {
+  distDir: string;
+  configPath: string;
+  expectedMode: string;
+  expectedVersion: string;
+}
+
+interface ValidationResult {
+  version: string;
+  expectedMode: ExpectedMode;
+  runtimeModulePath: string;
+  visibleToolNames: string[];
+}
 const STRUCTURED_TOOL_SEARCH = {
   mode: "tools",
   searchDefaultLimit: 8,
@@ -23,54 +108,62 @@ const PROBE_NAME = "nemoclaw_runtime_validator_probe";
 const PROBE_SENTINEL = "NEMOCLAW_OPENCLAW_TOOL_SEARCH_RUNTIME_OK";
 let importSequence = 0;
 
-function fail(message) {
+function fail(message: string): never {
   throw new Error(`OpenClaw Tool Search runtime validation failed: ${message}`);
 }
 
-function isRecord(value) {
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isRecord(value: unknown): value is JsonRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function readJson(filePath, label) {
-  let text;
+function isRuntimeFunctionName(value: string): value is RuntimeFunctionName {
+  return (RUNTIME_FUNCTION_NAMES as readonly string[]).includes(value);
+}
+
+function readJson(filePath: string, label: string): JsonRecord {
+  let text: string;
   try {
     text = fs.readFileSync(filePath, "utf8");
   } catch (error) {
-    fail(`could not read ${label} at ${filePath}: ${error.message}`);
+    fail(`could not read ${label} at ${filePath}: ${errorMessage(error)}`);
   }
 
-  let value;
+  let value: unknown;
   try {
-    value = JSON.parse(text);
+    value = JSON.parse(text) as unknown;
   } catch (error) {
-    fail(`could not parse ${label} at ${filePath}: ${error.message}`);
+    fail(`could not parse ${label} at ${filePath}: ${errorMessage(error)}`);
   }
   if (!isRecord(value)) fail(`${label} at ${filePath} must contain a JSON object`);
   return value;
 }
 
-function countFunctionDeclarations(source, functionName) {
+function countFunctionDeclarations(source: string, functionName: RuntimeFunctionName): number {
   const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return [...source.matchAll(new RegExp(`\\bfunction\\s+${escapedName}\\s*\\(`, "g"))].length;
 }
 
-function readRuntimeCandidates(distDir) {
-  let entries;
+function readRuntimeCandidates(distDir: string): RuntimeCandidate[] {
+  let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(distDir, { withFileTypes: true });
   } catch (error) {
-    fail(`could not read OpenClaw dist directory ${distDir}: ${error.message}`);
+    fail(`could not read OpenClaw dist directory ${distDir}: ${errorMessage(error)}`);
   }
 
-  const candidates = [];
+  const candidates: RuntimeCandidate[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !/^pi-tools-.*\.js$/.test(entry.name)) continue;
     const filePath = path.join(distDir, entry.name);
-    let source;
+    let source: string;
     try {
       source = fs.readFileSync(filePath, "utf8");
     } catch (error) {
-      fail(`could not read compiled runtime candidate ${filePath}: ${error.message}`);
+      fail(`could not read compiled runtime candidate ${filePath}: ${errorMessage(error)}`);
     }
     if (RUNTIME_FUNCTION_NAMES.every((name) => source.includes(`function ${name}`))) {
       candidates.push({ filePath, source });
@@ -79,7 +172,7 @@ function readRuntimeCandidates(distDir) {
   return candidates;
 }
 
-function locateRuntimeModule(distDir) {
+function locateRuntimeModule(distDir: string): RuntimeCandidate {
   const candidates = readRuntimeCandidates(distDir);
   if (candidates.length !== 1) {
     fail(
@@ -89,6 +182,7 @@ function locateRuntimeModule(distDir) {
     );
   }
   const candidate = candidates[0];
+  if (!candidate) fail("compiled runtime candidate disappeared after cardinality check");
   for (const functionName of RUNTIME_FUNCTION_NAMES) {
     const count = countFunctionDeclarations(candidate.source, functionName);
     if (count !== 1) {
@@ -100,11 +194,16 @@ function locateRuntimeModule(distDir) {
   return candidate;
 }
 
-function parseRuntimeExportAliases(source, filePath) {
-  const aliases = new Map();
+function parseRuntimeExportAliases(
+  source: string,
+  filePath: string,
+): Map<RuntimeFunctionName, string> {
+  const aliases = new Map<RuntimeFunctionName, string>();
   const exportBlocks = [...source.matchAll(/\bexport\s*\{([\s\S]*?)\}\s*;?/g)];
   for (const block of exportBlocks) {
-    for (const rawEntry of block[1].split(",")) {
+    const blockBody = block[1];
+    if (blockBody === undefined) continue;
+    for (const rawEntry of blockBody.split(",")) {
       const entry = rawEntry.trim();
       if (!entry) continue;
       const match = entry.match(
@@ -112,7 +211,7 @@ function parseRuntimeExportAliases(source, filePath) {
       );
       if (!match) continue;
       const localName = match[1];
-      if (!RUNTIME_FUNCTION_NAMES.includes(localName)) continue;
+      if (localName === undefined || !isRuntimeFunctionName(localName)) continue;
       if (aliases.has(localName)) {
         fail(`${filePath} exports compiled function ${localName} more than once`);
       }
@@ -131,33 +230,56 @@ function parseRuntimeExportAliases(source, filePath) {
   return aliases;
 }
 
-async function importRuntimeFunctions(filePath, aliases) {
+function requiredAlias(
+  aliases: ReadonlyMap<RuntimeFunctionName, string>,
+  functionName: RuntimeFunctionName,
+  filePath: string,
+): string {
+  const alias = aliases.get(functionName);
+  if (alias === undefined) fail(`${filePath} does not export compiled function ${functionName}`);
+  return alias;
+}
+
+async function importRuntimeFunctions(
+  filePath: string,
+  aliases: ReadonlyMap<RuntimeFunctionName, string>,
+): Promise<RuntimeFunctions> {
   const moduleUrl = pathToFileURL(filePath);
   moduleUrl.searchParams.set(
     "nemoclaw_tool_search_validator",
     `${process.pid}-${Date.now()}-${importSequence++}`,
   );
 
-  let runtimeModule;
+  let runtimeModule: JsonRecord;
   try {
-    runtimeModule = await import(moduleUrl.href);
+    const loaded: unknown = await import(moduleUrl.href);
+    if (!isRecord(loaded)) fail(`compiled runtime ${filePath} did not export a module object`);
+    runtimeModule = loaded;
   } catch (error) {
-    fail(`could not import compiled runtime ${filePath}: ${error.message}`);
+    fail(`could not import compiled runtime ${filePath}: ${errorMessage(error)}`);
   }
 
-  const functions = {};
+  const runtimeExports = new Map<RuntimeFunctionName, (...args: never[]) => unknown>();
   for (const functionName of RUNTIME_FUNCTION_NAMES) {
-    const exportName = aliases.get(functionName);
+    const exportName = requiredAlias(aliases, functionName, filePath);
     const value = runtimeModule[exportName];
     if (typeof value !== "function") {
       fail(`${filePath} export ${exportName} for ${functionName} is not a function`);
     }
-    functions[functionName] = value;
+    runtimeExports.set(functionName, value as (...args: never[]) => unknown);
   }
-  return functions;
+  return {
+    resolveToolSearchConfig: runtimeExports.get(
+      "resolveToolSearchConfig",
+    ) as ResolveToolSearchConfig,
+    createOpenClawCodingTools: runtimeExports.get(
+      "createOpenClawCodingTools",
+    ) as CreateOpenClawCodingTools,
+    applyToolSearchCatalog: runtimeExports.get("applyToolSearchCatalog") as ApplyToolSearchCatalog,
+  };
 }
 
-function assertExpectedVersion(distDir, expectedVersion) {
+function assertExpectedVersion(distDir: string, expectedVersion: string): string {
   const packagePath = path.resolve(distDir, "..", "package.json");
   const packageJson = readJson(packagePath, "OpenClaw package metadata");
   if (packageJson.version !== expectedVersion) {
@@ -170,7 +292,11 @@ function assertExpectedVersion(distDir, expectedVersion) {
   return packageJson.version;
 }
 
-function readToolSearchConfig(config, expectedMode, configPath) {
+function readToolSearchConfig(
+  config: JsonRecord,
+  expectedMode: ExpectedMode,
+  configPath: string,
+): void {
   const tools = config.tools;
   if (!isRecord(tools)) fail(`generated config ${configPath} is missing object tools`);
   const toolSearch = tools.toolSearch;
@@ -189,10 +315,13 @@ function readToolSearchConfig(config, expectedMode, configPath) {
       )}`,
     );
   }
-  return toolSearch;
 }
 
-function assertResolvedConfig(resolveToolSearchConfig, config, expectedMode) {
+function assertResolvedConfig(
+  resolveToolSearchConfig: ResolveToolSearchConfig,
+  config: JsonRecord,
+  expectedMode: ExpectedMode,
+): void {
   const resolved = resolveToolSearchConfig(config);
   if (!isRecord(resolved)) fail("resolveToolSearchConfig did not return an object");
   if (expectedMode === "progressive") {
@@ -212,7 +341,7 @@ function assertResolvedConfig(resolveToolSearchConfig, config, expectedMode) {
   }
 }
 
-function createProbeTool() {
+function createProbeTool(): Tool {
   return {
     name: PROBE_NAME,
     label: "NemoClaw runtime validator probe",
@@ -225,51 +354,66 @@ function createProbeTool() {
       },
       required: ["value"],
     },
-    execute: async (_toolCallId, args) => ({
+    execute: async (_toolCallId: string, args: JsonRecord) => ({
       content: [{ type: "text", text: `${PROBE_SENTINEL}:${args?.value ?? ""}` }],
       details: { sentinel: PROBE_SENTINEL, value: args?.value ?? null },
     }),
   };
 }
 
-function readToolResultPayload(result, toolName) {
-  if (isRecord(result) && "details" in result && result.details !== undefined) {
-    return result.details;
+function readToolResultPayload(result: unknown, toolName: string): unknown {
+  if (!isRecord(result)) fail(`${toolName} returned a non-object result`);
+  const toolResult: ToolResult = result;
+  if (toolResult.details !== undefined) {
+    return toolResult.details;
   }
-  const content = isRecord(result) && Array.isArray(result.content) ? result.content : [];
+  const content = Array.isArray(toolResult.content) ? toolResult.content : [];
   const textPart = content.find(
-    (entry) => isRecord(entry) && entry.type === "text" && typeof entry.text === "string",
+    (entry): entry is JsonRecord & { type: "text"; text: string } =>
+      isRecord(entry) && entry.type === "text" && typeof entry.text === "string",
   );
   if (!textPart) fail(`${toolName} returned no JSON text or details payload`);
   try {
-    return JSON.parse(textPart.text);
+    return JSON.parse(textPart.text) as unknown;
   } catch (error) {
-    fail(`${toolName} returned invalid JSON text: ${error.message}`);
+    fail(`${toolName} returned invalid JSON text: ${errorMessage(error)}`);
   }
 }
 
-function assertExactToolNames(tools, expectedNames, label) {
+function isTool(value: unknown): value is Tool {
+  return isRecord(value) && typeof value.name === "string" && typeof value.execute === "function";
+}
+
+function assertExactToolNames(
+  tools: unknown,
+  expectedNames: readonly string[],
+  label: string,
+): Tool[] {
   if (!Array.isArray(tools)) fail(`${label} must be an array`);
-  const names = tools.map((tool) => (isRecord(tool) ? tool.name : undefined));
-  if (names.some((name) => typeof name !== "string")) {
-    fail(`${label} contains a tool without a string name`);
-  }
+  if (!tools.every(isTool)) fail(`${label} contains a non-executable or unnamed tool`);
+  const names = tools.map((tool) => tool.name);
   const sortedNames = [...names].sort();
   if (!isDeepStrictEqual(sortedNames, [...expectedNames].sort())) {
     fail(`${label} names must be ${expectedNames.join(", ")}; found ${sortedNames.join(", ")}`);
   }
-  return names;
+  return tools;
 }
 
-function toolByName(tools, name) {
-  const matches = tools.filter((tool) => isRecord(tool) && tool.name === name);
-  if (matches.length !== 1 || typeof matches[0].execute !== "function") {
+function toolByName(tools: readonly Tool[], name: string): Tool {
+  const matches = tools.filter((tool) => tool.name === name);
+  const match = matches[0];
+  if (matches.length !== 1 || match === undefined) {
     fail(`expected exactly one executable ${name} control; found ${matches.length}`);
   }
-  return matches[0];
+  return match;
 }
 
-function createControls(createOpenClawCodingTools, config, catalogRef, runId) {
+function createControls(
+  createOpenClawCodingTools: CreateOpenClawCodingTools,
+  config: JsonRecord,
+  catalogRef: CatalogRef,
+  runId: string,
+): Tool[] {
   const controls = createOpenClawCodingTools({
     config,
     workspaceDir: process.cwd(),
@@ -286,18 +430,21 @@ function createControls(createOpenClawCodingTools, config, catalogRef, runId) {
       includePluginTools: false,
     },
   });
-  if (!Array.isArray(controls)) fail("createOpenClawCodingTools did not return an array");
-  const unexpected = controls.filter(
-    (tool) => !isRecord(tool) || typeof tool.name !== "string" || !ALL_CONTROL_NAMES.has(tool.name),
-  );
+  if (!Array.isArray(controls) || !controls.every(isTool)) {
+    fail("createOpenClawCodingTools did not return executable named tools");
+  }
+  const unexpected = controls.filter((tool) => !ALL_CONTROL_NAMES.has(tool.name));
   if (unexpected.length > 0) {
     fail("control-only createOpenClawCodingTools call returned a non-Tool-Search tool");
   }
   return controls;
 }
 
-async function validateProgressiveRuntime(runtime, config) {
-  const catalogRef = {};
+async function validateProgressiveRuntime(
+  runtime: RuntimeFunctions,
+  config: JsonRecord,
+): Promise<string[]> {
+  const catalogRef: CatalogRef = {};
   const runId = `nemoclaw-tool-search-validator-${process.pid}-${Date.now()}-${importSequence}`;
   const controls = createControls(runtime.createOpenClawCodingTools, config, catalogRef, runId);
   const probe = createProbeTool();
@@ -309,7 +456,7 @@ async function validateProgressiveRuntime(runtime, config) {
     sessionId: runId,
   });
   if (!isRecord(compacted)) fail("applyToolSearchCatalog did not return an object");
-  const visibleNames = assertExactToolNames(
+  const visibleTools = assertExactToolNames(
     compacted.tools,
     STRUCTURED_CONTROL_NAMES,
     "progressive model-visible tools",
@@ -322,9 +469,9 @@ async function validateProgressiveRuntime(runtime, config) {
     fail("progressive catalog did not compact and register exactly one hidden probe");
   }
 
-  const search = toolByName(compacted.tools, "tool_search");
-  const describe = toolByName(compacted.tools, "tool_describe");
-  const call = toolByName(compacted.tools, "tool_call");
+  const search = toolByName(visibleTools, "tool_search");
+  const describe = toolByName(visibleTools, "tool_describe");
+  const call = toolByName(visibleTools, "tool_call");
   const searchPayload = readToolResultPayload(
     await search.execute("nemoclaw-validator-search", { query: PROBE_NAME, limit: 8 }),
     "tool_search",
@@ -359,11 +506,14 @@ async function validateProgressiveRuntime(runtime, config) {
   ) {
     fail("tool_call did not execute the hidden deterministic probe");
   }
-  return visibleNames;
+  return visibleTools.map((tool) => tool.name);
 }
 
-async function validateDirectRuntime(runtime, config) {
-  const catalogRef = {};
+async function validateDirectRuntime(
+  runtime: RuntimeFunctions,
+  config: JsonRecord,
+): Promise<string[]> {
+  const catalogRef: CatalogRef = {};
   const runId = `nemoclaw-tool-search-validator-direct-${process.pid}-${Date.now()}-${importSequence}`;
   const controls = createControls(runtime.createOpenClawCodingTools, config, catalogRef, runId);
   assertExactToolNames(controls, [], "direct Tool Search controls");
@@ -376,7 +526,7 @@ async function validateDirectRuntime(runtime, config) {
     sessionId: runId,
   });
   if (!isRecord(direct)) fail("applyToolSearchCatalog did not return an object");
-  const visibleNames = assertExactToolNames(
+  const visibleTools = assertExactToolNames(
     direct.tools,
     [PROBE_NAME],
     "direct model-visible tools",
@@ -384,11 +534,13 @@ async function validateDirectRuntime(runtime, config) {
   if (direct.compacted !== false || direct.catalogToolCount !== 0) {
     fail("direct mode unexpectedly compacted the hidden probe");
   }
-  const proof = await direct.tools[0].execute("nemoclaw-validator-direct", { value: "direct" });
+  const directProbe = visibleTools[0];
+  if (directProbe === undefined) fail("direct probe disappeared after cardinality check");
+  const proof = await directProbe.execute("nemoclaw-validator-direct", { value: "direct" });
   if (!isRecord(proof) || !isRecord(proof.details) || proof.details.sentinel !== PROBE_SENTINEL) {
     fail("direct mode did not preserve executable direct tool exposure");
   }
-  return visibleNames;
+  return visibleTools.map((tool) => tool.name);
 }
 
 export async function validateOpenClawToolSearchRuntime({
@@ -396,10 +548,11 @@ export async function validateOpenClawToolSearchRuntime({
   configPath,
   expectedMode,
   expectedVersion,
-}) {
+}: ValidationOptions): Promise<ValidationResult> {
   if (expectedMode !== "progressive" && expectedMode !== "direct") {
     fail(`expected mode must be progressive or direct; found ${String(expectedMode)}`);
   }
+  const validatedMode: ExpectedMode = expectedMode;
   if (typeof expectedVersion !== "string" || expectedVersion.trim() === "") {
     fail("expected version must be a non-empty string");
   }
@@ -407,25 +560,33 @@ export async function validateOpenClawToolSearchRuntime({
   const resolvedConfigPath = path.resolve(configPath);
   const version = assertExpectedVersion(resolvedDist, expectedVersion);
   const config = readJson(resolvedConfigPath, "generated OpenClaw config");
-  readToolSearchConfig(config, expectedMode, resolvedConfigPath);
+  readToolSearchConfig(config, validatedMode, resolvedConfigPath);
   const { filePath, source } = locateRuntimeModule(resolvedDist);
   const aliases = parseRuntimeExportAliases(source, filePath);
   const runtime = await importRuntimeFunctions(filePath, aliases);
-  assertResolvedConfig(runtime.resolveToolSearchConfig, config, expectedMode);
+  assertResolvedConfig(runtime.resolveToolSearchConfig, config, validatedMode);
   const visibleToolNames =
-    expectedMode === "progressive"
+    validatedMode === "progressive"
       ? await validateProgressiveRuntime(runtime, config)
       : await validateDirectRuntime(runtime, config);
-  return { version, expectedMode, runtimeModulePath: filePath, visibleToolNames };
+  return { version, expectedMode: validatedMode, runtimeModulePath: filePath, visibleToolNames };
 }
 
-function usage() {
+function usage(): string {
   return "Usage: validate-openclaw-tool-search.mts <dist-dir> <config-path> <progressive|direct> <expected-version>";
 }
 
-async function main(argv) {
+async function main(argv: readonly string[]): Promise<void> {
   if (argv.length !== 4) fail(usage());
   const [distDir, configPath, expectedMode, expectedVersion] = argv;
+  if (
+    distDir === undefined ||
+    configPath === undefined ||
+    expectedMode === undefined ||
+    expectedVersion === undefined
+  ) {
+    fail(usage());
+  }
   const result = await validateOpenClawToolSearchRuntime({
     distDir,
     configPath,
