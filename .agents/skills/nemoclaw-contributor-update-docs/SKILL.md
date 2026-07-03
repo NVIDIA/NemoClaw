@@ -18,6 +18,7 @@ Scan recent git history for commits that affect user-facing behavior and draft d
 - Before a release, to catch any doc gaps.
 - During daily release prep, before opening the release-note docs PR.
 - Before cutting a release tag, so release-note docs land on the same release train.
+- When maintainers run `/nemoclaw-contributor-update-docs for vX.Y.Z`, treat it as pre-tag release-prep docs for `vX.Y.Z` unless the tag already exists.
 - After a release only when maintainers missed the pre-tag docs step and need a catch-up PR.
 - When a contributor asks "what docs need updating?"
 
