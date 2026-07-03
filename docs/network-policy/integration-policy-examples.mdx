@@ -106,6 +106,26 @@ Keep OAuth client secrets and refresh tokens out of policy files.
 If the tool still fails, run `openshell term`, trigger the workflow again, and inspect the blocked request.
 If the blocked endpoint is not covered by the maintained `outlook` preset, treat it as a separate policy review instead of assuming it is part of the supported preset.
 
+## Gmail and Google Workspace Mail
+
+NemoClaw does not currently ship a maintained `gmail` preset.
+Do not reuse the `outlook` preset for Gmail: Microsoft Graph and Gmail use different hosts, authentication flows, and API paths.
+For Gmail or Google Workspace mail tools, first decide whether the tool uses the Gmail REST API, IMAP/SMTP, or another Google API, then create a custom preset with only the endpoints and binaries that workflow needs.
+
+Keep Google OAuth client secrets, refresh tokens, app passwords, and downloaded credential JSON files out of policy YAML.
+Store credentials through the integration you are running in the sandbox, or through an OpenShell provider path when the integration supports placeholder resolution.
+
+Use the standard custom-preset flow:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file ./gmail.yaml --dry-run
+$$nemoclaw my-assistant policy-add --from-file ./gmail.yaml --yes
+```
+
+After applying the custom preset, run the Gmail workflow with `openshell term` open and inspect any blocked requests.
+Add only endpoints you can explain, and prefer method/path-restricted REST rules when the workflow uses HTTPS APIs.
+If the tool falls back to IMAP or SMTP, review the security impact separately because those connections cannot be narrowed to HTTP methods and paths.
+
 ## Telegram Bot Messaging
 
 Telegram needs channel configuration and egress policy.
