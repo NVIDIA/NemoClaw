@@ -246,11 +246,15 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       error?: Error;
       now?: () => number;
       onRun?: () => void;
+      probeError?: Error;
       writeStderr?: (line: string) => void;
     } = {},
   ) => {
     const stderr: string[] = [];
-    const probeLogs = vi.fn(() => probeOutput);
+    const probeLogs = vi.fn(() => {
+      if (options.probeError) throw options.probeError;
+      return probeOutput;
+    });
     const enableAudit = vi.fn(() => {});
     let exitCode = Number.NaN;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
@@ -331,6 +335,17 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       },
     });
     expect(exitCode).toBe(56);
+  });
+
+  it("preserves the command exit code when the policy log probe fails", async () => {
+    const { exitCode, probeLogs, stderr } = await runExec(56, "", {
+      probeError: Object.assign(new Error("OpenShell log read timed out"), {
+        code: "ETIMEDOUT",
+      }),
+    });
+    expect(exitCode).toBe(56);
+    expect(probeLogs).toHaveBeenCalledOnce();
+    expect(stderr).toHaveLength(0);
   });
 
   it("captures the denial cutoff before dispatch and rejects an older denial", async () => {
