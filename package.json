@@ -20,7 +20,9 @@
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.js",
+    "dev:setup": "bash scripts/dev-setup.sh",
     "dev:doctor": "bash scripts/dev-setup.sh --doctor",
+    "agent": "pi",
     "test": "npm run clean:cli && npm --prefix nemoclaw run clean && npm run build:cli && npm --prefix nemoclaw run build && vitest run --project cli --project integration --project installer-integration --project package-contract --project plugin --project e2e-support",
     "test:spec": "npm test -- --reporter=tree",
     "test:fast": "npm run clean:cli && vitest run --project cli --project plugin --project e2e-support",
