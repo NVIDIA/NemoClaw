@@ -102,5 +102,10 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       severity: "ok",
       detail: "disabled",
     });
+    expect(
+      signals.find(
+        (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
+      ),
+    ).toBeUndefined();
   });
 });
