@@ -953,9 +953,9 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       });
     }
     const switchEndpointUrl =
-      SWITCH_PROVIDER === "compatible-endpoint"
-        ? hosted.endpointUrl
-        : await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
+      SWITCH_PROVIDER === "compatible-anthropic-endpoint"
+        ? await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider)
+        : null;
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
