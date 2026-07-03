@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 import {
-  detectTerminalAgentVersionDrift,
-  formatTerminalAgentVersionDriftWarning,
+  checkTerminalAgentVersion,
+  formatTerminalAgentVersionFailure,
 } from "./terminal-version-drift";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
@@ -19,11 +19,12 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   } as unknown as AgentDefinition;
 }
 
-describe("detectTerminalAgentVersionDrift (#6193)", () => {
-  it("flags drift when the installed version is below expected_version", () => {
+describe("checkTerminalAgentVersion (#6193)", () => {
+  it("reports stale when the installed version is below expected_version", () => {
     const runner = vi.fn(() => "LangChain Deep Agents Code v0.1.12");
-    const drift = detectTerminalAgentVersionDrift("dcode-sb", makeAgent(), runner);
-    expect(drift).toEqual({
+    const result = checkTerminalAgentVersion("dcode-sb", makeAgent(), runner);
+    expect(result).toEqual({
+      status: "stale",
       installedVersion: "0.1.12",
       expectedVersion: "0.1.13",
       schemeMismatch: false,
@@ -36,35 +37,88 @@ describe("detectTerminalAgentVersionDrift (#6193)", () => {
     );
   });
 
-  it("returns null when the installed version meets expected_version", () => {
+  it("reports current when the installed version meets expected_version", () => {
     const runner = vi.fn(() => "dcode v0.1.13");
-    expect(detectTerminalAgentVersionDrift("dcode-sb", makeAgent(), runner)).toBeNull();
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
+      status: "current",
+      installedVersion: "0.1.13",
+      expectedVersion: "0.1.13",
+      schemeMismatch: false,
+    });
   });
 
-  it("returns null when the installed version exceeds expected_version", () => {
+  it("reports current when the installed version exceeds expected_version", () => {
     const runner = vi.fn(() => "dcode v0.2.0");
-    expect(detectTerminalAgentVersionDrift("dcode-sb", makeAgent(), runner)).toBeNull();
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toMatchObject({
+      status: "current",
+      installedVersion: "0.2.0",
+    });
   });
 
-  it("returns null (no gate) when the manifest declares no expected_version", () => {
+  it("does not probe when the manifest declares no expected_version", () => {
     const runner = vi.fn(() => "dcode v0.1.12");
     const agent = makeAgent({ expectedVersion: null } as Partial<AgentDefinition>);
-    expect(detectTerminalAgentVersionDrift("dcode-sb", agent, runner)).toBeNull();
+    expect(checkTerminalAgentVersion("dcode-sb", agent, runner)).toEqual({
+      status: "not-required",
+      installedVersion: null,
+      expectedVersion: null,
+    });
+    expect(runner).not.toHaveBeenCalled();
   });
 
-  it("returns null when the probe output has no parseable version", () => {
+  it("reports unverified when the probe output has no parseable version", () => {
     const runner = vi.fn(() => "command not found");
-    expect(detectTerminalAgentVersionDrift("dcode-sb", makeAgent(), runner)).toBeNull();
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
+      status: "unverified",
+      installedVersion: null,
+      expectedVersion: "0.1.13",
+      reason: "unparseable-output",
+    });
+  });
+
+  it("reports unverified when the probe produces no output", () => {
+    const runner = vi.fn(() => ({ output: null }));
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
+      status: "unverified",
+      installedVersion: null,
+      expectedVersion: "0.1.13",
+      reason: "probe-failed",
+    });
+  });
+
+  it("contains runner exceptions as an unverified result", () => {
+    const runner = vi.fn(() => {
+      throw new Error("probe transport failed");
+    });
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
+      status: "unverified",
+      installedVersion: null,
+      expectedVersion: "0.1.13",
+      reason: "probe-failed",
+    });
   });
 
   it("accepts the { output } runner result shape", () => {
     const runner = vi.fn(() => ({ output: "dcode v0.1.12" }));
-    const drift = detectTerminalAgentVersionDrift("dcode-sb", makeAgent(), runner);
-    expect(drift?.installedVersion).toBe("0.1.12");
+    const result = checkTerminalAgentVersion("dcode-sb", makeAgent(), runner);
+    expect(result).toMatchObject({ status: "stale", installedVersion: "0.1.12" });
   });
 
-  it("formats a drift warning naming the display name, installed, and expected versions", () => {
-    const line = formatTerminalAgentVersionDriftWarning(makeAgent(), {
+  it.each([
+    "dcode 0.1.12, built with SDK 9.8.7",
+    "built on 2026.7.1, dcode 0.1.12",
+  ])("uses the CLI version when probe output contains other versions: %s", (output) => {
+    const result = checkTerminalAgentVersion(
+      "dcode-sb",
+      makeAgent(),
+      vi.fn(() => output),
+    );
+    expect(result).toMatchObject({ status: "stale", installedVersion: "0.1.12" });
+  });
+
+  it("formats a stale-version failure with installed and required versions", () => {
+    const line = formatTerminalAgentVersionFailure(makeAgent(), {
+      status: "stale",
       installedVersion: "0.1.12",
       expectedVersion: "0.1.13",
       schemeMismatch: false,
@@ -72,5 +126,24 @@ describe("detectTerminalAgentVersionDrift (#6193)", () => {
     expect(line).toContain("LangChain Deep Agents Code");
     expect(line).toContain("0.1.12");
     expect(line).toContain("0.1.13");
+    expect(line).toContain("below required minimum");
+  });
+
+  it("describes incomparable version schemes without claiming one is below the other", () => {
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const result = checkTerminalAgentVersion(
+        "dcode-sb",
+        makeAgent({ expectedVersion: "0.17.0", versionScheme: "semver" }),
+        vi.fn(() => "dcode 2026.5.27"),
+      );
+      expect(result).toMatchObject({ status: "stale", schemeMismatch: true });
+      if (result.status !== "stale") throw new Error("expected stale result");
+      const line = formatTerminalAgentVersionFailure(makeAgent(), result);
+      expect(line).toContain("different version scheme");
+      expect(line).not.toContain("below");
+    } finally {
+      stderrSpy.mockRestore();
+    }
   });
 });

@@ -27,8 +27,8 @@ import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import {
-  detectTerminalAgentVersionDrift,
-  formatTerminalAgentVersionDriftWarning,
+  checkTerminalAgentVersion,
+  formatTerminalAgentVersionFailure,
 } from "./terminal-version-drift";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
@@ -36,7 +36,10 @@ export { verifyAgentBinaryAvailable } from "./binary-availability";
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;
-  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+  runCaptureOpenshell: (
+    args: string[],
+    opts?: { ignoreError?: boolean; timeout?: number },
+  ) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
@@ -287,6 +290,31 @@ async function failAgentSetup(
 }
 
 /**
+ * Require a terminal runtime to satisfy the manifest's expected version before
+ * recording agent setup as complete.
+ */
+async function enforceTerminalAgentVersion(
+  sandboxName: string,
+  agent: AgentDefinition,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+  recordStepFailed: OnboardContext["recordStepFailed"],
+  options: { beforeFailure?: () => Promise<void> } = {},
+): Promise<void> {
+  const result = checkTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell);
+  if (result.status === "current" || result.status === "not-required") {
+    return;
+  }
+
+  await options.beforeFailure?.();
+  await failAgentSetup(
+    sandboxName,
+    agent,
+    formatTerminalAgentVersionFailure(agent, result),
+    recordStepFailed,
+  );
+}
+
+/**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
 export function isHealthProbeOk(result: string | null | undefined): boolean {
@@ -352,10 +380,16 @@ export async function handleAgentSetup(
         syncNemoClawConfig();
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
         if (smokeResult.ok) {
-          const drift = detectTerminalAgentVersionDrift(sandboxName, agent, runCaptureOpenshell);
-          if (drift) {
-            console.warn(formatTerminalAgentVersionDriftWarning(agent, drift));
-          }
+          await enforceTerminalAgentVersion(
+            sandboxName,
+            agent,
+            runCaptureOpenshell,
+            recordStepFailed,
+            {
+              beforeFailure: () =>
+                startRecordedStep("agent_setup", { sandboxName, provider, model }),
+            },
+          );
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -416,10 +450,7 @@ export async function handleAgentSetup(
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
       );
     }
-    const drift = detectTerminalAgentVersionDrift(sandboxName, agent, runCaptureOpenshell);
-    if (drift) {
-      console.warn(formatTerminalAgentVersionDriftWarning(agent, drift));
-    }
+    await enforceTerminalAgentVersion(sandboxName, agent, runCaptureOpenshell, recordStepFailed);
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
     return;

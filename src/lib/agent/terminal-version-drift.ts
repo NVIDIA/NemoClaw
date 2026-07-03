@@ -19,62 +19,136 @@ type RunCaptureOpenshell = (
   opts?: { ignoreError?: boolean; timeout?: number },
 ) => string | { output?: string | null } | null;
 
-export interface TerminalAgentVersionDrift {
+export interface TerminalAgentVersionStale {
+  status: "stale";
   installedVersion: string;
   expectedVersion: string;
   schemeMismatch: boolean;
 }
 
+export interface TerminalAgentVersionUnverified {
+  status: "unverified";
+  installedVersion: null;
+  expectedVersion: string;
+  reason: "probe-failed" | "unparseable-output";
+}
+
+export type TerminalAgentVersionFailure =
+  | TerminalAgentVersionStale
+  | TerminalAgentVersionUnverified;
+
+export type TerminalAgentVersionCheck =
+  | { status: "not-required"; installedVersion: null; expectedVersion: null }
+  | {
+      status: "current";
+      installedVersion: string;
+      expectedVersion: string;
+      schemeMismatch: false;
+    }
+  | TerminalAgentVersionFailure;
+
 /**
  * Probe the installed terminal-agent version via the injected runner and
- * compare it to the manifest's `expected_version`. Returns drift details when
- * the installed version is below expected (or scheme-incomparable), or `null`
- * when it is current, unknown, or no expected version is declared.
+ * compare it to the manifest's `expected_version`.
  *
- * Never throws and never blocks onboarding: a missing expected version, a
- * failed probe, or unparseable output all yield `null` so a benign hiccup can
- * not spuriously flag drift. Drift is surfaced as an advisory (mirroring
- * `status`), not a hard failure — the runtime is still usable.
+ * Returns an explicit state so onboarding can distinguish current, stale, and
+ * unverifiable runtimes. Probe failures are contained and returned as
+ * `unverified`; they never silently pass the version gate.
  */
-export function detectTerminalAgentVersionDrift(
+export function checkTerminalAgentVersion(
   sandboxName: string,
   agent: AgentDefinition,
   runCaptureOpenshell: RunCaptureOpenshell,
-): TerminalAgentVersionDrift | null {
+): TerminalAgentVersionCheck {
   const expectedVersion = agent.expectedVersion;
-  if (!expectedVersion) return null;
+  if (!expectedVersion) {
+    return { status: "not-required", installedVersion: null, expectedVersion: null };
+  }
 
-  // Bound the probe so a hung `<agent> --version` can't wedge onboarding —
-  // mirrors the SSH probe in sandbox/version.ts (CodeRabbit review on #6230).
-  const result = runCaptureOpenshell(
-    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
-    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-  );
-  const output = typeof result === "string" ? result : (result?.output ?? null);
-  const installedVersion = output ? parseVersionFromText(output) : null;
-  if (!installedVersion) return null;
+  try {
+    // `version_command` is shell-form input from repository-shipped agent
+    // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
+    // to an argv-form allowlist before accepting custom/user manifests here.
+    // The timeout prevents a hung command from wedging onboarding.
+    const result = runCaptureOpenshell(
+      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
+      { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+    );
+    const output = typeof result === "string" ? result : (result?.output ?? null);
+    if (!output) {
+      return {
+        status: "unverified",
+        installedVersion: null,
+        expectedVersion,
+        reason: "probe-failed",
+      };
+    }
 
-  const verdict = evaluateStaleness(
-    sandboxName,
-    agent.versionScheme ?? null,
-    installedVersion,
-    expectedVersion,
-  );
-  if (!verdict.isStale) return null;
+    // Prefer the version associated with the manifest command's executable.
+    // Some CLIs include build/runtime versions in the same output, and the
+    // shared fallback parser intentionally returns the first numeric triplet.
+    const installedVersion = parseVersionFromText(output, agent.versionCommand);
+    if (!installedVersion) {
+      return {
+        status: "unverified",
+        installedVersion: null,
+        expectedVersion,
+        reason: "unparseable-output",
+      };
+    }
 
-  return { installedVersion, expectedVersion, schemeMismatch: verdict.schemeMismatch };
+    const verdict = evaluateStaleness(
+      sandboxName,
+      agent.versionScheme ?? null,
+      installedVersion,
+      expectedVersion,
+    );
+    if (!verdict.isStale) {
+      return {
+        status: "current",
+        installedVersion,
+        expectedVersion,
+        schemeMismatch: false,
+      };
+    }
+
+    return {
+      status: "stale",
+      installedVersion,
+      expectedVersion,
+      schemeMismatch: verdict.schemeMismatch,
+    };
+  } catch {
+    return {
+      status: "unverified",
+      installedVersion: null,
+      expectedVersion,
+      reason: "probe-failed",
+    };
+  }
 }
 
 /**
- * One-line advisory shown during the terminal smoke when the installed version
- * is behind the manifest's expected version.
+ * Describe why a terminal runtime cannot satisfy the manifest version gate.
  */
-export function formatTerminalAgentVersionDriftWarning(
+export function formatTerminalAgentVersionFailure(
   agent: AgentDefinition,
-  drift: TerminalAgentVersionDrift,
+  failure: TerminalAgentVersionFailure,
 ): string {
+  if (failure.status === "unverified") {
+    return (
+      `${agent.displayName} version could not be verified against required version ` +
+      failure.expectedVersion
+    );
+  }
+  if (failure.schemeMismatch) {
+    return (
+      `${agent.displayName} version ${failure.installedVersion} uses a different version scheme ` +
+      `than required version ${failure.expectedVersion}`
+    );
+  }
   return (
-    `  ⚠ ${agent.displayName} ${drift.installedVersion} is below the expected version ` +
-    `${drift.expectedVersion}; the runtime is usable but older than this NemoClaw release targets.`
+    `${agent.displayName} version ${failure.installedVersion} is below required minimum ` +
+    failure.expectedVersion
   );
 }
