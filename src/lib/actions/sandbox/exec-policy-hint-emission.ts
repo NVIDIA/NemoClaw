@@ -13,6 +13,9 @@ import { buildPolicyDenialExecHint, shouldProbePolicyDenial } from "./exec-polic
 
 /** Number of recent log lines to scan for a denial event. */
 export const POLICY_HINT_TAIL_LINES = 200;
+// Three reads 120 ms apart cover a bounded 240 ms log-settling window. Tests
+// override both values through PolicyDenialHintDeps; production keeps the
+// budget fixed so optional guidance cannot materially delay exec completion.
 export const POLICY_HINT_PROBE_ATTEMPTS = 3;
 export const POLICY_HINT_PROBE_RETRY_MS = 120;
 export const POLICY_HINT_MAX_RUNTIME_TIMEOUT_MS = 1_000;
@@ -30,8 +33,8 @@ export type PolicyDenialHintDeps = {
   retryDelayMs?: number;
 };
 
-// This timer must keep the event loop alive until execSandbox applies the
-// original command's exit code.
+// This timer must keep the event loop alive until execSandbox reaches
+// process.exit(completion.code) with the original command result.
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -73,6 +76,9 @@ function defaultProbeLogs(sandboxName: string): string {
 /**
  * Emit a denial-adjacent hint after a failed exec. Every dependency is
  * best-effort: failures return null and never replace the command's exit code.
+ * Exec inherits stdio byte-for-byte, so proxy error text is intentionally not
+ * captured for a cheaper prefilter; nonzero status is the only safe pre-probe
+ * gate, and the timestamp-correlated structured denial is the confirmation.
  * Log-read failures are terminal rather than retried, while successful empty
  * reads get two 120 ms settling retries (240 ms total).
  */
@@ -96,7 +102,9 @@ export async function maybeEmitPolicyDenialHint(
   try {
     enableAudit(sandboxName);
   } catch {
-    // Audit setup is optional; retained logs may still contain the denial.
+    // Deliberately silent: audit setup is optional and retained logs may still
+    // contain the denial. Printing this diagnostic, even under a new debug
+    // contract, would alter child stderr without a confirmed policy denial.
   }
 
   let match: PolicyDenialMatch | null = null;
@@ -105,6 +113,8 @@ export async function maybeEmitPolicyDenialHint(
     try {
       logOutput = probeLogs(sandboxName);
     } catch {
+      // Deliberately silent for the same output-preservation boundary: a failed
+      // optional probe must not append host diagnostics to the child's error.
       return null;
     }
     match = findRecentPolicyDenial(logOutput, commandStartedAtMs);
@@ -124,6 +134,7 @@ export async function maybeEmitPolicyDenialHint(
     (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
     return hint;
   } catch {
+    // A broken optional sink cannot replace the command's output or exit code.
     return null;
   }
 }

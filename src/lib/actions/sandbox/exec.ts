@@ -374,8 +374,10 @@ function defaultResolveBinary(): string {
 // inject them so the dispatch path stays hermetic without spawning a real
 // process or hitting the process-exiting OpenShell binary lookup.
 export type ExecSandboxDeps = {
+  /** Host lookup and pre-dispatch workdir seams. */
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
+  /** Command execution and post-command observability/cleanup seams. */
   run?: SandboxExecRunner;
   policyHint?: ExecPolicyHintDeps;
   cleanupDeps?: SandboxExecCleanupDeps;

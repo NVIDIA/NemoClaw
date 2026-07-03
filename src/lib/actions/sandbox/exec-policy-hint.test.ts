@@ -141,6 +141,26 @@ describe("maybeEmitPolicyDenialHint (#5978)", () => {
     expect(h.lines).toHaveLength(0);
   });
 
+  it("uses retained logs when optional audit enablement fails", async () => {
+    const h = harness();
+    const hint = await maybeEmitPolicyDenialHint(
+      "nemoclaw",
+      "oc-fresh",
+      56,
+      false,
+      START_BEFORE_DENIAL,
+      {
+        ...h.base,
+        enableAudit: () => {
+          throw new Error("audit setting unavailable");
+        },
+        probeLogs: () => DENIED_CURL_LINE,
+      },
+    );
+    expect(hint).toContain("example.com:443");
+    expect(h.lines).toEqual([hint]);
+  });
+
   it("degrades silently (no throw) when the stderr sink fails", async () => {
     const h = harness();
     const hint = await maybeEmitPolicyDenialHint(

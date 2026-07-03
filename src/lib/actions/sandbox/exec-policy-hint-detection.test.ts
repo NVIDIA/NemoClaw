@@ -16,6 +16,8 @@ const DENIED_GIT_LINE =
   "[1783046885.833] [sandbox] [OCSF ] [ocsf] NET:OPEN [MED] DENIED /usr/lib/git-core/git-remote-http(3973) -> github.com:443 [policy:- engine:opa] [reason:endpoint github.com:443 is not allowed by any policy]";
 const SSH_RELAY_INFO_LINE =
   "[1783046565.338] [sandbox] [OCSF ] [ocsf] NET:OPEN [INFO] [msg:ssh relay open (channel_id=8e95bfe4, target=unix:/run/openshell/ssh.sock)]";
+// Exact proxy JSON body captured alongside the OCSF lines above. Keep this
+// fixture strict: speculative wording variants would widen false positives.
 const PROXY_JSON_LINE =
   '{"detail":"CONNECT example.com:443 not permitted by policy","error":"policy_denied"}';
 

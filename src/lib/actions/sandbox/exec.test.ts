@@ -247,6 +247,7 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       now?: () => number;
       onRun?: () => void;
       probeError?: Error;
+      cleanupDeps?: SandboxExecCleanupDeps;
       writeStderr?: (line: string) => void;
     } = {},
   ) => {
@@ -276,7 +277,7 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
           options.onRun?.();
           return { status, ...(options.error ? { error: options.error } : {}) };
         },
-        cleanupDeps: cleanupSkipped,
+        cleanupDeps: options.cleanupDeps ?? cleanupSkipped,
         policyHint: {
           now: options.now ?? (() => START_MS),
           env: {},
@@ -350,6 +351,30 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     expect(exitCode).toBe(56);
     expect(probeLogs).toHaveBeenCalledOnce();
     expect(stderr).toHaveLength(0);
+  });
+
+  it("emits after active OpenClaw cleanup and preserves the command exit code", async () => {
+    const inspectMutableConfigPerms = vi.fn(() => ({
+      applies: false as const,
+      skipReason: "locked" as const,
+      reason: "shields up",
+    }));
+    const repairMutableConfigPerms = vi.fn(() => ({
+      applied: false as const,
+      skipReason: "locked" as const,
+      reason: "shields up",
+    }));
+    const { exitCode, stderr } = await runExec(56, DENIAL_LINE, {
+      cleanupDeps: {
+        getSandbox: () => ({ agent: "openclaw" }),
+        inspectMutableConfigPerms,
+        repairMutableConfigPerms,
+      },
+    });
+    expect(inspectMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(repairMutableConfigPerms).toHaveBeenCalledOnce();
+    expect(exitCode).toBe(56);
+    expect(stderr.join("\n")).toContain("recent network policy denial detected");
   });
 
   it("captures the denial cutoff before dispatch and rejects an older denial", async () => {
