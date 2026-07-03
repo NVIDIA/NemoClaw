@@ -42,6 +42,9 @@ const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
 const PINNED_CODEX_ACP_INTEGRITY =
   "sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==";
+const PINNED_MCPORTER_VERSION = "0.7.3";
+const PINNED_MCPORTER_INTEGRITY =
+  "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
   "sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
@@ -126,6 +129,9 @@ function runInstallBlock(
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-integrity-"));
   const blueprint = path.join(tmp, "blueprint.yaml");
   const log = path.join(tmp, "calls.log");
+  const mcporterRuntime = path.join(tmp, "mcporter-runtime");
+  const mcporterBin = path.join(tmp, "bin", "mcporter");
+  fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
   const script = [
     "#!/usr/bin/env bash",
@@ -141,17 +147,21 @@ function runInstallBlock(
     `OPENCLAW_2026_4_24_INTEGRITY=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_4_24_TARBALL=${JSON.stringify(LEGACY_GATEWAY_UPGRADE_OPENCLAW_TARBALL)}`,
     `CODEX_ACP_0_11_1_INTEGRITY=${JSON.stringify(codexAcpCommittedIntegrity)}`,
+    `MCPORTER_VERSION=${JSON.stringify(PINNED_MCPORTER_VERSION)}`,
+    `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(PINNED_MCPORTER_INTEGRITY)}`,
     "node() {",
     '  if [ "${1:-}" = "/usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  "$real_node" "$@"',
     "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' ${JSON.stringify(installedOpenClawVersion)}; else return 127; fi; }`,
+    `mcporter() { if [ "\${1:-}" = "--version" ]; then printf '%s\\n' ${JSON.stringify(PINNED_MCPORTER_VERSION)}; else return 127; fi; }`,
     "codex-acp() { :; }",
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${3:-}" = "version" ]; then printf "%s\\n" "$OPENCLAW_VERSION"; return 0; fi',
     `  if [ "\${1:-}" = "view" ] && [ "\${2:-}" = "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}" ] && [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(codexAcpRegistryIntegrity)}; return 0; fi`,
     `  if [ "\${1:-}" = "view" ] && [ "\${2:-}" = "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}" ] && [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" ${JSON.stringify(codexAcpRegistryTarball)}; return 0; fi`,
+    `  if [ "\${1:-}" = "view" ] && [ "\${2:-}" = "mcporter@${PINNED_MCPORTER_VERSION}" ] && [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(PINNED_MCPORTER_INTEGRITY)}; return 0; fi`,
     `  if [ "\${1:-}" = "view" ] && [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(registryIntegrity)}; return 0; fi`,
     `  if [ "\${1:-}" = "view" ] && [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" ${JSON.stringify(registryTarball)}; return 0; fi`,
     '  if [ "${1:-}" = "pack" ]; then',
@@ -174,7 +184,9 @@ function runInstallBlock(
     "pip3() { return 0; }",
     command
       .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
-      .replaceAll("/tmp/blueprint.yaml", blueprint),
+      .replaceAll("/tmp/blueprint.yaml", blueprint)
+      .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterRuntime)
+      .replaceAll("/usr/local/bin/mcporter", mcporterBin),
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -852,6 +864,7 @@ describe("OpenClaw npm integrity pins", () => {
     expect(currentPinArgNames).toEqual([
       "CODEX_ACP_0_11_1_INTEGRITY",
       "HERMES_NPM_INTEGRITY",
+      "MCPORTER_0_7_3_INTEGRITY",
       "OPENCLAW_2026_3_11_INTEGRITY",
       "OPENCLAW_2026_3_11_TARBALL",
       "OPENCLAW_2026_4_24_INTEGRITY",

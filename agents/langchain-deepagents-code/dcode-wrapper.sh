@@ -28,6 +28,7 @@ export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 unset PYTHONHOME PYTHONPATH
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
+readonly OPENSHELL_ENV_PLACEHOLDER_PREFIX="openshell:resolve:env:"
 readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
@@ -70,6 +71,9 @@ run_dcode() {
 #       dcode may resolve those to credentials the raw scan cannot see.
 #     * Runtime env iteration uses `env -0` so names that are not valid Bash
 #       identifiers (e.g. with hyphens) are still classified.
+#     * OpenShell credential placeholders are allowed only when the complete
+#       value names the same valid env key, either canonically or with an
+#       OpenShell `v<digits>_` revision prefix. Any other occurrence is refused.
 # - Regression: the parity tests in
 #   test/langchain-deepagents-code-image.test.ts pin the canonical
 #   TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and SECRET_BLOCK_PATTERNS
@@ -295,6 +299,41 @@ is_dynamic_dotenv_value() {
   return 1
 }
 
+is_openshell_env_placeholder_for_name() {
+  local name="$1"
+  local value="$2"
+  local canonical revision_prefix revision_suffix versioned revision
+
+  # OPENSHELL_TLS_KEY is supervisor infrastructure, not a provider credential.
+  # Only its exact mounted path is accepted from the runtime environment below;
+  # never let a provider placeholder bypass that name/value allowlist.
+  [ "$name" != "OPENSHELL_TLS_KEY" ] || return 1
+
+  # Keep this identifier contract aligned with OpenShell provider env keys.
+  if [ -z "$name" ] || [ "${#name}" -gt 128 ]; then
+    return 1
+  fi
+  case "$name" in
+    [0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;;
+  esac
+
+  canonical="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${name}"
+  [ "$value" = "$canonical" ] && return 0
+
+  revision_prefix="${OPENSHELL_ENV_PLACEHOLDER_PREFIX}v"
+  revision_suffix="_${name}"
+  versioned="${value#"$revision_prefix"}"
+  [ "$versioned" != "$value" ] || return 1
+  revision="${versioned%"$revision_suffix"}"
+  [ "$revision" != "$versioned" ] || return 1
+  [ "$versioned" = "$revision$revision_suffix" ] || return 1
+  [ "${#revision}" -le 20 ] || return 1
+  case "$revision" in
+    "" | *[!0-9]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 refuse_secret_env() {
   local source="$1"
   local name="$2"
@@ -311,6 +350,14 @@ refuse_dynamic_env() {
   exit 2
 }
 
+refuse_invalid_openshell_placeholder() {
+  local source="$1"
+  local name="$2"
+  printf 'dcode: refusing to start — %s contains an invalid OpenShell credential placeholder in %s.\n' "$source" "$name" >&2
+  printf '  Use only the exact placeholder for that same environment variable.\n' >&2
+  exit 2
+}
+
 refuse_auth_store_credentials() {
   local source="$1"
   printf 'dcode: refusing to start — %s contains stored Deep Agents Code credentials.\n' "$source" >&2
@@ -324,6 +371,12 @@ assert_no_secret_runtime_env() {
     name="${pair%%=*}"
     [ "$name" != "$pair" ] || continue
     value="${pair#*=}"
+    if [[ "$value" == *"$OPENSHELL_ENV_PLACEHOLDER_PREFIX"* ]]; then
+      if is_openshell_env_placeholder_for_name "$name" "$value"; then
+        continue
+      fi
+      refuse_invalid_openshell_placeholder "runtime environment variable" "$name"
+    fi
     if is_managed_token_value_for_name "$name" "$value"; then
       continue
     fi
@@ -380,6 +433,12 @@ assert_no_secret_env_file() {
     value="$(trim_whitespace "$value")"
     if is_dynamic_dotenv_value "$value"; then
       refuse_dynamic_env "$env_file" "$key"
+    fi
+    if [[ "$value" == *"$OPENSHELL_ENV_PLACEHOLDER_PREFIX"* ]]; then
+      if is_openshell_env_placeholder_for_name "$key" "$value"; then
+        continue
+      fi
+      refuse_invalid_openshell_placeholder "$env_file" "$key"
     fi
     if is_managed_token_value_for_name "$key" "$value"; then
       continue
@@ -443,6 +502,11 @@ assert_no_secret_runtime_env
 assert_no_secret_env_file
 assert_no_auth_store_credentials
 assert_no_codex_auth_credentials
+
+if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1'
+  exit 0
+fi
 
 # SECURITY: managed identity/status display boundary.
 # - Invalid state: config.toml and runtime environment values are mutable inside
@@ -678,7 +742,7 @@ for arg in "$@"; do
     --sandbox-setup | --sandbox-setup=*)
       reject_managed_override "sandbox isolation" "$arg"
       ;;
-    --mcp-config | --mcp-config=* | --trust-project-mcp | --no-mcp=*)
+    --mcp-config | --mcp-config=* | --trust-project-mcp | --no-mcp | --no-mcp=*)
       reject_managed_override "MCP posture" "$arg"
       ;;
     --shell-allow-list | --shell-allow-list=* | -S | -S?*)
@@ -766,6 +830,17 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
   arg_index=$((arg_index + 1))
 done
 
-extra_args=(--sandbox none --no-mcp)
+extra_args=(--sandbox none)
+# The root-owned package helper validates the complete sandbox-user-owned file
+# as strict HTTPS-only NemoClaw config before any upstream parser sees it.
+managed_mcp_config="$(
+  /opt/venv/bin/python3 -I -c \
+    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or "")'
+)"
+if [ -n "$managed_mcp_config" ]; then
+  extra_args+=(--mcp-config "$managed_mcp_config")
+else
+  extra_args+=(--no-mcp)
+fi
 
 run_dcode "${extra_args[@]}" "$@"

@@ -81,6 +81,11 @@ inference:
   provider_type: gateway_managed
   proxy_support: explicit  # configured in openclaw.json providers block
 
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: mcporter
+
 # ── Phone-home hosts ───────────────────────────────────────────
 phone_home_hosts:
   - openclaw.ai

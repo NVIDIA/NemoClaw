@@ -26,6 +26,7 @@ import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import { appendAuditEntry } from "../shields/audit";
 import { withTimerBoundShieldsMutationLockAsync } from "../shields/timer-bound-lock";
+import { withSandboxMutationLock } from "../state/mcp-lifecycle-lock";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
@@ -833,7 +834,9 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   deps.prepareRunOpenshell();
-  return withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-    runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
+  return withSandboxMutationLock(selected.sandboxName, () =>
+    withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
+      runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
+    ),
   );
 }

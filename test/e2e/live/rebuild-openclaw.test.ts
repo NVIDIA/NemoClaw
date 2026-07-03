@@ -217,7 +217,7 @@ async function configureGatewayInferenceRoute(
   );
 }
 
-function seedRegistryAndSession(): void {
+function seedRegistryAndSession(dashboardPort: number): void {
   // The legacy rebuild regression requires an intentionally old OpenClaw sandbox
   // that NemoClaw cannot create through the normal onboard path because current
   // blueprints reject versions below min_openclaw_version. Create that sandbox
@@ -240,6 +240,11 @@ function seedRegistryAndSession(): void {
     policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
+    dashboardPort,
+    // This test creates an old NemoClaw-managed runtime directly through
+    // OpenShell. Record the managed-image provenance explicitly so rebuild
+    // does not have to guess whether an omitted legacy value meant `--from`.
+    fromDockerfile: null,
   };
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
@@ -464,6 +469,15 @@ test.skipIf(!shouldRunLiveE2E())(
       });
     }
 
+    const phase1DashboardPort = registrySandbox().dashboardPort;
+    expect(
+      typeof phase1DashboardPort === "number" &&
+        Number.isInteger(phase1DashboardPort) &&
+        phase1DashboardPort > 0 &&
+        phase1DashboardPort <= 65535,
+      "initial onboard must persist the dashboard port used by authoritative rebuild",
+    ).toBe(true);
+
     await openshellBestEffort(
       host,
       ["sandbox", "delete", SANDBOX_NAME],
@@ -613,7 +627,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
     const preRebuildConfigHash = preHashResult.stdout.trim();
     expect(preRebuildConfigHash).toContain("openclaw.json");
 
-    seedRegistryAndSession();
+    seedRegistryAndSession(phase1DashboardPort as number);
     const sessionAfterSeed = readJsonFile<Record<string, unknown>>(SESSION_FILE, {});
     const seededSteps = sessionAfterSeed.steps as Record<string, { status?: string }> | undefined;
     const seededSandbox = registrySandbox();
@@ -622,6 +636,7 @@ print(json.dumps({'seeded': saved == os.environ['PRE_REBUILD_GATEWAY_TOKEN'], 'h
         name: seededSandbox.name,
         provider: seededSandbox.provider,
         agentVersion: seededSandbox.agentVersion,
+        dashboardPort: seededSandbox.dashboardPort,
         policyCount: Array.isArray(seededSandbox.policies) ? seededSandbox.policies.length : 0,
       },
       session: {

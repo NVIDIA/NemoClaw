@@ -813,6 +813,11 @@ If you want to upgrade the sandbox while preserving state, use `nemohermes <name
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+
+If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
+Use `nemohermes <name> shields down --timeout 15m --reason "MCP maintenance"`, allowing at least 15 minutes per configured server.
+If sandbox deletion is refused after destroy has restored lockdown, NemoClaw opens an owner-bound timed rollback window, restores the preserved MCP state, and re-locks shields; the timer retains auto-restore authority if the host process exits.
+
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
 It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
@@ -1134,6 +1139,100 @@ nemohermes my-assistant channels status --channel whatsapp
 | `--json` | Emit the status report as JSON (for the detailed WhatsApp probe, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
 The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
+
+### `nemohermes <name> mcp list`
+
+List MCP servers configured for a sandbox.
+The command reports the selected agent's MCP support status and, for each configured server, whether the generated OpenShell provider, policy, and agent adapter are present.
+
+```bash
+nemohermes my-assistant mcp list [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit sandbox, support, and MCP server state as JSON without credential values |
+
+### `nemohermes <name> mcp add`
+
+Add an MCP Streamable HTTP server to a sandbox.
+Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer credential for the sandbox-side MCP client.
+NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an `openshell:resolve:env:KEY` placeholder into the agent config.
+Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments.
+Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
+All endpoints must use HTTPS.
+The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero.
+NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit.
+OpenShell `0.0.72` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
+Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
+The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
+For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+
+Hermes MCP add, restart, and remove mutate managed config and are refused while shields are up.
+Run `nemohermes <name> shields down --timeout 15m --reason "MCP maintenance"` before the mutation, then run `nemohermes <name> shields up` after it; list and status remain read-only.
+Allow at least 15 minutes per configured server for an all-server restart or destroy; rebuild opens its own crash-recoverable maintenance window.
+Keep shields down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
+
+```bash
+export GITHUB_MCP_TOKEN=ghp_...
+nemohermes my-assistant mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
+unset GITHUB_MCP_TOKEN
+```
+
+### `nemohermes <name> mcp status`
+
+Inspect MCP server state for one server or for all configured servers.
+Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode.
+While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
+
+```bash
+nemohermes my-assistant mcp status [server] [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Emit status as JSON without credential values |
+
+### `nemohermes <name> mcp restart`
+
+Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
+Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
+If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
+Otherwise, restart reuses an existing provider whose current metadata match the registry.
+A missing provider requires the variable to be exported before retrying.
+When that provider is already absent but its name still blocks sandbox exec,
+restart first detaches only the dangling sandbox-spec reference, then runs the
+agent capability probe before changing a live provider or policy.
+
+Hermes shields must be down for this config mutation.
+Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
+
+```bash
+nemohermes my-assistant mcp restart [server]
+```
+
+### `nemohermes <name> mcp remove`
+
+Remove an MCP server from a sandbox.
+
+Hermes shields must be down for this config mutation.
+Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
+
+NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
+Deep Agents teardown does not require the managed launcher marker from the old image, so an existing compatible MCP entry cannot block `mcp remove`, sandbox rebuild, or destroy merely because the image predates that probe.
+A replacement image must pass the marker probe before post-rebuild MCP providers or policy are restored.
+The command fails closed on observed drift.
+`--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content.
+Residuals preserve registry state.
+OpenShell `0.0.72` mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
+
+```bash
+nemohermes my-assistant mcp remove github [--force]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--force` | Remove same-name adapter config and continue exact-ownership provider/policy cleanup; preserve registry state when residuals remain |
 
 ### `nemohermes <name> skill install <path>`
 
@@ -2140,6 +2239,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 
 | Variable | Default | Effect |
 |----------|---------|--------|
+| `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `nemohermes <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
 

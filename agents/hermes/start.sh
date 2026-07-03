@@ -2080,6 +2080,23 @@ hermes_socat_bridge_healthy() {
   gateway_control_pid_owns_tcp_listener "$pid" "$port"
 }
 
+hermes_api_socat_bridge_healthy() {
+  local pid="$1"
+  local port="$2"
+  local code
+  hermes_socat_bridge_healthy api-socat "$pid" "$port" || return 1
+  # A listener-owning socat parent can survive a gateway SIGUSR1 replacement
+  # while its relay path no longer reaches the replacement. Validate the same
+  # public HTTP path clients use so the managed supervisor repairs that stale
+  # bridge instead of treating its listener as sufficient proof of health.
+  code="$(curl -so /dev/null -w '%{http_code}' --max-time 2 \
+    "http://127.0.0.1:${port}/health" 2>/dev/null || echo 000)"
+  case "$code" in
+    200 | 401) hermes_socat_bridge_healthy api-socat "$pid" "$port" ;;
+    *) return 1 ;;
+  esac
+}
+
 hermes_dashboard_healthy() {
   local pid="$1"
   local code
@@ -2096,7 +2113,7 @@ hermes_dashboard_healthy() {
 }
 
 hermes_auxiliaries_need_recovery() {
-  hermes_socat_bridge_healthy api-socat "${SOCAT_PID:-}" "$PUBLIC_PORT" || return 0
+  hermes_api_socat_bridge_healthy "${SOCAT_PID:-}" "$PUBLIC_PORT" || return 0
   hermes_dashboard_healthy "${DASHBOARD_PID:-}" || return 0
   hermes_socat_bridge_healthy dashboard-socat "${DASHBOARD_SOCAT_PID:-}" "$DASHBOARD_PUBLIC_PORT" || return 0
   return 1
@@ -2137,11 +2154,12 @@ ensure_hermes_supervised_auxiliaries() {
     dashboard_user=sandbox
   fi
 
-  if ! hermes_socat_bridge_healthy api-socat "${SOCAT_PID:-}" "$PUBLIC_PORT"; then
+  if ! hermes_api_socat_bridge_healthy "${SOCAT_PID:-}" "$PUBLIC_PORT"; then
     hermes_stop_tracked_role api-socat "${SOCAT_PID:-0}" current "$PUBLIC_PORT" || return 1
     SOCAT_PID=""
     start_socat_forwarder \
       "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID "$GATEWAY_PID" "$gateway_user" || return 1
+    hermes_api_socat_bridge_healthy "$SOCAT_PID" "$PUBLIC_PORT" || return 1
   fi
   if ! hermes_dashboard_healthy "${DASHBOARD_PID:-}"; then
     # A live PID is not sufficient: it may be reused, alive without the exact
@@ -2764,6 +2782,24 @@ retry_tirith_marker_if_needed
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
+
+# Same-uid MCP transaction commands are valid only in OpenShell's non-root
+# workload topology. Stamp the legacy root-separated path before its gateway
+# can start so ordinary sandbox exec fails closed there.
+# invalidState: an ordinary sandbox process claims same-UID mutation authority
+# while Hermes actually runs in the legacy root-separated topology.
+# sourceBoundary: OpenShell owns workload topology; NemoClaw owns the immutable
+# root-lifecycle marker and stamps it before starting the root-separated gateway.
+# whyNotSourceFix: OpenShell 0.0.72 supports both topologies but exposes no
+# attested same-UID capability that this packaged entrypoint can query.
+# regressionTest: hermes-mcp-config-transaction.test.ts rejects both probe and
+# add when the root-lifecycle marker identifies the legacy topology.
+# removalCondition: remove this marker stamp when OpenShell unifies the topology
+# or exposes an attested execution-identity capability.
+install -d -m 0755 -o root -g root /run/nemoclaw
+printf '%s\n' 'root-separated' >/run/nemoclaw/hermes-root-lifecycle
+chown root:root /run/nemoclaw/hermes-root-lifecycle
+chmod 0444 /run/nemoclaw/hermes-root-lifecycle
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

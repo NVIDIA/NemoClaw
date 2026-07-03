@@ -23,6 +23,8 @@ NemoClaw v0.0.74 advances to OpenShell `0.0.72` and adopts its safe policy round
 - Stable installs pin OpenShell `0.0.72` release artifacts and supervisor image, adding MCP Streamable HTTP and JSON-RPC request-policy enforcement.
 - Policy mutations now read the round-trippable base policy instead of the effective policy, preventing provider-composed `_provider_*` entries from being sent back through `policy set` while preserving existing MCP rules.
   For more information, refer to [OpenShell 0.0.72 Compatibility Review](../security/openshell-0.0.72-compatibility-review) and [Customize the Network Policy](../network-policy/customize-network-policy).
+- Managed MCP commands now add, list, inspect, rotate, restart, and remove authenticated HTTPS Streamable HTTP servers for OpenClaw, Hermes, and LangChain Deep Agents Code through native OpenShell policy enforcement and provider-backed credential replacement.
+  For more information, refer to [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
 
 ## v0.0.73
 

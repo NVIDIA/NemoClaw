@@ -693,6 +693,7 @@ describe("runSandboxSnapshot", () => {
     for (const processLine of [
       "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "123 /opt/venv/bin/python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
+      "123 /opt/venv/bin/python3 -I -m deepagents_code --sandbox none --no-mcp -n work\n",
       "124 /usr/local/bin/dcode task\n",
       "125 /opt/bin/deepagents_code task\n",
       "126 /opt/bin/deepagents-code task\n",

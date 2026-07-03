@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -379,6 +381,7 @@ describe("E2E fixture clients", () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
     const script = trustedSandboxShellScript("echo ready");
+    const encodedScript = Buffer.from(script, "utf8").toString("base64");
 
     expectTypeOf<
       Parameters<SandboxClient["execShell"]>[1]
@@ -391,7 +394,20 @@ describe("E2E fixture clients", () => {
 
     expect(runner.calls[0]).toEqual({
       command: "openshell",
-      args: ["sandbox", "exec", "-n", "assistant", "--", "sh", "-lc", "echo ready"],
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "sh",
+        "-lc",
+        [
+          "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+          `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
+          `eval "$_NEMOCLAW_E2E_SCRIPT"`,
+        ].join("; "),
+      ],
       options: {
         artifactName: "custom-exec-shell",
         timeoutMs: 123,
@@ -399,22 +415,37 @@ describe("E2E fixture clients", () => {
     });
   });
 
-  it("encodes multiline shell scripts into an OpenShell-safe single argument", async () => {
+  it("sandbox client keeps multiline shell scripts out of OpenShell argv", async () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
-    const source = "set -e\nprintf 'ready\\n'\n";
+    const script = trustedSandboxShellScript("set -eu\nprintf '%s\\n' ready\r\n");
 
-    await sandbox.execShell("assistant", trustedSandboxShellScript(source));
+    await sandbox.execShell("assistant", script);
 
-    const argument = runner.calls[0]?.args.at(-1) ?? "";
-    expect(argument).not.toMatch(/[\r\n]/u);
-    const encoded = argument.match(/'([A-Za-z0-9+/=]+)' \| base64 -d/u)?.[1];
-    expect(encoded).toBeTruthy();
-    expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toBe(source);
+    const payload = runner.calls[0]?.args.at(-1) ?? "";
+    expect(payload).not.toMatch(/[\r\n]/);
+    const encodedScript = payload.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? "";
+    expect(Buffer.from(encodedScript, "base64").toString("utf8")).toBe(script);
+  });
+
+  it("sandbox client fails closed when the sandbox has no base64 decoder", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.execShell("assistant", trustedSandboxShellScript("echo should-not-run"));
+
+    const payload = runner.calls[0]?.args.at(-1) ?? "";
+    const result = spawnSync("/bin/sh", ["-c", payload], {
+      encoding: "utf8",
+      env: { PATH: "" },
+    });
+    expect(result.status).toBe(127);
+    expect(result.stderr).toContain("NEMOCLAW_BASE64_MISSING");
+    expect(result.stdout).not.toContain("should-not-run");
   });
 
   it("sandbox client requires trusted non-empty shell scripts", () => {
-    expect(() => trustedSandboxShellScript("")).toThrow(/must be non-empty/);
+    expect(() => trustedSandboxShellScript("")).toThrow(/must not be empty/);
     expect(() => trustedSandboxShellScript("echo ready\0ignored")).toThrow(/no NUL bytes/);
     expectTypeOf<Parameters<SandboxClient["execShell"]>[1]>().not.toEqualTypeOf<string>();
   });

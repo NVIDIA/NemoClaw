@@ -10,6 +10,8 @@ import {
   spawnSync,
 } from "node:child_process";
 
+import { buildSubprocessEnv } from "../../subprocess-env";
+
 export type OpenshellSpawnSync = (
   command: string,
   args: readonly string[],
@@ -21,11 +23,21 @@ export type OpenshellSpawn = typeof spawn;
 interface OpenshellSpawnOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  replaceEnv?: boolean;
   timeout?: number;
   ignoreError?: boolean;
   spawnSyncImpl?: OpenshellSpawnSync;
   errorLine?: (message: string) => void;
   exit?: (code: number) => never;
+}
+
+function openshellSpawnEnv(opts: OpenshellSpawnOptions): NodeJS.ProcessEnv {
+  const explicitEnv = Object.fromEntries(
+    Object.entries(opts.env ?? {}).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined,
+    ),
+  );
+  return opts.replaceEnv ? explicitEnv : buildSubprocessEnv(explicitEnv);
 }
 
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
@@ -149,7 +161,7 @@ export function runOpenshellCommand(
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: opts.stdio ?? "inherit",
     input: opts.input,
@@ -176,7 +188,7 @@ export function captureOpenshellCommand(
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
   const result = spawnSyncImpl(binary, args, {
     cwd: opts.cwd,
-    env: { ...process.env, ...opts.env },
+    env: openshellSpawnEnv(opts),
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
@@ -231,7 +243,7 @@ export function captureOpenshellCommandAsync(
   return new Promise((resolve) => {
     const child = spawnImpl(binary, args, {
       cwd: opts.cwd,
-      env: { ...process.env, ...opts.env },
+      env: openshellSpawnEnv(opts),
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
     }) as ChildProcess;

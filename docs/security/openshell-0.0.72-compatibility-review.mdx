@@ -11,14 +11,15 @@ content:
 ---
 
 This review covers NemoClaw's stable OpenShell `0.0.72` pin, Docker-driver gateway authentication, policy mutation, and MCP and JSON-RPC policy compatibility.
-The review was completed on June 29, 2026.
+The dependency compatibility review was completed on June 29, 2026; the MCP integration and DNS source/runtime supplement were reviewed on June 30, 2026.
 
 ## Release Identity
 
 - The stable tag is `NVIDIA/OpenShell@v0.0.72` at commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
 - The upstream [v0.0.72 release workflow](https://github.com/NVIDIA/OpenShell/actions/runs/28382086068) completed all 54 jobs at that commit, including the MCP conformance lane, package smoke tests, release publication, and GHCR tags.
 - NemoClaw pins the eight consumed CLI, gateway, and sandbox assets to the digests published by the [GitHub release API](https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72).
-- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`. Explicit operator overrides and the opt-in development channel remain separate trust decisions.
+- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`.
+  Explicit operator overrides and the opt-in development channel remain separate trust decisions.
 
 ## Source-of-Truth Boundaries
 
@@ -55,7 +56,8 @@ These version-specific pins are removed only when NemoClaw drops `0.0.72` suppor
 - `regressionTest`: `test/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
 - `removalCondition`: Remove the opt-in when NemoClaw no longer tests unreleased OpenShell builds or the development channel publishes artifacts through an independently verified immutable pipeline.
 
-The development channel is compatibility evidence only. Use it in trusted test environments, never as the stable shipping configuration.
+The development channel is compatibility evidence only.
+Use it in trusted test environments, never as the stable shipping configuration.
 
 ## Round-Trippable Policy Boundary
 
@@ -78,9 +80,24 @@ OpenShell `0.0.72` adds `protocol: mcp` for MCP Streamable HTTP and `protocol: j
 MCP rules can match methods and `tools/call` tool names, support allow and deny rules, and fail closed for malformed or ambiguous request frames.
 The upstream MCP conformance lane passed `initialize`, `tools_call`, and `elicitation-sep1034-client-defaults` with no expected failures.
 
-This dependency PR preserves the new MCP and JSON-RPC YAML fields when NemoClaw merges existing policies.
-It does not widen NemoClaw's strict blueprint-addition schema to author new MCP endpoints because that is a separate product and API change.
+NemoClaw preserves the new MCP and JSON-RPC YAML fields when it merges existing policies.
+The strict blueprint-addition schema does not author MCP endpoints; `nemoclaw <sandbox> mcp add` is the supported managed product path described in [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
 OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not stdio MCP or generic inbound traffic.
+
+## DNS Pinning Source and Runtime Contract
+
+The MCP integration pins the OpenShell DNS enforcement contract to [`NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963`](https://github.com/NVIDIA/OpenShell/tree/8cb16de9eae4c44d7d31e1493747d8c10abb5963).
+In that implementation, [`crates/openshell-supervisor-network/src/proxy.rs:2476-2502`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2476-L2502) produces one socket-address list, [`crates/openshell-supervisor-network/src/proxy.rs:2527-2567`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2527-L2567) validates every address in that list, and [`crates/openshell-supervisor-network/src/proxy.rs:2622-2630`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L2622-L2630) returns the validated list unchanged.
+The CONNECT path passes that returned list directly to `TcpStream::connect` at [`crates/openshell-supervisor-network/src/proxy.rs:822-832`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L822-L832).
+The explicit HTTP-forward path carries the same returned list from [`crates/openshell-supervisor-network/src/proxy.rs:3885-3893`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L3885-L3893) to [`crates/openshell-supervisor-network/src/proxy.rs:4123-4125`](https://github.com/NVIDIA/OpenShell/blob/8cb16de9eae4c44d7d31e1493747d8c10abb5963/crates/openshell-supervisor-network/src/proxy.rs#L4123-L4125).
+There is no second hostname resolution between validation and connection in either path.
+
+The stable and development `mcp-bridge` live lanes isolate that upstream contract from NemoClaw's MCP implementation before the OpenClaw scenario performs any managed MCP mutation.
+They apply a raw OpenShell `protocol: mcp` policy with `allowed_ips: [1.1.1.1]`, remap the hostname to a reachable private runner address, send a raw MCP `tools/list` request, require an exact HTTP 403, verify zero upstream requests without calling `nemoclaw mcp` or any agent adapter, and restore the exact base policy in `finally`.
+
+The live MCP scenario registers a hostname while it resolves to a pinned public address, remaps it to a reachable unpinned runner address, and sends an MCP `tools/list` request beneath each adapter runtime identity.
+OpenClaw uses the managed Node identity, Hermes uses its managed Python identity, and LangChain Deep Agents Code uses its managed virtual-environment Python identity.
+The scenario requires an OpenShell HTTP 403 or CONNECT 403 for every adapter and verifies that the upstream MCP server recorded zero requests.
 
 ## Local Contract Coverage
 
@@ -89,3 +106,5 @@ OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not std
 - Policy tests cover `--base` command construction and MCP and JSON-RPC field preservation.
 - Blueprint tests prove the merged policy excludes reserved provider entries.
 - The live gateway authentication and gateway-upgrade scenarios run against `0.0.72`.
+- The stable and development MCP live lanes independently prove raw OpenShell `allowed_ips` rebinding denial with an exact HTTP 403 and zero upstream requests, then restore the base policy.
+- The live MCP matrix proves DNS rebinding denial with zero upstream requests for OpenClaw, Hermes, and LangChain Deep Agents Code.

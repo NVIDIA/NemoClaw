@@ -48,7 +48,10 @@ export function createRebuildRegistryRollback(
 
       const recoveryRegistrySnapshot = options.getRecoveryRegistrySnapshot();
       const snapshotEntry = recoveryRegistrySnapshot?.sandboxes?.[options.sandboxName];
-      if (options.preparedBackupRecovery && snapshotEntry) {
+      const shouldRestoreRecoverySnapshot =
+        options.preparedBackupRecovery ||
+        (options.staleRecovery && removedRegistryReceipt === null);
+      if (shouldRestoreRecoverySnapshot && snapshotEntry) {
         rollbackAttempted = true;
         try {
           const defaultTransition = removedRegistryReceipt?.wasDefault

@@ -123,6 +123,28 @@ describe("createRebuildRegistryRollback", () => {
     );
   });
 
+  it("restores a stale-recovery snapshot when MCP kept the registry entry", () => {
+    const original = sandboxEntry({ model: "preserved-model" });
+    const restoreSandboxEntry = vi.fn();
+    const restoreSandboxEntryIfMissing = vi.fn(() => true);
+    const rollback = createRebuildRegistryRollback(
+      {
+        sandboxName: "alpha",
+        preparedBackupRecovery: false,
+        staleRecovery: true,
+        getRecoveryRegistrySnapshot: () => registrySnapshot(original, "alpha"),
+        log: vi.fn(),
+      },
+      { restoreSandboxEntry, restoreSandboxEntryIfMissing },
+    );
+    rollback.recordRemoval(null);
+
+    rollback.restoreForRetry();
+
+    expect(restoreSandboxEntry).toHaveBeenCalledWith(original, {});
+    expect(restoreSandboxEntryIfMissing).not.toHaveBeenCalled();
+  });
+
   it("can restore after an early no-op and contains restore failures", () => {
     const restoreSandboxEntryIfMissing = vi.fn(() => {
       throw new Error("registry locked");

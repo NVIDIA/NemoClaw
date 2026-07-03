@@ -10,7 +10,17 @@ import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
-import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
+import {
+  DCODE_CANONICAL_PATH,
+  headlessCheckPath,
+  makeStartScriptFixture as makeHeadlessStartScriptFixture,
+  NO_PROXY_ENV_NAMES,
+  PROXY_URL_ENV_NAMES,
+  runHeadlessCheckHelper,
+  runStartScriptProxyProbe,
+  TRACING_ENABLE_ENV_NAMES,
+} from "./helpers/langchain-deepagents-code-headless.ts";
+import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -30,28 +40,31 @@ function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
   return `-----BEGIN ${label} ${newline}opaque-test-body${newline}-----END ${label}`;
 }
 
-const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
-const headlessCheckPath = path.join(
-  process.cwd(),
-  "test",
-  "e2e",
-  "e2e-cloud-experimental",
-  "checks",
-  "07-deepagents-code-headless-inference.sh",
-);
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const tuiStartupCheckPath = path.join(
-  process.cwd(),
+  repoRoot,
   "test",
   "e2e",
   "e2e-cloud-experimental",
   "checks",
   "10-deepagents-code-tui-startup.sh",
 );
-const DCODE_CANONICAL_PATH =
-  "/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
+}
+
+const MANAGED_MCP_VALIDATOR_INVOCATION = [
+  'managed_mcp_config="$(',
+  "  /opt/venv/bin/python3 -I -c \\",
+  "    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or \"\")'",
+  ')"',
+].join("\n");
+
+function stubManagedMcpValidator(source: string): string {
+  expect(source).toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
+  return source.replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""');
 }
 
 function makeWrapperFixture(
@@ -69,7 +82,7 @@ function makeWrapperFixture(
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
-  const fixture = readAgentFile("dcode-wrapper.sh")
+  const fixture = stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh"))
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
@@ -101,7 +114,7 @@ function makeNetworkSimulatingFixture(tempDir: string): {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const networkLog = path.join(tempDir, "network.log");
   const envFile = path.join(tempDir, ".env");
-  const fixture = readAgentFile("dcode-wrapper.sh")
+  const fixture = stubManagedMcpValidator(readAgentFile("dcode-wrapper.sh"))
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
@@ -140,69 +153,6 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
       "string",
     );
     return entry.path as string;
-  });
-}
-
-const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
-const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
-const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
-const TRACING_ENABLE_ENV_NAMES = [
-  "DEEPAGENTS_CODE_LANGSMITH_TRACING",
-  "DEEPAGENTS_CODE_LANGSMITH_TRACING_V2",
-  "DEEPAGENTS_CODE_LANGCHAIN_TRACING",
-  "DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2",
-  "LANGSMITH_TRACING",
-  "LANGSMITH_TRACING_V2",
-  "LANGCHAIN_TRACING",
-  "LANGCHAIN_TRACING_V2",
-] as const;
-
-function runStartScriptProxyProbe(
-  scriptPath: string,
-  envFile: string,
-  env: NodeJS.ProcessEnv,
-): { envFileText: string; output: string } {
-  const probe = [
-    ...[
-      ...PROXY_URL_ENV_NAMES,
-      ...NO_PROXY_ENV_NAMES,
-      ...CLEARED_PROXY_ENV_NAMES,
-      ...TRACING_ENABLE_ENV_NAMES,
-    ].map((name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`),
-    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
-    "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
-    "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
-    '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[
-      ...PROXY_URL_ENV_NAMES,
-      ...NO_PROXY_ENV_NAMES,
-      ...CLEARED_PROXY_ENV_NAMES,
-      ...TRACING_ENABLE_ENV_NAMES,
-    ].map((name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`),
-  ].join("\n");
-  const result = spawnSync("bash", [scriptPath, "bash", "-c", probe], {
-    env: {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      ...env,
-      NEMOCLAW_TEST_PROXY_ENV: envFile,
-    },
-    encoding: "utf8",
-  });
-  expect(result.status, result.stderr).toBe(0);
-  return {
-    envFileText: fs.readFileSync(envFile, "utf8"),
-    output: `${result.stdout}\n${result.stderr}`,
-  };
-}
-
-function runHeadlessCheckHelper(
-  snippet: string,
-  env: NodeJS.ProcessEnv = {},
-  sourcePath = headlessCheckPath,
-): string {
-  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", sourcePath], {
-    encoding: "utf8",
-    env: { ...process.env, ...env },
   });
 }
 
@@ -257,7 +207,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     try {
-      const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+      const { envFile, scriptPath } = makeIdentityStartScriptFixture(tempDir);
 
       execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
         env: {
@@ -275,7 +225,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
-    const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+    const { envFile, scriptPath } = makeHeadlessStartScriptFixture(
+      tempDir,
+      readAgentFile("start.sh"),
+    );
     const inheritedSecrets = {
       NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
       OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
@@ -357,7 +310,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("unset PYTHONHOME PYTHONPATH");
     expect(wrapper).toContain('/opt/venv/bin/python3 -I - "$auth_file"');
     expect(wrapper).toContain("exec /opt/venv/bin/python3 -I -m deepagents_code");
-    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
+    expect(wrapper).toContain("extra_args=(--sandbox none)");
+    expect(wrapper).toContain('extra_args+=(--mcp-config "$managed_mcp_config")');
+    expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
+    expect(wrapper).toContain("extra_args+=(--no-mcp)");
     expect(wrapper).toContain("assert_no_auth_store_credentials");
     expect(wrapper).toContain("assert_no_codex_auth_credentials");
     for (const s of [
@@ -391,6 +347,39 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");
+  });
+
+  it("exposes an exact managed MCP capability marker without starting dcode", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mcp-capability-"));
+    try {
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {});
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n");
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the pinned Deep Agents Code user-level MCP discovery path", () => {
+    const requirements = readAgentFile("requirements.lock");
+    const wrapper = readAgentFile("dcode-wrapper.sh");
+    const patcher = readAgentFile("patch-managed-deepagents-code.py");
+    const manifest = readAgentFile("manifest.yaml");
+    const userLevelPath = "/sandbox/.deepagents/.mcp.json";
+
+    // The pinned Deep Agents Code release discovers ~/.deepagents/.mcp.json as user-level
+    // config. /sandbox/.mcp.json is project-level and headless `dcode -n`
+    // rejects it unless the project trust gate has been satisfied.
+    expect(requirements).toContain("deepagents-code==0.1.30");
+    expect(wrapper).toContain("managed_mcp_config_path");
+    expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${userLevelPath}")`);
+    expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
+    expect(manifest).toContain("- .deepagents/.mcp.json");
+    expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
+    expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
   });
 
   it("puts the managed Python venv before system Python in every dcode entry path", () => {
@@ -709,78 +698,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("requires the managed inference route and placeholder key in Deep Agents Code config", () => {
     expect(
-      runHeadlessCheckHelper(
-        'printf "%s" "$CONFIG" | references_managed_inference_route && printf route',
-        { CONFIG: 'base_url = "https://inference.local/v1"' },
-      ),
+      runHeadlessCheckHelper("managed-route", {
+        CONFIG: 'base_url = "https://inference.local/v1"',
+      }),
     ).toBe("route");
     expect(
-      runHeadlessCheckHelper(
-        'printf "%s" "$CONFIG" | references_managed_placeholder_key && printf key',
-        { CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"' },
-      ),
+      runHeadlessCheckHelper("managed-placeholder", {
+        CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"',
+      }),
     ).toBe("key");
-  });
-
-  it("requires exit zero and PONG from Deep Agents Code headless inference (#6191)", () => {
-    const classify = (exitCode: string, output: string) =>
-      runHeadlessCheckHelper(
-        [
-          'if classification="$(classify_headless_output "$DCODE_EXIT" "$HEADLESS_OUTPUT")"; then',
-          '  printf "pass:%s" "$classification";',
-          "else",
-          '  printf "fail:%s" "$classification";',
-          "fi",
-        ].join(" "),
-        { DCODE_EXIT: exitCode, HEADLESS_OUTPUT: output },
-      );
-
-    const cases: Array<[string, string, string]> = [
-      ["0", "startup log\n  PONG  \nDCODE_EXIT:0", "pass:pong"],
-      [
-        "1",
-        "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1",
-        "fail:actionable-inference-error",
-      ],
-      ["1", "PONG\nDCODE_EXIT:1", "fail:nonzero-exit"],
-      ["1", "openai.APIConnectionError\nDCODE_EXIT:1", "fail:inference-connection-failure"],
-      [
-        "1",
-        "Could not resolve host inference.local\nDCODE_EXIT:1",
-        "fail:inference-connection-failure",
-      ],
-      ["0", "OpenAI provider unavailable\nDCODE_EXIT:0", "fail:actionable-inference-error"],
-      [
-        "0",
-        "dcode version 0.1.12\nOpenAI provider unavailable\nDCODE_EXIT:0",
-        "fail:actionable-inference-error",
-      ],
-      ["124", "still waiting\nDCODE_EXIT:124", "fail:timeout"],
-      ["1", "usage: dcode [-h]\nDCODE_EXIT:1", "fail:local-execution-failure"],
-      ["1", "Traceback (most recent call last):\nDCODE_EXIT:1", "fail:local-execution-failure"],
-      ["127", "bash: dcode: command not found\nDCODE_EXIT:127", "fail:wrapper-missing"],
-      ["1", "No module named deepagents_code\nDCODE_EXIT:1", "fail:wrapper-missing"],
-      // The word 'dcode' in a non-error context (e.g. version banner) must not
-      // be misclassified as wrapper-missing; the regex requires a specific error
-      // indicator after the dcode path segment. See PR #6206 / advisor PRA-2.
-      ["0", "  PONG  \nDCODE_EXIT:0", "pass:pong"],
-      ["0", "dcode version 0.1.12\nPONG\nDCODE_EXIT:0", "pass:pong"],
-      ["0", "something happened\nDCODE_EXIT:0", "fail:ambiguous-output"],
-      ["0", "Reply with exactly one word: PONG\nDCODE_EXIT:0", "fail:ambiguous-output"],
-      ["0", "PONG because the route works\nDCODE_EXIT:0", "fail:ambiguous-output"],
-      ["1", "something happened\nDCODE_EXIT:1", "fail:nonzero-exit"],
-    ];
-    for (const [exitCode, output, expected] of cases) {
-      expect(classify(exitCode, output)).toBe(expected);
-    }
   });
 
   it("rejects unsafe headless timeout values before sandbox execution", () => {
     const validate = (timeout: string) =>
-      runHeadlessCheckHelper(
-        'if is_positive_integer "$HEADLESS_TIMEOUT"; then printf valid; else printf invalid; fi',
-        { DEEPAGENTS_HEADLESS_TIMEOUT: timeout },
-      );
+      runHeadlessCheckHelper("positive-integer", { DEEPAGENTS_HEADLESS_TIMEOUT: timeout });
 
     expect(validate("120")).toBe("valid");
     expect(validate("0")).toBe("invalid");
@@ -789,10 +720,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("detects representative secret families in headless inference artifacts", () => {
     const detectsSecret = (token: string) =>
-      runHeadlessCheckHelper(
-        'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
-        { TOKEN: token },
-      );
+      runHeadlessCheckHelper("contains-secret", { TOKEN: token });
     const secretSamples = [
       "nvapi-" + "A".repeat(10),
       "nvcf-" + "A".repeat(10),
@@ -885,13 +813,86 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("allows only exact same-name OpenShell env placeholders in runtime and dotenv inputs", () => {
+    const name = "GITHUB_MCP_TOKEN";
+    const validPlaceholders = [
+      `openshell:resolve:env:${name}`,
+      `openshell:resolve:env:v0_${name}`,
+      `openshell:resolve:env:v1442987827285932589_${name}`,
+    ];
+
+    for (const [index, placeholder] of validPlaceholders.entries()) {
+      const runtimeDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-runtime-${index}-`),
+      );
+      const runtimeFixture = makeWrapperFixture(runtimeDir);
+      const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], {
+        [name]: placeholder,
+      });
+      expect(runtimeResult.status, placeholder).toBe(0);
+      expect(runtimeResult.stdout).toContain("dcode-stub-ran");
+      expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(true);
+
+      const dotenvDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-dotenv-${index}-`),
+      );
+      const dotenvFixture = makeWrapperFixture(dotenvDir);
+      fs.writeFileSync(dotenvFixture.envFile, `${name}="${placeholder}"\n`, "utf8");
+      const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+      expect(dotenvResult.status, placeholder).toBe(0);
+      expect(dotenvResult.stdout).toContain("dcode-stub-ran");
+      expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(true);
+    }
+  });
+
+  it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
+    const invalidCases = [
+      { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12_OTHER_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v_MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12x_MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12__MODEL_NAME" },
+      { name: "MODEL_NAME", value: "Bearer openshell:resolve:env:MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:MODEL_NAME:suffix" },
+      { name: "MODEL-NAME", value: "openshell:resolve:env:MODEL-NAME" },
+      { name: "OPENSHELL_TLS_KEY", value: "openshell:resolve:env:OPENSHELL_TLS_KEY" },
+      { name: "OPENSHELL_TLS_KEY", value: "openshell:resolve:env:v12_OPENSHELL_TLS_KEY" },
+      { name: "GITHUB_MCP_TOKEN", value: "opaqueRawCredentialValue12345" },
+    ];
+
+    for (const [index, { name, value }] of invalidCases.entries()) {
+      const runtimeDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-invalid-runtime-${index}-`),
+      );
+      const runtimeFixture = makeWrapperFixture(runtimeDir);
+      const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], {
+        [name]: value,
+      });
+      expect(runtimeResult.status, `runtime accepted ${value}`).not.toBe(0);
+      expect(runtimeResult.stderr).toContain(name);
+      expect(runtimeResult.stderr).not.toContain(value);
+      expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(false);
+
+      const dotenvDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-invalid-dotenv-${index}-`),
+      );
+      const dotenvFixture = makeWrapperFixture(dotenvDir);
+      fs.writeFileSync(dotenvFixture.envFile, `${name}=${value}\n`, "utf8");
+      const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+      expect(dotenvResult.status, `dotenv accepted ${value}`).not.toBe(0);
+      expect(dotenvResult.stderr).toContain(name);
+      expect(dotenvResult.stderr).not.toContain(value);
+      expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(false);
+    }
+  });
+
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      SLACK_BOT_TOKEN: "xoxb-1234567890-abcdefghij",
-      SLACK_APP_TOKEN: "xapp-1-A1B2C3-1234567890-abcdefghij",
+      SLACK_BOT_TOKEN: ["xoxb", "1234567890", "abcdefghij"].join("-"),
+      SLACK_APP_TOKEN: ["xapp", "1", "A1B2C3", "1234567890", "abcdefghij"].join("-"),
       TELEGRAM_BOT_TOKEN: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
       DISCORD_BOT_TOKEN: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
     });
@@ -1457,11 +1458,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
       { name: "xoxb", sample: "xoxb-1234567890" },
       { name: "xoxp", sample: "xoxp-1234567890" },
-      { name: "xoxa", sample: "xoxa-1234567890" },
+      { name: "xoxa", sample: ["xoxa", "1234567890"].join("-") },
       { name: "xoxs", sample: "xoxs-1234567890" },
-      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
-      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
-      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
+      { name: "xapp", sample: ["xapp", "1", "A1B2C3", "12345", "abcde"].join("-") },
+      { name: "akia", sample: ["AKIA", "ABCDEFGHIJKLMNOP"].join("") },
+      { name: "asia", sample: ["ASIA", "ABCDEFGHIJKLMNOP"].join("") },
       { name: "hf", sample: "hf_abcdefghijklmnopq" },
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },

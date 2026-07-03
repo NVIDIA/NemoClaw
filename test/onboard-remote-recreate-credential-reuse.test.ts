@@ -258,10 +258,7 @@ const { setupNim, setupInference } = require(${onboardPath});
         });
         const conflictingEndpointOutput = `${conflictingEndpointResult.stdout || ""}\n${conflictingEndpointResult.stderr || ""}`;
         assert.notEqual(conflictingEndpointResult.status, 0, conflictingEndpointOutput);
-        assert.match(
-          conflictingEndpointOutput,
-          /NVIDIA_INFERENCE_API_KEY .*required for NVIDIA Endpoints/,
-        );
+        assert.match(conflictingEndpointOutput, /NVIDIA Endpoints endpoint validation failed/);
         assert.ok(
           !conflictingEndpointOutput.includes("Reusing existing gateway credential"),
           conflictingEndpointOutput,

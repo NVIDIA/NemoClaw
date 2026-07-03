@@ -88,6 +88,9 @@ navigation:
               - page: "Set Up Messaging Channels"
                 path: _build/agent-variants/manage-sandboxes/messaging-channels.openclaw.generated.mdx
                 slug: messaging-channels
+              - page: "Set Up MCP Servers"
+                path: _build/agent-variants/deployment/set-up-mcp-bridge.openclaw.generated.mdx
+                slug: set-up-mcp-servers
               - page: "Workspace Files"
                 path: _build/agent-variants/manage-sandboxes/workspace-files.openclaw.generated.mdx
                 slug: workspace-files
@@ -140,12 +143,12 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
-              - page: "OpenShell 0.0.72 Compatibility Review"
-                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
-                slug: openshell-0.0.72-compatibility-review
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
                 slug: trusted-computing-base
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review
@@ -262,6 +265,9 @@ navigation:
               - page: "Set Up Messaging Channels"
                 path: _build/agent-variants/manage-sandboxes/messaging-channels.hermes.generated.mdx
                 slug: messaging-channels
+              - page: "Set Up MCP Servers"
+                path: _build/agent-variants/deployment/set-up-mcp-bridge.hermes.generated.mdx
+                slug: set-up-mcp-servers
               - page: "Workspace Files"
                 path: _build/agent-variants/manage-sandboxes/workspace-files.hermes.generated.mdx
                 slug: workspace-files
@@ -301,12 +307,12 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
-              - page: "OpenShell 0.0.72 Compatibility Review"
-                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
-                slug: openshell-0.0.72-compatibility-review
               - page: "Trusted Computing Base"
                 path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
                 slug: trusted-computing-base
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review
