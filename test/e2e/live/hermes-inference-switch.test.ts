@@ -39,10 +39,19 @@ import {
   SWITCH_PROVIDER,
   strictHashPerms,
 } from "./hermes-inference-switch-helpers.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+  registerPublicNvidiaSwitchProvider,
+  requirePublicNvidiaSwitchKey,
+} from "./public-nvidia-switch-provider.ts";
 
 const TIMEOUT_MS = 45 * 60_000;
 const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
 const MOCK_BASELINE_MODEL = "hermes-inference-switch-baseline-model";
+
+function canonicalEndpoint(value: unknown): string | null {
+  return typeof value === "string" ? new URL(value).toString() : null;
+}
 
 test.skipIf(!shouldRunLiveE2E())(
   "Hermes inference set updates route/config and preserves live runtime",
@@ -86,6 +95,13 @@ test.skipIf(!shouldRunLiveE2E())(
     const apiKey = mockBaseline
       ? MOCK_BASELINE_API_KEY
       : secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const publicApiKey =
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
+        : null;
+    const redactionValues = [apiKey, publicApiKey].filter(
+      (value): value is string => typeof value === "string",
+    );
     const installEnv: NodeJS.ProcessEnv = mockBaseline
       ? {
           COMPATIBLE_API_KEY: apiKey,
@@ -110,6 +126,10 @@ test.skipIf(!shouldRunLiveE2E())(
       provider: "compatible-endpoint",
       model: hostedInstallModel(installEnv),
     });
+    const publicProvider = publicApiKey
+      ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, env())
+      : null;
+    publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
     const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
@@ -125,7 +145,11 @@ test.skipIf(!shouldRunLiveE2E())(
           SWITCH_API,
         ]
       : [];
-    const switched = await runHermesInferenceSetWithRetry(host, apiKey, compatibleMetadataArgs);
+    const switched = await runHermesInferenceSetWithRetry(
+      host,
+      redactionValues,
+      compatibleMetadataArgs,
+    );
     expect(switched.exitCode, resultText(switched)).toBe(0);
     expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
     expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
@@ -155,7 +179,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
       artifactName: "hermes-config-yaml",
       env: env(),
-      redactionValues: [apiKey],
+      redactionValues,
       timeoutMs: 30_000,
     });
     expect(config.exitCode, resultText(config)).toBe(0);
@@ -191,21 +215,33 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(state.session.agent).toBe("hermes");
     expect(state.session.provider).toBe(SWITCH_PROVIDER);
     expect(state.session.model).toBe(SWITCH_MODEL);
-    const expectedEndpointUrl =
-      switchEndpointUrl ?? process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
-    const expectedCredentialEnv = switchEndpointUrl
-      ? "COMPATIBLE_ANTHROPIC_API_KEY"
-      : "COMPATIBLE_API_KEY";
-    expect(new URL(String(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl)).toString()).toBe(
-      new URL(expectedEndpointUrl).toString(),
+    const publicSwitch = SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER;
+    const durableEndpointUrl = publicSwitch
+      ? null
+      : (switchEndpointUrl ??
+        process.env.NEMOCLAW_ENDPOINT_URL ??
+        DEFAULT_HOSTED_INFERENCE_BASE_URL);
+    const durableCredentialEnv = publicSwitch
+      ? null
+      : switchEndpointUrl
+        ? "COMPATIBLE_ANTHROPIC_API_KEY"
+        : "COMPATIBLE_API_KEY";
+    expect(canonicalEndpoint(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl)).toBe(
+      canonicalEndpoint(durableEndpointUrl),
     );
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(expectedCredentialEnv);
-    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(SWITCH_API);
-    expect(new URL(String(state.session.endpointUrl)).toString()).toBe(
-      new URL(expectedEndpointUrl).toString(),
+    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
+    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
+      publicSwitch ? null : SWITCH_API,
     );
-    expect(state.session.credentialEnv).toBe(expectedCredentialEnv);
+    expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
+    expect(canonicalEndpoint(state.session.endpointUrl)).toBe(
+      canonicalEndpoint(publicSwitch ? "https://inference.local/v1" : durableEndpointUrl),
+    );
+    expect(state.session.credentialEnv).toBe(
+      publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv,
+    );
     expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
+    expect(state.session.nimContainer).toBeNull();
 
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -220,7 +256,7 @@ test.skipIf(!shouldRunLiveE2E())(
           {
             artifactName: `hermes-inference-local-chat-after-switch-${attempt}`,
             env: env(),
-            redactionValues: [apiKey],
+            redactionValues,
             timeoutMs: 120_000,
           },
         ),
@@ -241,7 +277,7 @@ test.skipIf(!shouldRunLiveE2E())(
           {
             artifactName: `hermes-api-chat-after-switch-${attempt}`,
             env: env(),
-            redactionValues: [apiKey],
+            redactionValues,
             timeoutMs: 150_000,
           },
         ),

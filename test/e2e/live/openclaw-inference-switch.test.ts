@@ -36,19 +36,19 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_MODEL,
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+  registerPublicNvidiaSwitchProvider,
+  requirePublicNvidiaSwitchKey,
+} from "./public-nvidia-switch-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? uniqueSandboxName("e2e-openclaw-inference-switch");
-const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-120b-a12b";
-const SWITCH_PROVIDER =
-  process.env.NEMOCLAW_SWITCH_PROVIDER ??
-  (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
-const SWITCH_MODEL =
-  process.env.NEMOCLAW_SWITCH_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
+const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
+const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
@@ -91,6 +91,7 @@ interface OpenClawConfig {
       string,
       {
         baseUrl?: unknown;
+        apiKey?: unknown;
         api?: unknown;
         models?: Array<{ id?: unknown; name?: unknown }>;
       }
@@ -119,6 +120,7 @@ interface OnboardSession {
   endpointUrl?: unknown;
   credentialEnv?: unknown;
   preferredInferenceApi?: unknown;
+  nimContainer?: unknown;
 }
 
 interface MockAnthropicProvider {
@@ -515,12 +517,18 @@ async function assertRegistryAndSession(
   expect(session.sandboxName).toBe(SANDBOX_NAME);
   expect(session.provider).toBe(SWITCH_PROVIDER);
   expect(session.model).toBe(SWITCH_MODEL);
+  expect(session.nimContainer).toBeNull();
   switch (SWITCH_PROVIDER) {
     case "compatible-endpoint":
       expect(session.preferredInferenceApi).toBe("openai-completions");
       break;
     case "compatible-anthropic-endpoint":
       expect(session.preferredInferenceApi).toBe("anthropic-messages");
+      break;
+    case PUBLIC_NVIDIA_SWITCH_PROVIDER:
+      expect(session.endpointUrl).toBe("https://inference.local/v1");
+      expect(session.credentialEnv).toBe("OPENAI_API_KEY");
+      expect(session.preferredInferenceApi).toBe("openai-completions");
       break;
   }
 }
@@ -549,6 +557,7 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
       ? "https://inference.local"
       : "https://inference.local/v1",
   );
+  expect(provider?.apiKey).toBe("unused");
   expect(provider?.api).toBe(SWITCH_INFERENCE_API);
   expect(firstModel?.id).toBe(SWITCH_MODEL);
   expect(firstModel?.name).toBe(expectedPrimary);
@@ -975,6 +984,13 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       ? mockBaselineInference(baselineProvider.baseUrl)
       : requireHostedInferenceConfig(secrets);
     const apiKey = baseline.apiKey;
+    const publicApiKey =
+      SWITCH_PROVIDER === PUBLIC_NVIDIA_SWITCH_PROVIDER
+        ? requirePublicNvidiaSwitchKey(secrets.required("NVIDIA_API_KEY"))
+        : null;
+    const redactionValues = [apiKey, publicApiKey].filter(
+      (value): value is string => typeof value === "string",
+    );
 
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-switch-home-"));
     let mockProvider: MockAnthropicProvider | undefined;
@@ -997,7 +1013,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
           ...baseline.env,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
-        redactionValues: [apiKey],
+        redactionValues,
         timeoutMs: INSTALL_TIMEOUT_MS,
       },
     );
@@ -1013,6 +1029,11 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
     }
     expect(install.exitCode, installText).toBe(0);
     expectMockBaselineAuthentication(baselineProvider);
+
+    const publicProvider = publicApiKey
+      ? await registerPublicNvidiaSwitchProvider(host, publicApiKey, commandEnv(home))
+      : null;
+    publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
 
     if (SWITCH_PROVIDER === "compatible-anthropic-endpoint" && SWITCH_MOCK_ANTHROPIC === "1") {
       mockProvider = await startMockAnthropicProvider();
@@ -1033,7 +1054,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
       home,
-      [apiKey],
+      redactionValues,
       switchEndpointUrl,
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);

@@ -220,7 +220,7 @@ describe("Hermes inference switch command shape", () => {
     await expect(
       runHermesInferenceSetWithRetry(
         { command } as unknown as HostCliClient,
-        "hosted-key",
+        ["hosted-key"],
         ["--inference-api", "anthropic-messages"],
         { attempts: 1, delay: async () => {} },
       ),
@@ -228,5 +228,6 @@ describe("Hermes inference switch command shape", () => {
 
     expect(command.mock.calls[0]?.[1]).not.toContain("--no-verify");
     expect(command.mock.calls[1]?.[1]).toContain("--no-verify");
+    expect(command.mock.calls[0]?.[2]?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 });

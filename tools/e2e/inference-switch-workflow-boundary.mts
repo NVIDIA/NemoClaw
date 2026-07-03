@@ -63,8 +63,8 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
     {
       mode: "hosted",
       sandbox_name: `e2e-${agent}-inference-switch`,
-      switch_provider: "compatible-endpoint",
-      switch_model: "nvidia/nvidia/nemotron-3-super-120b-a12b",
+      switch_provider: "nvidia-prod",
+      switch_model: "nvidia/nemotron-3-super-120b-a12b",
       switch_inference_api: "openai-completions",
       switch_mock_anthropic: "0",
     },
@@ -114,12 +114,16 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== hostedSecret) {
     errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step`);
   }
+  const hostedPublicSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}";
+  if (runStep?.env?.NVIDIA_API_KEY !== hostedPublicSecret) {
+    errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its hosted run step`);
+  }
   for (const step of job.steps ?? []) {
     if (step !== runStep && step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
       errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its run step`);
     }
-    if (step.env?.NVIDIA_API_KEY !== undefined) {
-      errors.push(`${spec.job} must not expose NVIDIA_API_KEY to workflow steps`);
+    if (step !== runStep && step.env?.NVIDIA_API_KEY !== undefined) {
+      errors.push(`${spec.job} must expose NVIDIA_API_KEY only to its run step`);
     }
   }
 

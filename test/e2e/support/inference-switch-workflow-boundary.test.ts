@@ -76,7 +76,7 @@ describe("inference switch workflow boundary", () => {
     );
   });
 
-  it("uses a healthy hosted switch target and scopes its credential to hosted mode", () => {
+  it("uses a healthy hosted switch target and scopes its credentials to hosted mode", () => {
     const wrongTarget = readInferenceSwitchWorkflow();
     const hosted = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
       (entry) => entry.mode === "hosted",
@@ -93,6 +93,15 @@ describe("inference switch workflow boundary", () => {
     runStep.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
     expect(validateInferenceSwitchWorkflow(unscopedSecret)).toContain(
       "openclaw-inference-switch must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step",
+    );
+
+    const unscopedPublicKey = readInferenceSwitchWorkflow();
+    const publicRunStep = unscopedPublicKey.jobs["hermes-inference-switch"].steps!.find(
+      (step) => step.name === "Run Hermes inference switch live Vitest test",
+    )!;
+    publicRunStep.env!.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(unscopedPublicKey)).toContain(
+      "hermes-inference-switch must expose NVIDIA_API_KEY only to its hosted run step",
     );
 
     const publicKey = readInferenceSwitchWorkflow();

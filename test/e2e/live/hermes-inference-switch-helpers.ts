@@ -24,19 +24,19 @@ import {
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import {
+  PUBLIC_NVIDIA_SWITCH_MODEL,
+  PUBLIC_NVIDIA_SWITCH_PROVIDER,
+} from "./public-nvidia-switch-provider.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-120b-a12b";
 export const SWITCH_PROVIDER =
-  process.env.NEMOCLAW_SWITCH_PROVIDER ??
-  (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
-export const SWITCH_MODEL =
-  process.env.NEMOCLAW_SWITCH_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
+  process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
+export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
@@ -381,7 +381,7 @@ export async function installHermes(
 
 export async function runHermesInferenceSetWithRetry(
   host: HostCliClient,
-  apiKey: string,
+  redactionValues: string[],
   compatibleMetadataArgs: string[],
   options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
 ): Promise<ShellProbeResult> {
@@ -404,8 +404,8 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: verify
           ? `hermes-inference-set-${attempt}`
           : "hermes-inference-set-no-verify-after-transient-failures",
-        env: env(apiKey),
-        redactionValues: [apiKey],
+        env: env(),
+        redactionValues,
         timeoutMs: 180_000,
       }),
   });

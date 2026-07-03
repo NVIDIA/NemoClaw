@@ -1040,8 +1040,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-hermes-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-120b-a12b
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -1078,6 +1078,7 @@ jobs:
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
         env:
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
@@ -3731,8 +3732,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-openclaw-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-120b-a12b
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -3773,6 +3774,7 @@ jobs:
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
         env:
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
           NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
