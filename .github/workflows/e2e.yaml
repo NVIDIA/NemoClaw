@@ -2658,11 +2658,8 @@ jobs:
         run: bash .github/scripts/docker-auth-cleanup.sh
 
   full-e2e:
-    # Keep the load-sensitive agent-mediated proof out of the peak hosted
-    # lifecycle burst. always() preserves targeted dispatch when the
-    # unselected dependencies are skipped.
-    needs: [generate-matrix, token-rotation, channels-stop-start]
-    if: ${{ always() && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',full-e2e,') || contains(format(',{0},', inputs.targets), ',full-e2e,')) }}
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',full-e2e,') || contains(format(',{0},', inputs.targets), ',full-e2e,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
@@ -3589,10 +3586,8 @@ jobs:
 
   # The #2603/#3145 OpenClaw websocket protocol/history contract.
   openclaw-tui-chat-correlation:
-    # Run the strict hosted-correlation proof after the serialized full agent
-    # proof. always() preserves targeted dispatch when dependencies are skipped.
-    needs: [generate-matrix, token-rotation, channels-stop-start, full-e2e]
-    if: ${{ always() && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,')) }}
+    needs: generate-matrix
+    if: ${{ (github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation,') || contains(format(',{0},', inputs.targets), ',openclaw-tui-chat-correlation,') }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     env:
