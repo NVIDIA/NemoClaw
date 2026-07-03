@@ -321,7 +321,22 @@ def _pid1_is_nemoclaw_start() -> bool:
             os.close(proc_pid_fd)
         if proc_root_fd >= 0:
             os.close(proc_root_fd)
-    return _cmdline_is_nemoclaw_start(cmdline)
+    # SOURCE_OF_TRUTH_REVIEW (#6110): OpenShell owns PID 1 in Docker-driver
+    # sandboxes and starts the workload as its direct non-root child. NemoClaw's
+    # GPU recreate used to append that workload to the supervisor argv; the
+    # source fix is buildDockerGpuCloneRunArgs() in docker-gpu-patch.ts, which
+    # now preserves an empty Config.Cmd. An attacker controlling an image or
+    # recreate argv could otherwise append `nemoclaw-start`, impersonate direct
+    # PID 1 authority, and bypass the startup identity check. Keep this
+    # exclusion as defense in depth; live proof is in
+    # assertHermesGpuStartupProof() in
+    # test/e2e/live/hermes-gpu-startup-proof.ts. The dual-mode authorization
+    # branch can be removed only after direct-PID1 images are no longer
+    # supported; this supervisor exclusion itself remains a security invariant.
+    return (
+        not _cmdline_is_openshell_supervisor(cmdline)
+        and _cmdline_is_nemoclaw_start(cmdline)
+    )
 
 
 def _pinned_process_matches_startup_identity(

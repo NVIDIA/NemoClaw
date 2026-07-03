@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workflow-boundary.mts";
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
+import { validateHermesGpuStartupWorkflowBoundary } from "./hermes-gpu-startup-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
 import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
 import { validatePrepareE2eWorkflowBoundary } from "./prepare-e2e-workflow-boundary.mts";
@@ -3642,6 +3643,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   errors.push(...validatePrepareE2eWorkflowBoundary(workflow));
   errors.push(...validateUploadE2eArtifactsWorkflowBoundary(workflow));
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
+  errors.push(...validateHermesGpuStartupWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
   errors.push(...validateDocsValidationWorkflowBoundary(workflowPath));

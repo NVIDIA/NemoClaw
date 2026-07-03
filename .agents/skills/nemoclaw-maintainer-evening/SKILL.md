@@ -40,15 +40,22 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 This lists commits since the last tag, identifies risky areas touched, and suggests QA test focus areas. Format the output as a concise summary the user can paste into the tag annotation or a handoff channel.
 
+## Pre-Tag Docs
+
+Run `/nemoclaw-contributor-update-docs for <version>` before loading `cut-release-tag`.
+The release-prep docs PR must be merged, or explicitly waived with a reason, before `release:plan` captures the release commit.
+If a docs PR or any other intended PR merges after `release:plan`, regenerate the plan before cutting the tag.
+
 ## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
+Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. After the release plan freezes the exact candidate SHA, review the pre-tag E2E evidence ledger derived from `.github/workflows/e2e.yaml` at that commit. Do not ask for the release confirmation phrase until every test has green evidence or an explicit itemized maintainer exception. NemoClaw releases are tag-based: tag the confirmed release commit with `vX.Y.Z`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
 After the tag is cut and release notes are drafted or posted by the maintainer, present the final summary:
 
 - **Tag**: `v0.0.8` at commit `abc1234`
+- **Pre-tag E2E evidence**: 12/13 tests green for the exact candidate SHA; 1 itemized maintainer exception
 - **Release notes draft**: `../nemoclaw-release-v0.0.8/release-note-draft.md`
 - **Shipped**: 4 items (#1234, #1235, #1236, #1237)
 - **Bumped to v0.0.9**: 1 item (#1238 — still needs CI fix)

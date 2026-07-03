@@ -86,6 +86,62 @@ describe("maintainer skills follow canonical workflow policy", () => {
     ).toBe(true);
   });
 
+  it("requires exact-SHA E2E evidence or itemized maintainer exceptions before tagging", () => {
+    const dailyFlow = read(".agents/skills/nemoclaw-maintainer-policies/references/daily-flow.md");
+    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
+    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+
+    expect(policy).toContain("exact full `origin/main` commit SHA");
+    expect(policy).toContain("`.github/workflows/e2e.yaml` is the sole source of truth");
+    expect(policy).toContain("Do not maintain a separate release-gating test list");
+    expect(policy).toContain("at least one completed, successful execution");
+    expect(policy).toContain("multiple workflow runs, selective runs, reruns, and attempts");
+    expect(policy).toContain("explicit selection and every expanded matrix execution");
+    expect(policy).toContain("each expanded matrix execution as a separate ledger entry");
+    expect(policy).toContain("matrix `id`");
+    expect(policy).toContain("A later failure does not erase an earlier successful execution");
+    expect(policy).toContain(
+      "Skipped, unexecuted, queued, in-progress, cancelled, and failing results are not green evidence",
+    );
+    expect(policy).toContain("itemized maintainer exception");
+    expect(policy).toContain("If the candidate SHA changes");
+    expect(policy).toContain("discard the ledger and its exceptions");
+    expect(release).toContain("the number of tests with green evidence");
+    expect(release).toContain("successful run or job URL and attempt");
+    const evidenceSummary = release.indexOf("Before showing the confirmation prompt");
+    const confirmationPrompt = release.indexOf(
+      "Ask the maintainer to paste the exact phrase",
+      evidenceSummary,
+    );
+    expect(evidenceSummary).toBeGreaterThanOrEqual(0);
+    expect(evidenceSummary).toBeLessThan(confirmationPrompt);
+    expect(evening).toContain("every test has green evidence");
+    expect(evening).toContain("explicit itemized maintainer exception");
+    expect(evening).toContain("tag the confirmed release commit with `vX.Y.Z`");
+    expect(evening).not.toContain("tag `main`");
+    expect(dailyFlow).toContain("freeze the exact candidate SHA and review every E2E test");
+    expect(priorities).toContain("collect the E2E evidence or itemized maintainer exceptions");
+  });
+
+  it("runs release-prep docs before generating the final release plan", () => {
+    const updateDocs = read(".agents/skills/nemoclaw-contributor-update-docs/SKILL.md");
+    const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
+    const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
+
+    expect(updateDocs).toContain("/nemoclaw-contributor-update-docs for vX.Y.Z");
+    expect(evening.indexOf("/nemoclaw-contributor-update-docs for <version>")).toBeLessThan(
+      evening.indexOf("Load `cut-release-tag`"),
+    );
+    expect(release).toContain(
+      "Do not generate the release plan until release-prep docs are merged or explicitly waived.",
+    );
+    expect(policy).toContain("Run `/nemoclaw-contributor-update-docs for vX.Y.Z`");
+    expect(policy).toContain("If any merge lands after `release:plan`, generate a fresh plan");
+  });
+
   it("keeps cross-issue sweeping separate from comparator scoring", () => {
     const sweep = read(".agents/skills/nemoclaw-maintainer-cross-issue-sweep/SKILL.md");
     const comparator = read(".agents/skills/nemoclaw-maintainer-pr-comparator/SKILL.md");

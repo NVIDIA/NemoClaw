@@ -54,7 +54,7 @@ vi.mock("../domain/maintenance/images", () => ({
   parseSandboxImageRows: vi.fn().mockReturnValue([]),
 }));
 
-import { backupAll } from "./maintenance";
+import { backupAll, shouldSkipUnreachableSandboxBackup } from "./maintenance";
 
 describe("backupAll", () => {
   beforeEach(() => {
@@ -185,5 +185,96 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/binary/);
+  });
+
+  it("skips a running but SSH-unreachable sandbox when NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }],
+      defaultSandbox: null,
+    });
+    mocks.backupSandboxState.mockImplementation((name: string) =>
+      name === "sb-bad"
+        ? {
+            success: false,
+            unreachable: true,
+            backedUpDirs: [],
+            failedDirs: ["memories"],
+            backedUpFiles: [],
+            failedFiles: [],
+          }
+        : {
+            success: true,
+            backedUpDirs: ["dir1"],
+            failedDirs: [],
+            backedUpFiles: [],
+            failedFiles: [],
+            manifest: { backupPath: "/backups/sb-good/timestamp" },
+          },
+    );
+
+    process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await backupAll();
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("Skipped 'sb-bad'");
+    expect(output).toContain("1 backed up, 0 failed, 1 skipped");
+    expect(exitSpy).not.toHaveBeenCalled();
+
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    logSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it("fails with actionable guidance when a running sandbox is unreachable and the skip flag is unset", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
+      result: { status: 0, output: "sb-bad\n" },
+    });
+    mocks.backupSandboxState.mockImplementation(() => ({
+      success: false,
+      unreachable: true,
+      backedUpDirs: [],
+      failedDirs: ["memories"],
+      backedUpFiles: [],
+      failedFiles: [],
+    }));
+
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    const errorOutput = errorSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(errorOutput).toContain("NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1");
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+});
+
+describe("shouldSkipUnreachableSandboxBackup", () => {
+  it("is true only for exactly '1'", () => {
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "1" }),
+    ).toBe(true);
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "0" }),
+    ).toBe(false);
+    expect(
+      shouldSkipUnreachableSandboxBackup({ NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP: "true" }),
+    ).toBe(false);
+    expect(shouldSkipUnreachableSandboxBackup({})).toBe(false);
   });
 });
