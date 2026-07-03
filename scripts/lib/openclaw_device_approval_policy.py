@@ -189,11 +189,13 @@ def _save_json_file(path, value, mode=0o600):
             try:
                 os.close(fd)
             except OSError:
+                # Best-effort cleanup; preserve the original write/replace error.
                 pass
         if tmp is not None:
             try:
                 tmp.unlink()
             except FileNotFoundError:
+                # The temp path may already have been replaced or removed.
                 pass
 
 
