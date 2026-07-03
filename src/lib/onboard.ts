@@ -646,6 +646,10 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
+import type {
+  PreparedDcodeRebuildHandoff,
+  PreparedSandboxBuildContext,
+} from "./onboard/build-context-stage";
 
 type OnboardOptions = {
   nonInteractive?: boolean;
@@ -662,6 +666,8 @@ type OnboardOptions = {
   gpu?: boolean;
   noGpu?: boolean;
   autoYes?: boolean;
+  /** Internal one-process handoff prepared by the DCode rebuild preflight. */
+  preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -2555,6 +2561,7 @@ async function createSandbox(
   sandboxGpuConfig: SandboxGpuConfig | null = null,
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
+  preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2921,7 +2928,11 @@ async function createSandbox(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
+  if (preparedBuildContext && (agent?.name !== "langchain-deepagents-code" || fromDockerfile)) {
+    throw new Error("A prepared DCode build context cannot be used for this sandbox target.");
+  }
+  const stagedBuildContext =
+    preparedBuildContext ??
     buildContextStage.stageCreateSandboxBuildContext({
       root: ROOT,
       fromDockerfile,
@@ -2932,11 +2943,12 @@ async function createSandbox(
       error: console.error,
       exit: process.exit,
     });
+  const { buildCtx, stagedDockerfile, cleanupBuildCtx } = stagedBuildContext;
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  process.on("exit", cleanupBuildCtx);
+  if (!preparedBuildContext) process.on("exit", cleanupBuildCtx);
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -3002,22 +3014,26 @@ async function createSandbox(
     configuredMessagingChannels:
       getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
   });
-  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
-    agent,
-    fromDockerfile,
-    sandboxBaseImage: SANDBOX_BASE_IMAGE,
-    sandboxBaseTag: SANDBOX_BASE_TAG,
-    stagedDockerfile,
-    model,
-    chatUiUrl,
-    provider,
-    preferredInferenceApi,
-    webSearchConfig,
-    hermesToolGateways,
-    sandboxGpuConfig: effectiveSandboxGpuConfig,
-    log: console.log,
-    warn: console.warn,
-  });
+  const buildId = preparedBuildContext
+    ? preparedBuildContext.buildId
+    : (
+        await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+          agent,
+          fromDockerfile,
+          sandboxBaseImage: SANDBOX_BASE_IMAGE,
+          sandboxBaseTag: SANDBOX_BASE_TAG,
+          stagedDockerfile,
+          model,
+          chatUiUrl,
+          provider,
+          preferredInferenceApi,
+          webSearchConfig,
+          hermesToolGateways,
+          sandboxGpuConfig: effectiveSandboxGpuConfig,
+          log: console.log,
+          warn: console.warn,
+        })
+      ).buildId;
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
     sandboxCreateLaunch.prepareSandboxCreateLaunch({
@@ -4651,8 +4667,29 @@ function skippedStepMessage(
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
+function resolvePreparedDcodeRebuild(opts: OnboardOptions): PreparedDcodeRebuildHandoff | null {
+  const prepared = opts.preparedDcodeRebuild ?? null;
+  if (!prepared) return null;
+  if (
+    opts.resume !== true ||
+    opts.recreateSandbox !== true ||
+    opts.agent !== "langchain-deepagents-code"
+  ) {
+    throw new Error("A prepared DCode rebuild can only be used by DCode resume recreation.");
+  }
+  const gatewayName = prepared.gatewayName.trim();
+  if (gatewayName !== GATEWAY_NAME) {
+    throw new Error(
+      `Prepared DCode rebuild gateway '${gatewayName}' does not match '${GATEWAY_NAME}'.`,
+    );
+  }
+  return { ...prepared, gatewayName };
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  const preparedDcodeRebuild = resolvePreparedDcodeRebuild(opts);
+  let preparedBuildContext = preparedDcodeRebuild?.buildContext ?? null;
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
@@ -4660,7 +4697,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  delete process.env.OPENSHELL_GATEWAY;
+  if (preparedDcodeRebuild) process.env.OPENSHELL_GATEWAY = preparedDcodeRebuild.gatewayName;
+  else delete process.env.OPENSHELL_GATEWAY;
   const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
     onboardEntryOptions.resolveOnboardEntryOptions(
       {
@@ -5097,7 +5135,40 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
-          createSandbox,
+          createSandbox: (
+            gpu,
+            model,
+            provider,
+            preferredInferenceApi,
+            sandboxName,
+            webSearchConfig,
+            selectedMessagingChannels,
+            fromDockerfile,
+            selectedAgent,
+            controlUiPort,
+            sandboxGpuConfig,
+            resourceProfile,
+            hermesToolGateways,
+          ) => {
+            const prepared = preparedBuildContext;
+            preparedBuildContext = null;
+            return createSandbox(
+              gpu,
+              model,
+              provider,
+              preferredInferenceApi,
+              sandboxName,
+              webSearchConfig,
+              selectedMessagingChannels,
+              fromDockerfile,
+              selectedAgent,
+              controlUiPort,
+              sandboxGpuConfig,
+              resourceProfile as import("./resources-cmd").ResourceProfile | null,
+              hermesToolGateways,
+              prepared,
+            );
+          },
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
           recordStepComplete,

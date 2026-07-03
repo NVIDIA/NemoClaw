@@ -83,6 +83,7 @@ function createFixture(opts: {
   providerRegistered?: boolean;
   registeredProviders?: string[];
   activeSessionCount?: number | null;
+  inferenceProbeHttpStatus?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -98,6 +99,7 @@ function createFixture(opts: {
     providerRegistered = true,
     registeredProviders,
     activeSessionCount = 0,
+    inferenceProbeHttpStatus = null,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -121,6 +123,18 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
+          ...(agent === "langchain-deepagents-code"
+            ? {
+                credentialEnv,
+                preferredInferenceApi: "openai-completions",
+                endpointUrl: "https://inference-api.nvidia.com/v1",
+                nemoclawVersion: "0.0.72",
+                dashboardPort: 0,
+                gatewayName: "nemoclaw",
+                gatewayPort: 8080,
+                sandboxGpuMode: "0",
+              }
+            : {}),
           ...(agents ? { agents } : {}),
           ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
@@ -224,6 +238,9 @@ function createFixture(opts: {
   const workspaceDir = path.join(fakeRoot, "workspace");
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "test-workspace");
+  const deleteMarker = path.join(tmpDir, "sandbox-delete-invoked");
+  const atomicityMarker = path.join(fakeRoot, "rebuild-atomicity-marker.txt");
+  fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
@@ -239,13 +256,29 @@ function createFixture(opts: {
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("node:fs");
 const a = process.argv.slice(2);
 const registeredProviders = ${registeredProvidersLiteral};
-if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="exec") {
+  const command = a.join(" ");
+  if (command.includes("rebuild-atomicity-marker.txt")) {
+    process.stdout.write(fs.readFileSync(${JSON.stringify(atomicityMarker)}, "utf-8"));
+    process.exit(0);
+  }
+  if (command.includes("https://inference.local/")) {
+    const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
+    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + probeStatus + "\\n");
+    if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
+    process.stderr.write("upstream rejected stored provider credential\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
@@ -322,7 +355,7 @@ process.exit(0);
     mode: 0o755,
   });
 
-  return { tmpDir, nemoclawDir, sandboxName, fakeRoot };
+  return { tmpDir, nemoclawDir, sandboxName, fakeRoot, deleteMarker };
 }
 
 function runRebuild(
@@ -330,12 +363,22 @@ function runRebuild(
   extraEnv: Record<string, string> = {},
   options: { yes?: boolean; input?: string } = {},
 ) {
-  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
-  if (options.yes !== false) argv.push("--yes");
+  const args = [fixture.sandboxName, "rebuild"];
+  if (options.yes !== false) args.push("--yes");
+  return runCli(fixture, args, extraEnv, options.input);
+}
+
+function runCli(
+  fixture: ReturnType<typeof createFixture>,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+  input?: string,
+) {
+  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), ...args];
   return spawnSync(process.execPath, argv, {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    input: options.input,
+    input,
     env: {
       HOME: fixture.tmpDir,
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
@@ -509,6 +552,49 @@ describe("atomic rebuild (#2273)", () => {
       expect(output).not.toContain("preflight failed");
       // Should proceed to backup step
       expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("preserves the Ready DCode sandbox when its stored inference route returns 401 (#6195)", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "langchain-deepagents-code",
+        provider: "compatible-endpoint",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        providerRegistered: true,
+        inferenceProbeHttpStatus: 401,
+      });
+
+      const result = runRebuild(f, {
+        NEMOCLAW_PROVIDER_KEY: "obviously-invalid-ambient-credential",
+      });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("HTTP 401");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Deleting old sandbox");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(fs.existsSync(f.deleteMarker)).toBe(false);
+      expect(registryHasSandbox(f)).toBe(true);
+
+      const liveList = spawnSync(path.join(f.tmpDir, "openshell"), ["sandbox", "list"], {
+        encoding: "utf-8",
+      });
+      expect(liveList.status).toBe(0);
+      expect(liveList.stdout).toContain(`${f.sandboxName} Ready`);
+
+      const marker = runCli(f, [
+        f.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
     });
 
     it("aborts before backup when the gateway provider is missing even with host credential", {

@@ -71,6 +71,14 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
+import {
+  createDcodeRebuildPreflightScope,
+  type DcodeRebuildPreflightScope,
+  ensureDcodeRebuildTargetGatewaySelected,
+  prepareDcodeReplacementBeforeMutation,
+  revalidateDcodeReplacementAtMutationEdge,
+} from "./rebuild-dcode-preflight";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   backupSandboxStateForRebuild,
@@ -88,6 +96,7 @@ import {
   getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
   prepareRebuildResumeConfig,
+  type RebuildResumeConfig,
 } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
@@ -668,6 +677,121 @@ function revalidatePreparedRecoveryBeforeDelete(
   };
 }
 
+function checkRebuildGatewaySchemaBeforeConfirmation(
+  rebuildsDcodeSandbox: boolean,
+  sandboxName: string,
+  bail: RebuildBail,
+): boolean {
+  return rebuildsDcodeSandbox || checkRebuildGatewaySchemaPreflight(sandboxName, bail);
+}
+
+async function preflightRebuildCredentialsOnTarget(args: {
+  scope: DcodeRebuildPreflightScope;
+  sandboxName: string;
+  entry: RebuildSandboxEntry;
+  log(message: string): void;
+}): Promise<boolean> {
+  const { scope, sandboxName, entry, log } = args;
+  if (scope.enabled) {
+    if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, scope.bail))) {
+      return false;
+    }
+    if (!checkRebuildGatewaySchemaPreflight(sandboxName, scope.bail)) return false;
+  }
+  return preflightRebuildCredentials(sandboxName, entry, log, scope.bail);
+}
+
+async function prepareRebuildImageBeforeMutation(args: {
+  scope: DcodeRebuildPreflightScope;
+  sandboxName: string;
+  entry: RebuildSandboxEntry;
+  rebuildAgent: string | null;
+  resumeConfig: RebuildResumeConfig;
+  skipLiveRoute: boolean;
+  log(message: string): void;
+}): Promise<boolean> {
+  const { scope, sandboxName, entry, rebuildAgent, resumeConfig, skipLiveRoute, log } = args;
+  if (!scope.enabled) return ensureRebuildAgentBaseImage(rebuildAgent, scope.bail);
+  try {
+    const replacement = await prepareDcodeReplacementBeforeMutation({
+      sandboxName,
+      entry,
+      resumeConfig,
+      skipLiveRoute,
+      log,
+      bail: scope.bail,
+      checkGatewaySchema: () => checkRebuildGatewaySchemaPreflight(sandboxName, scope.bail),
+    });
+    if (!replacement) {
+      scope.cleanup();
+      return false;
+    }
+    scope.adopt(replacement);
+    return true;
+  } catch (error) {
+    scope.cleanup();
+    throw error;
+  }
+}
+
+async function runBeforeDcodeMutation<T>(
+  scope: DcodeRebuildPreflightScope,
+  action: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await action();
+  } catch (error) {
+    scope.cleanup();
+    throw error;
+  }
+}
+
+function runBeforeDcodeMutationSync<T>(scope: DcodeRebuildPreflightScope, action: () => T): T {
+  try {
+    return action();
+  } catch (error) {
+    scope.cleanup();
+    throw error;
+  }
+}
+
+async function revalidatePreparedDcodeBeforeDelete(args: {
+  scope: DcodeRebuildPreflightScope;
+  sandboxName: string;
+  entry: RebuildSandboxEntry;
+  resumeConfig: RebuildResumeConfig;
+  skipLiveRoute: boolean;
+  log(message: string): void;
+}): Promise<boolean> {
+  const { scope, sandboxName, entry, resumeConfig, skipLiveRoute, log } = args;
+  if (!scope.enabled) return true;
+  const replacement = scope.preparedReplacement;
+  if (!replacement) return scope.bail("DCode replacement preflight was not retained.");
+  return revalidateDcodeReplacementAtMutationEdge({
+    sandboxName,
+    entry,
+    resumeConfig,
+    skipLiveRoute,
+    log,
+    bail: scope.bail,
+    checkGatewaySchema: () => checkRebuildGatewaySchemaPreflight(sandboxName, scope.bail),
+    replacement,
+  });
+}
+
+function clearManagedDcodeCustomDockerfile(session: Session, rebuildsDcodeSandbox: boolean): void {
+  if (rebuildsDcodeSandbox) session.metadata = { ...session.metadata, fromDockerfile: null };
+}
+
+function getStoredRebuildDockerfile(
+  rebuildsDcodeSandbox: boolean,
+  sessionMatchesSandbox: boolean,
+  session: Session | null,
+): string | null {
+  if (rebuildsDcodeSandbox || !sessionMatchesSandbox) return null;
+  return session?.metadata?.fromDockerfile || null;
+}
+
 export async function rebuildSandbox(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
@@ -724,10 +848,11 @@ export async function rebuildSandbox(
   if (!isSingleAgentRebuildSupported(sb, bail)) return;
 
   const rebuildAgent = sb.agent || null;
+  const rebuildsDcodeSandbox = rebuildAgent === DCODE_AGENT_NAME;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
+  if (!checkRebuildGatewaySchemaBeforeConfirmation(rebuildsDcodeSandbox, sandboxName, bail)) return;
 
   // Hydrate non-secret messaging config before the rebuild touches anything
   // destructive. The manifest plan in registry is the durable source; legacy
@@ -745,53 +870,88 @@ export async function rebuildSandbox(
   );
   if (!rebuildConfirmed) return;
 
+  const dcodePreflight = createDcodeRebuildPreflightScope(rebuildsDcodeSandbox, bail);
+
   // Step 0: Preflight — verify recreate preconditions BEFORE destroying
   // anything. The most common rebuild failure is a missing provider credential
   // when onboard runs in non-interactive mode. Checking now lets us abort with
   // the sandbox still intact. See #2273.
-  if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
+  const credentialsReady = await runBeforeDcodeMutation(dcodePreflight, () =>
+    preflightRebuildCredentialsOnTarget({
+      scope: dcodePreflight,
+      sandboxName,
+      entry: sb,
+      log,
+    }),
+  );
+  if (!credentialsReady) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
   // #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
   // provider, model, credential, endpoint — from the registry/session BEFORE any
   // destructive backup/delete, and surface/neutralize ambient onboard-selection
   // env that would otherwise steer the resume away from the recorded sandbox.
   // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
-  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
-  if (!resumeConfig) return;
+  const resumeConfig = runBeforeDcodeMutationSync(dcodePreflight, () =>
+    prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, dcodePreflight.bail),
+  );
+  if (!resumeConfig) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
-  const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
-    sandboxName,
-    sb,
-    rebuildAgent,
-    log,
-    bail,
+  const rebuildMessagingPlan = await runBeforeDcodeMutation(dcodePreflight, () =>
+    stageRebuildMessagingPlanOrBail(sandboxName, sb, rebuildAgent, log, dcodePreflight.bail),
   );
 
   // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
-  const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
-  if (!liveState) return;
+  const liveState = await runBeforeDcodeMutation(dcodePreflight, () =>
+    resolveRebuildLiveState(sandboxName, sb, log, dcodePreflight.bail),
+  );
+  if (!liveState) {
+    dcodePreflight.cleanup();
+    return;
+  }
   const { staleRecovery } = liveState;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
   // A prepared pre-upgrade backup can recover a sandbox that still appears in
   // OpenShell but is stuck in Provisioning/Error. Capture the same registry
   // rollback state used by missing-live-sandbox recovery before deletion.
-  let recoveryRegistrySnapshot = preparedBackupRecovery
-    ? JSON.parse(JSON.stringify(registry.load()))
-    : liveState.staleRegistrySnapshot;
+  let recoveryRegistrySnapshot = runBeforeDcodeMutationSync(dcodePreflight, () =>
+    preparedBackupRecovery
+      ? JSON.parse(JSON.stringify(registry.load()))
+      : liveState.staleRegistrySnapshot,
+  );
 
-  // Build agent base layers before backup/delete so Dockerfile.base errors leave
-  // the existing sandbox intact. This is what applies local Hermes version edits.
-  if (!ensureRebuildAgentBaseImage(rebuildAgent, bail)) return;
+  // DCode prebuilds and seals the managed replacement inputs; other agents retain the
+  // existing base-image-only preflight.
+  const imageReady = await runBeforeDcodeMutation(dcodePreflight, () =>
+    prepareRebuildImageBeforeMutation({
+      scope: dcodePreflight,
+      sandboxName,
+      entry: sb,
+      rebuildAgent,
+      resumeConfig,
+      skipLiveRoute: recoveryRecreate,
+      log,
+    }),
+  );
+  if (!imageReady) {
+    dcodePreflight.cleanup();
+    return;
+  }
 
   // On stale-sandbox recovery the live sandbox is gone, so the normal
   // unlock→recreate→relock cycle cannot run. Track stale lock state and defer
   // clearing old shields state until recreate succeeds (#4497).
-  const { rebuildShieldsWindow, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
-    sandboxName,
-    recoveryRecreate,
+  const { rebuildShieldsWindow, staleSandboxWasLocked } = runBeforeDcodeMutationSync(
+    dcodePreflight,
+    () => openRebuildShieldsWindowForState(sandboxName, recoveryRecreate),
   );
-  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+  if (!rebuildShieldsWindow) return dcodePreflight.bail("Failed to auto-unlock shields.");
 
   const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
     relockRebuildShieldsWindow(sandboxName, rebuildShieldsWindow, sandboxStillExists, CLI_NAME);
@@ -826,6 +986,21 @@ export async function rebuildSandbox(
         bail,
       );
     if (backupManifest === undefined) return;
+
+    // Backup can take long enough for the recorded target, gateway route, or
+    // retained build inputs to drift. DCode fails closed at the deletion edge;
+    // a harmless backup may remain, but the live sandbox is preserved.
+    if (
+      !(await revalidatePreparedDcodeBeforeDelete({
+        scope: dcodePreflight,
+        sandboxName,
+        entry: sb,
+        resumeConfig,
+        skipLiveRoute: recoveryRecreate,
+        log,
+      }))
+    )
+      return;
 
     // Step 3: Delete sandbox without tearing down gateway or session.
     // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -927,6 +1102,7 @@ export async function rebuildSandbox(
       s.nimContainer = resumeConfig.nimContainer;
       s.credentialEnv = resumeConfig.credentialEnv;
       s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
+      clearManagedDcodeCustomDockerfile(s, rebuildsDcodeSandbox);
       // `onboard --resume` uses the session as the recreate contract. Always
       // overwrite the endpoint from the preflighted registry-derived config,
       // even when the pre-existing session currently matches this sandbox name:
@@ -953,9 +1129,11 @@ export async function rebuildSandbox(
     // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
     // Only read from the session when it belongs to this sandbox to avoid
     // using config from a different sandbox's onboard run.
-    const storedFromDockerfile = sessionMatchesSandbox
-      ? sessionAfter?.metadata?.fromDockerfile || null
-      : null;
+    const storedFromDockerfile = getStoredRebuildDockerfile(
+      rebuildsDcodeSandbox,
+      sessionMatchesSandbox,
+      sessionAfter,
+    );
     log(
       `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
     );
@@ -995,6 +1173,7 @@ export async function rebuildSandbox(
       sb,
       rebuildAgent,
       storedFromDockerfile,
+      preparedDcodeRebuild: dcodePreflight.preparedReplacement ?? undefined,
       autoYes: skipConfirm || rebuildConfirmed,
     });
     // #5735: isolate ambient onboard-selection env only for the duration of the
@@ -1005,6 +1184,7 @@ export async function rebuildSandbox(
     // unrelated onboard's values. Restored in finally so a bulk rebuild loop
     // and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+    const restoreDockerGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
     try {
       await onboard(recreateOpts);
       log("onboard() returned successfully");
@@ -1018,6 +1198,7 @@ export async function rebuildSandbox(
     } finally {
       process.exit = _savedExit;
       restoreAmbientRecreateEnv();
+      restoreDockerGpuPatchNetwork();
     }
 
     if (!onboardFailed) {
@@ -1388,8 +1569,12 @@ export async function rebuildSandbox(
       );
     }
   } finally {
-    if (!rebuildShieldsWindow.relocked) {
-      relockShieldsIfNeeded(sandboxStillExists);
+    try {
+      if (!rebuildShieldsWindow.relocked) {
+        relockShieldsIfNeeded(sandboxStillExists);
+      }
+    } finally {
+      dcodePreflight.cleanup();
     }
   }
 }

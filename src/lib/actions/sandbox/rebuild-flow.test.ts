@@ -36,6 +36,7 @@ type RebuildFlowSession = Record<string, unknown> & {
 };
 
 type RebuildFlowOverrides = {
+  agentName?: string;
   applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
@@ -51,6 +52,7 @@ type RebuildFlowOverrides = {
   };
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
+  sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   backupPolicyPresets?: string[];
@@ -60,18 +62,28 @@ type RebuildFlowOverrides = {
   recoveryManifestValidation?: (
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
+  dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
+  dcodeImageResult?:
+    | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
+    | { ok: false; detail: string };
+  openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
 };
 
 type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
+  disposePreparedDcodeRebuildImageSpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   markStepFailedSpy: MockInstance;
+  openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
+  preflightDcodeRouteSpy: MockInstance;
+  prepareManagedDcodeRebuildImageSpy: MockInstance;
+  removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
@@ -79,6 +91,7 @@ type RebuildFlowHarness = {
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
+  preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   session: RebuildFlowSession;
 };
 
@@ -172,10 +185,14 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
 
   const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
   const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const dockerImage = requireDist("../../adapters/docker/image.js");
+  const dockerInspect = requireDist("../../adapters/docker/inspect.js");
   const sandboxList = requireDist("../../openshell-sandbox-list.js");
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const agentDefs = requireDist("../../agent/defs.js");
+  const agentOnboard = requireDist("../../agent/onboard.js");
   const agentRuntime = requireDist("../../agent/runtime.js");
+  const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
   const onboardMod = requireDist("../../onboard.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
@@ -189,13 +206,17 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const processRecovery = requireDist("./process-recovery.js");
   const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
   const messaging = requireDist("../../messaging/index.js");
+  const rebuildInference = requireDist("./rebuild-inference-preflight.js");
+  const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
   const shields = requireDist("../../shields/index.js");
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  const agentName = overrides.agentName ?? "openclaw";
   const agentDef = {
-    name: "openclaw",
+    name: agentName,
     expectedVersion: "0.2.0",
+    dockerfileBasePath: "/tmp/Dockerfile.base",
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -204,9 +225,26 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
+  vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockReturnValue("sha256:dcode-base");
+  vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
+  vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
+    imageTag: `nemoclaw-${agentName}-base:test`,
+    built: true,
+  });
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: agentName });
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
+    agentName === "langchain-deepagents-code" ? "Deep Agents Code" : "OpenClaw",
+  );
+  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
+    async (...args: unknown[]) => {
+      const gatewayName =
+        (args[0] as { gatewayName?: string } | undefined)?.gatewayName ?? "nemoclaw";
+      const state = { state: "healthy_named", activeGateway: gatewayName };
+      return { recovered: true, attempted: false, before: state, after: state };
+    },
+  );
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     if (typeof mutator !== "function") {
@@ -230,7 +268,14 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     nimContainer: null,
     ...(overrides.sandboxEntry ?? {}),
   };
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  let sandboxEntryReadCount = 0;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+    const configuredReads = overrides.sandboxEntryReads ?? [];
+    if (sandboxEntryReadCount < configuredReads.length) {
+      return configuredReads[sandboxEntryReadCount++] as never;
+    }
+    return sandboxEntry;
+  });
   let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
@@ -258,7 +303,37 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     expectedVersion: "0.2.0",
     sandboxVersion: "0.1.0",
   });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
+  vi.spyOn(nim, "detectGpu").mockReturnValue(null);
+  const routeResults = [...(overrides.dcodeRouteResults ?? [{ ok: true }])];
+  const preflightDcodeRouteSpy = vi
+    .spyOn(rebuildInference, "preflightRebuildInferenceRoute")
+    .mockImplementation(() => routeResults.shift() ?? { ok: true });
+  const preparedDcodeBuildContext = {
+    buildCtx: "/tmp/dcode-rebuild-context",
+    stagedDockerfile: "/tmp/dcode-rebuild-context/Dockerfile",
+    buildId: "dcode-build",
+    contextFingerprint: "dcode-context",
+    dockerGpuPatchNetwork: null,
+    cleanupBuildCtx: vi.fn(() => true),
+  };
+  const prepareManagedDcodeRebuildImageSpy = vi
+    .spyOn(rebuildManagedImage, "prepareManagedDcodeRebuildImage")
+    .mockImplementation(
+      async () =>
+        (overrides.dcodeImageResult ?? {
+          ok: true,
+          prepared: preparedDcodeBuildContext,
+        }) as never,
+    );
+  const disposePreparedDcodeRebuildImageSpy = vi
+    .spyOn(rebuildManagedImage, "disposePreparedDcodeRebuildImage")
+    .mockImplementation((prepared: unknown) =>
+      (prepared as { cleanupBuildCtx: () => boolean }).cleanupBuildCtx(),
+    );
+  vi.spyOn(rebuildManagedImage, "verifyPreparedDcodeRebuildImage").mockReturnValue(true);
+  const openShieldsSpy = vi
+    .spyOn(rebuildShields, "openRebuildShieldsWindow")
+    .mockImplementation(overrides.openShieldsWindow ?? (() => rebuildShieldsWindow));
   const relockSpy = vi
     .spyOn(rebuildShields, "relockRebuildShieldsWindow")
     .mockImplementation((...args: unknown[]) => {
@@ -304,7 +379,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockReturnValue({ status: 0, output: "" });
-  vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined);
+  const removeSandboxRegistryEntrySpy = vi
+    .spyOn(destroy, "removeSandboxRegistryEntry")
+    .mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -343,12 +420,17 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
     applyPresetSpy,
     backupSandboxStateSpy,
+    disposePreparedDcodeRebuildImageSpy,
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     markStepFailedSpy,
+    openShieldsSpy,
     onboardSpy,
+    preflightDcodeRouteSpy,
+    prepareManagedDcodeRebuildImageSpy,
+    removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,
     relockSpy,
@@ -356,6 +438,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
+    preparedDcodeBuildContext,
     session,
   };
 }
@@ -449,6 +532,51 @@ function makePreparedRecoveryManifest() {
   };
 }
 
+function makeDcodeSandboxEntry(): Record<string, unknown> {
+  return {
+    name: "alpha",
+    agent: "langchain-deepagents-code",
+    agentVersion: "0.1.12",
+    nemoclawVersion: "0.0.72",
+    provider: "compatible-endpoint",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    endpointUrl: "https://inference-api.nvidia.com/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+    nimContainer: null,
+    policies: [],
+    dashboardPort: 0,
+    gatewayName: "nemoclaw",
+    gatewayPort: 8080,
+    gpuEnabled: false,
+    sandboxGpuEnabled: false,
+    sandboxGpuMode: "0",
+  };
+}
+
+function configureDcodeSession(harness: RebuildFlowHarness): void {
+  Object.assign(harness.session, {
+    agent: "langchain-deepagents-code",
+    provider: "compatible-endpoint",
+    model: "nvidia/nemotron-3-super-120b-a12b",
+    endpointUrl: "https://inference-api.nvidia.com/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+    gpuPassthrough: false,
+  });
+}
+
+function expectNoDcodeMutation(harness: RebuildFlowHarness): void {
+  expect(harness.openShieldsSpy).not.toHaveBeenCalled();
+  expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+  expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+    ["sandbox", "delete", "alpha"],
+    expect.anything(),
+  );
+  expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+  expect(harness.onboardSpy).not.toHaveBeenCalled();
+}
+
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -462,6 +590,254 @@ describe("rebuildSandbox flow", () => {
     } else {
       process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
     }
+  });
+
+  it("rejects a stored DCode route failure before any rebuild mutation (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [
+        { ok: false, detail: "existing sandbox inference probe returned HTTP 401" },
+      ],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded inference route smoke check failed");
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("rejects a DCode replacement-image failure before any rebuild mutation (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeImageResult: { ok: false, detail: "replacement image build failed" },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow();
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("rejects a managed DCode session with a recorded custom Dockerfile before image preparation (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+    });
+    configureDcodeSession(harness);
+    harness.session.metadata = { fromDockerfile: "/tmp/custom/Dockerfile" };
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Managed DCode rebuild cannot use a recorded custom Dockerfile");
+
+    expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("rejects registry drift during the final DCode preflight before shields and backup (#6195)", async () => {
+    const originalEntry = makeDcodeSandboxEntry();
+    const driftedEntry = { ...originalEntry, model: "nvidia/changed-during-preflight" };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: originalEntry,
+      sandboxEntryReads: [originalEntry, originalEntry, driftedEntry],
+      dcodeRouteResults: [{ ok: true }, { ok: true }],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the recorded sandbox target changed during preflight");
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(2);
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+    expectNoDcodeMutation(harness);
+  });
+
+  it("disposes the prepared DCode image when the final route recheck fails (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [
+        { ok: true },
+        { ok: false, detail: "existing sandbox inference probe returned HTTP 401" },
+      ],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded inference route smoke check failed");
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(2);
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+    expectNoDcodeMutation(harness);
+  });
+
+  it("preserves the live DCode sandbox when its registry target drifts after backup (#6195)", async () => {
+    const originalEntry = makeDcodeSandboxEntry();
+    const driftedEntry = { ...originalEntry, model: "nvidia/changed-at-delete-edge" };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: originalEntry,
+      sandboxEntryReads: [originalEntry, originalEntry, originalEntry, originalEntry, driftedEntry],
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the recorded sandbox target changed during preflight");
+
+    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+  });
+
+  it("preserves the live DCode sandbox when its credential route drifts after backup (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [
+        { ok: true },
+        { ok: true },
+        { ok: false, detail: "existing sandbox inference probe returned HTTP 401" },
+      ],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recorded inference route smoke check failed");
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
+    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+  });
+
+  it("restores the prior gateway and disposes DCode inputs when shields opening throws (#6195)", async () => {
+    const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
+    process.env.OPENSHELL_GATEWAY = "previous-gateway";
+    let gatewayAtShields: string | undefined;
+
+    try {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: makeDcodeSandboxEntry(),
+        dcodeRouteResults: [{ ok: true }, { ok: true }],
+        openShieldsWindow: () => {
+          gatewayAtShields = process.env.OPENSHELL_GATEWAY;
+          throw new Error("shields opening threw unexpectedly");
+        },
+      });
+      configureDcodeSession(harness);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("shields opening threw unexpectedly");
+
+      expect(gatewayAtShields).toBe("nemoclaw");
+      expect(process.env.OPENSHELL_GATEWAY).toBe("previous-gateway");
+      expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+      expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+        harness.preparedDcodeBuildContext,
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("finishes DCode preparation and recheck before backup, delete, and recreate (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: "langchain-deepagents-code",
+        preparedDcodeRebuild: expect.objectContaining({
+          buildContext: harness.preparedDcodeBuildContext,
+          gatewayName: "nemoclaw",
+        }),
+      }),
+    );
+
+    const [firstRouteOrder, preBackupRouteOrder, deleteEdgeRouteOrder] =
+      harness.preflightDcodeRouteSpy.mock.invocationCallOrder;
+    const imageOrder = harness.prepareManagedDcodeRebuildImageSpy.mock.invocationCallOrder[0];
+    const shieldsOrder = harness.openShieldsSpy.mock.invocationCallOrder[0];
+    const backupOrder = harness.backupSandboxStateSpy.mock.invocationCallOrder[0];
+    const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
+      ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+    );
+    const deleteOrder = harness.runOpenshellSpy.mock.invocationCallOrder[deleteCall];
+    const onboardOrder = harness.onboardSpy.mock.invocationCallOrder[0];
+
+    expect(firstRouteOrder).toBeLessThan(imageOrder);
+    expect(imageOrder).toBeLessThan(preBackupRouteOrder);
+    expect(preBackupRouteOrder).toBeLessThan(shieldsOrder);
+    expect(shieldsOrder).toBeLessThan(backupOrder);
+    expect(backupOrder).toBeLessThan(deleteEdgeRouteOrder);
+    expect(deleteEdgeRouteOrder).toBeLessThan(deleteOrder);
+    expect(deleteOrder).toBeLessThan(onboardOrder);
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
   });
 
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
@@ -524,6 +900,42 @@ describe("rebuildSandbox flow", () => {
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+      "alpha",
+      recoveryManifest.backupPath,
+    );
+  });
+
+  it("recreates non-Ready DCode from a validated backup without requiring a live route (#6195)", async () => {
+    const recoveryManifest = {
+      ...makePreparedRecoveryManifest(),
+      agentType: "langchain-deepagents-code",
+      agentVersion: "0.1.12",
+      dir: "/sandbox/.deepagents",
+    };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      sandboxListOutput: "alpha Error",
+      preDeleteLatestManifest: recoveryManifest,
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], {
+        throwOnError: true,
+        recoveryManifest,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalledOnce();
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
