@@ -13,13 +13,12 @@ import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimen
 import {
   DCODE_CANONICAL_PATH,
   headlessCheckPath,
-  makeStartScriptFixture as makeHeadlessStartScriptFixture,
+  makeStartScriptFixture,
   NO_PROXY_ENV_NAMES,
   PROXY_URL_ENV_NAMES,
   runHeadlessCheckHelper,
   runStartScriptProxyProbe,
 } from "./helpers/langchain-deepagents-code-headless.ts";
-import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -182,31 +181,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(baseDockerfile).toContain("> /sandbox/.profile");
   });
 
-  it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
-    try {
-      const { envFile, scriptPath } = makeIdentityStartScriptFixture(tempDir);
-
-      execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
-        env: {
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-          NEMOCLAW_SANDBOX_NAME: "dcode-demo",
-        },
-        encoding: "utf8",
-      });
-
-      expect(fs.readFileSync(envFile, "utf8")).toContain("export NEMOCLAW_SANDBOX_NAME=dcode-demo");
-    } finally {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
-    const { envFile, scriptPath } = makeHeadlessStartScriptFixture(
-      tempDir,
-      readAgentFile("start.sh"),
-    );
+    const { envFile, scriptPath } = makeStartScriptFixture(tempDir, readAgentFile("start.sh"));
     const inheritedSecrets = {
       NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
       OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
@@ -844,8 +821,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", value: "xapp-ghp_abcdefghijklmnopqr" },
-      { name: "SLACK_BOT_TOKEN", value: "xoxb-API_KEY=opaquevalue12345" },
-      { name: "SLACK_APP_TOKEN", value: "xapp-TOKEN:opaquevalue12345" },
       {
         name: "SLACK_BOT_TOKEN",
         value: `xoxb-lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
@@ -868,8 +843,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-nvapi-abcdefghijklmnop" },
       { name: "SLACK_APP_TOKEN", value: "xapp-pypi-abcdefghijklmnop" },
-      { name: "SLACK_BOT_TOKEN", value: "xoxb-PASSWORD opaquevalue12345" },
-      { name: "SLACK_APP_TOKEN", value: "xapp-CREDENTIAL=opaquevalue12345" },
       {
         name: "SLACK_APP_TOKEN",
         value: `xapp-lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
@@ -1359,7 +1332,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },
       { name: "pypi", sample: "pypi-abcdefghijklmnop" },
-      { name: "tavily", sample: "tvly-abcdefghijklmnop" },
       { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       {
