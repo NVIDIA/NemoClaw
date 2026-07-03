@@ -52,9 +52,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
-  "hermes-e2e",
-]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -71,6 +69,8 @@ const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
+// The general E2E workflow runs on schedule/manual dispatch. Its event set is
+// intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;

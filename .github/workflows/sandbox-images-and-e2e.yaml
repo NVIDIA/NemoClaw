@@ -4,6 +4,9 @@
 name: Images / Sandbox Images and E2E
 
 on:
+  # Manual dispatch is the branch-validation path. Non-main refs set
+  # DOCKERHUB_AUTH_REQUIRED=0 and pull anonymously; only trusted NVIDIA main
+  # dispatches receive Docker Hub credentials.
   workflow_dispatch:
   workflow_call:
     inputs:

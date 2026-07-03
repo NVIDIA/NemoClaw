@@ -30,6 +30,8 @@ const FORBIDDEN_RUNTIME_SECRETS = [
   "NVIDIA_INFERENCE_API_KEY",
   "GITHUB_TOKEN",
 ] as const;
+// The reusable workflow inherits `push` from its main-workflow caller and uses
+// `workflow_dispatch` for branch validation; unlike the E2E workflow, it has no schedule trigger.
 const TRUSTED_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')";
 const EXPECTED_AUTH_ENV = {
