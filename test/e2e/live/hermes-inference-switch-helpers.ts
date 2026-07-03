@@ -9,7 +9,6 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-import { resultText } from "../fixtures/clients/index.ts";
 import {
   type SandboxClient,
   trustedSandboxShellScript,
@@ -17,10 +16,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { FakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import {
-  DEFAULT_HOSTED_INFERENCE_BASE_URL,
-  DEFAULT_HOSTED_INFERENCE_MODEL,
-} from "../fixtures/hosted-inference.ts";
+import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
   inferenceSetAttemptCount,
   runInferenceSetWithRetry,
@@ -34,14 +30,13 @@ export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-export const HOSTED_BASELINE_PROVIDER = "nvidia-prod";
-export const HOSTED_BASELINE_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-120b-a12b";
 export const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ??
   (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
 export const SWITCH_MODEL =
   process.env.NEMOCLAW_SWITCH_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_HOSTED_INFERENCE_MODEL : HOSTED_BASELINE_MODEL);
+  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
@@ -64,16 +59,6 @@ export function mockAnthropicSwitchEnabled(runtimeEnv: NodeJS.ProcessEnv = proce
     (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === "compatible-anthropic-endpoint" &&
     (runtimeEnv.NEMOCLAW_SWITCH_INFERENCE_API ?? SWITCH_API) === "anthropic-messages" &&
     runtimeEnv.NEMOCLAW_SWITCH_MOCK_ANTHROPIC === "1"
-  );
-}
-
-export function compatibleHostedSwitchEnabled(
-  runtimeEnv: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return (
-    runtimeEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1" &&
-    (runtimeEnv.NEMOCLAW_SWITCH_PROVIDER ?? SWITCH_PROVIDER) === "compatible-endpoint" &&
-    (runtimeEnv.NEMOCLAW_SWITCH_INFERENCE_API ?? SWITCH_API) === "openai-completions"
   );
 }
 
@@ -101,11 +86,7 @@ export function openshellGatewayName(runtimeEnv: NodeJS.ProcessEnv = process.env
   return runtimeEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
 }
 
-export function env(
-  apiKey?: string,
-  extra: NodeJS.ProcessEnv = {},
-  options: { stageCompatibleHosted?: boolean } = {},
-): NodeJS.ProcessEnv {
+export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
@@ -116,7 +97,7 @@ export function env(
     OPENSHELL_GATEWAY: openshellGatewayName(),
   };
   apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
-  (options.stageCompatibleHosted ?? USE_COMPATIBLE_HOSTED) &&
+  USE_COMPATIBLE_HOSTED &&
     apiKey &&
     Object.assign(out, {
       COMPATIBLE_API_KEY: apiKey,
@@ -155,28 +136,6 @@ export function parseInferenceRoute(text: string): { provider: string; model: st
   const provider = plain.match(/^\s*Provider:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
   const model = plain.match(/^\s*Model:\s*(.*?)\s*$/mu)?.[1]?.trim() ?? "";
   return { provider, model };
-}
-
-export function expectHostedBaselineCredential(enabled: boolean, apiKey: string): void {
-  if (!enabled) return;
-  expect(apiKey).toMatch(/^nvapi-/u);
-}
-
-export async function expectHostedBaselineRoute(
-  enabled: boolean,
-  sandbox: SandboxClient,
-): Promise<void> {
-  if (!enabled) return;
-  const route = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
-    artifactName: "openshell-inference-route-before-switch",
-    env: env(),
-    timeoutMs: 30_000,
-  });
-  expect(route.exitCode, resultText(route)).toBe(0);
-  expect(parseInferenceRoute(resultText(route))).toEqual({
-    provider: HOSTED_BASELINE_PROVIDER,
-    model: HOSTED_BASELINE_MODEL,
-  });
 }
 
 export function chatContent(raw: string): string {
@@ -390,42 +349,10 @@ export async function ensureCompatibleAnthropicSwitchProvider(
   return endpointUrl;
 }
 
-export async function ensureCompatibleHostedSwitchProvider(
-  host: HostCliClient,
-  apiKey: string,
-  runtimeEnv: NodeJS.ProcessEnv = process.env,
-): Promise<string | null> {
-  if (!compatibleHostedSwitchEnabled(runtimeEnv)) return null;
-  const endpointUrl =
-    runtimeEnv.NEMOCLAW_SWITCH_ENDPOINT_URL ??
-    runtimeEnv.NEMOCLAW_ENDPOINT_URL ??
-    DEFAULT_HOSTED_INFERENCE_BASE_URL;
-  const providerScript = [
-    "set -euo pipefail",
-    "if openshell provider get -g nemoclaw compatible-endpoint >/dev/null 2>&1; then",
-    '  openshell provider update -g nemoclaw compatible-endpoint --credential COMPATIBLE_API_KEY --config "OPENAI_BASE_URL=${SWITCH_ENDPOINT_URL}"',
-    "else",
-    '  openshell provider create -g nemoclaw --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config "OPENAI_BASE_URL=${SWITCH_ENDPOINT_URL}"',
-    "fi",
-  ].join("\n");
-  const result = await host.command("bash", ["-lc", providerScript], {
-    artifactName: "register-compatible-hosted-switch-provider",
-    env: env(undefined, {
-      COMPATIBLE_API_KEY: apiKey,
-      SWITCH_ENDPOINT_URL: endpointUrl,
-    }),
-    redactionValues: [apiKey],
-    timeoutMs: 120_000,
-  });
-  expect(result.exitCode).toBe(0);
-  return endpointUrl;
-}
-
 export async function installHermes(
   host: HostCliClient,
   apiKey: string,
   installEnv: NodeJS.ProcessEnv = {},
-  options: { stageCompatibleHosted?: boolean } = {},
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -435,7 +362,7 @@ export async function installHermes(
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,
-        env: env(apiKey, installEnv, options),
+        env: env(apiKey, installEnv),
         redactionValues: [apiKey],
         timeoutMs: 25 * 60_000,
       },
@@ -456,11 +383,7 @@ export async function runHermesInferenceSetWithRetry(
   host: HostCliClient,
   apiKey: string,
   compatibleMetadataArgs: string[],
-  options: {
-    attempts?: number;
-    credentialEnv?: "COMPATIBLE_API_KEY";
-    delay?: (milliseconds: number) => Promise<void>;
-  } = {},
+  options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
 ): Promise<ShellProbeResult> {
   const args = [
     CLI,
@@ -472,10 +395,6 @@ export async function runHermesInferenceSetWithRetry(
     SWITCH_MODEL,
     ...compatibleMetadataArgs,
   ];
-  const commandEnv =
-    options.credentialEnv === "COMPATIBLE_API_KEY"
-      ? env(undefined, { COMPATIBLE_API_KEY: apiKey })
-      : env(apiKey);
   return runInferenceSetWithRetry({
     attempts:
       options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
@@ -485,7 +404,7 @@ export async function runHermesInferenceSetWithRetry(
         artifactName: verify
           ? `hermes-inference-set-${attempt}`
           : "hermes-inference-set-no-verify-after-transient-failures",
-        env: commandEnv,
+        env: env(apiKey),
         redactionValues: [apiKey],
         timeoutMs: 180_000,
       }),
@@ -598,23 +517,6 @@ export function registryState(): { registry: Record<string, any>; session: Recor
       fs.readFileSync(path.join(os.homedir(), ".nemoclaw", "onboard-session.json"), "utf8"),
     ),
   };
-}
-
-export function expectCompatibleRecoveryMetadata(
-  state: { registry: Record<string, any>; session: Record<string, any> },
-  endpointUrl: string | null,
-  hostedEndpointUrl: string | null,
-): void {
-  if (!endpointUrl) return;
-  const expectedCredentialEnv = hostedEndpointUrl
-    ? "COMPATIBLE_API_KEY"
-    : "COMPATIBLE_ANTHROPIC_API_KEY";
-  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl).toBe(endpointUrl);
-  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(expectedCredentialEnv);
-  expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(SWITCH_API);
-  expect(state.session.endpointUrl).toBe(endpointUrl);
-  expect(state.session.credentialEnv).toBe(expectedCredentialEnv);
-  expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
 }
 
 function quotePayload(payload: string): string {

@@ -42,7 +42,7 @@ const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? uniqueSandboxName("e2e-openclaw-inference-switch");
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
-const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-120b-a12b";
 const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ??
   (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");

@@ -64,8 +64,7 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
       mode: "hosted",
       sandbox_name: `e2e-${agent}-inference-switch`,
       switch_provider: "compatible-endpoint",
-      switch_model:
-        agent === "hermes" ? "nvidia/nvidia/nemotron-3-ultra" : "nvidia/nvidia/nemotron-3-super-v3",
+      switch_model: "nvidia/nvidia/nemotron-3-super-120b-a12b",
       switch_inference_api: "openai-completions",
       switch_mock_anthropic: "0",
     },
@@ -104,35 +103,23 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
     if (job.env?.[name] !== value) errors.push(`${spec.job} must map ${name} from its mode matrix`);
   }
 
-  for (const secret of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY"]) {
-    if (job.env?.[secret] !== undefined) {
-      errors.push(`${spec.job} must not expose ${secret} at job scope`);
-    }
+  if (job.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
+    errors.push(`${spec.job} must not expose NVIDIA_INFERENCE_API_KEY at job scope`);
+  }
+  if (job.env?.NVIDIA_API_KEY !== undefined) {
+    errors.push(`${spec.job} must not expose NVIDIA_API_KEY at job scope`);
   }
   const runStep = job.steps?.find((step) => step.name === spec.runStep);
-  const hostedInferenceKeyExpression =
-    "${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}";
-  const expectedInferenceKey =
-    spec.agent === "hermes"
-      ? hostedInferenceKeyExpression
-      : "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
-  if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== expectedInferenceKey) {
-    errors.push(`${spec.job} run step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
-  }
-  const publicKeyExpression = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}";
-  if (spec.agent === "hermes") {
-    if (runStep?.env?.NVIDIA_API_KEY !== publicKeyExpression) {
-      errors.push("hermes-inference-switch hosted mode must receive NVIDIA_API_KEY from secrets");
-    }
-  } else if (runStep?.env?.NVIDIA_API_KEY !== undefined) {
-    errors.push("openclaw-inference-switch run step must not receive NVIDIA_API_KEY");
+  const hostedSecret = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}";
+  if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== hostedSecret) {
+    errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its hosted run step`);
   }
   for (const step of job.steps ?? []) {
-    if (step === runStep) continue;
-    for (const secret of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY"]) {
-      if (step.env?.[secret] !== undefined) {
-        errors.push(`${spec.job} must expose ${secret} only to its run step`);
-      }
+    if (step !== runStep && step.env?.NVIDIA_INFERENCE_API_KEY !== undefined) {
+      errors.push(`${spec.job} must expose NVIDIA_INFERENCE_API_KEY only to its run step`);
+    }
+    if (step.env?.NVIDIA_API_KEY !== undefined) {
+      errors.push(`${spec.job} must not expose NVIDIA_API_KEY to workflow steps`);
     }
   }
 
