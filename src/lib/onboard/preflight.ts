@@ -16,7 +16,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
-import { printRemediationActions } from "./remediation";
 import {
   assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
@@ -28,10 +27,12 @@ import {
   extractCdiMismatchFilePath,
   getNvidiaCdiSpecPath,
 } from "./docker-cdi";
+import { printRemediationActions } from "./remediation";
 import {
   isWslDockerDesktopRuntime,
   wslDockerDesktopGpuCompatibilityAction,
 } from "./wsl-docker-desktop-gpu";
+
 export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 
@@ -363,6 +364,60 @@ export function isDockerUnderProvisioned(
   return cpuLow || memLow;
 }
 
+export interface CheckContainerRuntimeResourcesOptions {
+  ignored: boolean;
+  nonInteractive: boolean;
+  confirm(): Promise<boolean>;
+  log?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+  exit?: (code: number) => never;
+}
+
+/** Report container capacity and gate interactive continuation when it is undersized. */
+export async function checkContainerRuntimeResources(
+  host: HostAssessment,
+  options: CheckContainerRuntimeResourcesOptions,
+): Promise<void> {
+  const log = options.log ?? console.log;
+  const warn = options.warn ?? console.warn;
+  const error = options.error ?? console.error;
+  const exit = options.exit ?? ((code: number): never => process.exit(code));
+  const detected: string[] = [];
+  if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
+  if (typeof host.dockerMemTotalBytes === "number") {
+    detected.push(`${(host.dockerMemTotalBytes / 1024 ** 3).toFixed(1)} GiB`);
+  }
+  if (!host.isContainerRuntimeUnderProvisioned || options.ignored) {
+    if (host.dockerReachable && detected.length > 0) {
+      log(`  ✓ Container runtime resources: ${detected.join(" / ")}`);
+    }
+    return;
+  }
+
+  warn(
+    `  ⚠ Container runtime under-provisioned: ${detected.join(" / ") || "unknown"} detected ` +
+      `(recommended: ${MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
+  );
+  warn("    The sandbox build will be slow and may stall on default Colima settings.");
+  if (host.runtime === "colima") {
+    warn(
+      `    Suggested: colima stop && colima start --cpu ${MIN_RECOMMENDED_DOCKER_CPUS} --memory ${MIN_RECOMMENDED_DOCKER_MEM_GIB}`,
+    );
+  } else if (host.runtime === "docker-desktop") {
+    warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
+  }
+  warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
+  if (options.nonInteractive) {
+    warn("    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.");
+    return;
+  }
+  if (!(await options.confirm())) {
+    error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
+    exit(1);
+  }
+}
+
 function readDockerDefaultCgroupnsMode(
   readFileImpl: (filePath: string, encoding: BufferEncoding) => string,
 ): "host" | "private" | "unknown" {
@@ -664,6 +719,7 @@ export function assertCdiNvidiaGpuSpecPresent(
   host: HostAssessment,
   explicitlyOptedOutGpuPassthrough: boolean,
   hostGpuPlatform: string | null | undefined = null,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
   if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
   if (
@@ -678,7 +734,7 @@ export function assertCdiNvidiaGpuSpecPresent(
     "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
   );
   printRemediationActions(planHostRemediation(host));
-  process.exit(1);
+  exitProcess(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {

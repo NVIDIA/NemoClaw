@@ -679,8 +679,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
     for (const expected of [
       'args.sandbox = "none"',
-      "args.no_mcp = True",
-      "args.mcp_config = None",
+      "args.no_mcp = not has_managed_mcp",
+      "args.mcp_config = managed_mcp_config if has_managed_mcp else None",
       "args.shell_allow_list = None",
       'getattr(args, "update", False)',
       'getattr(args, "auto_update", False)',
@@ -792,15 +792,127 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(result.stdout).toContain("managed-posture-ok");
   });
 
+  it("accepts only exact same-name OpenShell credential placeholders", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const run = (name: string, value: string) =>
+      spawnSync("python3", ["-m", "deepagents_code"], {
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir, [name]: value },
+        encoding: "utf8",
+      });
+
+    for (const value of [
+      "openshell:resolve:env:GITHUB_MCP_TOKEN",
+      "openshell:resolve:env:v0_GITHUB_MCP_TOKEN",
+      `openshell:resolve:env:v${"1".repeat(20)}_GITHUB_MCP_TOKEN`,
+    ]) {
+      const result = run("GITHUB_MCP_TOKEN", value);
+      expect(result.status, result.stderr).toBe(0);
+    }
+
+    for (const [name, value] of [
+      ["GITHUB_MCP_TOKEN", "prefix-openshell:resolve:env:GITHUB_MCP_TOKEN"],
+      ["GITHUB_MCP_TOKEN", "openshell:resolve:env:OTHER_TOKEN"],
+      ["GITHUB_MCP_TOKEN", `openshell:resolve:env:v${"1".repeat(21)}_GITHUB_MCP_TOKEN`],
+      ["OPENSHELL_TLS_KEY", "openshell:resolve:env:OPENSHELL_TLS_KEY"],
+    ]) {
+      const result = run(name, value);
+      expect(result.status, `${name}=${value} was allowed`).not.toBe(0);
+      expect(result.stderr).toContain("invalid OpenShell credential placeholder");
+    }
+  });
+
+  it("loads only strict HTTPS-only managed MCP configuration", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const configPath = path.join(tempDir, ".mcp.json");
+    const validate = (config: unknown, mode = 0o600) => {
+      fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`, { mode });
+      fs.chmodSync(configPath, mode);
+      return spawnSync(
+        "python3",
+        [
+          "-c",
+          [
+            "import sys",
+            "from pathlib import Path",
+            "from deepagents_code import _nemoclaw_managed as managed",
+            "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
+            "print(managed.managed_mcp_config_path() or 'absent')",
+          ].join("; "),
+          configPath,
+        ],
+        {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+          encoding: "utf8",
+        },
+      );
+    };
+    const validServer = {
+      type: "http",
+      url: "https://api.githubcopilot.com/mcp/",
+      headers: {
+        Authorization: "Bearer openshell:resolve:env:v20_GITHUB_MCP_TOKEN",
+      },
+    };
+
+    const valid = validate({ mcpServers: { github: validServer } });
+    expect(valid.status, valid.stderr).toBe(0);
+    expect(valid.stdout.trim()).toBe(configPath);
+
+    for (const config of [
+      { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
+      { mcpServers: { github: validServer }, ui: { theme: "dark" } },
+      {
+        mcpServers: {
+          github: { ...validServer, headers: { "X-Test": "value" } },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, headers: { Authorization: "Bearer raw-secret-value" } },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://127.0.0.1/mcp/" },
+        },
+      },
+    ]) {
+      const result = validate(config);
+      expect(result.status, JSON.stringify(config)).not.toBe(0);
+    }
+
+    const badMode = validate({ mcpServers: { github: validServer } }, 0o644);
+    expect(badMode.status).not.toBe(0);
+    expect(badMode.stderr).toContain("unsafe ownership or mode");
+  });
+
   it("blocks TUI commands, credential screens, dotenv, OAuth, and install backends", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
+    const managedMcpPath = path.join(tempDir, "managed-mcp.json");
+    fs.writeFileSync(
+      managedMcpPath,
+      `${JSON.stringify({
+        mcpServers: {
+          github: {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN",
+            },
+          },
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
     const validation = `
 import asyncio
 import os
 from pathlib import Path
 
-from deepagents_code import agent, app, auth_store, config, hooks, model_config, non_interactive, server, subagents, update_check
+from deepagents_code import agent, app, auth_store, config, hooks, main as dcode_main, model_config, non_interactive, server, subagents, update_check
 from deepagents_code import _nemoclaw_managed
 from deepagents_code import config_manifest
 from deepagents_code.integrations import openai_codex
@@ -980,6 +1092,21 @@ async def validate():
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
     assert non_interactive.settings.shell_allow_list is None
+    _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    managed_args = dcode_main.parse_args()
+    assert managed_args.mcp_config == ${JSON.stringify(managedMcpPath)}
+    assert managed_args.no_mcp is False
+    assert managed_args.trust_project_mcp is False
+    managed_headless_kwargs = await non_interactive.run_non_interactive(
+        "message",
+        "assistant",
+        mcp_config_path="attacker.json",
+        no_mcp=True,
+        trust_project_mcp=True,
+    )
+    assert managed_headless_kwargs["mcp_config_path"] == ${JSON.stringify(managedMcpPath)}
+    assert managed_headless_kwargs["no_mcp"] is False
+    assert managed_headless_kwargs["trust_project_mcp"] is False
     assert model_config.ModelConfig().get_class_path("openai") is None
     managed_kwargs = config._get_provider_kwargs("openai")
     assert managed_kwargs == {

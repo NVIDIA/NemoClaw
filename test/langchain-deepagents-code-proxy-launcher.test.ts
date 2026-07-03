@@ -147,7 +147,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       env: hostileEnv,
       encoding: "utf8",
     });
-    const startResult = spawnSync(scriptPath, ["/bin/true"], {
+    const startResult = spawnSync(scriptPath, ["/usr/bin/true"], {
       env: hostileEnv,
       encoding: "utf8",
     });

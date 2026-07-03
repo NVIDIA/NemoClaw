@@ -76,8 +76,8 @@ function writeFakeOpenshell(binDir: string): void {
     path.join(binDir, "openshell"),
     `#!/usr/bin/env bash
 set -uo pipefail
-: "\${NEMOCLAW_FAKE_CASE_DIR:?}"
-printf '%s\n' "$*" >> "$NEMOCLAW_FAKE_CASE_DIR/openshell-calls.log"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
+printf '%s\n' "$*" >> "$case_dir/openshell-calls.log"
 case "\${1:-}" in
   --version|-V)
     printf 'openshell 0.0.37\n'
@@ -122,7 +122,7 @@ function writeFakeDocker(
     path.join(binDir, "docker"),
     `#!/usr/bin/env bash
 set -uo pipefail
-case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}/nemoclaw-gateway-drift-preflight-current}"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
 printf '%s\n' "$*" >> "$case_dir/docker-calls.log"
 format=""
 if [ "\${1:-}" = "inspect" ] || { [ "\${1:-}" = "container" ] && [ "\${2:-}" = "inspect" ]; }; then
@@ -160,7 +160,8 @@ function writeFakeDockerNoCluster(binDir: string): void {
     path.join(binDir, "docker"),
     `#!/usr/bin/env bash
 set -uo pipefail
-printf '%s\n' "$*" >> "$NEMOCLAW_FAKE_CASE_DIR/docker-calls.log"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}}"
+printf '%s\n' "$*" >> "$case_dir/docker-calls.log"
 if [ "\${1:-}" = "inspect" ] || { [ "\${1:-}" = "container" ] && [ "\${2:-}" = "inspect" ]; }; then
   printf 'Error: No such object\n' >&2
   exit 1

@@ -7,6 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json";
+import { buildRebuildHermesChildEnv } from "./e2e/live/rebuild-hermes-env.ts";
+
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
@@ -17,13 +20,20 @@ const PINNED_OPEN_SHELL_SHA256 = {
   gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
   sandboxLinuxArm64: "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+  sandboxBinaryLinuxX64: "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198",
 };
 const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
+const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
+const LEGACY_OPENSHELL_VERSION = "0.0.44";
+const OPENSHELL_REWRITE_FEATURE_MARKERS =
+  "request-body-credential-rewrite websocket-credential-rewrite";
+const OPENSHELL_MCP_FEATURE_MARKER = "allow_all_known_mcp_methods";
+const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER}`;
+type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
 
 function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
-
 /**
  * Run install-openshell.sh with a fake `openshell` binary that reports the
  * given version. The download/install code path is never reached because we
@@ -36,16 +46,41 @@ function runWithInstalledVersion(
   extraEnv: NodeJS.ProcessEnv = {},
   options: {
     capability?: boolean;
+    featurePlacement?: OpenShellFeaturePlacement;
     driverBins?: boolean | "gateway" | "gateway-vm";
+    driverLocation?: "path" | "explicit" | "symlink";
+    driverVersion?: string;
+    sandboxVersion?: string;
+    sandboxVersionExit?: number;
+    sandboxBinaryDigest?: string;
+    driverVersionExit?: number;
+    driverReadable?: boolean;
     os?: string;
     arch?: string;
   } = {},
 ) {
   const capability = options.capability ?? true;
+  const featurePlacement: OpenShellFeaturePlacement = capability
+    ? (options.featurePlacement ?? "openshell")
+    : "none";
+  const openshellMarkers =
+    featurePlacement === "openshell"
+      ? OPENSHELL_FEATURE_MARKERS
+      : featurePlacement === "split-mcp-gateway"
+        ? OPENSHELL_REWRITE_FEATURE_MARKERS
+        : "";
+  const gatewayMarkers =
+    featurePlacement === "gateway"
+      ? OPENSHELL_FEATURE_MARKERS
+      : featurePlacement === "split-mcp-gateway"
+        ? OPENSHELL_MCP_FEATURE_MARKER
+        : "";
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
+    const driverBin = options.driverLocation ? path.join(tmp, "driver-bin") : fakeBin;
     fs.mkdirSync(fakeBin);
+    fs.mkdirSync(driverBin, { recursive: true });
 
     writeExecutable(
       path.join(fakeBin, "uname"),
@@ -58,30 +93,61 @@ if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${o
       path.join(fakeBin, "openshell"),
       `#!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${version}"; exit 0; fi
-${capability ? "# request-body-credential-rewrite websocket-credential-rewrite" : ""}
+${openshellMarkers ? `# ${openshellMarkers}` : ""}
 exit 99`,
     );
 
-    if (options.driverBins !== false) {
+    const driverFixtures: Array<{ name: string; markers: string }> =
+      options.driverBins === false
+        ? []
+        : [
+            { name: "openshell-gateway", markers: gatewayMarkers },
+            ...(options.driverBins === "gateway"
+              ? []
+              : [
+                  {
+                    name: "openshell-sandbox",
+                    markers: OPENSHELL_MCP_FEATURE_MARKER,
+                  },
+                ]),
+            ...(options.driverBins === "gateway-vm"
+              ? [
+                  {
+                    name: "openshell-driver-vm",
+                    markers: OPENSHELL_MCP_FEATURE_MARKER,
+                  },
+                ]
+              : []),
+          ];
+    for (const fixture of driverFixtures) {
       writeExecutable(
-        path.join(fakeBin, "openshell-gateway"),
+        path.join(driverBin, fixture.name),
         `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "${fixture.name} ${fixture.name === "openshell-sandbox" ? (options.sandboxVersion ?? options.driverVersion ?? version) : (options.driverVersion ?? version)}"; exit ${fixture.name === "openshell-sandbox" ? (options.sandboxVersionExit ?? options.driverVersionExit ?? 0) : (options.driverVersionExit ?? 0)}; fi
+# ${fixture.markers}
 exit 0`,
       );
+      if (options.driverReadable === false) fs.chmodSync(path.join(driverBin, fixture.name), 0o111);
+      if (options.driverLocation === "symlink") {
+        fs.symlinkSync(path.join(driverBin, fixture.name), path.join(fakeBin, fixture.name));
+      }
     }
-    if (options.driverBins !== false && options.driverBins !== "gateway") {
-      writeExecutable(
-        path.join(fakeBin, "openshell-sandbox"),
-        `#!/usr/bin/env bash
-exit 0`,
-      );
-    }
-    if (options.driverBins === "gateway-vm") {
-      writeExecutable(
-        path.join(fakeBin, "openshell-driver-vm"),
-        `#!/usr/bin/env bash
-exit 0`,
-      );
+
+    switch (options.sandboxBinaryDigest) {
+      case undefined:
+        break;
+      default:
+        writeExecutable(
+          path.join(fakeBin, "sha256sum"),
+          `#!/usr/bin/env bash
+case "\${1:-}" in
+  */openshell-sandbox)
+    printf '%s  %s\\n' '${options.sandboxBinaryDigest}' "$1"
+    exit 0
+    ;;
+esac
+exit 1`,
+        );
     }
 
     // Stub curl to fail so the install path exits without doing real network I/O
@@ -120,12 +186,20 @@ exit 0`,
       );
     }
 
+    const explicitDriverEnv =
+      options.driverLocation === "explicit"
+        ? {
+            NEMOCLAW_OPENSHELL_GATEWAY_BIN: path.join(driverBin, "openshell-gateway"),
+            NEMOCLAW_OPENSHELL_SANDBOX_BIN: path.join(driverBin, "openshell-sandbox"),
+          }
+        : {};
     return spawnSync("bash", [SCRIPT], {
       env: {
         ...process.env,
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+        ...explicitDriverEnv,
         ...extraEnv,
-        PATH: `${fakeBin}:/usr/bin:/bin`,
+        PATH: `${fakeBin}:${driverBin}:/usr/bin:/bin`,
       },
       encoding: "utf8",
     });
@@ -135,29 +209,151 @@ exit 0`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
-  it("exits cleanly when openshell 0.0.72 and driver binaries are already installed", () => {
-    const result = runWithInstalledVersion("0.0.72");
+  it("exits cleanly when the required OpenShell and driver binaries are already installed", () => {
+    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
   });
 
-  it("triggers reinstall when openshell 0.0.72 is missing Docker-driver binaries", () => {
-    const result = runWithInstalledVersion("0.0.72", {}, { driverBins: false, os: "Linux" });
+  it("accepts MCP L7 support from the installed gateway sidecar", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { featurePlacement: "split-mcp-gateway" },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+  });
+
+  it("does not combine the OpenShell CLI with driver binaries from another PATH root", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverLocation: "path" },
+    );
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
   });
 
-  it("fails closed when openshell 0.0.72 lacks required messaging rewrite support", () => {
-    const result = runWithInstalledVersion("0.0.72", {}, { capability: false });
+  it("accepts cross-prefix driver binaries only through explicit overrides", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverLocation: "explicit" },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+  });
+
+  it("rejects mixed release components hidden behind one symlink directory", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverLocation: "symlink" },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/gateway resolves outside the active CLI install root/);
+  });
+
+  it("rejects stale components copied into the active install root", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverVersion: "0.0.71" },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/gateway does not match the active CLI build/);
+  });
+
+  it("rejects a component whose version probe fails after printing a version", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverVersionExit: 42 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/gateway does not match the active CLI build/);
+  });
+
+  it("accepts the exact pinned sandbox when its host-side version probe cannot load", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      {
+        sandboxVersionExit: 127,
+        sandboxBinaryDigest: PINNED_OPEN_SHELL_SHA256.sandboxBinaryLinuxX64,
+      },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+  });
+
+  it("rejects a non-runnable sandbox whose digest is not a pinned release artifact", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { sandboxVersionExit: 127, sandboxBinaryDigest: ZERO_SHA256 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/sandbox does not match the active CLI build/);
+  });
+
+  it("rejects a selected component that cannot be scanned", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverReadable: false },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/gateway is not readable and executable/);
+  });
+
+  it("rejects an executable directory supplied as an explicit component", () => {
+    const explicitDirectory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-openshell-component-dir-"),
+    );
+    try {
+      const result = runWithInstalledVersion(
+        REQUIRED_OPENSHELL_VERSION,
+        {
+          NEMOCLAW_OPENSHELL_GATEWAY_BIN: explicitDirectory,
+          NEMOCLAW_OPENSHELL_SANDBOX_BIN: explicitDirectory,
+        },
+        { os: "Darwin", arch: "arm64" },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/explicit OpenShell gateway binary.*missing.*not executable/);
+    } finally {
+      fs.rmSync(explicitDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("triggers reinstall when the required OpenShell is missing Docker-driver binaries", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { driverBins: false, os: "Linux" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing Docker-driver binaries/);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
+  });
+
+  it("fails closed when the required OpenShell lacks required messaging rewrite support", () => {
+    const result = runWithInstalledVersion(REQUIRED_OPENSHELL_VERSION, {}, { capability: false });
     expect(result.status).toBe(1);
     // `fail()` writes to stderr as of #3446; previously stdout.
     expect(result.stderr).toMatch(/missing request-body-credential-rewrite support/);
   });
 
-  it("accepts macOS openshell 0.0.72 when the gateway binary is installed", () => {
+  it("accepts macOS OpenShell when the gateway binary is installed", () => {
     const result = runWithInstalledVersion(
-      "0.0.72",
+      REQUIRED_OPENSHELL_VERSION,
       {},
       {
         driverBins: "gateway",
@@ -166,7 +362,17 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       },
     );
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+  });
+
+  it("ignores a stale sibling sandbox binary for a macOS VM-driver install", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { os: "Darwin", arch: "arm64", sandboxVersion: LEGACY_OPENSHELL_VERSION },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
   });
 
   it("does not require the macOS VM driver entitlement for Docker-driver onboarding", () => {
@@ -175,7 +381,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       const state = path.join(tmp, "codesign-state");
       const log = path.join(tmp, "codesign.log");
       const result = runWithInstalledVersion(
-        "0.0.72",
+        REQUIRED_OPENSHELL_VERSION,
         {
           NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT: "0",
           NEMOCLAW_FAKE_CODESIGN_STATE: state,
@@ -189,7 +395,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       );
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
+      expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
       expect(result.stdout).not.toMatch(/missing the macOS Hypervisor entitlement/);
       expect(result.stdout).not.toMatch(/Signing openshell-driver-vm/);
       expect(result.stdout).not.toMatch(/Installing OpenShell from release/);
@@ -199,9 +405,9 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     }
   });
 
-  it("triggers reinstall on macOS when openshell 0.0.72 is missing required gateway binaries", () => {
+  it("triggers reinstall on macOS when OpenShell is missing required gateway binaries", () => {
     const result = runWithInstalledVersion(
-      "0.0.72",
+      REQUIRED_OPENSHELL_VERSION,
       {},
       {
         driverBins: false,
@@ -211,7 +417,9 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     );
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
   });
 
   it("downloads the macOS arm64 gateway asset during reinstall", () => {
@@ -276,6 +484,22 @@ exit 0`,
       writeExecutable(
         path.join(fakeBin, "tar"),
         `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then
+    outdir="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$outdir" ] || exit 1
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"
 exit 0`,
       );
       writeExecutable(
@@ -283,10 +507,10 @@ exit 0`,
         `#!/usr/bin/env bash
 dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
-cat > "$dest" <<'EOF'
-#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.72"; exit 0; fi
-# request-body-credential-rewrite websocket-credential-rewrite
+  cat > "$dest" <<'EOF'
+  #!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi
+# ${OPENSHELL_FEATURE_MARKERS}
 exit 0
 EOF
 chmod +x "$dest"
@@ -393,8 +617,17 @@ dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
 case "$(basename "$dest")" in
 openshell)
-  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell 0.0.72"; else exit 0; fi\n# request-body-credential-rewrite websocket-credential-rewrite\n' > "$dest" ;;
-*) printf '#!/usr/bin/env bash\nexit 0\n' > "$dest" ;;
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; else exit 0; fi\n# ${OPENSHELL_FEATURE_MARKERS}\n' > "$dest"
+  ;;
+openshell-sandbox)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-sandbox ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\n# ${OPENSHELL_MCP_FEATURE_MARKER}\nexit 0\n' > "$dest"
+  ;;
+openshell-gateway)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell-gateway ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\nexit 0\n' > "$dest"
+  ;;
+*)
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dest"
+  ;;
 esac
 chmod 755 "$dest"`,
       );
@@ -517,7 +750,16 @@ printf '%s\\n' "$dest" >> ${JSON.stringify(installLog)}
 mkdir -p "$(dirname "$dest")"
 case "$(basename "$dest")" in
 openshell)
-  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell 0.0.72"; else exit 0; fi\\n# request-body-credential-rewrite websocket-credential-rewrite\\n' > "$dest"
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; else exit 0; fi\\n# ${OPENSHELL_FEATURE_MARKERS}\\n' > "$dest"
+  ;;
+openshell-sandbox)
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell-sandbox ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\\n# ${OPENSHELL_MCP_FEATURE_MARKER}\\nexit 0\\n' > "$dest"
+  ;;
+openshell-gateway)
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell-gateway ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi\\nexit 0\\n' > "$dest"
+  ;;
+openshell-driver-vm)
+  printf '#!/usr/bin/env bash\\n# ${OPENSHELL_MCP_FEATURE_MARKER}\\nexit 0\\n' > "$dest"
   ;;
 *)
   printf '#!/usr/bin/env bash\\nexit 0\\n' > "$dest"
@@ -671,16 +913,26 @@ exit 0`,
   it("reinstalls the pinned release when openshell is above MAX_VERSION", () => {
     const result = runWithInstalledVersion("0.0.73");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.72/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
+    expect(result.stdout).toContain(
+      `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
+    );
+    expect(result.stdout).toContain(`reinstalling pinned OpenShell ${REQUIRED_OPENSHELL_VERSION}`);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
     expect(result.stderr).not.toMatch(/Upgrade NemoClaw first/);
   });
 
   it("reinstalls the pinned release when openshell is at a much newer version", () => {
     const result = runWithInstalledVersion("0.1.0");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.72/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
+    expect(result.stdout).toContain(
+      `above the maximum (${REQUIRED_OPENSHELL_VERSION}) supported by this NemoClaw release`,
+    );
+    expect(result.stdout).toContain(`reinstalling pinned OpenShell ${REQUIRED_OPENSHELL_VERSION}`);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
     expect(result.stderr).not.toMatch(/Upgrade NemoClaw first/);
   });
 
@@ -704,13 +956,121 @@ exit 0`,
     );
   });
 
+  it("accepts coherent dev components with different git-prefix lengths", () => {
+    const result = runWithInstalledVersion(
+      "0.0.72-dev.8+g7bce1223d",
+      {
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      },
+      { driverVersion: "0.0.72-dev.8+g7bce1223" },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toMatch(/dev channel/);
+  });
+
+  it("refreshes a dev build when Docker-driver binaries are missing", () => {
+    const result = runWithInstalledVersion(
+      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
+      {
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      },
+      { driverBins: false, os: "Linux" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("refreshes a Linux dev build when the sandbox binary alone is missing", () => {
+    const result = runWithInstalledVersion(
+      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
+      {
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      },
+      { driverBins: "gateway", os: "Linux" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("reuses a macOS dev build with its required standalone gateway", () => {
+    const result = runWithInstalledVersion(
+      "0.0.72-dev.8+g7bce1223d",
+      {
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      },
+      { driverBins: "gateway", os: "Darwin", arch: "arm64" },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toMatch(/dev channel/);
+  });
+
+  it("refreshes an installed dev build when current main is required", () => {
+    const result = runWithInstalledVersion("0.0.72-dev.8+g7bce1223d", {
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      NEMOCLAW_OPENSHELL_FORCE_INSTALL: "1",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("refreshing the moving dev release");
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("keeps auto on the stable release-selection contract", () => {
+    const result = runWithInstalledVersion("0.0.36", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
+    expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("preserves the rebuild Hermes requested channel through the real installer boundary", () => {
+    const childEnv = buildRebuildHermesChildEnv(
+      {
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+        NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+        NVIDIA_API_KEY: "must-not-reach-child",
+      },
+      {},
+    );
+    const result = runWithInstalledVersion("0.0.36", childEnv);
+
+    expect(childEnv.NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL).toBe("1");
+    expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+    expect(result.stdout).not.toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
+  });
+
   it("upgrades stable OpenShell when the dev channel is requested", () => {
     const result = runWithInstalledVersion("0.0.36", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);
+    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);
+  });
+
+  it("rejects the removed artifact channel", () => {
+    const result = runWithInstalledVersion("0.0.72", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "artifact",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto");
   });
 
   it("proceeds to install when openshell is not present", () => {

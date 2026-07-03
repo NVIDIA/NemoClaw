@@ -31,7 +31,7 @@
       "status": "tested",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-launch.ts:10` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
+      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:11` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
     },
     {
       "name": "macOS (Apple Silicon)",
@@ -93,7 +93,7 @@
       "name": "Other OpenAI-compatible endpoint",
       "status": "caveated",
       "endpoint_type": "Custom OpenAI-compatible",
-      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is at `src/lib/onboard.ts:3661`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
+      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is at `src/lib/onboard.ts:3585`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
     },
     {
       "name": "Anthropic",
@@ -129,7 +129,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1632`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts:78`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",
@@ -218,12 +218,12 @@
     {
       "name": "Podman / other container runtimes",
       "status": "unsupported",
-      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard.ts:1599` prints the rejection; `src/lib/onboard/preflight.ts:586` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
+      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard/fatal-runtime-preflight.ts:50` prints the rejection; `src/lib/onboard/preflight.ts:676` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
     },
     {
       "name": "Intel Mac (macOS x86_64)",
       "status": "unsupported",
-      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:315`). See issue #954 (closed)."
+      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:654`). See issue #954 (closed)."
     },
     {
       "name": "Non-Ubuntu/Debian Linux distros",
@@ -248,7 +248,7 @@
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
       "status": "unsupported",
-      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1632`). NemoClaw does not install non-NVIDIA accelerator drivers."
+      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard/fatal-runtime-preflight.ts:78`). NemoClaw does not install non-NVIDIA accelerator drivers."
     },
     {
       "name": "Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses",

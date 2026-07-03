@@ -64,18 +64,21 @@ dcode -n "Summarize this repository"
 ```
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
-They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, LangSmith tracing, and OpenTelemetry export.
+They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, LangSmith tracing, and OpenTelemetry export.
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
 Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
+MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through the single managed user-level config and OpenShell egress policy; arbitrary project and user MCP configuration remains blocked.
+Before launch, NemoClaw validates the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders; stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
+For authenticated MCP setup and credential rotation, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
 
 Interactive shell execution and other destructive tools remain behind human-in-the-loop approval prompts.
 Thread-wide auto-approval and shell allow-list auto-approval are disabled.
 Headless `dcode -n` is an explicit automation boundary.
 It has no approval UI and automatically approves non-shell tool requests, including file writes and edits.
-The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, MCP, nested remote sandboxes, remote async subagents, and alternate model routes.
+The managed headless path still disables shell execution, startup commands, interpreter tool calling, executable hooks, unmanaged MCP configuration, nested remote sandboxes, remote async subagents, and alternate model routes.
 Use the interactive TUI when you need to inspect each destructive tool request before it runs.
 
 To confirm which sandbox a session is in, run the identity command:
@@ -102,7 +105,8 @@ Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, and generated config when those files exist.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
-NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables both Deep Agents Code dotenv loading and MCP at runtime.
+NemoClaw intentionally does not back up `.deepagents/.env` or user-authored portions of `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
+NemoClaw restores its managed MCP definitions separately from the credential-free registry; service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
 Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, successfully builds the replacement from a pinned base and fingerprinted context, and revalidates the target and route.
@@ -120,7 +124,8 @@ Use NemoClaw-managed credential paths when support is available instead of stori
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
-To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+To enable Tavily for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
+The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
 
 ```bash
 # Preview the endpoints the preset opens:
@@ -131,20 +136,27 @@ nemo-deepagents <sandbox-name> policy-add tavily --yes
 export TAVILY_API_KEY=tvly-...
 # Register the provider with the gateway:
 nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+# Remove the raw key from the host shell after the gateway stores it:
+unset TAVILY_API_KEY
 # Attach the new provider to the sandbox:
 nemo-deepagents <sandbox-name> rebuild
 ```
 
 The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
-Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
+Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in.
+Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
 NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 
-Remove the access again when it is no longer needed.
+Remove the target sandbox's managed-Python opt-in when it is no longer needed.
 
 ```bash
 nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ```
+
+This does not unregister the gateway-wide `tavily-search` provider; its credential and Node/curl routes remain available to sandboxes that attach it.
+When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
+OpenShell rejects provider deletion while any sandbox still has it attached.
 
 ### Tracing (LangSmith and OpenTelemetry)
 

@@ -63,6 +63,8 @@ function createStaleFixture(
   const sandboxName = "my-assistant";
   const provider = "nvidia-prod";
   const credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+  const targetGatewayName = gatewayName ?? "nemoclaw";
+  const targetGatewayPort = targetGatewayName === "nemoclaw-9000" ? 9000 : 8080;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-4497-"));
   tmpFixtures.push(tmpDir);
@@ -79,9 +81,13 @@ function createStaleFixture(
           model: "meta/llama-3.3-70b-instruct",
           provider,
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: targetGatewayName,
+          gatewayPort: targetGatewayPort,
+          dashboardPort: 28789,
+          fromDockerfile: null,
           policies: [],
           agent: null,
-          ...(gatewayName ? { gatewayName } : {}),
         },
       },
     }),
@@ -113,7 +119,7 @@ function createStaleFixture(
       webSearchConfig: null,
       policyPresets: [],
       messagingPlan: null,
-      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+      metadata: { gatewayName: targetGatewayName, fromDockerfile: null },
       steps: {},
     }),
     { mode: 0o600 },
@@ -133,38 +139,72 @@ function createStaleFixture(
   const listBody = liveListIncludesSandbox
     ? `process.stdout.write("${sandboxName}\\n"); process.exit(0);`
     : `process.stdout.write("\\n"); process.exit(0);`;
-  // When a foreign gateway is active, `status` reports a different active
-  // gateway even though the named nemoclaw gateway still exists. This models
-  // the multi-gateway data-loss risk: the sandbox is hidden from the active
-  // gateway's list but rebuild must NOT destroy it.
-  const statusBody = foreignGatewayActive
+  // The authoritative target preflights run before liveness reconciliation.
+  // Report the recorded target as healthy until `sandbox list` is queried,
+  // then expose the drift that these guard tests are specifically exercising.
+  const healthyTargetStatus = `process.stdout.write("Server Status\\n\\n  Gateway: ${targetGatewayName}\\n  Server: http://127.0.0.1:${targetGatewayPort}\\n  Status: Connected\\n"); process.exit(0);`;
+  const lateDriftStatus = foreignGatewayActive
     ? `process.stdout.write("Server Status\\n\\n  Gateway: other-gw\\n  Server: http://127.0.0.1:9090\\n  Status: Connected\\n"); process.exit(0);`
-    : `process.stdout.write("Server Status\\n\\n  Gateway: nemoclaw\\n  Server: http://127.0.0.1:8080\\n  Status: Connected\\n"); process.exit(0);`;
+    : gatewayName
+      ? `process.stdout.write("Server Status\\n\\n  Gateway: nemoclaw\\n  Server: http://127.0.0.1:8080\\n  Status: Connected\\n"); process.exit(0);`
+      : healthyTargetStatus;
+  const livenessProbeMarker = path.join(tmpDir, "sandbox-list-probed");
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("fs");
 const a = process.argv.slice(2);
-if (a[0]==="sandbox" && a[1]==="list")       { ${listBody} }
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+const livenessProbeMarker = ${JSON.stringify(livenessProbeMarker)};
+if (a[0]==="-V" || a[0]==="--version")       { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="list")       { fs.writeFileSync(livenessProbeMarker, "1"); ${listBody} }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
-if (a[0]==="status")                         { ${statusBody} }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"); process.exit(0); }
+if (a[0]==="status")                         { if (fs.existsSync(livenessProbeMarker)) { ${lateDriftStatus} } ${healthyTargetStatus} }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: ${targetGatewayName}\\nGateway endpoint: https://127.0.0.1:${targetGatewayPort}/\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
-if (a[0]==="gateway")                        { process.stdout.write("nemoclaw\\n"); process.exit(0); }
-if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
+if (a[0]==="gateway")                        { process.stdout.write("${targetGatewayName}\\n"); process.exit(0); }
+if (a[0]==="inference" && a[1]==="get")      { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(tmpDir, component),
+      `#!/usr/bin/env node
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 
   // Fake docker — recreate path may shell out; succeed on common probes.
   fs.writeFileSync(
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+if (a[0]==="info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="build") { process.exit(0); }
-if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.Id}}") process.stdout.write("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
+if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
+if (a[0]==="run") {
+  if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 if (a[0]==="ps") { process.exit(0); }
 process.exit(0);
@@ -185,6 +225,8 @@ function runRebuild(fixture: { tmpDir: string; sandboxName: string }) {
       env: {
         HOME: fixture.tmpDir,
         PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",

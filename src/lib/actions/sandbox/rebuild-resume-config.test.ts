@@ -137,9 +137,58 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
+  it("recovers a complete legacy selection only from the target's matching session", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/legacy-model",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const config = prepareRebuildResumeConfig("alpha", entry(), null, noopLog, throwingBail);
+    expect(config).toMatchObject({
+      provider: "nvidia-prod",
+      model: "nvidia/legacy-model",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("surfaces the legacy local credential migration while clearing the stale key", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "ollama-local",
+      model: "llama3.2",
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    const log = vi.fn();
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({ provider: "ollama-local", model: "llama3.2" }),
+      null,
+      log,
+      throwingBail,
+    );
+
+    expect(config?.credentialEnv).toBeNull();
+    expect(consoleLog).toHaveBeenCalledWith(expect.stringContaining("GH #2519"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("clearing for rebuild"));
+  });
+
+  it("fails closed when neither registry nor matching session has a complete selection", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    expect(() => prepareRebuildResumeConfig("alpha", entry(), null, noopLog, throwingBail)).toThrow(
+      "Cannot determine recorded inference provider and model",
+    );
+  });
+
   it("validates and canonicalizes a matching custom-endpoint session endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
       endpointUrl: " http://127.0.0.1:19999/v1/?x=1#frag ",
     });
     const config = prepareRebuildResumeConfig(
@@ -185,6 +234,8 @@ describe("prepareRebuildResumeConfig", () => {
   it("ignores target-scoped explicit env when the custom-endpoint session matches the sandbox", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
       endpointUrl: "https://session.example.test/v1?x=1#frag",
     });
     const restore = snapshotEnv([
@@ -228,7 +279,27 @@ describe("prepareRebuildResumeConfig", () => {
   it("fails closed for a matching custom-endpoint session with an invalid endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
       endpointUrl: "https://user:pass@example.test/v1",
+    });
+    expect(() =>
+      prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-endpoint", model: "m" }),
+        null,
+        noopLog,
+        throwingBail,
+      ),
+    ).toThrow("Cannot validate recreate endpoint");
+  });
+
+  it("does not borrow a custom endpoint from a conflicting same-sandbox selection", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "different-model",
+      endpointUrl: "https://wrong.example.test/v1",
     });
     expect(() =>
       prepareRebuildResumeConfig(
@@ -403,6 +474,7 @@ describe("prepareRebuildResumeConfig", () => {
         endpointUrl: "http://127.0.0.1:19999/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: "true",
       }),
       null,
       noopLog,
@@ -413,9 +485,50 @@ describe("prepareRebuildResumeConfig", () => {
       model: "m",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       pinEndpoint: true,
       endpointUrl: "http://127.0.0.1:19999/v1",
     });
+  });
+
+  it("does not borrow compatible-endpoint reasoning from an unrelated session", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "other",
+      compatibleEndpointReasoning: "true",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config?.compatibleEndpointReasoning).toBeNull();
+  });
+
+  it("uses the target session as a legacy reasoning fallback", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
+      compatibleEndpointReasoning: "false",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config?.compatibleEndpointReasoning).toBe("false");
   });
 
   it("fails closed for invalid durable custom endpoint metadata before delete", () => {
@@ -453,7 +566,13 @@ describe("prepareRebuildResumeConfig", () => {
     const prior = process.env.NEMOCLAW_AGENT;
     process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
     try {
-      const config = prepareRebuildResumeConfig("alpha", entry(), null, noopLog, throwingBail);
+      const config = prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "nvidia-prod", model: "nvidia/test" }),
+        null,
+        noopLog,
+        throwingBail,
+      );
       expect(config?.ambient.agentMismatch).toEqual({
         envAgent: "langchain-deepagents-code",
         registryAgent: "openclaw",

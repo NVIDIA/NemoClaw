@@ -18,7 +18,7 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   provider: string | null;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: Session["hermesAuthMethod"];
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
@@ -64,7 +64,7 @@ export interface ProviderModelSelectedContextUpdate {
   provider: string;
   endpointUrl: string | null;
   credentialEnv: string | null;
-  hermesAuthMethod: string | null;
+  hermesAuthMethod: Session["hermesAuthMethod"];
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;

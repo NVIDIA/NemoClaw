@@ -113,7 +113,7 @@ function runHermesInstallLayer(
     'ln() { printf "ln %s\\n" "$*" >> "$call_log"; }',
     'export HERMES_SEMVER="0.16.0"',
     'export HERMES_NPM_INTEGRITY="sha512-test"',
-    'export HERMES_UV_EXTRAS="messaging"',
+    'export HERMES_UV_EXTRAS="messaging mcp"',
     command.replaceAll("/opt/hermes", fixture),
   ].join("\n");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });

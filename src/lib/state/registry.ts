@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
 import type { InferenceSelection } from "../inference/selection";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
@@ -14,6 +14,11 @@ import {
   normalizeExtraProviders,
   readExtraProviders,
 } from "./extra-providers";
+import {
+  normalizeSandboxMcpState,
+  type SandboxMcpState,
+  serializeSandboxMcpStateForDisk,
+} from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
 
 export {
@@ -30,6 +35,9 @@ import {
   serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
+import type { WebSearchProvider } from "../inference/web-search";
+
+export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 
 export {
   getConfiguredMessagingChannelsFromEntry,
@@ -42,6 +50,8 @@ export {
 export interface CustomPolicyEntry {
   name: string;
   content: string;
+  /** Desired content reserved before a crash-safe generated-policy transition. */
+  pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
 }
@@ -85,6 +95,9 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // policy step never finished — so re-onboard knows whether `policies`
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
+  webSearchEnabled?: boolean;
+  /** Durable provider identity for enabled managed web search. */
+  webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
@@ -94,8 +107,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // (`--from`) sandboxes are intentionally left without a fingerprint so they
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
+  fromDockerfile?: string | null;
+  hermesAuthMethod?: "oauth" | "api_key" | null;
   imageTag?: string | null;
   messaging?: SandboxMessagingState;
+  mcp?: SandboxMcpState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -122,7 +138,6 @@ export const LOCK_OWNER = path.join(LOCK_DIR, "owner");
 export const LOCK_STALE_MS = 10_000;
 export const LOCK_RETRY_MS = 100;
 export const LOCK_MAX_RETRIES = 120;
-
 /** kill(pid, 0) liveness probe. EPERM means the pid exists but is owned by
  * another user, which still counts as alive. */
 function isProcessAlive(pid: number): boolean {
@@ -377,11 +392,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   const messaging = cloneSandboxMessagingState(entry.messaging);
-  if (!messaging) {
-    const { messaging: _messaging, ...rest } = entry;
-    return rest;
-  }
-  return { ...entry, messaging };
+  const mcp = normalizeSandboxMcpState(entry.mcp);
+  const { messaging: _messaging, mcp: _mcp, ...rest } = entry;
+  return {
+    ...rest,
+    ...(messaging ? { messaging } : {}),
+    ...(mcp ? { mcp } : {}),
+  };
 }
 
 /**
@@ -403,11 +420,13 @@ function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
     livePhase?: string | null;
   };
   const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
-  if (!messaging) {
-    const { messaging: _messaging, ...rest } = durable;
-    return rest;
-  }
-  return { ...durable, messaging };
+  const mcp = serializeSandboxMcpStateForDisk(durable.mcp);
+  const { messaging: _messaging, mcp: _mcp, ...rest } = durable;
+  return {
+    ...rest,
+    ...(messaging ? { messaging } : {}),
+    ...(mcp ? { mcp } : {}),
+  };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
@@ -441,6 +460,13 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      webSearchEnabled:
+        typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
+      webSearchProvider:
+        entry.webSearchEnabled === true &&
+        (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
+          ? entry.webSearchProvider
+          : null,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a
@@ -449,8 +475,14 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
+      fromDockerfile: entry.fromDockerfile || null,
+      hermesAuthMethod:
+        entry.hermesAuthMethod === "oauth" || entry.hermesAuthMethod === "api_key"
+          ? entry.hermesAuthMethod
+          : null,
       imageTag: entry.imageTag || null,
       messaging: cloneSandboxMessagingState(entry.messaging),
+      mcp: normalizeSandboxMcpState(entry.mcp),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]

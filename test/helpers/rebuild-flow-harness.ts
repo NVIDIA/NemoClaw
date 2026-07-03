@@ -103,8 +103,6 @@ export type RebuildFlowHarness = {
   session: RebuildFlowSession;
 };
 
-const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
-
 // Snapshot the given env vars and return a restore fn that reinstates their
 // prior values exactly — vars that were unset stay unset, set ones are put back.
 // Branchless on purpose (filter, not conditional restore) so it both restores
@@ -124,18 +122,20 @@ export function snapshotEnv(names: readonly string[]): () => void {
   };
 }
 
+const restoreRebuildFlowEnv = snapshotEnv([
+  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+  "NEMOCLAW_SANDBOX_NAME",
+]);
+
 export function resetRebuildFlowTestEnvironment(): void {
   delete process.env.NEMOCLAW_SANDBOX_NAME;
+  process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
 }
 
 export function restoreRebuildFlowTestEnvironment(): void {
   vi.restoreAllMocks();
   delete require.cache[requireDist.resolve(rebuildModulePath)];
-  if (originalSandboxName === undefined) {
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
-  } else {
-    process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
-  }
+  restoreRebuildFlowEnv();
 }
 
 function createStep(status: string): RebuildFlowStep {
@@ -240,6 +240,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     name: agentName,
     expectedVersion: "0.2.0",
     dockerfileBasePath: "/tmp/Dockerfile.base",
+    runtime: { kind: "terminal" },
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -279,6 +280,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     },
   );
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     if (typeof mutator !== "function") {
       throw new TypeError("updateSession expected a mutator function");
@@ -325,7 +327,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation(() => undefined);
@@ -424,6 +426,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
     await overrides.onboard?.(session);
   });
+  vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {

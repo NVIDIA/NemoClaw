@@ -36,6 +36,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
+  gatewayPort?: number;
   log?: (message: string) => void;
   warn?: (message: string) => void;
   deps?: SandboxDockerfilePatchDeps;
@@ -95,6 +96,7 @@ export async function prepareSandboxDockerfilePatch({
   webSearchConfig,
   hermesToolGateways,
   sandboxGpuConfig,
+  gatewayPort,
   log = console.log,
   warn = console.warn,
   deps = {},
@@ -135,6 +137,7 @@ export async function prepareSandboxDockerfilePatch({
     sandboxGpuConfig,
     {
       dockerDriverGateway: getDockerDriverGateway(),
+      gatewayPort,
       log,
     },
   );

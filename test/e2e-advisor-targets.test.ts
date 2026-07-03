@@ -6,14 +6,14 @@ import { describe, expect, it } from "vitest";
 import { buildTargetComment } from "../tools/e2e-advisor/target-comment.mts";
 import {
   buildPrompt,
-  buildTargetPromptTurn,
   buildSystemPrompt,
+  buildTargetPromptTurn,
   canonicalDispatchCommand,
+  E2E_TARGET_ADVISOR_WORKFLOWS,
+  type E2eTargetAdvisorResult,
   extractFreeStandingE2eJobs,
   normalizeE2eTargetAdvisorResult,
   renderTargetSummary,
-  E2E_TARGET_ADVISOR_WORKFLOWS,
-  type E2eTargetAdvisorResult,
 } from "../tools/e2e-advisor/targets.mts";
 
 // Tests target observable behavior of the target advisor pipeline:

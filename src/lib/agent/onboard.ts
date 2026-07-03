@@ -5,23 +5,14 @@
 // non-default agent (e.g. Hermes) is selected via --agent flag or
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
-import fs from "fs";
-import os from "os";
-import path from "path";
-
-import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import { sleepSeconds } from "../core/wait";
 import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
-import { ROOT, redact, run } from "../runner";
-import {
-  buildLocalBaseTag,
-  resolveSandboxBaseImage,
-  SANDBOX_BASE_TAG,
-} from "../sandbox-base-image";
+import { redact, run } from "../runner";
+import * as baseImage from "./base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
@@ -41,6 +32,35 @@ export interface OnboardContext {
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
 }
 
+// Keep these compatibility exports as ordinary writable functions. Focused
+// onboarding and rebuild harnesses replace them at the facade boundary, while
+// the implementation stays isolated in base-image.ts.
+export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  return baseImage.getAgentSandboxBaseImageEnvVar(agentName);
+}
+
+export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
+  return baseImage.pinAgentSandboxBaseImageRef(agentName, imageRef);
+}
+
+export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
+  return baseImage.hermesBaseImageSupportsMcp(imageRef);
+}
+
+export function ensureAgentBaseImage(
+  agent: AgentDefinition,
+  opts: { forceBaseImageRebuild?: boolean } = {},
+): { imageTag: string | null; built: boolean } {
+  return baseImage.ensureAgentBaseImage(agent, opts);
+}
+
+export function createAgentSandbox(
+  agent: AgentDefinition,
+  opts: { forceBaseImageRebuild?: boolean } = {},
+): { buildCtx: string; stagedDockerfile: string } {
+  return baseImage.createAgentSandbox(agent, opts);
+}
+
 /**
  * Resolve the effective agent from CLI flags, env, or session.
  * Returns null for openclaw (default path), loaded agent object otherwise.
@@ -55,125 +75,6 @@ export function resolveAgent({
   const name = resolveAgentName({ agentFlag, session });
   if (name === "openclaw") return null;
   return loadAgent(name);
-}
-
-/**
- * Ensure the agent-specific sandbox base image exists locally.
- * Rebuild callers can force this so local Dockerfile.base edits are applied.
- */
-export function ensureAgentBaseImage(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  imageTag: string | null;
-  built: boolean;
-} {
-  const baseDockerfile = agent.dockerfileBasePath;
-
-  if (!baseDockerfile) {
-    return { imageTag: null, built: false };
-  }
-
-  const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
-  const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
-  const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
-  if (forceBaseImageRebuild) {
-    console.log(`  Rebuilding ${agent.displayName} base image...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  const resolved = resolveSandboxBaseImage({
-    imageName: baseImageName,
-    dockerfilePath: baseDockerfile,
-    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
-    envVar: `NEMOCLAW_${agent.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`,
-    label: `${agent.displayName} sandbox base image`,
-    requireOpenshellSandboxAbi: process.platform === "linux",
-    rootDir: ROOT,
-  });
-  if (resolved && !forceBaseImageRebuild) {
-    console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
-    return { imageTag: resolved.ref, built: false };
-  }
-  if (!resolved && process.platform === "linux" && !forceBaseImageRebuild) {
-    throw new Error(
-      `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
-    );
-  }
-  const inspectResult = dockerImageInspect(baseImageTag, {
-    ignoreError: true,
-    suppressOutput: true,
-  });
-  if (inspectResult?.status !== 0) {
-    console.log(`  Building ${agent.displayName} base image (first time only)...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
-      ignoreError: true,
-      stdio: ["ignore", "inherit", "inherit"],
-    });
-    if (buildResult.error || buildResult.status !== 0) {
-      const detail = buildResult.error
-        ? `: ${buildResult.error.message}`
-        : ` (exit ${buildResult.status ?? "unknown"})`;
-      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
-    }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
-  }
-
-  console.log(`  Base image exists: ${baseImageTag}`);
-  return { imageTag: baseImageTag, built: false };
-}
-
-/**
- * Stage build context for an agent-specific sandbox image.
- * Builds the base image if the agent defines one and it's not cached locally.
- */
-export function createAgentSandbox(
-  agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  buildCtx: string;
-  stagedDockerfile: string;
-} {
-  const agentDockerfile = agent.dockerfilePath;
-
-  if (!agentDockerfile) {
-    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
-  }
-
-  const { imageTag: baseImageRef } = ensureAgentBaseImage(agent, opts);
-
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
-  fs.cpSync(ROOT, buildCtx, {
-    recursive: true,
-    filter: (src) => {
-      const base = path.basename(src);
-      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
-    },
-  });
-  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
-  fs.copyFileSync(agentDockerfile, stagedDockerfile);
-  if (baseImageRef) {
-    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
-    fs.writeFileSync(
-      stagedDockerfile,
-      dockerfile.replace(/^ARG BASE_IMAGE(?:=.*)?$/m, `ARG BASE_IMAGE=${baseImageRef}`),
-    );
-  }
-  console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
-
-  return { buildCtx, stagedDockerfile };
 }
 
 /**

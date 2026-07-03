@@ -69,6 +69,8 @@ interface ScenarioScript {
   gatewaySelect: { output: string; exit: number };
   // whether `gateway select nemoclaw` flips the active gateway to nemoclaw
   selectFlipsActive: boolean;
+  // `sandbox list` output; defaults to the live sandbox for scenarios 1-12.
+  sandboxList?: string;
 }
 
 interface HarnessResult {
@@ -101,6 +103,11 @@ function writeDefaultRegistry() {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 28790,
+          fromDockerfile: null,
           policies: [],
         },
       },
@@ -136,6 +143,7 @@ const callLogPath = ${JSON.stringify(callLogFile)};
 const script = JSON.parse(fs.readFileSync(scriptPath, "utf8"));
 const state = JSON.parse(fs.readFileSync(statePath, "utf8") || "{}");
 const args = process.argv.slice(2);
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
 
 fs.appendFileSync(callLogPath, JSON.stringify(args) + "\\n");
 
@@ -151,8 +159,8 @@ function emit(r) {
   process.exit(r.exit || 0);
 }
 
-if (args[0] === "--version") {
-  process.stdout.write("openshell 0.0.25\\n");
+if (args[0] === "-V" || args[0] === "--version") {
+  process.stdout.write("openshell 0.0.72\\n");
   process.exit(0);
 }
 
@@ -188,20 +196,32 @@ if (args[0] === "policy" && args[1] === "get") {
 }
 
 if (args[0] === "sandbox" && args[1] === "list") {
-  // Return the sandbox as live to avoid the list-based destroy path.
-  process.stdout.write("Sandboxes:\\n  - ${SANDBOX_NAME}\\n");
+  process.stdout.write(script.sandboxList === undefined ? "Sandboxes:\\n  - ${SANDBOX_NAME}\\n" : script.sandboxList);
   process.exit(0);
 }
 
 if (args[0] === "inference" && args[1] === "get") {
-  process.stdout.write("Provider: nvidia-prod\\nModel: nvidia/nemotron-3-super-120b-a12b\\n");
+  process.stdout.write("Gateway inference:\\n  Provider: nvidia-prod\\n  Model: nvidia/nemotron-3-super-120b-a12b\\n");
   process.exit(0);
 }
+
+if (args[0] === "provider" && args[1] === "get") process.exit(0);
 
 // forward stop/start, provider delete, logs, etc. — no-op success
 process.exit(0);
 `;
   fs.writeFileSync(openshellPath, stub, { mode: 0o755 });
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(homeLocalBin, component),
+      `#!${process.execPath}
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 }
 
 function runCli(action: string, extraEnv: Record<string, string | undefined> = {}): HarnessResult {
@@ -286,6 +306,32 @@ beforeEach(() => {
   fs.mkdirSync(registryDir, { recursive: true });
   writeDefaultRegistry();
   writeDefaultSession();
+  fs.writeFileSync(
+    path.join(homeLocalBin, "docker"),
+    `#!${process.execPath}
+const a = process.argv.slice(2);
+if (a[0] === "info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
+if (a[0] === "build") process.exit(0);
+if (a[0] === "image" && a[1] === "inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.Id}}") process.stdout.write("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
+if (a[0] === "tag" || a[0] === "rmi") process.exit(0);
+if (a[0] === "run") {
+  if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
 });
 
 afterEach(() => {
@@ -720,6 +766,7 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
       gatewayInfo: [{ output: GATEWAY_INFO_NEMOCLAW, exit: 0 }],
       gatewaySelect: { output: "", exit: 0 },
       selectFlipsActive: false,
+      sandboxList: "",
     });
 
     // Step 3: routine connect must preserve the registry entry.
@@ -751,12 +798,14 @@ describe("connect preserves the registry so rebuild can recover in scenario 14 (
           HOME: tmpDir,
           PATH: `${homeLocalBin}:/usr/bin:/bin`,
           NO_COLOR: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
           NEMOCLAW_NON_INTERACTIVE: "1",
           // The recreate handoff (onboard --resume) fails fast in this stubbed
           // HOME — fine: the assertions below target the recovery markers that
           // are emitted BEFORE the recreate, proving rebuild crossed the
           // backup gate that previously blocked it.
-          NVIDIA_INFERENCE_API_KEY: "",
+          NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
           NEMOCLAW_PROVIDER_KEY: "",
         },
       },

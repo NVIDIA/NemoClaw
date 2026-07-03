@@ -22,6 +22,14 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
+# Managed MCP requires the packaged Hermes client surface. A published base can
+# carry the expected Hermes version while still having been built without the
+# optional `mcp` dependency group, in which case Hermes silently disables both
+# MCP discovery and Streamable HTTP support. This is a build-time import guard;
+# the live MCP E2E proves authenticated HTTPS execution through OpenShell.
+RUN /opt/hermes/.venv/bin/python -c \
+    'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
+
 # Published base images can lag Dockerfile.base while local feature branches
 # still layer this final image on top. Invalid state: the selected base has
 # Hermes source under /opt/hermes but lacks hermes_cli/web_dist. Prebuild the
@@ -118,6 +126,8 @@ COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 # Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
@@ -125,11 +135,12 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
