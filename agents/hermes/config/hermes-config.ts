@@ -102,6 +102,8 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       tool_search: {
         // Deliberately defer every MCP and non-core plugin tool, even for a
         // small catalog. Hermes keeps its built-in core tools directly visible.
+        // Keep Hermes' native snake_case keys and 5/20 limits distinct from
+        // OpenClaw's camelCase Tool Search contract and 8-result default.
         enabled: "on",
         search_default_limit: 5,
         max_search_limit: 20,

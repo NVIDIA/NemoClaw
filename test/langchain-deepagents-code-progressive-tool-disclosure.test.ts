@@ -155,6 +155,7 @@ describe("Deep Agents progressive tool disclosure", () => {
       "search_tools",
       "read_file",
     ]);
+    expect(result.max_query_length).toBe(256);
   });
 
   it("restores discovered tools after compaction and session reconstruction", () => {
@@ -199,6 +200,9 @@ import deepagents_code.main as main
 os.environ['DEEPAGENTS_CODE_SHELL_ALLOW_LIST'] = 'bash'
 args = main.parse_args()
 assert args.sandbox == 'none'
+assert args.sandbox_id is None
+assert args.sandbox_snapshot_name is None
+assert args.sandbox_setup is None
 assert args.mcp_config is None and args.no_mcp is True
 assert args.trust_project_mcp is False and args.shell_allow_list is None
 assert 'DEEPAGENTS_CODE_SHELL_ALLOW_LIST' not in os.environ

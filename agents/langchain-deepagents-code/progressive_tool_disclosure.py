@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Progressively disclose Deep Agents tools without changing execution policy."""
+"""Progressively disclose Deep Agents tools without changing execution policy.
+
+This middleware is a model-context optimization, not an authorization boundary.
+It filters the tools bound to each model request while leaving LangGraph's full
+executor registry intact. A model-generated call that guesses a hidden tool name
+can therefore still reach that tool; existing tool-call middleware, approval,
+credential, and sandbox controls remain responsible for governing execution.
+"""
 
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, NotRequired, cast
@@ -19,6 +26,9 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.types import Command
 from pydantic import BaseModel, Field
+
+MAX_SEARCH_QUERY_LENGTH = 256
+"""Maximum model-supplied search query length accepted by ``search_tools``."""
 
 CORE_TOOL_NAMES = frozenset(
     {
@@ -60,10 +70,11 @@ class ProgressiveToolDisclosureState(AgentState):
     output while the checkpointer retains them for the owning graph thread.
     """
 
-    discovered_tools: Annotated[
-        NotRequired[list[str]],
-        _merge_discovered_tools,
-        PrivateStateAttr,
+    # LangGraph 1.2.6 recognizes a reducer only when it is the final Annotated
+    # metadata value. Keep PrivateStateAttr before the reducer so concurrent
+    # search_tools calls merge instead of producing a LastValue conflict.
+    discovered_tools: NotRequired[
+        Annotated[list[str], PrivateStateAttr, _merge_discovered_tools]
     ]
 
 
@@ -71,7 +82,8 @@ class SearchToolsInput(BaseModel):
     """Input contract for the ``search_tools`` model tool."""
 
     query: str = Field(
-        description="Keyword to match against tool names and descriptions."
+        max_length=MAX_SEARCH_QUERY_LENGTH,
+        description="Keyword to match against tool names and descriptions.",
     )
 
 
@@ -117,8 +129,11 @@ class ProgressiveToolDisclosureMiddleware(
     """Expose a core tool set, then reveal matching tools for one thread.
 
     The full tool registry remains registered with the executor. Only the tools
-    sent to each model request are filtered, so existing policy, approval, and
-    credential boundaries still govern execution after a tool is discovered.
+    sent to each model request are filtered. Consequently, a model call that
+    guesses a hidden tool name can still execute it through the normal executor;
+    existing policy, approval, credential, and sandbox controls continue to
+    govern every execution. Progressive disclosure must not be treated as an
+    authorization boundary.
     """
 
     state_schema = ProgressiveToolDisclosureState
@@ -256,6 +271,7 @@ class ProgressiveToolDisclosureMiddleware(
 
 __all__ = [
     "CORE_TOOL_NAMES",
+    "MAX_SEARCH_QUERY_LENGTH",
     "ProgressiveToolDisclosureMiddleware",
     "ProgressiveToolDisclosureState",
 ]

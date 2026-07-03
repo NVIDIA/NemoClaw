@@ -111,7 +111,8 @@ class BaseModel:
     pass
 
 
-def Field(*, description: str) -> str:
+def Field(*, description: str, max_length: int | None = None) -> str:
+    del max_length
     return description
 
 
@@ -187,6 +188,7 @@ def _visible_names(request: ModelRequest) -> list[str]:
 
 def _run_behavior(module: types.ModuleType) -> dict[str, Any]:
     middleware, tools, weather, database = _fixture(module)
+    assert module.MAX_SEARCH_QUERY_LENGTH == 256
     original = list(tools)
     captured: list[ModelRequest] = []
     middleware.wrap_model_call(
@@ -252,6 +254,7 @@ def _run_behavior(module: types.ModuleType) -> dict[str, Any]:
         "initial": _visible_names(captured[0]),
         "discovered": state,
         "async": async_names,
+        "max_query_length": module.MAX_SEARCH_QUERY_LENGTH,
     }
 
 

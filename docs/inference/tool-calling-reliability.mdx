@@ -47,11 +47,29 @@ The common failure mode is:
 This is different from a network or policy block.
 `nemoclaw <name> status`, `nemoclaw <name> logs`, and `nemoclaw debug --quick` can all look healthy while tool dispatch still fails inside the conversation.
 
+### Structured Tool Search by Agent
+
+OpenClaw and Hermes both expose `tool_search`, `tool_describe`, and `tool_call` as structured model tools, but each agent keeps its native configuration schema and search limits.
+The keys and enum values are not interchangeable.
+
+| Agent | NemoClaw-generated native configuration | Default results | Maximum results |
+|---|---|---:|---:|
+| OpenClaw | `tools.toolSearch.mode: "tools"` with `searchDefaultLimit` and `maxSearchLimit` | 8 | 20 |
+| Hermes | `tools.tool_search.enabled: "on"` with `search_default_limit` and `max_search_limit` | 5 | 20 |
+
+For OpenClaw, `mode: "tools"` selects its structured bridge instead of the JavaScript-based `tool_search_code` bridge.
+A model-specific `toolSearch: false` override still disables Tool Search entirely.
+For Hermes, `enabled: "on"` activates its native bridge whenever the session has at least one deferrable MCP or non-core plugin tool, even when that catalog is small; Hermes core tools remain directly visible.
+
+Both agents build their own policy-scoped catalog and route the final call through their normal execution, policy, approval, and hook paths.
+Sharing the three model-facing tool names does not mean they share a runtime implementation, configuration format, or result-limit default.
+
 ### Nemotron Managed Inference
 
-NemoClaw configures OpenClaw's native Tool Search in structured mode, exposing `tool_search`, `tool_describe`, and `tool_call` instead of the JavaScript-based `tool_search_code` helper.
-For the `nvidia/nemotron-3-super-120b-a12b` managed inference route, this avoids asking the model to generate the invalid JavaScript that produced `[tools] tool_search_code failed` noise.
-Progressive-discovery trajectory evidence is still required before marking that model capability verified; final calls continue through OpenClaw's normal policy and approval path.
+NemoClaw's generated OpenClaw default uses structured Tool Search, exposing `tool_search`, `tool_describe`, and `tool_call` instead of the JavaScript-based `tool_search_code` helper.
+The managed Nemotron Super and Ultra routes retain model-specific `toolSearch: false` safeguards because their code-mode failures are documented and no live structured-search trajectory has cleared the replacement.
+In the model-specific manifest contract, `false` disables Tool Search entirely while `true` selects OpenClaw's default code mode; neither boolean selects structured mode.
+These routes therefore keep direct structured tool calling until search, describe, call, and final tool execution are verified through a real model trajectory.
 
 ## Recommended Fix
 

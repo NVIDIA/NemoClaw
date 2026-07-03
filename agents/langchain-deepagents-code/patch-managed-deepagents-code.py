@@ -80,6 +80,14 @@ AGENT_MAIN_PATCH = """    agent_middleware.append(
 
 MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
 
+# Progressive-disclosure source boundary: Deep Agents Code 0.1.12 constructs
+# its main and local-subagent middleware stacks inside ``agent.py`` and exposes
+# no supported injection hook for this image-owned middleware. Invalid state is
+# any upstream anchor drift or a partial install that could leave main and
+# subagent visibility behavior inconsistent, so the image build fails closed.
+# Remove these agent.py anchors once the pinned upstream offers a stable hook
+# that can install separate middleware instances in both stacks.
+
 # Source boundary: Deep Agents Code 0.1.12 parses direct `python3 -m
 # deepagents_code` flags inside upstream `deepagents_code.main`; NemoClaw only
 # owns the managed image after installation. Invalid state: direct module

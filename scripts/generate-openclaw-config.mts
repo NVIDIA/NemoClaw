@@ -388,8 +388,14 @@ function validateSelectedAgentEffects(
           `${manifestPath}: unknown effects.openclawTools keys: ${unknownToolKeys.join(", ")}`,
         );
       }
+      // Source: openclaw@2026.5.27 ToolSearchSchema and resolveToolSearchConfig
+      // (`src/config/zod-schema.agent-runtime.ts`, `src/agents/tool-search.ts`).
+      // Keep the registry override narrower than the runtime config: false
+      // disables Tool Search, while true selects its default code bridge.
       if ("toolSearch" in tools && typeof tools.toolSearch !== "boolean") {
-        throw new Error(`${manifestPath}: effects.openclawTools.toolSearch must be a boolean`);
+        throw new Error(
+          `${manifestPath}: effects.openclawTools.toolSearch must be a boolean override`,
+        );
       }
     }
 
@@ -1074,6 +1080,10 @@ export function buildConfig(env: Env = process.env): JsonObject {
       openclawToolOverrides,
     );
   }
+  // OpenClaw v2026.5.27 accepts either a boolean shorthand or this object form.
+  // Model-specific manifests intentionally remain boolean-only and replace this
+  // value wholesale: false disables Tool Search; true restores upstream code
+  // mode. Do not shallow-merge a boolean override into the structured object.
   const openclawTools: JsonObject = {
     toolSearch: {
       mode: "tools",

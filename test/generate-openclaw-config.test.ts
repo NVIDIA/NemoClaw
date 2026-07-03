@@ -1376,9 +1376,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     }
   }, 20_000);
 
-  // #4780: Nemotron can generate invalid JS for `tool_search_code`. NemoClaw's
-  // structured mode keeps progressive discovery without exposing code mode.
-  it("uses structured OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
+  // #4780: keep the boolean false safeguards until live structured-search
+  // trajectories prove these models can replace the direct-tool fallback.
+  it("keeps Tool Search disabled for Nemotron managed inference (#4780)", () => {
     for (const model of ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nvidia/nemotron-3-ultra"]) {
       const config = runConfigScript({
         NEMOCLAW_MODEL: model,
@@ -1388,11 +1388,11 @@ describe("generate-openclaw-config.mts: config generation", () => {
         NEMOCLAW_INFERENCE_API: "openai-completions",
       });
 
-      expect(config.tools?.toolSearch, model).toEqual(STRUCTURED_TOOL_SEARCH);
+      expect(config.tools?.toolSearch, model).toBe(false);
     }
   });
 
-  it("keeps structured Tool Search for Nemotron on non-matching routes (#4780)", () => {
+  it("keeps structured Tool Search for non-matching Nemotron routes (#4780)", () => {
     const cases = [
       { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
       { NEMOCLAW_PROVIDER_KEY: "nvidia" },
@@ -1653,13 +1653,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
         agent: "openclaw",
         description: "Invalid tool override",
         match: { modelIds: ["test-model"] },
-        effects: { openclawTools: { toolSearch: "false" } },
+        effects: { openclawTools: { toolSearch: { mode: "tools" } } },
       },
     );
 
     expectBuildConfigError(
       { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: badToolRegistryDir },
-      "effects.openclawTools.toolSearch must be a boolean",
+      "effects.openclawTools.toolSearch must be a boolean override",
     );
 
     fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "bad-tool-effect.json"));

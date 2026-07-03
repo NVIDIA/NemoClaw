@@ -34,6 +34,12 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
+const HERMES_STRUCTURED_TOOL_SEARCH = {
+  enabled: "on",
+  search_default_limit: 5,
+  max_search_limit: 20,
+};
+
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
   "browser",
@@ -233,6 +239,28 @@ describe("agents/hermes/generate-config.ts", () => {
     testTimeout(15_000),
   );
 
+  it("emits the pinned Hermes native structured Tool Search contract", () => {
+    const { config } = runConfigScript();
+    const configYaml = fs.readFileSync(path.join(tmpDir, ".hermes", "config.yaml"), "utf-8");
+
+    expect(config.tools?.tool_search).toEqual(HERMES_STRUCTURED_TOOL_SEARCH);
+    expect(config.tools?.toolSearch).toBeUndefined();
+    expect(config.tools?.tool_search?.mode).toBeUndefined();
+    expect(configYaml).toContain(
+      [
+        "tools:",
+        "  tool_search:",
+        "    enabled: on",
+        "    search_default_limit: 5",
+        "    max_search_limit: 20",
+      ].join("\n"),
+    );
+    expect(configYaml).not.toContain("toolSearch:");
+    expect(configYaml).not.toContain("mode: tools");
+    expect(configYaml).not.toContain("searchDefaultLimit:");
+    expect(configYaml).not.toContain("maxSearchLimit:");
+  });
+
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 
@@ -242,11 +270,7 @@ describe("agents/hermes/generate-config.ts", () => {
       tool_progress: "all",
       interim_assistant_messages: true,
     });
-    expect(config.tools?.tool_search).toEqual({
-      enabled: "on",
-      search_default_limit: 5,
-      max_search_limit: 20,
-    });
+    expect(config.tools?.tool_search).toEqual(HERMES_STRUCTURED_TOOL_SEARCH);
     expect(config.curator).toMatchObject({
       enabled: true,
       interval_hours: 168,

@@ -281,6 +281,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code",
     );
     expect(dockerfile).toContain("patch-managed-deepagents-code.py");
+    expect(dockerfile).toContain("COPY test/fixtures/deepagents-progressive-disclosure-runtime.py");
+    expect(dockerfile).toContain(
+      "python3 /opt/nemoclaw-deepagents-code/deepagents-progressive-disclosure-runtime.py",
+    );
+    expect(dockerfile).toContain(
+      "rm -f /opt/nemoclaw-deepagents-code/deepagents-progressive-disclosure-runtime.py",
+    );
     expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(wrapper).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
