@@ -43,8 +43,6 @@ export const AUTO_PAIR_MAX_APPROVALS = 8;
 export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
 // Historical budget fields remain for callers/tests; the state-only pass uses
 // maxApprovals and the outer timeout.
-const AUTO_PAIR_LIST_TIMEOUT_S = 2;
-const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
 
 // Per-surface budget overrides. The connect/probe/finalization surfaces (#4504)
 // supply a tighter budget — a single realistic pending CLI/webchat scope
@@ -122,8 +120,6 @@ export function buildAutoPairApprovalScript(
     ? "print(f'__NEMOCLAW_AUTO_PAIR_APPROVED__={approved_count}')\n"
     : "";
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
-  void (options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S);
-  void (options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S);
   return `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
@@ -179,6 +175,12 @@ for device in pending:
         approved = approve_allowlisted_request(request_id, STATE_DIR, device)
         if approved:
             approved_count += 1
+            try:
+                refreshed = local_pairing_list(STATE_DIR)
+                if isinstance(refreshed, dict) and isinstance(refreshed.get('paired'), list):
+                    paired = refreshed.get('paired')
+            except Exception:
+                pass
     except Exception:
         continue
 try:

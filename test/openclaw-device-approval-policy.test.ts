@@ -158,6 +158,8 @@ print(json.dumps({
       const stateDir = path.join(tmpDir, "state");
       writeOriginalPendingState(stateDir);
       const devicesDir = path.join(stateDir, "devices");
+      fs.writeFileSync(path.join(devicesDir, ".pending.json.tmp"), "stale interrupted write");
+      fs.writeFileSync(path.join(devicesDir, ".paired.json.tmp"), "stale interrupted write");
 
       const result = runPolicySnippet(
         `
