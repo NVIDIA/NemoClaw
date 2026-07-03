@@ -4,8 +4,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../state/onboard-session";
-import { prepareOnboardSession, type OnboardSessionBootstrapDeps } from "./session-bootstrap";
 import type { ResumeConfigConflict } from "./resume-config";
+import { type OnboardSessionBootstrapDeps, prepareOnboardSession } from "./session-bootstrap";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -43,7 +43,9 @@ function createDeps(
       session = next;
       return next;
     }),
-    repairResumeMachineSnapshot: vi.fn((current: Session) => current),
+    applySessionRecovery: vi.fn(
+      () => ({ action: "keep", reason: "nonterminal_snapshot" }) as const,
+    ),
     setOnboardBrandingAgent: vi.fn(),
     getResumeConfigConflicts: vi.fn(() => []),
     recordResumeConflict: vi.fn(async () => undefined),
@@ -117,7 +119,8 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.failure).toBeNull();
     expect(result.session?.status).toBe("in_progress");
-    expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
+    expect(deps.applySessionRecovery).toHaveBeenCalledWith(initial);
+    expect(result.recovery).toEqual({ action: "keep", reason: "nonterminal_snapshot" });
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });
 

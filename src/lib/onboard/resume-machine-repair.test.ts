@@ -13,9 +13,10 @@ import {
 } from "../state/onboard-session";
 import { advanceTo, branchTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
-import { repairResumeMachineSnapshot, resumeMachineState } from "./resume-machine-repair";
+import { resumeMachineState } from "./resume-machine-repair";
 import { classifyResumeMachineRepair } from "./resume-repair-policy";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
+import { applySessionRecovery } from "./session-recovery";
 
 /**
  * Builds a failed durable session while letting each test set the interrupted step.
@@ -96,7 +97,7 @@ function createBoundaryHarness(initial: Session) {
  * Replays the live resume sequence from failed snapshot repair through completion.
  */
 async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
-  repairResumeMachineSnapshot(initial, "2026-06-01T00:01:00.000Z");
+  applySessionRecovery(initial, "2026-06-01T00:01:00.000Z");
   initial.failure = null;
   initial.status = "in_progress";
   const { boundary, getSession } = createBoundaryHarness(initial);
@@ -187,7 +188,7 @@ describe("resume machine repair", () => {
     });
 
     expect(resumeMachineState(session)).toBe("preflight");
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,
@@ -234,7 +235,7 @@ describe("resume machine repair", () => {
       },
     });
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,
@@ -259,7 +260,7 @@ describe("resume machine repair", () => {
     session.steps.preflight.status = "complete";
     session.steps.gateway.status = "complete";
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,
@@ -282,7 +283,7 @@ describe("resume machine repair", () => {
     session.resumable = false;
     session.status = "complete";
 
-    repairResumeMachineSnapshot(session, "2026-06-01T00:01:00.000Z");
+    applySessionRecovery(session, "2026-06-01T00:01:00.000Z");
 
     expect(session.machine).toEqual({
       version: MACHINE_SNAPSHOT_VERSION,
