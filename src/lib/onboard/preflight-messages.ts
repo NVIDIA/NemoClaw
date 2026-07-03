@@ -37,23 +37,26 @@ export interface UnderProvisionedRuntimeWarning {
 }
 
 /** Container runtime detected below the recommended CPU/memory floor. */
-export function printUnderProvisionedRuntimeWarning(opts: UnderProvisionedRuntimeWarning): void {
+export function printUnderProvisionedRuntimeWarning(
+  opts: UnderProvisionedRuntimeWarning,
+  warn: (message: string) => void = console.warn,
+): void {
   const { detectedStr, runtime, recommendedCpus, recommendedMemGib } = opts;
-  console.warn(
+  warn(
     warnLine(
       `Container runtime under-provisioned: ${detectedStr} detected ` +
         `(recommended: ${recommendedCpus} vCPU / ${recommendedMemGib} GiB).`,
     ),
   );
-  console.warn("    The sandbox build will be slow and may stall on default Colima settings.");
+  warn("    The sandbox build will be slow and may stall on default Colima settings.");
   if (runtime === "colima") {
-    console.warn(
+    warn(
       `    Suggested: colima stop && colima start --cpu ${recommendedCpus} --memory ${recommendedMemGib}`,
     );
   } else if (runtime === "docker-desktop") {
-    console.warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
+    warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
   }
-  console.warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
+  warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
 }
 
 /** Total system memory is below the sandbox-build comfort threshold. */

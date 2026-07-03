@@ -260,8 +260,9 @@ describe("sandbox oclif command adapters", () => {
       timeout: "5m",
       reason: "debugging",
       policy: "permissive",
+      throwOnError: true,
     });
-    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha");
+    expect(mocks.shieldsUp).toHaveBeenCalledWith("alpha", { throwOnError: true });
     expect(mocks.shieldsStatus).toHaveBeenCalledWith("alpha");
   });
 

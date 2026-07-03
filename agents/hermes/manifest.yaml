@@ -120,6 +120,11 @@ inference:
   provider_options:
     - hermesProvider
 
+# ── MCP server support ───────────────────────────────────────────
+mcp:
+  support: bridge
+  adapter: hermes-config
+
 # ── Phone-home hosts ───────────────────────────────────────────
 # Agent-specific egress endpoints needed for updates, auth, etc.
 phone_home_hosts:

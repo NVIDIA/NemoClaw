@@ -17,6 +17,17 @@
 //   - NEMOCLAW_PROVIDER_KEY → src/lib/onboard/provider-key-bridge.ts / providers.ts
 //   - NEMOCLAW_ENDPOINT_URL → src/lib/onboard.ts (remote endpoint override)
 //   - NEMOCLAW_MODEL        → src/lib/onboard.ts (model override)
+//   - NEMOCLAW_COMPAT_MODEL / NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL
+//                           → src/lib/onboard/providers.ts (hosted model aliases)
+//   - NEMOCLAW_PREFERRED_API → src/lib/onboard/setup-nim-selection.ts
+//   - NEMOCLAW_REASONING    → src/lib/onboard/reasoning-mode.ts
+//   - NEMOCLAW_VLLM_MODEL / NEMOCLAW_VLLM_EXTRA_ARGS_JSON
+//                           → src/lib/onboard/setup-nim-vllm.ts
+//   - NEMOCLAW_FROM_DOCKERFILE → src/lib/onboard/entry-options.ts
+//   - NEMOCLAW_POLICY_TIER / NEMOCLAW_POLICY_MODE / NEMOCLAW_POLICY_PRESETS
+//                           → src/lib/onboard/policy-tier-env.ts / policy selection
+//   - NEMOCLAW_SANDBOX_GPU / NEMOCLAW_SANDBOX_GPU_DEVICE
+//                           → src/lib/onboard/sandbox-gpu-mode.ts
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
 // onboard-selection env var forces a conscious update here.
@@ -30,6 +41,19 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_PROVIDER_KEY",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_COMPAT_MODEL",
+  "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_REASONING",
+  "NEMOCLAW_VLLM_MODEL",
+  "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
+  "NEMOCLAW_FROM_DOCKERFILE",
+  "NEMOCLAW_WEB_SEARCH_PROVIDER",
+  "NEMOCLAW_POLICY_TIER",
+  "NEMOCLAW_POLICY_MODE",
+  "NEMOCLAW_POLICY_PRESETS",
+  "NEMOCLAW_SANDBOX_GPU",
+  "NEMOCLAW_SANDBOX_GPU_DEVICE",
 ] as const;
 
 /**
@@ -43,7 +67,6 @@ export const AMBIENT_RECREATE_ENV_VARS = [
  */
 export function sanitizeEnvValueForDisplay(value: string, maxLength = 80): string {
   const stripped = value
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately stripping control chars from untrusted env input before display.
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

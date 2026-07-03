@@ -40,6 +40,7 @@ describe("SANDBOX_PROVIDER_SUFFIXES", () => {
         "slack-app",
         "teams-bridge",
         "brave-search",
+        "tavily-search",
       ].sort(),
     );
   });
@@ -207,7 +208,7 @@ describe("detachSandboxProviders", () => {
     expect(result.detached).toHaveLength(SANDBOX_PROVIDER_SUFFIXES.length - 1);
   });
 
-  it("includes the Brave search provider in the detach set", () => {
+  it("includes Brave and Tavily search providers in the detach set", () => {
     const { runOpenshell, calls } = buildRunOpenshell(new Map());
 
     detachSandboxProviders("spark-nemo", { runOpenshell });
@@ -220,6 +221,14 @@ describe("detachSandboxProviders", () => {
         argv[4] === "spark-nemo-brave-search",
     );
     expect(braveCall).toBeDefined();
+    const tavilyCall = calls.find(
+      (argv) =>
+        argv[0] === "sandbox" &&
+        argv[1] === "provider" &&
+        argv[2] === "detach" &&
+        argv[4] === "spark-nemo-tavily-search",
+    );
+    expect(tavilyCall).toBeDefined();
   });
 });
 

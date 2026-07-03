@@ -56,14 +56,16 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 52 entries", () => {
-      // 44 visible + 8 hidden (shields×3 + config get/set/rotate-token +
-      // inference get/set). 44 visible includes the sessions group (root +
-      // list + reset + delete + export), the agents quartet (add + apply +
-      // delete + list), the singular `agent` passthrough that forwards to
-      // `openclaw agent`, and the download + upload host-side openshell
-      // wrappers.
-      expect(sandboxCommands()).toHaveLength(52);
+    it("should return exactly 57 entries", () => {
+      // 49 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+      // inference get/set).
+      // 49 visible includes the sessions group (root + list + reset + delete +
+      // export), the agents quartet (add + apply + delete + list), the
+      // singular `agent` passthrough that forwards to `openclaw agent`, and
+      // the download + upload host-side openshell wrappers, plus five MCP
+      // bridge display entries under the `mcp` parent and the gateway restart
+      // command under the `gateway` parent.
+      expect(sandboxCommands()).toHaveLength(57);
     });
 
     it("every entry has scope sandbox", () => {
@@ -221,9 +223,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 31 unique action tokens including empty string", () => {
+    it("returns exactly 32 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(31);
+      expect(tokens).toHaveLength(32);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -253,6 +255,7 @@ describe("command-registry", () => {
         "shields",
         "config",
         "channels",
+        "mcp",
         "gateway",
         "gateway-token",
         "upload",
@@ -311,6 +314,7 @@ describe("command-registry", () => {
         "Skills",
         "Policy Presets",
         "Messaging Channels",
+        "MCP Servers",
         "Compatibility Commands",
         "Services",
         "Troubleshooting",

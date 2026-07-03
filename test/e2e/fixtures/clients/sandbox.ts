@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
@@ -42,16 +43,22 @@ export type TrustedSandboxShellScript = string & {
 };
 
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
-  if (script.length === 0 || script.includes("\0")) {
-    throw new Error("sandbox shell script must be non-empty and contain no NUL bytes");
+  if (script.length === 0) {
+    throw new Error("sandbox shell script must not be empty");
+  }
+  if (script.includes("\0")) {
+    throw new Error("sandbox shell script must contain no NUL bytes");
   }
   return script as TrustedSandboxShellScript;
 }
 
 function sandboxShellArgument(script: TrustedSandboxShellScript): string {
-  if (!/[\r\n]/u.test(script)) return script;
-  const encoded = Buffer.from(script, "utf8").toString("base64");
-  return `eval "$(printf '%s' '${encoded}' | base64 -d)"`;
+  const encodedScript = Buffer.from(script, "utf8").toString("base64");
+  return [
+    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+    `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
+    `eval "$_NEMOCLAW_E2E_SCRIPT"`,
+  ].join("; ");
 }
 
 export class SandboxClient {

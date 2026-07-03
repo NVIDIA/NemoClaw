@@ -37,6 +37,16 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
   }
 }
 
+function stageMcporterRuntime(rootDir: string, buildCtx: string): void {
+  const sourceDir = path.join(rootDir, "agents", "openclaw", "mcporter-runtime");
+  const stagedDir = path.join(buildCtx, "agents", "openclaw", "mcporter-runtime");
+  fs.mkdirSync(stagedDir, { recursive: true });
+  for (const fileName of ["package.json", "package-lock.json"]) {
+    fs.copyFileSync(path.join(sourceDir, fileName), path.join(stagedDir, fileName));
+  }
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "agents"));
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -47,19 +57,27 @@ function stageLegacySandboxBuildContext(
     path.join(rootDir, "tsconfig.runtime-preloads.json"),
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
-  fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
+  stageMcporterRuntime(rootDir, buildCtx);
+  fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), {
+    recursive: true,
+  });
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
   });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
-  fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
+  fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), {
+    recursive: true,
+  });
   fs.cpSync(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
-  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
+    recursive: true,
+    force: true,
+  });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
   return {
@@ -85,6 +103,7 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "tsconfig.runtime-preloads.json"),
     path.join(buildCtx, "tsconfig.runtime-preloads.json"),
   );
+  stageMcporterRuntime(rootDir, buildCtx);
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [

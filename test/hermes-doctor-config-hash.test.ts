@@ -18,6 +18,11 @@ describe("Hermes doctor and config hash boundary", () => {
     const binDir = path.join(tmp, "usr-local-bin");
     const libDir = path.join(tmp, "usr-local-lib-nemoclaw");
     const preloadsDir = path.join(libDir, "preloads");
+    const mcpConfigTransactionPath = path.join(libDir, "hermes-mcp-config-transaction.py");
+    const mcpCredentialBoundaryPath = path.join(
+      libDir,
+      "openshell-child-visible-credentials.v0.0.72.json",
+    );
     const nestedDir = path.join(preloadsDir, "nested");
     const profileDir = path.join(tmp, "etc-profile.d");
     const bashrcPath = path.join(tmp, "bash.bashrc");
@@ -36,6 +41,8 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
+        mcpConfigTransactionPath,
+        mcpCredentialBoundaryPath,
         path.join(libDir, "state-dir-guard.py"),
         path.join(libDir, "managed-gateway-control.py"),
         path.join(libDir, "sandbox-rlimits.sh"),
@@ -69,12 +76,14 @@ describe("Hermes doctor and config hash boundary", () => {
       expect(result.stderr).toBe("");
       expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
         [
-          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")}`,
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")} ${mcpCredentialBoundaryPath}`,
           `-R 0:0 ${preloadsDir}`,
           "",
         ].join("\n"),
       );
       expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
+      expect(mode(mcpConfigTransactionPath)).toBe("755");
+      expect(mode(mcpCredentialBoundaryPath)).toBe("444");
       expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
       expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
       expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");

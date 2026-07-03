@@ -9,7 +9,6 @@ import {
   shouldRunBranchValidationE2E,
   shouldRunLiveE2E,
 } from "./test/e2e/fixtures/live-project-gate.ts";
-import { resolveE2ERetryCount } from "./test/helpers/e2e-retries";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
@@ -17,7 +16,6 @@ const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === 
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
-const e2eRetryCount = resolveE2ERetryCount();
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const canonicalOpenShellPolicyBoundary = path.resolve(
   "nemoclaw/src/shared/openshell-policy-boundary.cts",
@@ -88,6 +86,7 @@ export default defineConfig({
             "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
+            "test/install-build-dependency-preflight.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
@@ -101,6 +100,7 @@ export default defineConfig({
           alias: canonicalOpenShellPolicyAlias,
           include: [
             "test/install-express-prompt.test.ts",
+            "test/install-build-dependency-preflight.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
@@ -143,10 +143,11 @@ export default defineConfig({
           name: "e2e-live",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
-          // Vitest counts retries after the initial failure. In CI the default
-          // value of 2 gives live E2Es up to three total attempts while keeping
-          // local opt-in runs single-shot unless NEMOCLAW_E2E_RETRIES is set.
-          retry: e2eRetryCount,
+          // Live targets mutate host, Docker, gateway, and sandbox state. A
+          // whole-test retry reuses that state and can hide the first failure
+          // behind stale locks or exhausted storage. Transient operations must
+          // retry inside the target after proving their cleanup boundary.
+          retry: 0,
           include: runLiveE2E ? ["test/e2e/live/**/*.test.ts"] : [],
           // Live E2E tests are opt-in because they install, onboard, and
           // mutate real NemoClaw/OpenShell state. Run explicitly with:
@@ -158,7 +159,10 @@ export default defineConfig({
         test: {
           name: "e2e-branch-validation",
           alias: canonicalOpenShellPolicyAlias,
-          retry: e2eRetryCount,
+          // A branch-validation retry must provision a fresh remote instance.
+          // Retrying a stateful target inside one VM can overlap a timed-out
+          // installer that still legitimately owns the onboarding lock.
+          retry: 0,
           include: runBranchValidationE2E ? ["test/e2e/brev-e2e.test.ts"] : [],
           // Branch validation E2E: rsyncs the branch over a Brev instance
           // provisioned from the published NemoClaw launchable image and
