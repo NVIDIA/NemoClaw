@@ -78,6 +78,40 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { needs?: string | string[] }>;
+    };
+    const serializedDependencies = {
+      "full-e2e": ["generate-matrix", "token-rotation", "channels-stop-start"],
+      "openclaw-tui-chat-correlation": [
+        "generate-matrix",
+        "token-rotation",
+        "channels-stop-start",
+        "full-e2e",
+      ],
+    };
+
+    for (const [jobName, dependencies] of Object.entries(serializedDependencies)) {
+      expect(workflow.jobs[jobName]?.needs).toBe("generate-matrix");
+      workflow.jobs[jobName]!.needs = dependencies;
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "full-e2e job must depend on generate-matrix",
+          "openclaw-tui-chat-correlation job must depend on generate-matrix",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -983,8 +1017,13 @@ jobs:
           "live job must run on the matrix runner",
           "live job must enable hosted-compatible inference mode",
           "live job env must not include NVIDIA_INFERENCE_API_KEY",
+          "run-target job missing step: Configure live E2E trace directory",
           "step 'Run live E2E tests' run script must not interpolate dispatch inputs directly",
           "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "run-target job missing step: Build trusted live E2E timing summary",
+          "run-target job missing step: Delete raw live E2E traces",
+          "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+          "artifact upload path must include e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
           "live must not invoke actions/upload-artifact directly",
           "live must use upload-e2e-artifacts exactly once",
           "openshell-version-pin job must use the shared jobs selector condition",

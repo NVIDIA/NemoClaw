@@ -16,6 +16,9 @@ The release is one annotated semver tag on an already-merged `origin/main` commi
 ## Hard Rules
 
 - Tag only the commit captured in a generated release plan.
+- Do not generate the release plan until release-prep docs are merged or explicitly waived.
+- If `origin/main` changes after plan generation, regenerate the plan before cutting the tag.
+- Before asking for release confirmation, satisfy the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence) for that exact commit.
 - Ask the maintainer to paste the exact confirmation phrase from the plan before cutting the tag.
 - Push only the semver tag (`vX.Y.Z`) from the agent-controlled step.
 - Never push `latest` or `lkg` from this skill.
@@ -30,7 +33,7 @@ Copy this checklist and update it as you proceed:
 ```text
 Release Progress:
 - [ ] Step 1: Generate release plan
-- [ ] Step 2: Show plan and exact confirmation phrase
+- [ ] Step 2: Show plan, E2E evidence, and exact confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
 - [ ] Step 5: Bump remaining open issues/PRs
@@ -39,6 +42,9 @@ Release Progress:
 ```
 
 ### Step 1: Generate Release Plan
+
+Before this step, confirm release-prep docs are merged or explicitly waived.
+Return to `nemoclaw-maintainer-evening` if docs are still pending.
 
 Run exactly one of:
 
@@ -56,7 +62,7 @@ The script writes a plan outside the checkout root, for example:
 ../nemoclaw-release-v0.0.58/plan.json
 ```
 
-### Step 2: Show Plan and Ask for Exact Confirmation
+### Step 2: Show Plan, E2E Evidence, and Ask for Exact Confirmation
 
 Read the generated `plan.json` and show the maintainer:
 
@@ -67,6 +73,17 @@ Read the generated `plan.json` and show the maintainer:
 - forbidden operations,
 - exact confirmation phrase,
 - open issue/PR housekeeping plan for the release label.
+
+For the plan's full `origin/main` SHA, review `.github/workflows/e2e.yaml` at that commit and build the evidence ledger required by the canonical [pre-tag E2E evidence policy](../nemoclaw-maintainer-policies/references/release-train.md#pre-tag-e2e-evidence). The workflow is the sole source of truth; do not substitute or maintain a separate release-gating test list.
+
+Before showing the confirmation prompt, present:
+
+- the exact candidate SHA;
+- the number of tests with green evidence out of the number required by the workflow;
+- each required test mapped to a successful run or job URL and attempt; and
+- an itemized maintainer exception for every test without green evidence, including its current result or failure summary and the rationale for proceeding.
+
+Do not ask for the exact phrase until every test has green evidence or an explicit itemized maintainer exception. If `origin/main` moves or the candidate SHA otherwise changes, regenerate the plan and rebuild the ledger for the new SHA.
 
 Ask the maintainer to paste the exact phrase:
 

@@ -10,6 +10,7 @@ content:
   type: "how_to"
 ---
 import { StarterPromptButton } from "../_components/StarterPromptButton";
+import { StarterPromptFallback } from "../_components/StarterPrompt";
 
 NemoClaw publishes an MCP docs server and Markdown versions of its Fern documentation for AI coding agents.
 Your agent can search or fetch the same canonical pages that appear on the docs site and apply that guidance to your local setup.
@@ -19,9 +20,12 @@ Use this page when you want your agent to help with installation, inference conf
 ## Give Your Agent the Starter Prompt
 
 The fastest path is to copy the starter prompt from the NemoClaw home page and paste it into your local coding agent.
-The prompt tells the agent to use the Markdown docs, ask one question at a time, run commands only with permission, and handle credentials safely.
+The prompt tells the agent to use NemoClaw skills when available, bootstrap the docs-routing skill when missing, use the Markdown docs, ask one question at a time, run commands only with permission, and handle credentials safely.
+NemoClaw keeps the prompt text in a shared docs source so the copy button and manual fallback render the same content.
 
 <StarterPromptButton />
+
+<StarterPromptFallback />
 
 ## Configure the Docs MCP Server
 

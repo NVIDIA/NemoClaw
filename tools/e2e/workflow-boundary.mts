@@ -53,10 +53,8 @@ const COMMON_SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
 ];
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
-  "full-e2e",
   "hermes-e2e",
   "hermes-root-entrypoint-smoke",
-  "openclaw-tui-chat-correlation",
 ]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
@@ -372,6 +370,24 @@ function requireRunContains(
   }
 }
 
+function requireRunFragmentBefore(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex === -1 || afterIndex === -1) return;
+  if (beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
+    );
+  }
+}
+
 function requireRunDoesNotContain(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -380,6 +396,22 @@ function requireRunDoesNotContain(
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
+  }
+}
+
+function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
+  if (!uploadPath.includes(expected)) {
+    errors.push(`artifact upload path must include ${expected}`);
+  }
+}
+
+function requireUploadPathDoesNotContain(
+  errors: string[],
+  uploadPath: string,
+  forbidden: string,
+): void {
+  if (uploadPath.includes(forbidden)) {
+    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -517,39 +549,6 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
-  }
-}
-
-function validateSerializedHostedAgentProofs(errors: string[], jobs: WorkflowRecord): void {
-  const specs = [
-    {
-      jobName: "full-e2e",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start"],
-    },
-    {
-      jobName: "openclaw-tui-chat-correlation",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start", "full-e2e"],
-    },
-  ] as const;
-
-  for (const { dependencies, jobName } of specs) {
-    const job = asRecord(jobs[jobName]);
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (
-      needs.length !== dependencies.length ||
-      dependencies.some((dependency) => !needs.includes(dependency))
-    ) {
-      errors.push(`${jobName} job must wait for ${dependencies.join(", ")}`);
-    }
-    const condition = stringValue(job.if);
-    if (!condition.includes("always()")) {
-      errors.push(`${jobName} job must remain runnable after skipped dependencies`);
-    }
-    for (const selector of ["inputs.jobs", "inputs.targets", `,${jobName},`]) {
-      if (!condition.includes(selector)) {
-        errors.push(`${jobName} job selector must include ${selector}`);
-      }
-    }
   }
 }
 
@@ -3808,6 +3807,23 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
+  const configureTraceEnv = asRecord(configureTrace?.env);
+  if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace setup step must pass matrix.id through TARGET_ID env");
+  }
+  if (configureTrace?.["if"] !== undefined) {
+    errors.push("live trace setup step must run before live E2E tests without an if condition");
+  }
+  if (stringValue(jobEnv.NEMOCLAW_TRACE_DIR).length > 0) {
+    errors.push("live job must not set NEMOCLAW_TRACE_DIR at job scope");
+  }
+  requireRunContains(errors, configureTrace, "NEMOCLAW_TRACE_DIR=%s");
+  requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
+
+  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3819,6 +3835,71 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
+
+  const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
+  const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
+  if (sanitizeTrace?.["if"] !== "always()") {
+    errors.push("live trace sanitizer must always run");
+  }
+  if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+  );
+  requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
+  requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
+
+  const deleteTrace = requireStep(errors, steps, "Delete raw live E2E traces");
+  const deleteTraceEnv = asRecord(deleteTrace?.env);
+  if (deleteTrace?.["if"] !== "always()") {
+    errors.push("live raw trace cleanup must always run");
+  }
+  if (deleteTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live raw trace cleanup must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, deleteTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, deleteTrace, '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
+  requireRunContains(errors, deleteTrace, 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"');
+
+  const configureTraceIndex = steps.indexOf(configureTrace as WorkflowStep);
+  const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
+  const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
+  const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
+  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
+  if (
+    configureTraceIndex === -1 ||
+    prepareWorkspaceIndex === -1 ||
+    runVitestIndex === -1 ||
+    sanitizeTraceIndex === -1 ||
+    deleteTraceIndex === -1 ||
+    !(
+      configureTraceIndex < prepareWorkspaceIndex &&
+      prepareWorkspaceIndex < runVitestIndex &&
+      runVitestIndex < sanitizeTraceIndex &&
+      sanitizeTraceIndex < deleteTraceIndex
+    )
+  ) {
+    errors.push(
+      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  }
 
   const summary = requireStep(errors, steps, "Summarize artifacts");
   const summaryEnv = asRecord(summary?.env);
@@ -3836,6 +3917,54 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   );
   requireRunContains(errors, summary, "| Target | Manifest | Expected state | Suites | Phases |");
   requireRunContains(errors, summary, "TARGET_ID");
+
+  const upload = requireStep(errors, steps, "Upload E2E artifacts");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-${{ matrix.id }}") {
+    errors.push("artifact upload name must include matrix.id");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
+  );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/target.json");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
+  );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
+  requireUploadPathDoesNotContain(errors, uploadPath, "nemoclaw-e2e-traces");
+  requireUploadPathDoesNotContain(errors, uploadPath, "NEMOCLAW_TRACE_DIR");
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
+      errors.push("artifact upload path must not list the whole matrix artifact directory");
+    }
+  }
 
   validateOpenShellVersionPinJob(errors, jobs);
   validateOnboardNegativePathsJob(errors, jobs);
@@ -3861,7 +3990,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
-  validateSerializedHostedAgentProofs(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
   validateGatewayGuardRecoveryJob(errors, jobs);
   validateFreeStandingJobSelector(

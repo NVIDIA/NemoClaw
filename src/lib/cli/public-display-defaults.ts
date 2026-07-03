@@ -315,6 +315,23 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "(--dry-run)",
     },
   ],
+  "sandbox:inference:get": [
+    {
+      group: "Services",
+      order: 36.1,
+      flags: "[--json]",
+      hidden: true,
+    },
+  ],
+  "sandbox:inference:set": [
+    {
+      group: "Services",
+      order: 37.1,
+      description: "Switch inference and sync the named agent config",
+      flags: "--provider <provider> --model <model> [--no-verify]",
+      hidden: true,
+    },
+  ],
   "sandbox:logs": [
     {
       group: "Sandbox Management",
@@ -526,7 +543,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --yes|-y)",
+      flags: "(--check, --fresh, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [

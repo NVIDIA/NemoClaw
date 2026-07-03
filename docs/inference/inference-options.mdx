@@ -81,6 +81,16 @@ NemoClaw neither displays nor accepts an unsafe `NEMOCLAW_MODEL` value as the ma
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
+### Custom Endpoint URL Validation
+
+Explicit endpoint URLs that NemoClaw saves through Hermes Provider setup, `inference set`, host-side `config set`, or a direct blueprint run must pass host-side SSRF validation.
+NemoClaw rejects loopback, link-local, private, and internal addresses, including public hostnames that resolve to a private address.
+For public HTTP URLs, NemoClaw stores the validated IP address so a downstream runtime cannot repeat DNS resolution and reach a different address.
+NemoClaw rejects DNS-backed HTTPS URLs in these paths because it cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary.
+Use an HTTPS IP-literal endpoint with a certificate valid for that address, or a public HTTP endpoint only when your deployment permits non-TLS traffic.
+Managed provider defaults that do not supply an explicit custom endpoint through these paths are unaffected.
+NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
+
 <Note>
 NVIDIA Endpoints and Hermes Provider use independent model catalogs, so a model can remain available through one provider after it leaves the other's curated list.
 Curated-list updates affect new onboarding choices and do not rewrite existing sandbox configurations.

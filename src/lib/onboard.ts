@@ -540,6 +540,7 @@ const agentOnboard = require("./agent/onboard");
 const agentDefs = require("./agent/defs");
 
 const gatewayState: typeof import("./state/gateway") = require("./state/gateway");
+const notReadyRecreate: typeof import("./onboard/not-ready-recreate") = require("./onboard/not-ready-recreate");
 const sandboxState: typeof import("./state/sandbox") = require("./state/sandbox");
 const validation: typeof import("./validation") = require("./validation");
 const urlUtils: typeof import("./core/url-utils") = require("./core/url-utils");
@@ -991,19 +992,15 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
   return Boolean(live && live.provider === provider && live.model === model);
 }
 
-const {
-  pruneStaleSandboxEntry,
-  shouldRestoreLatestBackupOnRecreate,
-  confirmRecreateForSelectionDrift,
-  isOpenclawReady,
-} = sandboxLifecycle.createSandboxLifecycleHelpers({
-  runCaptureOpenshell,
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
-    fetchGatewayAuthTokenFromSandbox(sandboxName),
-  agentProductName,
-  prompt,
-  isAffirmativeAnswer,
-});
+const { pruneStaleSandboxEntry, confirmRecreateForSelectionDrift, isOpenclawReady } =
+  sandboxLifecycle.createSandboxLifecycleHelpers({
+    runCaptureOpenshell,
+    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) =>
+      fetchGatewayAuthTokenFromSandbox(sandboxName),
+    agentProductName,
+    prompt,
+    isAffirmativeAnswer,
+  });
 
 const { ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } =
   createWebSearchFlowHelpers({
@@ -2638,20 +2635,14 @@ async function createSandbox(
   // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
+  let notReadyRecreateInProgress = false;
 
-  if (!liveExists && existingRegistryEntryBeforePrune && shouldRestoreLatestBackupOnRecreate()) {
-    const latestBackup = sandboxState.getLatestBackup(sandboxName);
-    if (latestBackup?.backupPath) {
-      pendingStateRestoreBackupPath = latestBackup.backupPath;
-      note(
-        `  Found pre-upgrade backup for '${sandboxName}'; it will be restored after recreation.`,
-      );
-    } else {
-      note(
-        `  No pre-upgrade backup found for '${sandboxName}'. Recreated sandbox will start with fresh state.`,
-      );
-    }
-  }
+  pendingStateRestoreBackupPath = notReadyRecreate.selectPreUpgradeBackupForCreate({
+    liveExists,
+    hasExistingRegistryEntry: existingRegistryEntryBeforePrune !== null,
+    sandboxName,
+    note,
+  });
 
   if (liveExists) {
     const existingSandboxState = getSandboxReuseState(sandboxName);
@@ -2792,11 +2783,13 @@ async function createSandbox(
             return sandboxName;
           }
         } else {
-          console.error(`  Sandbox '${sandboxName}' already exists but is not ready.`);
-          console.error(
-            "  Pass --recreate-sandbox or set NEMOCLAW_RECREATE_SANDBOX=1 to overwrite.",
-          );
-          process.exit(1);
+          notReadyRecreateInProgress = true;
+          const outcome = notReadyRecreate.resolveNotReadyOutcome(sandboxName, note);
+          if (outcome.kind === "blocked") {
+            for (const hint of outcome.hints) console.error(hint);
+            process.exit(1);
+          }
+          pendingStateRestoreBackupPath = outcome.restoreBackupPath;
         }
       } else if (existingSandboxState === "ready") {
         if (confirmedSelectionDrift) {
@@ -2887,7 +2880,12 @@ async function createSandbox(
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
-    if (pendingStateRestore === null && !shouldSkipPreRecreateBackup(process.env)) {
+    const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
+    if (
+      noRestorePending &&
+      !notReadyRecreateInProgress &&
+      !shouldSkipPreRecreateBackup(process.env)
+    ) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = backupSandboxBeforeRecreate({ sandboxName });
       if (!result.ok) {
@@ -2998,10 +2996,9 @@ async function createSandbox(
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  const plannedMessagingPlan = plannedMessagingState?.plan;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels:
-      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
+      getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3025,6 +3022,7 @@ async function createSandbox(
       agent,
       chatUiUrl,
       createArgs,
+      sandboxName,
       env: process.env,
       extraPlaceholderKeys,
       getDashboardForwardPort,

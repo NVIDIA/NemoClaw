@@ -130,6 +130,19 @@ To avoid these issues, install the prerequisites in the following order before r
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
 
+### `docker` is missing after installing Colima
+
+Homebrew Colima does not install the Docker CLI binary.
+If you install only Colima, `colima start` can succeed while later `docker` commands fail with `command not found`.
+
+Install both packages, start Colima with enough resources for the sandbox image build, and verify Docker before onboarding:
+
+```bash
+brew install colima docker
+colima start --cpu 4 --memory 8
+docker info
+```
+
 ### Permission errors during installation
 
 The NemoClaw installer does not require `sudo` or root.
@@ -255,15 +268,20 @@ Remote/headless hosts should keep the OpenShell gateway on loopback and bind the
 NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Docker-driver gateways on OpenShell 0.0.71 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+Docker-driver gateways on OpenShell 0.0.72 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
 
 ### Older-glibc gateway compatibility container
 
-OpenShell 0.0.71 directly supports Linux hosts with glibc 2.28 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+OpenShell 0.0.72 directly supports Linux hosts with glibc 2.28 or newer.
+On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container.
+Leave it unset on supported hosts.
 
-The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See the [OpenShell 0.0.71 gateway auth review](../security/openshell-0.0.71-gateway-auth-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
+The compatibility container uses host networking and mounts the host Docker socket read-only.
+A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host.
+The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon.
+See the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
@@ -604,7 +622,56 @@ As a last resort, you can also delete the session file directly and re-run the i
 rm ~/.nemoclaw/onboard-session.json
 ```
 
+### Kubernetes namespace not ready
+
+If onboarding fails with `Kubernetes namespace not ready`, a previous failed or interrupted setup may have left stale OpenShell or NemoClaw state behind.
+Clean up the failed installation before re-running the installer:
+
+```bash
+$$nemoclaw uninstall --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The normal uninstall path keeps user data under `~/.nemoclaw/`, including sandbox registry metadata, backups, and saved credentials unless you explicitly remove them.
+If `$$nemoclaw uninstall` reports that the local uninstall script is missing, follow the CLI's security boundary: download the versioned NVIDIA/NemoClaw tag URL that it prints, inspect the script locally, run that local copy, and then retry the installer.
+
+```bash
+curl -fsSLo uninstall.sh <versioned-uninstall-url>
+less uninstall.sh
+bash uninstall.sh --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
 ## Runtime
+
+<AgentOnly variant="openclaw">
+
+### OpenShell gateway and OpenClaw gateway startup order
+
+NemoClaw uses two gateway layers for OpenClaw sandboxes:
+
+- The OpenShell gateway runs on the host side and owns sandbox lifecycle, provider routes, port forwards, and `openshell sandbox list` / `status` queries.
+- The OpenClaw gateway runs inside the sandbox container and serves the OpenClaw dashboard, agent API, and sub-agent WebSocket traffic.
+
+Start and recover them in this order: container runtime, OpenShell gateway, sandbox container, then the in-sandbox OpenClaw gateway.
+
+<Warning>
+Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy.
+NemoClaw cannot select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+</Warning>
+
+If the host rebooted or the OpenShell gateway is down, first run:
+
+```bash
+$$nemoclaw <name> status
+```
+
+The status command selects or starts the sandbox's recorded OpenShell gateway when possible, then checks whether OpenShell can still see the sandbox.
+If the sandbox container is present but stopped on a Docker-driver host, status can recover the labeled container and then re-query OpenShell.
+After the sandbox is visible again, use `$$nemoclaw <name> recover` only for the in-sandbox OpenClaw gateway and host forwards.
+Use `$$nemoclaw <name> gateway restart` when you intentionally need the in-sandbox gateway to reload supported runtime configuration.
+
+</AgentOnly>
 
 ### Reconnect after a host reboot
 
@@ -778,8 +845,44 @@ $$nemoclaw <name> rebuild
 
 ### Sandbox shows as stopped
 
-The sandbox may have been stopped or deleted.
-Run `$$nemoclaw onboard` to recreate the sandbox from the same blueprint and policy definitions.
+When status reports `sandbox_container_stopped`, Docker still has a container for the sandbox, but the container is not running.
+Use the lightest recovery path first instead of rebuilding immediately.
+
+1. Confirm Docker can still see the labeled container.
+
+   ```bash
+   docker ps -a --filter "label=openshell.ai/sandbox-name=<name>"
+   ```
+
+   If a container is listed, start it:
+
+   ```bash
+   docker start <container-name>
+   ```
+
+1. Run status recovery from the host.
+
+   ```bash
+   $$nemoclaw <name> status
+   ```
+
+   On Docker-driver hosts, status also attempts non-destructive recovery when OpenShell reports the sandbox as missing but Docker still has a stopped `openshell.ai/sandbox-name=<name>` container or the latest GPU-backup sibling.
+   A successful recovery prints that the sandbox was recovered from Docker and then shows the refreshed OpenShell state.
+
+1. If the sandbox is running but the agent gateway or dashboard forward is still down, recover the in-sandbox gateway and forwards:
+
+   ```bash
+   $$nemoclaw <name> recover
+   ```
+
+1. Rebuild only if the sandbox cannot be restarted or status still cannot recover it while the local registry entry exists:
+
+   ```bash
+   $$nemoclaw <name> rebuild --yes
+   ```
+
+   Rebuild recreates the sandbox from recorded metadata and preserves supported workspace and agent state.
+   If the sandbox was intentionally deleted and you want a clean setup, run `$$nemoclaw <name> destroy` to remove the stale local entry, then run `$$nemoclaw onboard`.
 
 ### Sandbox is registered locally but missing from the gateway
 
@@ -971,6 +1074,32 @@ $$nemoclaw onboard
 The variable accepts seconds and applies to the readiness wait only.
 When the deadline expires, NemoClaw deletes the partially-created sandbox before printing the retry hint, so the next `$$nemoclaw onboard` starts from a clean state.
 If readiness still fails after the extended budget, inspect the gateway and sandbox status:
+
+```bash
+openshell sandbox list
+$$nemoclaw <name> status
+```
+
+### Sandbox onboard fails with "entered Error phase before it became ready"
+
+Onboarding ends with:
+
+```text
+  Sandbox 'my-assistant' entered Error phase before it became ready (waited up to 180s).
+```
+
+On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready` — seen on DGX Spark, where the dashboard port fallback and supervisor restart race the sandbox bootstrap.
+
+NemoClaw tolerates a bounded run of consecutive `Error` polls (default 30 polls / ~60s) so this transient recovers on its own; only `Error` that persists past the debounce window is treated as terminal. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
+
+If your host needs a longer window (slower re-registration), raise the debounce; to fail fast on the first `Error` poll, set it to `1`:
+
+```bash
+export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=60   # tolerate ~120s of transient Error
+$$nemoclaw onboard
+```
+
+If the failure persists after the debounce, the sandbox is genuinely stuck — inspect the retained diagnostics and gateway state:
 
 ```bash
 openshell sandbox list
@@ -1281,6 +1410,16 @@ For full filesystem enforcement, run on a Linux kernel 5.13 or later (Ubuntu 22.
 Sandboxes created with OpenShell versions older than 0.0.24 can become unreachable after a gateway restart because SSH secrets were not persisted.
 Running `$$nemoclaw onboard` automatically upgrades OpenShell to 0.0.24 or later during the preflight check.
 After the upgrade, recreate the sandbox with `$$nemoclaw onboard`.
+
+### DNS-backed HTTPS endpoint is not supported
+
+NemoClaw rejects an explicit custom endpoint when it resolves a public HTTPS hostname but cannot pin the same peer address across the downstream OpenShell runtime boundary while preserving TLS SNI and host validation.
+This can appear during a direct blueprint run, Hermes Provider custom-endpoint setup, `$$nemoclaw inference set`, or a host-side `config set` write.
+
+Use an HTTPS IP-literal endpoint whose certificate is valid for that address.
+If your deployment permits non-TLS provider traffic, you can instead use a public HTTP endpoint that NemoClaw can rewrite to a DNS-pinned address.
+Do not bypass the check with a private or internal address or by editing the persisted sandbox config directly.
+For the full endpoint rules, refer to [Inference Options](../inference/inference-options#custom-endpoint-url-validation).
 
 ### Agent cannot reach external hosts through a proxy
 

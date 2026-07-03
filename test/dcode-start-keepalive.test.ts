@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -16,9 +17,40 @@ const START_SCRIPT = path.join(
 
 // start.sh hardcodes this runtime-env path; clean it up so the test is hermetic.
 const RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
+const tempDirs: string[] = [];
+
+function makeStartFixture(): string {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-keepalive-"));
+  const scriptPath = path.join(tempDir, "start.sh");
+  const hostFile = path.join(tempDir, "trusted-proxy-host");
+  const portFile = path.join(tempDir, "trusted-proxy-port");
+  const fixture = fs
+    .readFileSync(START_SCRIPT, "utf8")
+    .replace(
+      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
+      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
+    )
+    .replace(
+      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
+      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
+    )
+    .replace(
+      "readonly MANAGED_PROXY_OWNER_UID=0",
+      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
+    );
+  fs.writeFileSync(hostFile, "10.200.0.1\n");
+  fs.writeFileSync(portFile, "3128\n");
+  fs.chmodSync(hostFile, 0o444);
+  fs.chmodSync(portFile, 0o444);
+  fs.writeFileSync(scriptPath, fixture);
+  fs.chmodSync(scriptPath, 0o755);
+  tempDirs.push(tempDir);
+  return scriptPath;
+}
 
 afterEach(() => {
   fs.rmSync(RUNTIME_ENV_FILE, { force: true });
+  for (const tempDir of tempDirs.splice(0)) fs.rmSync(tempDir, { force: true, recursive: true });
 });
 
 describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
@@ -33,7 +65,8 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
     // script directly (not via `bash`) so this also exercises the real ENTRYPOINT
     // contract — the image runs /usr/local/bin/nemoclaw-start directly, so a
     // broken shebang or execute bit would also be caught here.
-    const result = spawnSync(START_SCRIPT, [], {
+    expect(fs.statSync(START_SCRIPT).mode & 0o111).not.toBe(0);
+    const result = spawnSync(makeStartFixture(), [], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
@@ -47,7 +80,7 @@ describe("Deep Agents Code sandbox entrypoint keep-alive (#5717)", () => {
   });
 
   it("execs an explicitly supplied command instead of idling", () => {
-    const result = spawnSync(START_SCRIPT, ["printf", "RAN_CMD"], {
+    const result = spawnSync(makeStartFixture(), ["printf", "RAN_CMD"], {
       input: "",
       timeout: 3000,
       encoding: "utf-8",
