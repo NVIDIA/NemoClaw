@@ -98,6 +98,15 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       max_turns: 60,
       reasoning_effort: "medium",
     },
+    tools: {
+      tool_search: {
+        // Deliberately defer every MCP and non-core plugin tool, even for a
+        // small catalog. Hermes keeps its built-in core tools directly visible.
+        enabled: "on",
+        search_default_limit: 5,
+        max_search_limit: 20,
+      },
+    },
     memory: {
       memory_enabled: true,
       user_profile_enabled: true,

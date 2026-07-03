@@ -49,9 +49,9 @@ This is different from a network or policy block.
 
 ### Nemotron Managed Inference
 
-For the `nvidia/nemotron-3-super-120b-a12b` managed inference route on `inference.local`, NemoClaw disables OpenClaw's native code-based tool search surface.
-That route otherwise tends to generate invalid JavaScript for the `tool_search_code` helper, which creates `[tools] tool_search_code failed` noise even when normal turns succeed.
-The agent still uses the structured tool-calling surface that the model handles correctly.
+NemoClaw configures OpenClaw's native Tool Search in structured mode, exposing `tool_search`, `tool_describe`, and `tool_call` instead of the JavaScript-based `tool_search_code` helper.
+For the `nvidia/nemotron-3-super-120b-a12b` managed inference route, this avoids asking the model to generate the invalid JavaScript that produced `[tools] tool_search_code failed` noise.
+Progressive-discovery trajectory evidence is still required before marking that model capability verified; final calls continue through OpenClaw's normal policy and approval path.
 
 ## Recommended Fix
 

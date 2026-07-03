@@ -1074,7 +1074,14 @@ export function buildConfig(env: Env = process.env): JsonObject {
       openclawToolOverrides,
     );
   }
-  const openclawTools: JsonObject = { toolSearch: true, ...openclawToolOverrides };
+  const openclawTools: JsonObject = {
+    toolSearch: {
+      mode: "tools",
+      searchDefaultLimit: 8,
+      maxSearchLimit: 20,
+    },
+    ...openclawToolOverrides,
+  };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
     inferenceCompat.supportsUsageInStreaming ??= true;

@@ -242,6 +242,11 @@ describe("agents/hermes/generate-config.ts", () => {
       tool_progress: "all",
       interim_assistant_messages: true,
     });
+    expect(config.tools?.tool_search).toEqual({
+      enabled: "on",
+      search_default_limit: 5,
+      max_search_limit: 20,
+    });
     expect(config.curator).toMatchObject({
       enabled: true,
       interval_hours: 168,
