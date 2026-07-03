@@ -1080,6 +1080,32 @@ openshell sandbox list
 $$nemoclaw <name> status
 ```
 
+### Sandbox onboard fails with "entered Error phase before it became ready"
+
+Onboarding ends with:
+
+```text
+  Sandbox 'my-assistant' entered Error phase before it became ready (waited up to 180s).
+```
+
+On a fresh onboard the OpenShell gateway can (re)start its supervisor session and re-register the just-created sandbox. During that window `openshell sandbox list` briefly reports the sandbox in the transient `Error` phase before it flips to `Ready` — seen on DGX Spark, where the dashboard port fallback and supervisor restart race the sandbox bootstrap.
+
+NemoClaw tolerates a bounded run of consecutive `Error` polls (default 30 polls / ~60s) so this transient recovers on its own; only `Error` that persists past the debounce window is treated as terminal. `Failed` and `CrashLoopBackOff` are always terminal and fail immediately.
+
+If your host needs a longer window (slower re-registration), raise the debounce; to fail fast on the first `Error` poll, set it to `1`:
+
+```bash
+export NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE=60   # tolerate ~120s of transient Error
+$$nemoclaw onboard
+```
+
+If the failure persists after the debounce, the sandbox is genuinely stuck — inspect the retained diagnostics and gateway state:
+
+```bash
+openshell sandbox list
+$$nemoclaw <name> status
+```
+
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
 Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their
