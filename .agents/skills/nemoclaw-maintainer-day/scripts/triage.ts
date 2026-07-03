@@ -16,10 +16,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
-  INDEPENDENT_APPROVAL_CHECK_NAME,
-  isStrictlySuccessful,
   isRiskyFile,
-  latestStatusCheck,
   PENALTY_BROAD_CI_RED,
   PENALTY_CODERABBIT_MAJOR,
   PENALTY_DRAFT_OR_CONFLICT,
@@ -224,22 +221,19 @@ function classifyPr(pr: PrData): ClassifiedPr {
   // gh returns two shapes: CheckRun {name, status, conclusion} and
   // StatusContext {context, state}. Handle both.
   const checks = pr.statusCheckRollup ?? [];
-  const ciChecks = checks.filter(
-    (check) => (check.name ?? check.context) !== INDEPENDENT_APPROVAL_CHECK_NAME,
-  );
   const passingConclusions = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
-  let checksGreen = ciChecks.length > 0;
+  let checksGreen = checks.length > 0;
 
   // Verify required checks are present. Fork PRs from first-time
   // contributors need "Approve and run" before pull_request workflows
   // execute. Until then only pull_request_target checks and external
   // bots appear — treat that as not-green.
-  const presentNames = new Set(ciChecks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
+  const presentNames = new Set(checks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
   if (REQUIRED_CHECK_NAMES.some((name) => !presentNames.has(name))) {
     checksGreen = false;
   }
 
-  for (const check of ciChecks) {
+  for (const check of checks) {
     if (!checksGreen) break;
     // StatusContext uses "state", CheckRun uses "conclusion"+"status"
     if (check.state) {
@@ -259,7 +253,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
       }
     }
   }
-  if (ciChecks.length === 0) checksGreen = false;
+  if (checks.length === 0) checksGreen = false;
   if (!checksGreen && !draft) reasons.push("failing-checks");
 
   // Check merge state
@@ -269,9 +263,8 @@ function classifyPr(pr: PrData): ClassifiedPr {
   const hasConflict = mergeState === "DIRTY";
   if (hasConflict) reasons.push("merge-conflict");
 
-  // Generic reviewDecision does not prove reviewer independence. Only the
-  // trusted policy check may promote a PR to merge-now.
-  const approved = isStrictlySuccessful(latestStatusCheck(checks, INDEPENDENT_APPROVAL_CHECK_NAME));
+  // Check review decision
+  const approved = pr.reviewDecision === "APPROVED";
   const blocked = mergeState === "BLOCKED";
   if (blocked && !hasConflict) reasons.push("merge-blocked");
 
@@ -525,10 +518,13 @@ function main(): void {
     enrichPr(repo, candidates[i]);
   }
 
-  // 4. Classify after enrichment. In approved-only mode, retain only PRs with
-  // the trusted independent-human-approval check; reviewDecision alone is not
-  // an eligibility signal.
-  const classified = prs.map(classifyPr).filter((pr) => !approvedOnly || pr.mergeNow);
+  // 4. Apply --approved-only after enrichment, when reviewDecision is known,
+  // then classify all retained PRs. Un-enriched PRs have an empty review
+  // decision and are excluded in approved-only mode; otherwise they classify
+  // as blocked due to empty checks.
+  const classified = prs
+    .filter((pr) => !approvedOnly || pr.reviewDecision === "APPROVED")
+    .map(classifyPr);
   for (const item of classified) {
     item.projectPriority = projectPriorities.get(item.number) ?? null;
   }

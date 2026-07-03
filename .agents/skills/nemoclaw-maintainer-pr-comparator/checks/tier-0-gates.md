@@ -11,7 +11,7 @@ Mandatory prerequisites. Any gate failure means the PR cannot be merged in its c
 - Gate 2: CI green on latest head SHA
 - Gate 3: Mergeable, no conflicts
 - Gate 4: Contributor compliance satisfied
-- Gate 5: Independent human approval satisfied
+- Gate 5: Branch protection satisfied
 - Gate 6: Automated reviewer threads resolved
 
 ## Gate 1: PR state OPEN
@@ -46,18 +46,11 @@ The PR body must include a valid contributor `Signed-off-by:` declaration, and e
 
 **Why this is a hard kill:** contributor compliance is a self-serve eligibility requirement. Maintainers reject noncompliant PRs and do not amend, sign, force-push, approve, or merge them on the contributor's behalf.
 
-## Gate 5: Independent human approval satisfied
+## Gate 5: Branch protection satisfied
 
-The `independent-human-approval` check must pass for the latest reviewable push and come from the
-dedicated GitHub App or service source pinned in the repository ruleset. The repository-side Actions
-adapter is interim defense in depth and is not the final source-isolated gate. The qualifying
-reviewer must be an eligible human reviewer who is absent from the append-only PR contributor set.
-The PR opener, commit authors, recognized co-authors, human committers, pushers, and direct code
-appliers remain ineligible even when GitHub reports `reviewDecision: APPROVED`.
+`reviewDecision: APPROVED`, plus all branch-protection requirements such as CODEOWNERS and required hooks. The skill may defer CODEOWNERS membership to branch protection, but Gate 4 always checks DCO and GitHub commit verification directly.
 
-**Why this is separate:** CODEOWNERS and ordinary required-review counts establish ownership and
-review quantity, not independence. Earlier reviews remain recorded; only one new qualifying
-approval is needed after the latest reviewable push.
+**Why defer:** Branch protection rules are the source of truth. Re-implementing the check in the skill would drift from repo policy. If your repo doesn't enforce CODEOWNERS via branch protection, set `codeowners_enforced_via_branch_protection: false` in `repo-policy.md` and add explicit team checks.
 
 ## Gate 6: Automated reviewer threads resolved
 

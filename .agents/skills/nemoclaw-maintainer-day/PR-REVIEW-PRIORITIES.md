@@ -5,21 +5,15 @@
 
 Ordered list of what NemoClaw maintainers look for in a pull request. Higher items block approval; lower items inform queue ranking.
 
-## Hard gates
+## Hard gates (all must pass to approve)
 
-The code and policy gates determine whether an eligible reviewer may approve and whether the PR is
-finally merge-ready. A pending independent-approval check is expected before the qualifying review;
-after that review, every gate below must pass before the PR is reported merge-ready.
-
-1. **Reviewer independence** — before approving, confirm that the current actor is not the PR opener, an author, co-author, committer, pusher, or direct code applier. A contributor's review remains advisory.
-2. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
-3. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
-4. **CI green** — all required checks in `statusCheckRollup` must pass.
-5. **No merge conflicts** — `mergeStateStatus` must be clean.
-6. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
-7. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
-8. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
-9. **Independent approval recorded** — after one eligible reviewer approves the latest reviewable push, `independent-human-approval` must pass from the dedicated App or service source pinned in the `main` ruleset before the PR is reported merge-ready. The repository-side Actions result is interim defense in depth only. Earlier reviews remain recorded and do not all require resubmission.
+1. **Contributor compliance** — the PR body has the contributor's DCO declaration and every commit appears as `Verified` in GitHub. Maintainers reject noncompliant PRs and do not repair contributor history.
+2. **Security correctness** — no sandbox escape, SSRF, credential exposure, policy bypass, or installer trust violation. PRs touching risky areas (see [RISKY-AREAS.md](RISKY-AREAS.md)) get a deep security pass before anything else.
+3. **CI green** — all required checks in `statusCheckRollup` must pass.
+4. **No merge conflicts** — `mergeStateStatus` must be clean.
+5. **No unresolved major/critical CodeRabbit findings** — correctness and safety findings block; style nits do not. Use judgment on borderline cases.
+6. **No unresolved actionable PR Review Advisor findings** — correctness, security, acceptance-coverage, and test-depth findings block unless explicitly judged false-positive. Ask the user before acting on ambiguous or design-changing advice.
+7. **Tests for touched risky code** — risky areas must have test coverage, either added in the PR or pre-existing. No exceptions.
 
 ## Quality expectations (block if violated, but fixable via salvage)
 

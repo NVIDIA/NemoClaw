@@ -31,7 +31,6 @@ Pick 5-10 cases spanning different patterns:
 - Stalled-PR-replaced-by-fresh chain
 - One PR with CI failures and one green
 - Author re-cut their own work after DCO/sign-off issue
-- Reviewer contributed commits and then supplied the only approval, as in PR #6202
 
 Record each case as: `(issue, [pr_a, pr_b, ...], actual_winner_pr)`.
 

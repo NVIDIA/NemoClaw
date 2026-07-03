@@ -5,10 +5,6 @@
 
 Use this workflow after creating a PR and after every push to an open PR.
 
-After pushing or directly applying code, treat the current actor as a PR contributor. Preserve any
-review they already submitted as advisory context, but do not let it satisfy the independent human
-approval gate. Hand approval to another eligible human after the latest reviewable push.
-
 ## Watch checks
 
 ```bash

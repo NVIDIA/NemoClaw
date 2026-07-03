@@ -242,11 +242,7 @@ For Markdown docs routing, user-skill guidance, and release-prep documentation w
 
 ## Pull Requests
 
-We welcome contributions. Every PR requires one approval from an eligible independent human reviewer before merge.
-The PR opener and anyone who authors, co-authors, commits, pushes, or directly applies code to the PR may still review and comment, but their approval does not satisfy this requirement.
-Review suggestions alone do not change reviewer eligibility; applying or pushing code does.
-The qualifying approval must cover the most recent reviewable push, while earlier reviews remain recorded rather than being blanket-dismissed.
-To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
+We welcome contributions. Every PR requires maintainer review before merge. To keep the review queue healthy, limit the number of open PRs you have at any time to fewer than 10.
 Maintainers review pull requests according to project priority, security impact, release readiness, and reviewer availability.
 PRs that solve issues with Priority set to Urgent or High are more likely to receive earlier review when maintainers have capacity.
 For substantial features or behavior changes, start with a GitHub Discussion before opening a large implementation PR.

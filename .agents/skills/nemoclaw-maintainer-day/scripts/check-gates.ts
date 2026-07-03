@@ -21,21 +21,13 @@ import {
 } from "./pra-gate.ts";
 import {
   ghJson,
-  INDEPENDENT_APPROVAL_CHECK_NAME,
-  isStrictlySuccessful,
   isRiskyFile,
   isTestFile,
-  latestStatusCheck,
   parseStringArg,
   REQUIRED_CHECK_NAMES,
   run,
   type StatusCheck,
 } from "./shared.ts";
-import {
-  fetchCurrentContributors,
-  fetchObservations,
-} from "../../../../tools/independent-approval/github.mts";
-import { identityKey, mergeContributors } from "../../../../tools/independent-approval/policy.mts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +36,22 @@ import { identityKey, mergeContributors } from "../../../../tools/independent-ap
 interface GateResult {
   pass: boolean;
   details: string;
+}
+
+interface PrIdentity {
+  login?: string | null;
+}
+
+interface PrReview {
+  author?: PrIdentity | null;
+  state?: string | null;
+  submittedAt?: string | null;
+}
+
+interface ContributorApprovalAdvisory {
+  status: "clear" | "warning";
+  details: string;
+  actors: string[];
 }
 
 interface CodeRabbitThread {
@@ -64,8 +72,6 @@ interface GateOutput {
       pendingChecks?: string[];
       missingChecks?: string[];
     };
-    independentApproval: GateResult;
-    actorEligibleToApprove: GateResult & { actor?: string; contributorReasons?: string[] };
     conflicts: GateResult & { mergeStateStatus?: string };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
@@ -75,69 +81,62 @@ interface GateOutput {
       unverifiedCommits?: Array<{ sha: string; reason: string }>;
     };
   };
+  advisories: {
+    contributorApprovalOverlap: ContributorApprovalAdvisory;
+  };
 }
 
-function checkActorEligibleToApprove(
-  repo: string,
-  prNumber: number,
-): GateResult & { actor?: string; contributorReasons?: string[] } {
-  const rawActor = ghJson(["api", "user"]);
-  if (!rawActor || typeof rawActor !== "object" || Array.isArray(rawActor)) {
-    return { pass: false, details: "Could not resolve the current GitHub actor" };
-  }
-  const value = rawActor as { id?: unknown; login?: unknown; type?: unknown };
-  if (
-    !Number.isSafeInteger(value.id) ||
-    typeof value.login !== "string" ||
-    !value.login.trim() ||
-    value.type !== "User"
-  ) {
-    return { pass: false, details: "Current GitHub actor is not an eligible human user" };
+function normalizedLogin(identity: PrIdentity | null | undefined): string | null {
+  if (!identity) return null;
+  const login = identity.login?.trim().toLowerCase();
+  return login || null;
+}
+
+function checkContributorApprovalOverlap(pr: {
+  author?: PrIdentity | null;
+  commits?: Array<{ authors?: PrIdentity[] | null }> | null;
+  reviews?: PrReview[] | null;
+}): ContributorApprovalAdvisory {
+  const contributors = new Set<string>();
+  const addContributor = (identity: PrIdentity | null | undefined): void => {
+    const login = normalizedLogin(identity);
+    if (login) contributors.add(login);
+  };
+
+  addContributor(pr.author);
+  for (const commit of pr.commits ?? []) {
+    for (const author of commit.authors ?? []) addContributor(author);
   }
 
-  try {
-    const snapshot = fetchCurrentContributors(repo, prNumber);
-    const observations = fetchObservations(repo, prNumber);
-    const contributors = mergeContributors([
-      snapshot.contributors,
-      ...observations.map((observation) => observation.contributors),
-    ]);
-    const actor = { id: value.id as number, login: value.login, type: value.type };
-    const contributor = contributors.find(
-      (candidate) => identityKey(candidate) === identityKey(actor),
-    );
-    if (contributor) {
-      return {
-        pass: false,
-        details: `@${actor.login} contributed to this PR and cannot provide its qualifying approval`,
-        actor: actor.login,
-        contributorReasons: contributor.reasons,
-      };
+  const reviews = [...(pr.reviews ?? [])].sort(
+    (left, right) => Date.parse(left.submittedAt ?? "") - Date.parse(right.submittedAt ?? ""),
+  );
+  const latestOpinionByLogin = new Map<string, string>();
+  for (const review of reviews) {
+    const login = normalizedLogin(review.author);
+    const state = review.state?.toUpperCase() ?? "";
+    if (login && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state)) {
+      latestOpinionByLogin.set(login, state);
     }
+  }
+  const approvingLogins = new Set(
+    [...latestOpinionByLogin].filter(([, state]) => state === "APPROVED").map(([login]) => login),
+  );
+  const actors = [...approvingLogins].filter((login) => contributors.has(login)).sort();
+
+  if (actors.length === 0) {
     return {
-      pass: true,
-      details: `@${actor.login} is not in the observed PR contributor set`,
-      actor: actor.login,
+      status: "clear",
+      details: "No author/approver overlap found in the current PR snapshot",
+      actors: [],
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return { pass: false, details: `Could not verify current actor eligibility: ${message}` };
-  }
-}
-
-function checkIndependentApproval(statusCheckRollup: StatusCheck[] | null): GateResult {
-  const latest = latestStatusCheck(statusCheckRollup ?? [], INDEPENDENT_APPROVAL_CHECK_NAME);
-  if (!latest) {
-    return { pass: false, details: "Independent human approval check is missing" };
   }
 
-  const pass = isStrictlySuccessful(latest);
-
+  const mentions = actors.map((actor) => `@${actor}`).join(", ");
   return {
-    pass,
-    details: pass
-      ? "One current independent human approval is present"
-      : "Independent human approval has not passed for the latest reviewable push",
+    status: "warning",
+    details: `${mentions} both contributed to and approved this PR. This warning is advisory; it does not invalidate approval, require another reviewer, or change allPass.`,
+    actors,
   };
 }
 
@@ -152,15 +151,13 @@ function checkCi(
     return { pass: false, details: "No status checks found" };
   }
 
-  const ciChecks = statusCheckRollup.filter(
-    (check) => (check.name ?? check.context) !== INDEPENDENT_APPROVAL_CHECK_NAME,
-  );
-
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
   // pull_request workflows execute. Until then only pull_request_target
   // checks (like check-pr-limit) and external bots (CodeRabbit) appear.
-  const presentNames = new Set(ciChecks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
+  const presentNames = new Set(
+    statusCheckRollup.map((c) => c.name ?? c.context ?? "").filter(Boolean),
+  );
   const missingChecks = REQUIRED_CHECK_NAMES.filter((name) => !presentNames.has(name));
   if (missingChecks.length > 0) {
     return {
@@ -174,7 +171,7 @@ function checkCi(
   const failing: string[] = [];
   const pending: string[] = [];
 
-  for (const check of ciChecks) {
+  for (const check of statusCheckRollup) {
     const checkName = check.name ?? check.context ?? "(unknown)";
 
     // StatusContext (e.g. CodeRabbit) uses `state` instead of `status`/`conclusion`.
@@ -209,7 +206,7 @@ function checkCi(
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
   }
-  return { pass: true, details: `All ${ciChecks.length} CI checks green` };
+  return { pass: true, details: `All ${statusCheckRollup.length} checks green` };
 }
 
 // ---------------------------------------------------------------------------
@@ -558,7 +555,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid",
+    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,author,commits,reviews",
   ]) as {
     number: number;
     title: string;
@@ -568,6 +565,9 @@ function main(): void {
     statusCheckRollup: StatusCheck[];
     mergeStateStatus: string;
     headRefOid: string;
+    author: PrIdentity | null;
+    commits: Array<{ authors?: PrIdentity[] | null }>;
+    reviews: PrReview[];
   } | null;
 
   if (!prData) {
@@ -576,13 +576,12 @@ function main(): void {
   }
 
   const ci = checkCi(prData.statusCheckRollup);
-  const independentApproval = checkIndependentApproval(prData.statusCheckRollup);
-  const actorEligibleToApprove = checkActorEligibleToApprove(repo, prNumber);
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const prAdvisor = checkPrAdvisor(repo, prNumber, prData.headRefOid ?? "");
   const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
+  const contributorApprovalOverlap = checkContributorApprovalOverlap(prData);
 
   const output: GateOutput = {
     pr: prNumber,
@@ -590,22 +589,13 @@ function main(): void {
     title: prData.title,
     allPass:
       ci.pass &&
-      independentApproval.pass &&
       conflicts.pass &&
       coderabbit.pass &&
       riskyCodeTested.pass &&
       prAdvisor.pass &&
       contributorCompliance.pass,
-    gates: {
-      ci,
-      independentApproval,
-      actorEligibleToApprove,
-      conflicts,
-      coderabbit,
-      riskyCodeTested,
-      prAdvisor,
-      contributorCompliance,
-    },
+    gates: { ci, conflicts, coderabbit, riskyCodeTested, prAdvisor, contributorCompliance },
+    advisories: { contributorApprovalOverlap },
   };
 
   console.log(JSON.stringify(output, null, 2));

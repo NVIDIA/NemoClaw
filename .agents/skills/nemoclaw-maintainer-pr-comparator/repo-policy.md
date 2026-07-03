@@ -7,37 +7,28 @@ Configurable defaults that adapt the skill to a specific repository. Edit this f
 
 ## Contents
 
-- Required independent human approval and optional CODEOWNERS enforcement
+- Required reviewer teams (CODEOWNERS)
 - PR compliance policy (DCO declaration and GitHub verified signatures)
 - Automated reviewer (CodeRabbit, Copilot, etc.)
 - Documentation directory
 - Coverage threshold files
 - Bot author logins to filter
 
-## Required human approval
+## Required reviewer teams
 
-Do not infer reviewer independence from CODEOWNERS or `reviewDecision: APPROVED`. Require the
-`independent-human-approval` check, which excludes the append-only PR contributor set and accepts
-one eligible human approval for the latest reviewable push.
-
-Pin that required check to its dedicated GitHub App or service source in the repository ruleset. A
-status with the same name from another source is not qualifying evidence. In particular, the
-repository-side Actions adapter is interim defense in depth because all workflows share the
-`github-actions` App identity and its PR-comment observations are not tamper-proof storage.
+CODEOWNERS approval is enforced via branch protection. The skill checks `reviewDecision: APPROVED` and trusts branch protection to enforce the right teams.
 
 ```yaml
-codeowners_enforced_via_branch_protection: false
-independent_approval_check: independent-human-approval
+codeowners_enforced_via_branch_protection: true
 ```
 
-Enable CODEOWNERS in the repository ruleset when team ownership is also required. CODEOWNERS
-establishes expertise; it does not replace the independent-approval check.
+If your repo does NOT enforce CODEOWNERS via branch protection, set this to `false` and add an explicit list of required teams to check.
 
 ## Commit compliance policy
 
 NemoClaw default: a DCO sign-off declaration is required in the PR description, and GitHub verified commit signatures are required for every PR commit.
 DCO is enforced by the `dco-check` workflow and checked directly in the PR body by the comparator and merge gate.
-Verified signatures are checked directly for every PR commit by the comparator and merge gate; repository rules remain a separate enforcement layer.
+Verified signatures are checked directly for every PR commit by the comparator and merge gate; branch protection remains a separate gate.
 
 ```yaml
 dco_required: true

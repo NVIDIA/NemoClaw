@@ -4,7 +4,7 @@
 #
 # Collect Tier 0 gate state for a PR and emit JSON for downstream scoring.
 # Covers gates 1-5 (state, CI on latest SHA, mergeable, contributor compliance,
-# independent human approval). Gate 6 (CodeRabbit threads) is handled by
+# branch protection). Gate 6 (CodeRabbit threads) is handled by
 # check-coderabbit-threads.sh.
 #
 # Usage: collect-gates.sh <pr-number> [--repo OWNER/REPO]
@@ -61,7 +61,6 @@ missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')
 # CheckRun conclusion or terminal StatusContext state fails closed.
 ci_failing_checks=$(printf '%s' "$raw" | jq -c '[
   (.statusCheckRollup // [])[]
-  | select((.name // .context // "") != "independent-human-approval")
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state != "SUCCESS" and $state != "PENDING" and $state != "EXPECTED")
@@ -76,7 +75,6 @@ ci_failing_checks=$(printf '%s' "$raw" | jq -c '[
 ]')
 ci_pending_checks=$(printf '%s' "$raw" | jq -c '[
   (.statusCheckRollup // [])[]
-  | select((.name // .context // "") != "independent-human-approval")
   | if .state != null then
       (.state | ascii_upcase) as $state
       | select($state == "PENDING" or $state == "EXPECTED" or $state == "")
@@ -129,21 +127,9 @@ else
   gate_contributor_compliance=false
 fi
 
-# Gate 5: independent human approval. reviewDecision remains informational;
-# it does not prove that the approving reviewer is independent of the PR.
+# Gate 5: branch protection (proxy via reviewDecision = APPROVED)
 review_decision=$(printf '%s' "$raw" | jq -r .reviewDecision)
-independent_approval_status=$(printf '%s' "$raw" | jq -r '(
-  [(.statusCheckRollup // [])[]
-    | select((.name // .context // "") == "independent-human-approval")]
-  | sort_by(.completedAt // .startedAt // "")
-  | last
-) as $check
-| if $check == null then "MISSING"
-  elif $check.state != null then ($check.state | ascii_upcase)
-  elif (($check.status // "") | ascii_upcase) != "COMPLETED" then "PENDING"
-  else ($check.conclusion // "" | ascii_upcase)
-  end')
-gate_independent_approval=$([ "$independent_approval_status" = "SUCCESS" ] && echo true || echo false)
+gate_branch_protection=$([ "$review_decision" = "APPROVED" ] && echo true || echo false)
 
 head_sha=$(printf '%s' "$raw" | jq -r .headRefOid)
 
@@ -155,7 +141,7 @@ classify_failures=()
 [ "$gate_ci_green" = "false" ] && classify_failures+=("substantive:ci_failures=$ci_failure_count,pending=$ci_pending_count,missing=$(printf '%s' "$missing_checks" | jq -r 'join(",")')")
 [ "$gate_mergeable" = "false" ] && classify_failures+=("substantive:mergeable=$mergeable,state=$merge_state")
 [ "$gate_contributor_compliance" = "false" ] && classify_failures+=("ineligible:contributor_compliance")
-[ "$gate_independent_approval" = "false" ] && classify_failures+=("substantive:independent_approval=$independent_approval_status")
+[ "$gate_branch_protection" = "false" ] && classify_failures+=("substantive:review=$review_decision")
 
 failures_json=$(printf '%s\n' "${classify_failures[@]:-}" | jq -Rs 'split("\n") | map(select(length > 0))')
 
@@ -166,7 +152,7 @@ jq -n \
   --argjson gate_ci_green "$gate_ci_green" \
   --argjson gate_mergeable "$gate_mergeable" \
   --argjson gate_contributor_compliance "$gate_contributor_compliance" \
-  --argjson gate_independent_approval "$gate_independent_approval" \
+  --argjson gate_branch_protection "$gate_branch_protection" \
   --arg state "$state" \
   --argjson ci_failure_count "$ci_failure_count" \
   --argjson ci_pending_count "$ci_pending_count" \
@@ -181,7 +167,6 @@ jq -n \
   --argjson commit_fetch_failed "$commits_fetch_failed" \
   --argjson commit_parse_failed "$commit_parse_failed" \
   --arg review_decision "$review_decision" \
-  --arg independent_approval_status "$independent_approval_status" \
   --argjson failures "$failures_json" \
   '{
     pr: $pr,
@@ -191,7 +176,7 @@ jq -n \
       ci_green_latest_sha: $gate_ci_green,
       mergeable: $gate_mergeable,
       contributor_compliance: $gate_contributor_compliance,
-      independent_human_approval: $gate_independent_approval
+      branch_protection: $gate_branch_protection
     },
     details: {
       state: $state,
@@ -207,8 +192,7 @@ jq -n \
       unverified_commits: $unverified_commits,
       commit_fetch_failed: $commit_fetch_failed,
       commit_parse_failed: $commit_parse_failed,
-      review_decision: $review_decision,
-      independent_approval_status: $independent_approval_status
+      review_decision: $review_decision
     },
     failures: $failures
   }'

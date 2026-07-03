@@ -229,11 +229,6 @@ gh pr create --draft --title "..." --assignee "@me" --body "..."
 
 After creating the PR, do not stop at the URL. Follow the shared [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) workflow: watch required CI, inspect CodeRabbit and PR Review Advisor feedback, address valid findings, and consult the user when feedback is ambiguous or design-changing.
 
-The PR opener and every person who authored, co-authored, committed, pushed, or directly applied
-code is ineligible to provide the qualifying approval. Request a different eligible human to approve
-the most recent reviewable push; do not dismiss earlier reviews or require every reviewer to
-reapprove.
-
 ## Step 9: Report the Result
 
 After the PR is created and the initial CI/reviewer follow-up is handled, display the PR URL as a clickable markdown link and summarize the status:

@@ -224,10 +224,6 @@ Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a P
 ## PR Requirements
 
 - Create feature branch from `main`
-- Require one approval from an eligible human reviewer who is not the PR opener, author, co-author, committer, pusher,
-  or direct code applier. Once a reviewer contributes code, their review becomes advisory and a
-  different eligible human must approve the most recent reviewable push. Do not blanket-dismiss
-  earlier approvals.
 - Let normal commit and push hooks provide hook verification before submitting
 - Contributor-owned PRs must self-serve the DCO declaration and GitHub commit verification before opening a PR
 - Every contributor-owned PR description must include a valid `Signed-off-by:` declaration for the contributor, and every commit in the PR must appear as `Verified` in GitHub

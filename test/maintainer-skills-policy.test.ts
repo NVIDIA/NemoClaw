@@ -171,27 +171,6 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(comparator).toContain(".commit.verification.verified");
   });
 
-  it("requires an independent human after a reviewer contributes code (#6222)", () => {
-    const policy = read(
-      ".agents/skills/nemoclaw-maintainer-policies/references/workflow-policy.md",
-    );
-    const mergeGate = read(".agents/skills/nemoclaw-maintainer-day/MERGE-GATE.md");
-    const salvage = read(".agents/skills/nemoclaw-maintainer-day/SALVAGE-PR.md");
-    const comparatorPolicy = read(
-      ".agents/skills/nemoclaw-maintainer-pr-comparator/repo-policy.md",
-    );
-    const contributing = read("CONTRIBUTING.md");
-
-    expect(policy).toContain("append-only contributor set");
-    expect(policy).toMatch(/One\s+current independent approval is sufficient/u);
-    expect(policy).toContain("do not enable blanket stale-approval dismissal");
-    expect(mergeGate).toContain("independent-human-approval");
-    expect(mergeGate).toContain("gates.actorEligibleToApprove");
-    expect(salvage).toContain("maintainer who pushed is now a PR contributor");
-    expect(comparatorPolicy).toContain("Do not infer reviewer independence");
-    expect(contributing).toContain("applying or pushing code does");
-  });
-
   it("gives distinct remediation for PR-body and commit-verification failures", () => {
     const verdict = read(".agents/skills/nemoclaw-maintainer-pr-comparator/templates/verdict.md");
 

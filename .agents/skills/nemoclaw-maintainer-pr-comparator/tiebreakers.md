@@ -34,9 +34,9 @@ If after all five tiebreakers no PR wins: recommend "merge A, cherry-pick releva
 Don't give up — pick the closest-to-ready and recommend salvage steps.
 
 1. Classify each Tier 0 failure per PR:
-   - **Trivial** (author-fixable without changing commit compliance): missing issue link or stale base
+   - **Trivial** (author-fixable without changing commit compliance): missing issue link, stale base, force-pushed since last review
    - **Ineligible**: missing PR-body DCO declaration or any commit that is not GitHub Verified. Reject rather than salvage; the contributor must provide a clean compliant history.
-   - **Substantive** (real work or independent review): CI red, mergeability conflicts, a missing or pending independent approval, unresolved CodeRabbit threads
+   - **Substantive** (real work): CI red, mergeability conflicts, missing CODEOWNERS approvals, unresolved CodeRabbit threads
 2. Distance-to-ready ranking:
    - Any PR with an **Ineligible** failure ranks below every eligible PR; if all candidates are ineligible, return a rejection-only verdict
    - Among eligible PRs, fewer substantive failures wins

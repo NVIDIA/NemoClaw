@@ -68,10 +68,6 @@ scripts/check-coderabbit-threads.sh <pr-number>
 ```
 
 Six gates, all mandatory. See `checks/tier-0-gates.md` for the full list and interpretation.
-Require the `independent-human-approval` check; never treat a generic
-`reviewDecision: APPROVED` value as evidence that the approver did not contribute code.
-The repository-side Actions result is interim defense in depth. It becomes qualifying Tier 0
-evidence only when a dedicated App or service publishes it and the ruleset pins that source.
 
 ### Step 5: Tier 1 correctness
 
