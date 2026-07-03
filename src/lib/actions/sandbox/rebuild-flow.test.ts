@@ -70,7 +70,7 @@ type RebuildFlowHarness = {
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
-  markStepFailedSpy: MockInstance;
+  finalizeIncompleteOnboardStepSpy: MockInstance;
   onboardSpy: MockInstance;
   registryUpdateSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
@@ -138,12 +138,17 @@ function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSe
 }
 
 function installTerminalStepFailureMock(
-  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  onboardSession: { finalizeIncompleteOnboardStep: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
 ): MockInstance {
   return vi
-    .spyOn(onboardSession, "markStepFailed")
-    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+    .spyOn(onboardSession, "finalizeIncompleteOnboardStep")
+    .mockImplementation((stepName: unknown, message: unknown) => {
+      // Idempotent terminal owner: never re-transition an already-terminal
+      // machine.
+      if (session.machine.state === "failed" || session.machine.state === "complete") {
+        return session;
+      }
       const stepKey = String(stepName);
       const step = session.steps[stepKey] ?? createStep("pending");
       session.steps[stepKey] = step;
@@ -155,10 +160,8 @@ function installTerminalStepFailureMock(
         message: typeof message === "string" ? message : null,
         recordedAt: "2026-06-01T00:02:00.000Z",
       };
-      const updateMachine =
-        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
-      session.machine.state = updateMachine ? "failed" : session.machine.state;
-      session.machine.revision += updateMachine ? 1 : 0;
+      session.machine.state = "failed";
+      session.machine.revision += 1;
       return session;
     });
 }
@@ -218,7 +221,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const releaseOnboardLockSpy = vi
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
-  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  const finalizeIncompleteOnboardStepSpy = installTerminalStepFailureMock(onboardSession, session);
   session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   const sandboxEntry = {
     name: "alpha",
@@ -347,7 +350,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
-    markStepFailedSpy,
+    finalizeIncompleteOnboardStepSpy,
     onboardSpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,
@@ -1025,10 +1028,9 @@ describe("rebuildSandbox flow", () => {
     ).rejects.toThrow("Recreate failed");
 
     expect(harness.releaseOnboardLockSpy).toHaveBeenCalled();
-    expect(harness.markStepFailedSpy).toHaveBeenCalledWith(
+    expect(harness.finalizeIncompleteOnboardStepSpy).toHaveBeenCalledWith(
       "sandbox",
       "Rebuild recreate failed",
-      expect.objectContaining({ updateMachine: true }),
     );
     expect(harness.session).toMatchObject({
       status: "failed",

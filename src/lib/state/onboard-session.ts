@@ -22,11 +22,14 @@ import {
   emitOnboardMachineEvent,
   machineStateFromOnboardSessionStep,
 } from "../onboard/machine/events";
-import { isOnboardMachineState } from "../onboard/machine/transitions";
+import {
+  assertValidOnboardMachineTransition,
+  isOnboardMachineState,
+  isTerminalOnboardMachineState,
+} from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
-  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
   shouldUpdateMachine,
@@ -1226,6 +1229,65 @@ export function markStepFailed(
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
   return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
+}
+
+/**
+ * Single synchronous terminal-failure owner for process-exit / backstop paths.
+ *
+ * Records exactly one failed transition and one terminal event for an
+ * interrupted step, replacing the legacy step-mutation escape hatch on the
+ * process-exit path. It is idempotent by construction: if the durable machine
+ * is already terminal (an in-band failure or a prior backstop already recorded
+ * the terminal event) it no-ops rather than recording a second failure, so the
+ * failed transition is validated and never doubled. Performs no
+ * sandbox/provider/policy effects.
+ */
+export function finalizeIncompleteOnboardStep(
+  stepName: string,
+  message: string | null = null,
+): Session | null {
+  const existing = loadSession();
+  if (!existing) return null;
+  if (isTerminalOnboardMachineState(existing.machine.state)) return existing;
+
+  let emitted = false;
+  const updatedSession = updateSession((session) => {
+    const step = session.steps[stepName];
+    if (!step) return session;
+    if (isTerminalOnboardMachineState(session.machine.state)) return session;
+    const now = new Date().toISOString();
+    // Guard the terminality invariant: only a legal <non-terminal> -> failed
+    // transition may be recorded here.
+    assertValidOnboardMachineTransition(session.machine.state, "failed");
+    step.status = "failed";
+    step.completedAt = null;
+    step.error = redactSensitiveText(message);
+    session.failure = sanitizeFailure({ step: stepName, message, recordedAt: now });
+    session.status = "failed";
+    transitionMachineSnapshot(session, "failed", now);
+    emitted = true;
+    return session;
+  });
+  if (emitted) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.failed",
+        session: updatedSession,
+        step: stepName,
+        error: message,
+      }),
+    );
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.failed",
+        session: updatedSession,
+        state: "failed",
+        step: stepName,
+        error: message,
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {

@@ -3,6 +3,7 @@
 
 import type { Session } from "../state/onboard-session";
 import type { ResumeConfigConflict } from "./resume-config";
+import type { SessionRecoveryPlan } from "./session-recovery";
 
 export interface OnboardSessionBootstrapInput {
   resume: boolean;
@@ -21,7 +22,7 @@ export interface OnboardSessionBootstrapDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  repairResumeMachineSnapshot(session: Session): Session;
+  applySessionRecovery(session: Session): SessionRecoveryPlan;
   setOnboardBrandingAgent(agentName: string | null): void;
   getResumeConfigConflicts(
     session: Session | null,
@@ -42,6 +43,12 @@ export interface OnboardSessionBootstrapDeps {
 export interface OnboardSessionBootstrapResult {
   session: Session | null;
   fromDockerfile: string | null;
+  /**
+   * The recovery decision applied during resume bootstrap, or null for a fresh
+   * session. The caller emits exactly one explicit recovery event when
+   * `action === "recover"`.
+   */
+  recovery: SessionRecoveryPlan | null;
 }
 
 function mode(nonInteractive: boolean): "non-interactive" | "interactive" {
@@ -157,8 +164,9 @@ async function prepareResumeSession(
     await exitForResumeConflicts(resumeConflicts, deps);
   }
 
+  let recovery: SessionRecoveryPlan | null = null;
   deps.updateSession((current: Session) => {
-    deps.repairResumeMachineSnapshot(current);
+    recovery = deps.applySessionRecovery(current);
     current.mode = mode(input.nonInteractive);
     current.failure = null;
     current.status = "in_progress";
@@ -166,7 +174,7 @@ async function prepareResumeSession(
   });
   session = deps.loadSession();
   assertRecoverableResumeSandboxName(session, input, deps);
-  return { session, fromDockerfile };
+  return { session, fromDockerfile, recovery };
 }
 
 function prepareFreshSession(
@@ -185,7 +193,7 @@ function prepareFreshSession(
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );
-  return { session, fromDockerfile };
+  return { session, fromDockerfile, recovery: null };
 }
 
 export async function prepareOnboardSession(

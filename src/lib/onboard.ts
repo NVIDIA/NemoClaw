@@ -136,8 +136,8 @@ const {
   clearAgentScopedResumeState,
 }: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
 const {
-  repairResumeMachineSnapshot,
-}: typeof import("./onboard/resume-machine-repair") = require("./onboard/resume-machine-repair");
+  applySessionRecovery,
+}: typeof import("./onboard/session-recovery") = require("./onboard/session-recovery");
 const {
   stopTrackedModelRouterForAgentChange,
 }: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
@@ -4766,7 +4766,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   try {
     onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let selectedMessagingChannels: string[] = [];
-    let { session, fromDockerfile } = await onboardSessionBootstrap.prepareOnboardSession(
+    let { session, fromDockerfile, recovery } = await onboardSessionBootstrap.prepareOnboardSession(
       {
         resume,
         fresh,
@@ -4783,7 +4783,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         createSession: onboardSession.createSession,
         saveSession: onboardSession.saveSession,
         updateSession: onboardSession.updateSession,
-        repairResumeMachineSnapshot,
+        applySessionRecovery,
         setOnboardBrandingAgent,
         getResumeConfigConflicts,
         recordResumeConflict: (conflict) => onboardRuntimeBoundary.recordResumeConflict(conflict),
@@ -4794,6 +4794,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
+    if (recovery?.action === "recover") {
+      // Exactly one explicit recovery event for the single, already-applied
+      // deterministic re-seat of a terminal snapshot to its non-terminal entry.
+      await recordRepairEvent("state.repair.completed", {
+        state: recovery.entry,
+        metadata: { reason: recovery.reason, entry: recovery.entry },
+      });
+    }
     await (resume ? recordCompatibleStateResult : recordStateResult)(
       advanceTo("preflight", { metadata: { state: "init" } }),
     );

@@ -50,7 +50,7 @@ describe("rebuild resume snapshot repair", () => {
     const agentDefs = requireDist("../../agent/defs.js");
     const agentRuntime = requireDist("../../agent/runtime.js");
     const onboardMod = requireDist("../../onboard.js");
-    const resumeRepair = requireDist("../../onboard/resume-machine-repair.js");
+    const sessionRecovery = requireDist("../../onboard/session-recovery.js");
     const onboardSession = requireDist("../../state/onboard-session.js");
     const registry = requireDist("../../state/registry.js");
     const sandboxSession = requireDist("../../state/sandbox-session.js");
@@ -147,7 +147,7 @@ describe("rebuild resume snapshot repair", () => {
         observed.preRepairMachineState = reopened.machine.state;
         observed.preRepairStatus = reopened.status;
         observed.preRepairResumable = reopened.resumable;
-        resumeRepair.repairResumeMachineSnapshot(reopened, "2026-06-01T00:01:00.000Z");
+        sessionRecovery.applySessionRecovery(reopened, "2026-06-01T00:01:00.000Z");
         observed.repairedMachineState = reopened.machine.state;
         throw new Error("stop-after-resume-repair-probe");
       }),

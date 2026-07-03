@@ -112,14 +112,30 @@ describe("terminal step failure helper", () => {
   });
 
   it("leaves sessions without a started step untouched", () => {
-    const markStepFailed = vi.fn(() => session.createSession());
+    const finalizeIncompleteOnboardStep = vi.fn(() => session.createSession());
 
     expect(
       markLastStartedStepFailed(
-        { loadSession: () => session.createSession(), markStepFailed },
+        { loadSession: () => session.createSession(), finalizeIncompleteOnboardStep },
         "boom",
       ),
     ).toBeNull();
-    expect(markStepFailed).not.toHaveBeenCalled();
+    expect(finalizeIncompleteOnboardStep).not.toHaveBeenCalled();
+  });
+
+  it("records exactly one failed transition even if the exit backstop fires twice", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+
+    markLastStartedStepFailed(session, "Onboarding exited before the step completed.");
+    const afterFirst = requireLoadedSession();
+    const revisionAfterFirst = afterFirst.machine.revision;
+    expect(afterFirst.machine.state).toBe("failed");
+
+    // A second backstop invocation must not re-transition an already-terminal
+    // machine or bump the revision again.
+    markLastStartedStepFailed(session, "Onboarding exited before the step completed.");
+    const afterSecond = requireLoadedSession();
+    expect(afterSecond.machine.state).toBe("failed");
+    expect(afterSecond.machine.revision).toBe(revisionAfterFirst);
   });
 });
