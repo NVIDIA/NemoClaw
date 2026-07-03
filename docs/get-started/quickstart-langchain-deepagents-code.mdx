@@ -115,7 +115,7 @@ nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_
 nemo-deepagents <sandbox-name> rebuild
 ```
 
-The `tavily` preset only opens egress to `api.tavily.com:443`.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
 Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
 

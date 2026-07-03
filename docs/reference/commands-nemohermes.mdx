@@ -149,8 +149,8 @@ Three tiers are available:
 
 | Tier | Description |
 |------|-------------|
-| Restricted | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | Full dev tooling and web search when the active agent supports web search. Package installs, model downloads, and inference. No messaging platform access. |
+| Restricted | No tier defaults. Web search or messaging integrations selected earlier can still add their required presets; deselect them during policy review for baseline-only access. |
+| Balanced (default) | Full dev tooling and a selected, supported web search provider. Package installs, model downloads, and inference. No messaging platform access by default. |
 | Open | Broad access across third-party services including messaging and productivity. Agent-specific unsupported presets are filtered out. |
 
 After selecting a tier, the wizard shows a combined preset and access-mode screen where you can include or exclude individual presets and toggle each between read and read-write access.
@@ -174,9 +174,12 @@ Onboarding applies tier defaults and preserves any presets you previously added 
 Use `custom` with `NEMOCLAW_POLICY_PRESETS` when you want the explicit list to be authoritative.
 Onboarding removes any preset that is not in the list.
 `skip` leaves the applied set untouched and does not apply tier defaults.
-NemoClaw filters tier suggestions and resume selections by active agent support, so unsupported presets such as Brave Search are not reapplied to agents that do not support them.
+NemoClaw filters tier suggestions and resume selections by active agent support and the selected web search provider.
+During automatic suggestion and resume reconciliation, it removes stale `brave`, `tavily`, and Hermes `nous-web` selections when they conflict with the active agent or selected provider.
+An explicit `custom` preset list or interactive manual selection remains operator-controlled.
 
 Hermes managed-tool gateway selections add matching Hermes-specific policy presets, such as `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`, without applying unsupported OpenClaw-only presets.
+When Tavily Search is selected, it replaces `nous-web` as the Hermes web search and extract backend while the other selected Nous tools remain enabled.
 
 | Value | Behaviour |
 |-------|-----------|
@@ -204,9 +207,22 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOC
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
-Hermes does not use NemoClaw's OpenClaw Brave Search setup.
-If you authenticate Hermes through Nous Portal OAuth, the wizard can prompt for managed Nous tool gateways such as web search.
-API-key mode is inference-only and does not enable managed tool gateways.
+Hermes supports Tavily Search through NemoClaw onboarding and does not support Brave Search.
+To enable Tavily in non-interactive mode, set the provider and matching key.
+
+```bash
+NEMOCLAW_WEB_SEARCH_PROVIDER=tavily \
+TAVILY_API_KEY=... \
+  nemohermes onboard --non-interactive
+```
+
+Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
+When the selector is unset, NemoClaw enables Tavily when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` for Hermes.
+An explicit Tavily selection with no key exits before sandbox creation.
+A Tavily key that fails validation prints a warning, disables web search for that run, and lets the rest of onboarding continue.
+Changing or disabling Tavily recreates the sandbox because the Hermes backend, environment placeholder, and credential attachment are part of the image.
+If you also select the Nous-managed web gateway through Nous Portal OAuth, Tavily replaces `nous-web` while other selected Nous tools remain enabled.
+API-key mode is inference-only and does not enable managed Nous tool gateways.
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -1997,10 +2013,12 @@ Set them before running `nemohermes onboard`.
 | `NEMOCLAW_MINIMAL_BOOTSTRAP` | `1` to enable | Skips default OpenClaw workspace-template seeding for new pristine workspaces. Existing files are not deleted; refer to [Runtime Controls](../manage-sandboxes/runtime-controls). |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
-Hermes-specific provider authentication:
+Hermes-specific onboarding configuration:
 
 | Variable | Format | Effect |
 |----------|--------|--------|
+| `NEMOCLAW_WEB_SEARCH_PROVIDER` | `tavily` or `none` | Selects Tavily Search in non-interactive onboarding or disables web search explicitly. When unset, `TAVILY_API_KEY` implicitly selects Tavily. |
+| `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no web search provider is set. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
 | `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
@@ -2024,7 +2042,7 @@ The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_
 NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`.
-Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, and `BRAVE_API_KEY`.
+Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, and `TAVILY_API_KEY`.
 Bare canonical envKeys, the control env itself, and arbitrary host secret names (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `KUBECONFIG`, and similar) are refused so they cannot leak into the sandbox provider gateway.
 Duplicates are dropped silently.
 The list is capped at 32 entries per sandbox.

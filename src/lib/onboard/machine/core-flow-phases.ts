@@ -120,6 +120,7 @@ export function createCoreOnboardFlowPhases<
       hermesToolGateways: context.hermesToolGateways,
       controlUiPort: options.sandbox.controlUiPort,
       rootDir: options.sandbox.rootDir,
+      env: options.env,
       deps: options.sandboxDeps,
     });
 
@@ -128,6 +129,8 @@ export function createCoreOnboardFlowPhases<
         session: sandboxStateResult.session,
         sandboxName: sandboxStateResult.sandboxName,
         webSearchConfig: sandboxStateResult.webSearchConfig,
+        webSearchConfigChanged: sandboxStateResult.webSearchConfigChanged,
+        hermesToolGateways: sandboxStateResult.hermesToolGateways,
         selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
         webSearchSupported: sandboxStateResult.webSearchSupported,
       }),
