@@ -1,24 +1,41 @@
-#!/usr/bin/env bash
+#!/bin/bash -p
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Managed Deep Agents Code launcher for NemoClaw/OpenShell sandboxes.
 
 set -euo pipefail
+unset BASH_ENV ENV OPENAI_PROXY
 
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
+export LANGGRAPH_NO_VERSION_CHECK=true
+export OTEL_ENABLED=false
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
+export DEEPAGENTS_CODE_LANGSMITH_TRACING=false
+export DEEPAGENTS_CODE_LANGSMITH_TRACING_V2=false
+export DEEPAGENTS_CODE_LANGCHAIN_TRACING=false
+export DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2=false
+export LANGSMITH_TRACING=false
+export LANGSMITH_TRACING_V2=false
+export LANGCHAIN_TRACING=false
+export LANGCHAIN_TRACING_V2=false
+export DEEPAGENTS_CODE_OFFLINE=1
+export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
+unset PYTHONHOME PYTHONPATH
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
 readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
+readonly DEEPAGENTS_AUTH_FILE="/sandbox/.deepagents/.state/auth.json"
+readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"
 
 run_dcode() {
-  exec python3 -m deepagents_code "$@"
+  unset PYTHONHOME PYTHONPATH
+  exec /opt/venv/bin/python3 -I -m deepagents_code "$@"
 }
 
 # SECURITY: dcode runtime/.env secret guard.
@@ -68,7 +85,8 @@ run_dcode() {
 #   route through a Node entrypoint that imports the canonical patterns directly.
 
 has_context_secret_shape() {
-  local upper="${1^^}"
+  local upper
+  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
   # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
@@ -238,9 +256,16 @@ is_secret_shaped_value() {
 }
 
 has_credential_name_context() {
-  local upper="${1^^}"
+  local upper
+  upper="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
   case "$upper" in
     KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
+      return 0
+      ;;
+    LANGSMITH_RUNS_ENDPOINTS | LANGCHAIN_RUNS_ENDPOINTS)
+      return 0
+      ;;
+    OTEL_EXPORTER_OTLP_ENDPOINT | OTEL_EXPORTER_OTLP_TRACES_ENDPOINT | OTEL_EXPORTER_OTLP_HEADERS | OTEL_EXPORTER_OTLP_TRACES_HEADERS)
       return 0
       ;;
     *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
@@ -286,6 +311,13 @@ refuse_dynamic_env() {
   exit 2
 }
 
+refuse_auth_store_credentials() {
+  local source="$1"
+  printf 'dcode: refusing to start — %s contains stored Deep Agents Code credentials.\n' "$source" >&2
+  printf "  Remove them and use 'nemoclaw credentials' plus NemoClaw policy/configuration instead.\n" >&2
+  exit 2
+}
+
 assert_no_secret_runtime_env() {
   local pair name value
   while IFS= read -r -d '' pair; do
@@ -318,6 +350,7 @@ assert_no_secret_env_file() {
   while IFS= read -r line || [ -n "$line" ]; do
     lines+=("$line")
   done <"$env_file"
+  [ "${#lines[@]}" -gt 0 ] || return 0
   for line in "${lines[@]}"; do
     line="${line%$'\r'}"
     line="$(trim_whitespace "$line")"
@@ -360,8 +393,56 @@ assert_no_secret_env_file() {
   done
 }
 
+assert_no_auth_store_credentials() {
+  local auth_file="$DEEPAGENTS_AUTH_FILE"
+  # Absent auth.json is normal in a fresh sandbox — allow launch.
+  [ -e "$auth_file" ] || return 0
+  # Present-but-unreadable is suspicious (e.g. permissions manipulated to
+  # hide credentials from this scan). Refuse rather than treat as clean.
+  [ -r "$auth_file" ] || refuse_auth_store_credentials "$auth_file"
+  set +e
+  # Exit 0 = confirmed clean (no truthy credentials); any nonzero = refuse.
+  # This closes the malformed-JSON bypass: a file dcode's own loader might
+  # still parse should not pass this gate unexamined.
+  /opt/venv/bin/python3 -I - "$auth_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+# Schema pin: detection assumes a truthy top-level "credentials" key,
+# matching the auth.json shape in deepagents-code==0.1.30. Nested or
+# renamed shapes ({"auth":{...}}, {"state":{"credentials":...}}, top-level
+# list) are not detected. When bumping the upstream pin, re-review this
+# assumption against the new auth.json schema.
+credentials = data.get("credentials") if isinstance(data, dict) else None
+sys.exit(1 if credentials else 0)
+PY
+  local status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    refuse_auth_store_credentials "$auth_file"
+  fi
+}
+
+assert_no_codex_auth_credentials() {
+  local auth_file="$DEEPAGENTS_CODEX_AUTH_FILE"
+  # ChatGPT OAuth stores a complete bearer/refresh-token bundle in this
+  # separate file. Any presence (including a dangling symlink) is credential
+  # state and therefore invalid in the managed harness.
+  if [ -e "$auth_file" ] || [ -L "$auth_file" ]; then
+    refuse_auth_store_credentials "$auth_file"
+  fi
+}
+
 assert_no_secret_runtime_env
 assert_no_secret_env_file
+assert_no_auth_store_credentials
+assert_no_codex_auth_credentials
 
 # SECURITY: managed identity/status display boundary.
 # - Invalid state: config.toml and runtime environment values are mutable inside
@@ -561,9 +642,27 @@ reject_managed_override() {
   exit 2
 }
 
-if [ "${1:-}" = "mcp" ]; then
-  reject_managed_override "MCP posture" "mcp"
-fi
+case "${1:-}" in
+  mcp)
+    reject_managed_override "MCP posture" "mcp"
+    ;;
+  update | install)
+    reject_managed_override "dependency update posture" "${1:-}"
+    ;;
+  auth)
+    reject_managed_override "credential posture" "auth"
+    ;;
+  tools)
+    case "${2:-}" in
+      list | help | "" | -h | --help)
+        : # read-only inspection subcommands pass through
+        ;;
+      *)
+        reject_managed_override "managed tool set posture" "tools ${2:-}"
+        ;;
+    esac
+    ;;
+esac
 
 for arg in "$@"; do
   case "$arg" in
@@ -584,6 +683,36 @@ for arg in "$@"; do
       ;;
     --shell-allow-list | --shell-allow-list=* | -S | -S?*)
       reject_managed_override "shell allow-list posture" "$arg"
+      ;;
+    --u | --up | --upd | --upda | --updat | --update | --update=*)
+      reject_managed_override "dependency update posture" "$arg"
+      ;;
+    --auto-u | --auto-up | --auto-upd | --auto-upda | --auto-updat | --auto-update | --auto-update=*)
+      reject_managed_override "dependency update posture" "$arg"
+      ;;
+    --ins | --inst | --insta | --instal | --install | --install=*)
+      reject_managed_override "dependency update posture" "$arg"
+      ;;
+    --model-p | --model-p=* | --model-pa | --model-pa=* | --model-par | --model-par=* | --model-para | --model-para=* | --model-param | --model-param=* | --model-params | --model-params=*)
+      reject_managed_override "model parameter posture" "$arg"
+      ;;
+    --rubric-m | --rubric-m=* | --rubric-mo | --rubric-mo=* | --rubric-mod | --rubric-mod=* | --rubric-mode | --rubric-mode=* | --rubric-model | --rubric-model=*)
+      reject_managed_override "rubric model posture" "$arg"
+      ;;
+    --sta | --sta=* | --star | --star=* | --start | --start=* | --startu | --startu=* | --startup | --startup=* | --startup-*)
+      reject_managed_override "startup command posture" "$arg"
+      ;;
+    --interpreter)
+      reject_managed_override "interpreter posture" "$arg"
+      ;;
+    --interpreter-t | --interpreter-t=* | --interpreter-to | --interpreter-to=* | --interpreter-too | --interpreter-too=* | --interpreter-tool | --interpreter-tool=* | --interpreter-tools | --interpreter-tools=*)
+      reject_managed_override "interpreter posture" "$arg"
+      ;;
+    -y | --auto-a | --auto-ap | --auto-app | --auto-appr | --auto-appro | --auto-approv | --auto-approve)
+      reject_managed_override "tool approval posture" "$arg"
+      ;;
+    --acp)
+      reject_managed_override "ACP approval posture" "$arg"
       ;;
   esac
 done
