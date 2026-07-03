@@ -81,6 +81,11 @@ function openClawGroupPolicyFromInputs(context: RenderedChannelConfigParserConte
     : DEFAULT_OPENCLAW_GROUP_POLICY;
 }
 
+/**
+ * Returns one effective boolean for uniform group configuration (including the
+ * runtime's mention-only default), `[false, true]` for mixed group overrides,
+ * or `undefined` when the rendered configuration cannot establish a mode.
+ */
 function getOpenClawGroupRequireMention(
   key: RenderedConfigVisibilityKey,
   source: RenderedConfigSource,

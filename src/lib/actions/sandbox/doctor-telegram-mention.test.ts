@@ -90,4 +90,60 @@ describe("Telegram mention diagnostics in doctor", () => {
       }),
     );
   });
+
+  it("reports Hermes all-messages mode from telegram.require_mention (#5691)", async () => {
+    const harness = createDoctorHarness();
+    const openClawMessaging = telegramMessaging("0");
+    const hermesMessaging = {
+      ...openClawMessaging,
+      plan: {
+        ...openClawMessaging.plan,
+        agent: "hermes" as const,
+      },
+    };
+    harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "hermes",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+      messaging: hermesMessaging,
+    });
+    harness.loadAgentSpy.mockReturnValue({
+      name: "hermes",
+      configPaths: {
+        dir: "/sandbox/.hermes",
+        configFile: "config.yaml",
+        envFile: ".env",
+        format: "yaml",
+      },
+    });
+    harness.executeSandboxCommandForVerificationSpy.mockImplementation((_sandboxName, command) =>
+      command.includes("/sandbox/.hermes/config.yaml")
+        ? {
+            status: 0,
+            stdout: "telegram:\n  require_mention: false\n",
+            stderr: "",
+          }
+        : { status: 0, stdout: "ok", stderr: "" },
+    );
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Messaging",
+        label: "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
+        status: "ok",
+        detail: "all-messages (0)",
+      }),
+    );
+    expect(harness.executeSandboxCommandForVerificationSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining("/sandbox/.hermes/config.yaml"),
+    );
+  });
 });

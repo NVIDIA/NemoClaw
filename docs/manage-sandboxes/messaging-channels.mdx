@@ -81,6 +81,9 @@ Set `TELEGRAM_REQUIRE_MENTION=0` when you want the bot to reply to all group mes
 When `TELEGRAM_GROUP_POLICY=open`, NemoClaw writes the selected mention mode explicitly so `TELEGRAM_REQUIRE_MENTION=0` does not fall back to OpenClaw's mention-only runtime default.
 NemoClaw does not summarize one global mention mode when `TELEGRAM_GROUP_POLICY` is `allowlist` or `disabled` because group access is blocked or controlled per group before mention handling.
 </AgentOnly>
+<AgentOnly variant="hermes">
+For Hermes, NemoClaw maps `TELEGRAM_REQUIRE_MENTION` to `telegram.require_mention`, and `channels status` and `doctor` compare the stored setting with that rendered value.
+</AgentOnly>
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
 
 Discord uses a bot token from the Discord Developer Portal.
