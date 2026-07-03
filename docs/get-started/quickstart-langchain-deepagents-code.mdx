@@ -32,6 +32,9 @@ nemoclaw onboard --agent langchain
 ```
 
 The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
+After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
+Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
+If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.

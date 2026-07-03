@@ -62,6 +62,19 @@ describe("openshell helpers", () => {
     expect(parseVersionFromText("openshell 0.0.9")).toBe("0.0.9");
     expect(parseVersionFromText("v1.2.3\n")).toBe("1.2.3");
     expect(parseVersionFromText("Hermes Agent v0.17.0 (2026.6.19)")).toBe("0.17.0");
+    expect(parseVersionFromText("built on 2026.7.1, dcode 0.1.12", "dcode --version")).toBe(
+      "0.1.12",
+    );
+    expect(
+      parseVersionFromText("Python 3.12.0\ndcode command failed", "dcode --version"),
+    ).toBeNull();
+    expect(parseVersionFromText("LangChain Deep Agents Code v0.1.12", "dcode --version")).toBe(
+      "0.1.12",
+    );
+    expect(
+      parseVersionFromText("built on 2026.7.1, dcode 0.1.12, dcode 0.2.0", "dcode --version"),
+    ).toBe("0.1.12");
+    expect(parseVersionFromText("dcode 0.1.12", "/opt/venv/bin/dcode --version")).toBe("0.1.12");
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 
@@ -395,7 +408,7 @@ describe("openshell helpers", () => {
     const version = getInstalledOpenshellVersion("openshell", {
       spawnSyncImpl: stubSpawnSync({
         status: 0,
-        stdout: "openshell 0.0.11\n",
+        stdout: "built on 2026.7.1, openshell 0.0.11\n",
         stderr: "",
       }),
     });
