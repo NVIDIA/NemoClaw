@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type SpawnSyncOptions, spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 
 import type { HostGatewayProcessDeps, RunResult } from "../onboard/host-gateway-process";
 
@@ -22,14 +24,19 @@ export function defaultGatewayReleaseCommandExists(
   command: string,
   env: NodeJS.ProcessEnv,
 ): boolean {
-  // `command` is an internal literal ("lsof"), never user supplied.
-  return (
-    defaultGatewayReleaseRun(
-      "sh",
-      ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`],
-      { env },
-    ).status === 0
-  );
+  // Resolve the internal literal (currently only "lsof") directly from PATH.
+  // Ignore empty entries instead of treating the working directory as trusted.
+  return (env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((directory) => {
+      try {
+        fs.accessSync(path.join(directory, command), fs.constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    });
 }
 
 export function listeningGatewayPids(

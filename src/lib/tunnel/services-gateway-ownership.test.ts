@@ -118,7 +118,10 @@ describe("releaseGatewayPortForStop", () => {
       }),
     ).not.toThrow();
 
-    expect(warn).toHaveBeenCalledWith("Could not release the NemoClaw gateway port: registry boom");
+    const output = warn.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("Could not release the NemoClaw gateway port: registry boom");
+    expect(output).toContain("repair the sandbox registry and retry");
+    expect(output).toContain("NODE_DEBUG=nemoclaw:gateway");
   });
 
   it("uses inspect-only guidance when release cannot confirm the port is free", () => {
@@ -167,9 +170,10 @@ describe("releaseGatewayPortForStop", () => {
     });
 
     expect(release).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("Invalid persisted sandbox gateway for peer 'beta'"),
-    );
+    const output = warn.mock.calls.map((call) => call[0]).join("\n");
+    expect(output).toContain("Invalid persisted sandbox gateway for peer 'beta'");
+    expect(output).toContain("repair the sandbox registry and retry");
+    expect(output).toContain("NODE_DEBUG=nemoclaw:gateway");
   });
 });
 

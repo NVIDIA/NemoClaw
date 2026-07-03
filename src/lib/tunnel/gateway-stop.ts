@@ -105,7 +105,9 @@ export function releaseGatewayPortForStop(
     // block the selected sandbox's non-gateway stop work, but skip destructive
     // release so a potentially shared gateway is never torn down by guessing.
     warn(
-      `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
+      `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}. ` +
+        "Gateway ownership is ambiguous; repair the sandbox registry and retry. " +
+        "Run with NODE_DEBUG=nemoclaw:gateway for details.",
     );
     // Best-effort by design: keep normal output concise, with the full stack
     // available only to an operator explicitly debugging gateway teardown.

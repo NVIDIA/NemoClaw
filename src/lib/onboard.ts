@@ -2139,6 +2139,14 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
+/**
+ * Reconcile or create the host Docker-driver gateway. The public onboard()
+ * entrypoint holds acquireOnboardLock()'s atomic process-wide lock across this
+ * whole call, so concurrent `nemoclaw onboard` processes cannot race creation.
+ * The strict post-reap bind check below remains a second boundary against
+ * recovery commands or external processes that do not participate in that
+ * lock; the OS then permits only one child to bind the port.
+ */
 async function startDockerDriverGateway({
   exitOnFailure = true,
   skipSandboxBridgeReachability = false,

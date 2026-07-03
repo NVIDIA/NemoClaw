@@ -35,7 +35,13 @@ export interface ConfirmGatewayPortResult {
   remaining: number[];
 }
 
-/** Bind loopback in a child so this synchronous stop path can prove the port is free. */
+/**
+ * Bind loopback in a child so this synchronous stop path can prove the port is
+ * free. Node's in-process net.Server reports bind success/failure
+ * asynchronously; using it here would require making the full stop API async.
+ * The child performs one bind only, and confirmGatewayPortReleased caps the
+ * caller at 20 attempts.
+ */
 export function defaultProbePortFree(port: number): boolean {
   try {
     return (

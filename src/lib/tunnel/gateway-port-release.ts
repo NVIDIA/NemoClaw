@@ -93,9 +93,11 @@ export function releaseManagedGatewayPort(
   const stateDir = resolveGatewayReleaseStateDir(port, env, homeDir);
   let lsofPids: number[] = [];
   let scanned = false;
-  // An initial lsof failure is distinct from lsof being unavailable: the
-  // observation tool exists but returned an error, so even a later bind probe
-  // must not mask the incomplete destructive scan.
+  // The two lsof failure stages fail closed differently. An initial failure
+  // leaves the destructive candidate scan incomplete, so confirmation is
+  // skipped entirely: a later successful bind cannot make that scan complete.
+  // When this initial scan succeeds, a later confirmation failure is retried
+  // by confirmGatewayPortReleased and never treated as an empty listener set.
   let scanFailed = false;
   if (commandExists("lsof")) {
     const result = listeningGatewayPids(port, run, env, warn);
@@ -124,8 +126,8 @@ export function releaseManagedGatewayPort(
 
   // During confirmation, listeningGatewayPids() returns null on a real lsof
   // error. confirmGatewayPortReleased treats that as non-release and keeps
-  // polling within its fixed deadline/attempt bound; it never coerces a failed
-  // observation to an empty listener set.
+  // polling within its fixed deadline/attempt bound; exhaustion returns
+  // released=false. It never coerces a failed observation to an empty set.
   const confirmation =
     !scanFailed && stopResult.failed.length === 0
       ? confirmGatewayPortReleased({

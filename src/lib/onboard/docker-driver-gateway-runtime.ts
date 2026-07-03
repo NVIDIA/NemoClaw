@@ -20,6 +20,8 @@ import {
 } from "./gateway-process-identity";
 import type { PortProbeResult } from "./preflight";
 
+// Keep the listener option type on the established runtime facade while the
+// implementation remains isolated in docker-driver-gateway-port-listener.ts.
 export type { DockerDriverGatewayPortListenerOptions } from "./docker-driver-gateway-port-listener";
 
 import * as vmDriverProcess from "./vm-driver-process";
@@ -422,6 +424,9 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     );
   }
 
+  // Bind listener discovery to this factory's liveness and process-identity
+  // dependencies. Returning the configured methods keeps onboard on one
+  // authoritative runtime instance rather than constructing a second factory.
   const {
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayPortListenerScan,

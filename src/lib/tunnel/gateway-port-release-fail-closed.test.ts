@@ -220,6 +220,25 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     );
   });
 
+  it("caps bind proof attempts for one managed gateway release at twenty", () => {
+    let clock = 0;
+    const probePortFree = vi.fn(() => false);
+
+    const result = releaseManagedGatewayPort(
+      { confirmTimeoutMs: 100_000, confirmPollIntervalMs: 1 },
+      {
+        ...baseDeps(),
+        commandExists: () => false,
+        now: () => clock++,
+        probePortFree,
+        stopHostGatewayProcesses: stopSpy(emptyStopResult()).fn,
+      },
+    );
+
+    expect(result.released).toBe(false);
+    expect(probePortFree).toHaveBeenCalledTimes(20);
+  });
+
   it("does not trust empty lsof output when a hidden listener prevents rebinding", () => {
     const stop = stopSpy(emptyStopResult());
     const probePortFree = vi.fn(() => false);
