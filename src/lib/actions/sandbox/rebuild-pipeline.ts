@@ -145,6 +145,7 @@ async function rebuildSandboxUnlocked(
       if (
         !(await dcodePreflight.revalidateBeforeDelete(
           resumeConfig,
+          durableConfig.toolDisclosure,
           recoveryRecreate,
           recreateOptions.targetGatewayPort,
         ))

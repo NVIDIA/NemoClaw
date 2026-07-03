@@ -10,6 +10,7 @@ export interface SandboxResumeSignals {
   readonly sandboxGpuConfigChanged: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
+  readonly toolDisclosureChanged: boolean;
 }
 
 export type SandboxResumeDecision =
@@ -43,6 +44,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
+    !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
   );
 }
@@ -83,6 +85,15 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       kind: "recreate",
       note: "  [resume] Hermes managed tool gateway selection changed; recreating sandbox.",
       removeRegistryEntry: true,
+    };
+  }
+  if (signals.toolDisclosureChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+      // Keep the row until createSandbox captures registry-only fidelity such
+      // as managed MCP bridge state and can route it through transactional rebuild.
+      removeRegistryEntry: false,
     };
   }
   if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };

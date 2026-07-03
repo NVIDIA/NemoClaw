@@ -180,6 +180,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
     path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "validate-openclaw-tool-search.mjs"),
+    path.join(stagedScriptsDir, "validate-openclaw-tool-search.mjs"),
+  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(

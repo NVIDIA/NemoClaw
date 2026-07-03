@@ -9,6 +9,7 @@ import {
 } from "../../onboard/gateway-binding";
 import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
 export type RebuildGpuOptOutEntry = {
   sandboxGpuMode?: string | null;
@@ -18,6 +19,7 @@ export type RebuildGpuOptOutEntry = {
   dashboardPort?: number | null;
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  toolDisclosure?: ToolDisclosure;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -86,6 +88,7 @@ export type RebuildRecreateOnboardOpts = {
   onboardLockAlreadyHeld: true;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
+  toolDisclosure: ToolDisclosure;
   noGpu?: true;
 };
 
@@ -135,6 +138,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     onboardLockAlreadyHeld: true,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
+    toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };
 }

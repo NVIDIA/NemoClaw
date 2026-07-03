@@ -13,6 +13,7 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
@@ -368,6 +369,15 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const recordedToolDisclosure = normalizeToolDisclosure(registryEntry?.toolDisclosure);
+    const desiredToolDisclosure = toolDisclosureOrDefault(state.session?.toolDisclosure);
+    const toolDisclosureChanged = Boolean(
+      registryEntry &&
+        (recordedToolDisclosure ? recordedToolDisclosure !== desiredToolDisclosure : true),
+    );
     return decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
@@ -385,6 +395,7 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      toolDisclosureChanged,
     });
   }
 

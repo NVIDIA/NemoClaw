@@ -70,7 +70,10 @@ export async function runRebuildPreflightPhase(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
-  const { log, bail, skipConfirm } = createRebuildCommandContext(options, opts);
+  const { log, bail, requestedToolDisclosure, skipConfirm } = createRebuildCommandContext(
+    options,
+    opts,
+  );
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
@@ -129,6 +132,7 @@ export async function runRebuildPreflightPhase(
         // Reaching this point means either --yes was supplied or confirmation
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
+        requestedToolDisclosure,
         log,
         bail,
       });
@@ -140,6 +144,7 @@ export async function runRebuildPreflightPhase(
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
+          preparedTarget.targetConfig.durableConfig.toolDisclosure,
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );

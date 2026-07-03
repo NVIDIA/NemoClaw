@@ -65,7 +65,7 @@ function loadPrepareSandboxDockerfilePatch(): PrepareSandboxDockerfilePatch {
   ).prepareSandboxDockerfilePatch;
 }
 
-function assertPreparedDcodeTarget(
+export function assertPreparedDcodeTarget(
   preparedBuildContext: PreparedSandboxBuildContext | null,
   agent: AgentDefinition | null | undefined,
   fromDockerfile: string | null,

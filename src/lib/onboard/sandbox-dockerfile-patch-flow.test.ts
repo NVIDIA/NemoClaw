@@ -73,7 +73,11 @@ describe("prepareSandboxDockerfilePatch", () => {
       false,
       null,
       ["github"],
-      { buildIdPolicy: "preserve" },
+      {
+        buildIdPolicy: "preserve",
+        toolDisclosure: "progressive",
+        requireToolDisclosureContract: false,
+      },
     );
   });
 
@@ -109,6 +113,8 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(dockerImageInspect).not.toHaveBeenCalled();
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "preserve",
+      toolDisclosure: "progressive",
+      requireToolDisclosureContract: false,
     });
   });
 
@@ -154,6 +160,8 @@ describe("prepareSandboxDockerfilePatch", () => {
     );
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "rewrite",
+      toolDisclosure: "progressive",
+      requireToolDisclosureContract: true,
     });
   });
 
@@ -183,6 +191,8 @@ describe("prepareSandboxDockerfilePatch", () => {
 
     expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
       buildIdPolicy: "rewrite",
+      toolDisclosure: "progressive",
+      requireToolDisclosureContract: false,
     });
   });
 

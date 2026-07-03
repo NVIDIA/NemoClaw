@@ -31,6 +31,7 @@ function dcodeInput(
     model: "nvidia/nemotron-3-super-120b-a12b",
     provider: "compatible-endpoint",
     preferredInferenceApi: "openai-completions",
+    toolDisclosure: "progressive",
     sandboxGpuConfig: {
       mode: "0",
       hostGpuDetected: false,
@@ -69,7 +70,7 @@ describe("managed DCode rebuild image preflight", () => {
     const buildImage = vi.fn(() => ({ status: 0 }) as never);
     const removeImage = vi.fn(() => ({ status: 0 }) as never);
 
-    const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
+    const result = await prepareManagedDcodeRebuildImage(dcodeInput({ toolDisclosure: "direct" }), {
       stageBuildContext,
       prepareDockerfilePatch,
       buildImage,
@@ -99,6 +100,7 @@ describe("managed DCode rebuild image preflight", () => {
         provider: "compatible-endpoint",
         model: "nvidia/nemotron-3-super-120b-a12b",
         preferredInferenceApi: "openai-completions",
+        toolDisclosure: "direct",
         chatUiUrl: "",
       }),
     );

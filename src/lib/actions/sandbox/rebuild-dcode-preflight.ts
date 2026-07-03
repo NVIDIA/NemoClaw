@@ -19,6 +19,7 @@ import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   DCODE_AGENT_NAME,
   type ResolvedDcodeRebuildTarget,
@@ -45,6 +46,7 @@ type PinnedDcodeBaseImage = {
 export type PreparedDcodeReplacement = {
   readonly buildContext: PreparedDcodeRebuildImage;
   readonly gatewayName: string;
+  readonly toolDisclosure: ToolDisclosure;
   dispose(): boolean;
   verify(): boolean;
 };
@@ -53,6 +55,7 @@ export type DcodeReplacementPreflightInput = {
   sandboxName: string;
   entry: RebuildSandboxEntry;
   resumeConfig: RebuildResumeConfig;
+  toolDisclosure: ToolDisclosure;
   skipLiveRoute: boolean;
   /** Authoritative persisted gateway port carried by the rebuild target. */
   gatewayPort?: number;
@@ -379,6 +382,7 @@ export async function prepareDcodeReplacementBeforeMutation(
         provider: target.provider,
         model: target.model,
         preferredInferenceApi: target.preferredInferenceApi,
+        toolDisclosure: input.toolDisclosure,
         sandboxGpuConfig,
         gatewayPort,
       }),
@@ -401,6 +405,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     const replacement: PreparedDcodeReplacement = {
       buildContext: preparedBuildContext,
       gatewayName: target.gatewayName,
+      toolDisclosure: input.toolDisclosure,
       dispose: () => disposePreparation(preparedBuildContext, preparedBase),
       verify: () => verifyPreparedDcodeRebuildImage(preparedBuildContext) && preparedBase.verify(),
     };
@@ -420,6 +425,9 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
   if (replacement.gatewayName !== target.gatewayName) {
     fail("the prepared DCode gateway changed before deletion", bail);
+  }
+  if (replacement.toolDisclosure !== input.toolDisclosure) {
+    fail("the prepared DCode tool-disclosure mode changed before deletion", bail);
   }
   if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
     return false;

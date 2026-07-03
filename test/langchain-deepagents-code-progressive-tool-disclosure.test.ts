@@ -1,0 +1,500 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
+const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
+const patcherPath = path.join(agentDir, "patch-managed-deepagents-code.py");
+const harnessPath = path.join(
+  repoRoot,
+  "test",
+  "fixtures",
+  "deepagents-progressive-disclosure-harness.py",
+);
+
+const MAIN_ANCHOR = "    args = parser.parse_args()\n";
+const ENTRYPOINT_ANCHOR = "from deepagents_code.main import cli_main\n";
+const HARDENING_MARKER = "NemoClaw-managed Deep Agents Code hardening v2.";
+const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
+
+const PACKAGE_SOURCES: Record<string, string> = {
+  "__init__.py": `"""Deep Agents Code 0.1.30 test package."""`,
+  "__main__.py": `from deepagents_code.main import cli_main
+
+if __name__ == "__main__":
+    cli_main()
+`,
+  "main.py": `from __future__ import annotations
+
+import os
+from types import SimpleNamespace
+
+class Parser:
+    def parse_args(self):
+        return SimpleNamespace(command=None)
+
+    def error(self, message):
+        raise RuntimeError(message)
+
+parser = Parser()
+
+def parse_args():
+    args = parser.parse_args()
+    return args
+
+def cli_main():
+    return parse_args()
+`,
+  "app.py": `from __future__ import annotations
+
+class UserMessage:
+    def __init__(self, value): self.value = value
+
+class AppMessage(UserMessage):
+    pass
+
+class DeepAgentsApp:
+    async def _check_for_updates(self, *, periodic=False): pass
+    async def _enter_service_api_key(self, *args, **kwargs): pass
+    async def _handle_auto_update_toggle(self): pass
+    async def _handle_command(self, command): pass
+    async def _handle_install_command(self, command): pass
+    async def _handle_install_package(self, *args, **kwargs): pass
+    async def _handle_update_action(self, *args, **kwargs): pass
+    async def _handle_update_command(self, command="/update"): pass
+    async def _install_extra(self, *args, **kwargs): return True
+    async def _on_auto_approve_enabled(self): pass
+    async def _prompt_launch_tavily(self): pass
+    async def _prompt_model_auth_if_needed(self, model_spec): return True
+    async def _set_rubric_model(self, model_spec): pass
+    async def _show_auth_manager(self, **kwargs): pass
+    async def _switch_model(self, model_spec, **kwargs): pass
+    def _start_mcp_login(self, server_name): pass
+    async def action_toggle_auto_approve(self): pass
+`,
+  "auth_store.py": `from __future__ import annotations
+
+class StoredCredential: pass
+class WriteOutcome: pass
+
+def load_credentials(): return {}
+def set_stored_key(*args, **kwargs): return WriteOutcome()
+`,
+  "config.py": `from __future__ import annotations
+
+import os
+from typing import Any
+from urllib.parse import urlparse
+
+_dotenv_loaded_values = {}
+
+def _get_provider_kwargs(provider, *, model_name=None): return {}
+def _load_dotenv(*, start_path=None, refresh_loaded=False): return False
+def _parse_interpreter_ptc(raw): return raw
+def _preview_dotenv_environ(*, start_path=None): return {}
+def _tracing_enabled(): return False
+`,
+  "model_config.py": `from __future__ import annotations
+
+class ModelConfigError(RuntimeError): pass
+
+class ModelConfig:
+    @classmethod
+    def load(cls): return cls()
+    def get_class_path(self, provider_name): return None
+`,
+  "agent.py": `from __future__ import annotations
+
+def create_deep_agent(*args, **kwargs):
+    del args
+    main = list(kwargs.get("middleware") or ())
+    subagents = [
+        list(subagent.get("middleware") or ())
+        for subagent in kwargs.get("subagents") or ()
+    ]
+    return main, subagents
+
+def _resolve_ptc_option(*args, **kwargs): return None
+def load_async_subagents(config_path=None): return []
+
+def create_cli_agent(model, assistant_id, *args, **kwargs):
+    del model, assistant_id, args
+    kwargs.pop("mcp_server_info", None)
+    kwargs.pop("rubric_model", None)
+    kwargs.pop("async_subagents", None)
+    return create_deep_agent(
+        middleware=[],
+        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        **kwargs,
+    )
+`,
+  "update_check.py": `from __future__ import annotations
+
+async def _run_install_subprocess(*args, **kwargs): return True, "spawned"
+def set_auto_update(enabled): return enabled
+async def _one(): return await _run_install_subprocess("one")
+async def _two(): return await _run_install_subprocess("two")
+async def _three(): return await _run_install_subprocess("three")
+async def _four(): return await _run_install_subprocess("four")
+async def _five(): return await _run_install_subprocess("five")
+`,
+  "integrations/__init__.py": `"""Test integrations."""`,
+  "integrations/openai_codex.py": `from __future__ import annotations
+
+from pathlib import Path
+
+class CodexAuthStatus:
+    def __init__(self, *, logged_in, store_path):
+        self.logged_in = logged_in
+        self.store_path = store_path
+
+def default_store_path(): return Path("/sandbox/.deepagents/.state/chatgpt-auth.json")
+def get_status(*, store_path=None): return CodexAuthStatus(logged_in=False, store_path=store_path)
+async def run_browser_login(*args, **kwargs): return get_status()
+def build_chat_model(*args, **kwargs): return object()
+`,
+  "widgets/__init__.py": `"""Test widgets."""`,
+  "widgets/auth.py": `from __future__ import annotations
+
+class Static:
+    def __init__(self, value): self.value = value
+
+class AuthResult:
+    CANCELLED = "cancelled"
+
+class AuthPromptScreen:
+    def compose(self): return []
+    def on_mount(self): pass
+
+class AuthManagerScreen:
+    def compose(self): return []
+    def on_mount(self): pass
+`,
+  "widgets/codex_auth.py": `from __future__ import annotations
+
+class Static:
+    def __init__(self, value): self.value = value
+
+class CodexAuthScreen:
+    def compose(self): return []
+    def on_mount(self): pass
+`,
+  "widgets/model_selector.py": `from __future__ import annotations
+
+class ModelSelectorScreen:
+    def _select_with_auth_check(self, model_spec, provider): pass
+`,
+  "widgets/approval.py": `from __future__ import annotations
+
+class ApprovalMenu:
+    def _handle_selection(self, option, *, reject_message=None): pass
+`,
+  "server.py": `from __future__ import annotations
+
+import os
+
+def _build_server_env(): return dict(os.environ)
+`,
+  "subagents.py": `from __future__ import annotations
+
+def list_subagents(*args, **kwargs): return []
+`,
+  "hooks.py": `from __future__ import annotations
+
+from typing import Any
+
+_hooks_config = None
+
+def _load_hooks(): return []
+def _run_single_hook(command, event, payload_bytes): return None
+`,
+  "non_interactive.py": `from __future__ import annotations
+
+async def run_non_interactive(*args, **kwargs): return kwargs
+async def _run_startup_command(command, console, *, quiet): return command
+`,
+};
+
+interface PatchFixture {
+  root: string;
+  packageDir: string;
+  entrypointPath: string;
+  mainPath: string;
+  agentPath: string;
+  modulePath: string;
+  helperPath: string;
+  sourcePaths: string[];
+}
+
+function writeFixtureFile(root: string, relativePath: string, content: string): string {
+  const target = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, `${content.trim()}\n`, "utf8");
+  return target;
+}
+
+function makePatchFixture(version = "0.1.30"): PatchFixture {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-disclosure-"));
+  const packageDir = path.join(root, "deepagents_code");
+  const sourcePaths = Object.entries(PACKAGE_SOURCES).map(([relativePath, source]) =>
+    writeFixtureFile(packageDir, relativePath, source),
+  );
+  writeFixtureFile(
+    root,
+    `deepagents_code-${version}.dist-info/METADATA`,
+    `Metadata-Version: 2.1\nName: deepagents-code\nVersion: ${version}`,
+  );
+  const entrypointPath = path.join(packageDir, "__main__.py");
+  const mainPath = path.join(packageDir, "main.py");
+  const agentPath = path.join(packageDir, "agent.py");
+  const modulePath = path.join(packageDir, "progressive_tool_disclosure.py");
+  const helperPath = path.join(packageDir, "_nemoclaw_managed.py");
+  return {
+    root,
+    packageDir,
+    entrypointPath,
+    mainPath,
+    agentPath,
+    modulePath,
+    helperPath,
+    sourcePaths,
+  };
+}
+
+function runPatcher(fixture: PatchFixture) {
+  return spawnSync("python3", [patcherPath], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, PYTHONPATH: fixture.root },
+  });
+}
+
+function snapshot(paths: string[]): Record<string, string> {
+  return Object.fromEntries(paths.map((file) => [file, fs.readFileSync(file, "utf8")]));
+}
+
+function runWiring(fixture: PatchFixture): Record<string, unknown> {
+  const script = `import importlib
+import importlib.util
+import json
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("disclosure_harness", ${JSON.stringify(harnessPath)})
+harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(harness)
+harness._install_stubs()
+sys.path.insert(0, ${JSON.stringify(fixture.root)})
+agent = importlib.import_module("deepagents_code.agent")
+middleware = importlib.import_module("deepagents_code.progressive_tool_disclosure")
+
+class Info:
+    def __init__(self, tools):
+        self.tools = tools
+
+def counts(result):
+    main, subagents = result
+    middleware_type = middleware.ProgressiveToolDisclosureMiddleware
+    instances = [item for item in main if isinstance(item, middleware_type)]
+    instances.extend(
+        item for stack in subagents for item in stack if isinstance(item, middleware_type)
+    )
+    return len(instances), len({id(item) for item in instances})
+
+os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
+no_mcp = counts(agent.create_cli_agent(None, "assistant"))
+empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
+active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
+direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "invalid"
+try:
+    agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))])
+except RuntimeError as exc:
+    invalid = str(exc)
+else:
+    raise AssertionError("invalid disclosure mode was accepted")
+
+print(json.dumps({
+    "no_mcp": no_mcp,
+    "empty_mcp": empty_mcp,
+    "active": active,
+    "direct": direct,
+    "invalid": invalid,
+}))
+`;
+  const result = spawnSync("python3", ["-c", script], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, PYTHONPATH: fixture.root },
+  });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as Record<string, unknown>;
+}
+
+function runHarness(scenario: "behavior" | "persistence" | "isolation", target = middlewarePath) {
+  const result = spawnSync("python3", [harnessPath, scenario, target], { encoding: "utf8" });
+  expect(result.status, result.stderr).toBe(0);
+  return JSON.parse(result.stdout) as Record<string, unknown>;
+}
+
+describe("Deep Agents progressive tool disclosure", () => {
+  it("keeps only core tools visible and discovers name/description matches cumulatively", () => {
+    const result = runHarness("behavior");
+    expect(result.initial).toEqual(["ls", "search_tools", "read_file"]);
+    expect(result.discovered).toEqual(["Weather_Forecast", "query_database"]);
+    expect(result.async).toEqual([
+      "Weather_Forecast",
+      "ls",
+      "query_database",
+      "search_tools",
+      "read_file",
+    ]);
+    expect(result.max_query_length).toBe(256);
+  });
+
+  it("restores discovered tools after compaction and session reconstruction", () => {
+    const result = runHarness("persistence");
+    expect(result.resumed).toContain("Weather_Forecast");
+    expect(result.unknown).not.toContain("Weather_Forecast");
+  });
+
+  it("isolates graph threads and local-subagent middleware instances", () => {
+    const result = runHarness("isolation");
+    expect(result.thread_a).toContain("Weather_Forecast");
+    expect(result.thread_b).not.toContain("Weather_Forecast");
+  });
+});
+
+describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
+  it("patches the complete package and isolated main/subagent wiring idempotently", () => {
+    const fixture = makePatchFixture();
+    const first = runPatcher(fixture);
+    expect(first.status, first.stderr).toBe(0);
+
+    const managedPaths = [...fixture.sourcePaths, fixture.modulePath, fixture.helperPath];
+    const firstBytes = snapshot(managedPaths);
+    const second = runPatcher(fixture);
+    expect(second.status, second.stderr).toBe(0);
+    expect(snapshot(managedPaths)).toEqual(firstBytes);
+
+    for (const file of fixture.sourcePaths.filter(
+      (sourcePath) => !sourcePath.endsWith("/__init__.py"),
+    )) {
+      expect(
+        firstBytes[file].match(new RegExp(HARDENING_MARKER.replaceAll(".", "\\."), "g")),
+      ).toHaveLength(1);
+    }
+    expect(
+      firstBytes[fixture.agentPath].match(/NemoClaw-managed progressive tool disclosure\./g),
+    ).toHaveLength(1);
+    expect(
+      firstBytes[fixture.agentPath].match(/ProgressiveToolDisclosureMiddleware\(\)/g),
+    ).toHaveLength(2);
+    expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
+
+    expect(runWiring(fixture)).toEqual({
+      no_mcp: [0, 0],
+      empty_mcp: [0, 0],
+      active: [3, 3],
+      direct: [0, 0],
+      invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
+    });
+  });
+
+  it("fails closed on the pinned package version before changing source", () => {
+    const fixture = makePatchFixture("0.1.31");
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Expected deepagents-code==0.1.30");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it.each([
+    ["parser", "mainPath", MAIN_ANCHOR],
+    ["entrypoint", "entrypointPath", ENTRYPOINT_ANCHOR],
+  ] as const)("fails closed when the exact %s anchor is missing or duplicated", (label, pathKey, anchor) => {
+    for (const mode of ["missing", "duplicate"] as const) {
+      const fixture = makePatchFixture();
+      const target = fixture[pathKey];
+      const original = fs.readFileSync(target, "utf8");
+      fs.writeFileSync(
+        target,
+        mode === "missing"
+          ? original.replace(anchor, "")
+          : original.replace(anchor, anchor + anchor),
+        "utf8",
+      );
+      const before = snapshot(fixture.sourcePaths);
+      const result = runPatcher(fixture);
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain(`Expected one Deep Agents Code ${label} marker`);
+      expect(snapshot(fixture.sourcePaths)).toEqual(before);
+      expect(fs.existsSync(fixture.modulePath)).toBe(false);
+    }
+  });
+
+  it("fails closed when the required progressive agent source shape drifts", () => {
+    const fixture = makePatchFixture();
+    const original = fs.readFileSync(fixture.agentPath, "utf8");
+    fs.writeFileSync(
+      fixture.agentPath,
+      original.replace("def create_cli_agent(", "def renamed_create_cli_agent("),
+      "utf8",
+    );
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Required upstream functions missing");
+    expect(result.stderr).toContain("create_cli_agent");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it("rejects a partial progressive sentinel without changing package source", () => {
+    const fixture = makePatchFixture();
+    fs.appendFileSync(fixture.agentPath, `\n# ${DISCLOSURE_MARKER}\n`, "utf8");
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("progressive-disclosure patch is partial");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it("rejects a partial package install with the middleware missing", () => {
+    const fixture = makePatchFixture();
+    const first = runPatcher(fixture);
+    expect(first.status, first.stderr).toBe(0);
+    fs.rmSync(fixture.modulePath);
+    const before = snapshot([...fixture.sourcePaths, fixture.helperPath]);
+
+    const result = runPatcher(fixture);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Managed package patch is partial: middleware is missing");
+    expect(snapshot([...fixture.sourcePaths, fixture.helperPath])).toEqual(before);
+    expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it("refuses to overwrite a conflicting installed middleware module", () => {
+    const fixture = makePatchFixture();
+    fs.writeFileSync(fixture.modulePath, "# unexpected module\n", "utf8");
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing to overwrite unexpected middleware");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.readFileSync(fixture.modulePath, "utf8")).toBe("# unexpected module\n");
+  });
+});

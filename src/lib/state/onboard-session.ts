@@ -26,6 +26,12 @@ import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
+  DEFAULT_TOOL_DISCLOSURE,
+  invalidRecordedToolDisclosure,
+  normalizeToolDisclosure,
+  type ToolDisclosure,
+} from "../tool-disclosure";
+import {
   LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
@@ -53,6 +59,14 @@ const STEP_STATES: readonly StepStatus[] = [
   "skipped",
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
+const INVALID_TOOL_DISCLOSURE_SESSIONS = new WeakSet<object>();
+
+/** True when a normalized session carried a non-null, unsupported persisted value. */
+export function hasInvalidSessionToolDisclosure(session: unknown): boolean {
+  return typeof session === "object" && session !== null
+    ? INVALID_TOOL_DISCLOSURE_SESSIONS.has(session)
+    : false;
+}
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -105,6 +119,8 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Selected preference, retained even when a model-specific safeguard downgrades it. */
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -175,6 +191,7 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -202,6 +219,7 @@ export interface DebugSessionSummary {
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -426,6 +444,9 @@ function transitionMachineSnapshot(
 }
 
 export function createSession(overrides: Partial<Session> = {}): Session {
+  const invalidToolDisclosure =
+    hasInvalidSessionToolDisclosure(overrides) ||
+    invalidRecordedToolDisclosure(overrides.toolDisclosure);
   const now = new Date().toISOString();
   const startedAt = overrides.startedAt ?? now;
   const steps = {
@@ -456,6 +477,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    toolDisclosure: normalizeToolDisclosure(overrides.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -474,11 +496,15 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       createMachineSnapshot("init", startedAt),
     steps,
   };
+  if (invalidToolDisclosure) INVALID_TOOL_DISCLOSURE_SESSIONS.add(session);
   return session;
 }
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
+
+  const invalidToolDisclosure =
+    hasInvalidSessionToolDisclosure(data) || invalidRecordedToolDisclosure(data.toolDisclosure);
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -498,6 +524,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    toolDisclosure: normalizeToolDisclosure(data.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -523,6 +550,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
+  if (invalidToolDisclosure) INVALID_TOOL_DISCLOSURE_SESSIONS.add(normalized);
 
   return normalized;
 }
@@ -993,6 +1021,8 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
+  const toolDisclosure = normalizeToolDisclosure(updates.toolDisclosure);
+  if (toolDisclosure) safe.toolDisclosure = toolDisclosure;
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1286,6 +1316,7 @@ export function summarizeForDebug(
     preferredInferenceApi: session.preferredInferenceApi,
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
+    toolDisclosure: session.toolDisclosure,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

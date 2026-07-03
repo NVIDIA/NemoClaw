@@ -142,7 +142,9 @@ describe("onboard custom Dockerfile", () => {
           "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
           "ARG NEMOCLAW_INFERENCE_API=openai-completions",
           "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+          "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
           "ARG NEMOCLAW_BUILD_ID=default",
+          "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
           "RUN echo done",
         ].join("\n"),
       );
@@ -333,6 +335,109 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
+  it("rejects an invalid tool-disclosure contract before mutating a live or stale sandbox", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-contract-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "contract-preflight.js");
+    const outcomePath = path.join(tmpDir, "outcome.json");
+    const customDockerfile = path.join(tmpDir, "Dockerfile.custom");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+    fs.writeFileSync(customDockerfile, "FROM scratch\n");
+
+    const script = String.raw`
+const fs = require("node:fs");
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const outcomePath = ${JSON.stringify(outcomePath)};
+const customDockerfile = ${JSON.stringify(customDockerfile)};
+const destructive = [];
+const sandboxLive = process.env.SANDBOX_LIVE === "1";
+const capture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (/sandbox get my-assistant/.test(text)) return sandboxLive ? "my-assistant Ready" : "";
+  if (/sandbox list/.test(text)) return sandboxLive ? "my-assistant Ready" : "";
+  if (/forward list/.test(text)) return "";
+  return "";
+};
+runner.runCapture = capture;
+runner.runCaptureOpenshell = capture;
+runner.run = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (/sandbox (?:delete|create|rebuild)/.test(text)) destructive.push(text);
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runOpenshell = runner.run;
+
+registry.registerSandbox({
+  name: "my-assistant",
+  agent: "openclaw",
+  model: "gpt-5.4",
+  provider: "openai-api",
+  fromDockerfile: customDockerfile,
+  toolDisclosure: "progressive",
+});
+const originalRemove = registry.removeSandbox;
+registry.removeSandbox = (...args) => {
+  destructive.push("registry remove " + String(args[0]));
+  return originalRemove(...args);
+};
+
+const errors = [];
+console.error = (...args) => errors.push(args.join(" "));
+const originalExit = process.exit;
+process.exit = (code) => {
+  fs.writeFileSync(outcomePath, JSON.stringify({ code, destructive, errors }));
+  originalExit(code);
+};
+
+const { createSandbox } = require(${onboardPath});
+createSandbox(
+  null,
+  "gpt-5.4",
+  "openai-api",
+  null,
+  "my-assistant",
+  null,
+  null,
+  customDockerfile,
+).catch((error) => {
+  errors.push(String(error));
+  fs.writeFileSync(outcomePath, JSON.stringify({ code: 1, destructive, errors }));
+  originalExit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    for (const sandboxLive of ["1", "0"]) {
+      fs.rmSync(outcomePath, { force: true });
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_RECREATE_SANDBOX: "1",
+          SANDBOX_LIVE: sandboxLive,
+        },
+      });
+
+      assert.equal(result.status, 1, result.stderr);
+      assert.ok(fs.existsSync(outcomePath), result.stderr);
+      const outcome = JSON.parse(fs.readFileSync(outcomePath, "utf8"));
+      assert.deepEqual(outcome.destructive, []);
+      assert.match(outcome.errors.join("\n"), /tool-disclosure contract is invalid/);
+    }
+  });
+
   it("exits with an error when the --from Dockerfile path does not exist", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-missing-"));
@@ -479,7 +584,14 @@ const { createSandbox } = require(${onboardPath});
     const ignoredDir = path.join(tmpDir, "node_modules", "pkg");
 
     fs.mkdirSync(ignoredDir, { recursive: true });
-    fs.writeFileSync(path.join(ignoredDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.writeFileSync(
+      path.join(ignoredDir, "Dockerfile"),
+      [
+        "FROM ubuntu:22.04",
+        "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      ].join("\n"),
+    );
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o755,
@@ -546,7 +658,14 @@ const { createSandbox } = require(${onboardPath});
     const customBuildDir = path.join(tmpDir, "custom-image");
 
     fs.mkdirSync(customBuildDir, { recursive: true });
-    fs.writeFileSync(path.join(customBuildDir, "Dockerfile"), "FROM ubuntu:22.04\n");
+    fs.writeFileSync(
+      path.join(customBuildDir, "Dockerfile"),
+      [
+        "FROM ubuntu:22.04",
+        "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      ].join("\n"),
+    );
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
       mode: 0o755,

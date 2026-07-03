@@ -21,7 +21,13 @@ import {
   webSearchProviderForConfig,
 } from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
-import type { Session } from "../../state/onboard-session";
+import { hasInvalidSessionToolDisclosure, type Session } from "../../state/onboard-session";
+import {
+  DEFAULT_TOOL_DISCLOSURE,
+  invalidRecordedToolDisclosure,
+  normalizeToolDisclosure,
+  type ToolDisclosure,
+} from "../../tool-disclosure";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
@@ -32,6 +38,8 @@ export type RebuildDurableConfig = {
   hermesAuthMethodError: string | null;
   webSearchConfig: WebSearchConfig | null;
   webSearchError: string | null;
+  toolDisclosure: ToolDisclosure;
+  toolDisclosureError: string | null;
 };
 
 export const REBUILD_HERMES_DASHBOARD_ENV_KEYS = [
@@ -109,6 +117,7 @@ export function resolveRebuildDurableConfig(
     provider: entry.provider ?? null,
     model: entry.model ?? null,
   },
+  requestedToolDisclosure?: ToolDisclosure,
 ): RebuildDurableConfig {
   const matchingSession =
     session?.sandboxName === sandboxName &&
@@ -153,6 +162,20 @@ export function resolveRebuildDurableConfig(
           ? "tavily"
           : "brave";
   }
+  const recordedToolDisclosure =
+    entry.toolDisclosure !== undefined && entry.toolDisclosure !== null
+      ? entry.toolDisclosure
+      : matchingSession?.toolDisclosure;
+  const toolDisclosureError =
+    invalidRecordedToolDisclosure(recordedToolDisclosure) ||
+    ((entry.toolDisclosure === undefined || entry.toolDisclosure === null) &&
+      hasInvalidSessionToolDisclosure(matchingSession))
+      ? "recorded toolDisclosure value must be progressive or direct"
+      : null;
+  const toolDisclosure =
+    requestedToolDisclosure ??
+    normalizeToolDisclosure(recordedToolDisclosure) ??
+    DEFAULT_TOOL_DISCLOSURE;
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined
       ? entry.fromDockerfile
@@ -195,6 +218,8 @@ export function resolveRebuildDurableConfig(
         ? { fetchEnabled: true, provider: webSearchProvider }
         : null,
     webSearchError,
+    toolDisclosure,
+    toolDisclosureError,
   };
 }
 
@@ -224,6 +249,10 @@ export function validatedRebuildRegistryUpdate(
   fromDockerfile: string | null,
   credentialEnv: string | null,
 ): Partial<RebuildSandboxEntry> {
+  // toolDisclosure is intentionally absent: this preflight update still
+  // describes the running old image. Replacement onboarding commits the
+  // requested mode only after creation succeeds; retry rollback keeps the old
+  // registry value if recreation fails.
   return {
     provider: resume.provider,
     model: resume.model,

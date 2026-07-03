@@ -152,6 +152,7 @@ function createDeps(
       getSandboxRegistryEntry: (name: string) => ({
         name,
         webSearchEnabled: false,
+        toolDisclosure: "progressive" as const,
         fromDockerfile: null,
         hermesAuthMethod: null,
       }),
@@ -375,6 +376,24 @@ describe("handleSandboxState", () => {
     expect(result.session).toBe(skippedSession);
   });
 
+  it("does not claim an unregistered live sandbox as a managed legacy migration", async () => {
+    const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: () => null,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
+
   it("backfills absent rebuild fidelity after validated sandbox reuse", async () => {
     const session = createSession({
       sandboxName: "saved",
@@ -384,7 +403,11 @@ describe("handleSandboxState", () => {
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
       getSandboxReuseState: () => "ready",
-      getSandboxRegistryEntry: (name) => ({ name, nemoclawVersion: "0.1.0" }),
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        nemoclawVersion: "0.1.0",
+        toolDisclosure: "progressive",
+      }),
     });
 
     await handleSandboxState({
@@ -401,6 +424,94 @@ describe("handleSandboxState", () => {
       fromDockerfile: null,
       hermesAuthMethod: "api_key",
     });
+  });
+
+  it.each([
+    ["a legacy managed image", createSession({ toolDisclosure: "progressive" }), undefined],
+    ["a changed selection", createSession({ toolDisclosure: "direct" }), "progressive" as const],
+  ])("recreates instead of reusing %s tool disclosure", async (_label, session, recorded) => {
+    session.sandboxName = "saved";
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        nemoclawVersion: "0.1.0",
+        toolDisclosure: recorded,
+        fromDockerfile: null,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+    );
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
+  it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
+    const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        nemoclawVersion: null,
+        fromDockerfile: "/tmp/Dockerfile.custom",
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+    );
+    expect(calls.createSandbox).toHaveBeenCalled();
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+  });
+
+  it("retains managed MCP registry fidelity until createSandbox can refuse generic migration", async () => {
+    const session = createSession({ sandboxName: "saved", toolDisclosure: "progressive" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        nemoclawVersion: "0.1.0",
+        mcp: {
+          version: 1,
+          bridges: {
+            fake: {
+              server: "fake",
+              agent: "openclaw",
+              url: "https://mcp.example.test",
+              env: [],
+              policyName: "mcp-bridge-fake",
+              addedAt: "2026-07-03T00:00:00.000Z",
+            },
+          },
+        },
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalled();
   });
 
   it("marks web search changed when recreate implicitly enables Tavily", async () => {

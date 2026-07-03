@@ -3225,7 +3225,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 childProcess.spawn = () => {
   throw new Error("unexpected sandbox create");
 };
@@ -3961,7 +3961,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 
 // Mock prompt to return "y" (reuse)
 credentials.prompt = async () => "y";
@@ -4096,7 +4096,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -4221,7 +4221,7 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -4472,7 +4472,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({ name: "my-assistant", toolDisclosure: "progressive" });
 
 childProcess.spawn = (...args) => {
   const child = new EventEmitter();

@@ -396,14 +396,19 @@ describe("rebuildSandbox DCode flow", () => {
     configureDcodeSession(harness);
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      harness.rebuildSandbox("alpha", ["--yes", "--tool-disclosure", "direct"], {
+        throwOnError: true,
+      }),
     ).resolves.toBeUndefined();
 
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
-    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ toolDisclosure: "direct" }),
+    );
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agent: "langchain-deepagents-code",
+        toolDisclosure: "direct",
         preparedDcodeRebuild: expect.objectContaining({
           buildContext: harness.preparedDcodeBuildContext,
           gatewayName: "nemoclaw",

@@ -324,6 +324,7 @@ export async function startCompatibleMock(options: {
   toolResultToken?: string;
   toolNames?: string[];
   deferredToolName?: string;
+  progressiveToolSearch?: { toolName: string; query: string };
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
@@ -347,55 +348,148 @@ export async function startCompatibleMock(options: {
     ) {
       const body = JSON.parse(await readRequestBody(req)) as {
         stream?: boolean;
-        messages?: Array<{ role?: string; content?: unknown }>;
+        messages?: Array<{ role?: string; content?: unknown; tool_call_id?: string }>;
         tools?: Array<{ function?: { name?: string } }>;
       };
-      const directToolName = body.tools
-        ?.map((tool) => tool.function?.name)
-        .find(
-          (name): name is string =>
-            typeof name === "string" && (options.toolNames ?? []).includes(name),
+      const visibleToolNames = new Set(
+        (body.tools ?? [])
+          .map((tool) => tool.function?.name)
+          .filter((name): name is string => typeof name === "string"),
+      );
+      const toolResults = (body.messages ?? []).filter((message) => message.role === "tool");
+      const toolResultCount = toolResults.length;
+      const sawAuthenticatedToolResult = toolResults.some((message) =>
+        JSON.stringify(message.content).includes(options.toolResultToken ?? "__never__"),
+      );
+      const hasExpectedToolResult = (
+        index: number,
+        toolCallId: string,
+        requiredContent: string[],
+      ) => {
+        const message = toolResults[index];
+        const content = JSON.stringify(message?.content);
+        return (
+          message?.tool_call_id === toolCallId &&
+          requiredContent.every((value) => content.includes(value))
         );
-      const deferredToolWrapper =
-        !directToolName &&
-        options.deferredToolName &&
-        body.tools?.some((tool) => tool.function?.name === "tool_call")
-          ? "tool_call"
-          : undefined;
-      const toolName = directToolName ?? deferredToolWrapper;
-      const toolArguments = directToolName
-        ? { challenge: options.toolChallenge }
-        : {
-            name: options.deferredToolName,
+      };
+      let plannedToolCall:
+        | { id: string; name: string; arguments: Record<string, unknown> }
+        | undefined;
+      let protocolError: string | undefined;
+
+      if (!sawAuthenticatedToolResult && options.progressiveToolSearch) {
+        const { query, toolName } = options.progressiveToolSearch;
+        if (toolResultCount === 0 && visibleToolNames.has(toolName)) {
+          protocolError = `progressive target ${toolName} was visible before search_tools`;
+        } else if (toolResultCount === 0 && !visibleToolNames.has("search_tools")) {
+          protocolError = "search_tools was not visible before progressive discovery";
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_progressive_tool_search",
+            name: "search_tools",
+            arguments: { query },
+          };
+        } else if (
+          toolResultCount !== 1 ||
+          !hasExpectedToolResult(0, "call_progressive_tool_search", ["Discovered", toolName])
+        ) {
+          protocolError = "search_tools did not return the expected progressive target";
+        } else if (!visibleToolNames.has(toolName)) {
+          protocolError = `progressive target ${toolName} was not visible after search_tools`;
+        } else {
+          plannedToolCall = {
+            id: "call_progressive_mcp_proof",
+            name: toolName,
             arguments: { challenge: options.toolChallenge },
           };
-      const sawAuthenticatedToolResult = (body.messages ?? []).some(
-        (message) =>
-          message.role === "tool" &&
-          JSON.stringify(message.content).includes(options.toolResultToken ?? "__never__"),
-      );
+        }
+      } else if (!sawAuthenticatedToolResult && options.deferredToolName) {
+        const bridgeNames = ["tool_search", "tool_describe", "tool_call"];
+        const missingBridges = bridgeNames.filter((name) => !visibleToolNames.has(name));
+        if (visibleToolNames.has(options.deferredToolName)) {
+          protocolError = `deferred target ${options.deferredToolName} leaked into model tools`;
+        } else if (missingBridges.length > 0) {
+          protocolError = `Hermes tool search bridges missing: ${missingBridges.join(", ")}`;
+        } else if (toolResultCount === 0) {
+          plannedToolCall = {
+            id: "call_hermes_tool_search",
+            name: "tool_search",
+            arguments: { query: options.deferredToolName },
+          };
+        } else if (toolResultCount === 1) {
+          if (
+            hasExpectedToolResult(0, "call_hermes_tool_search", [
+              "matches",
+              options.deferredToolName,
+            ])
+          ) {
+            plannedToolCall = {
+              id: "call_hermes_tool_describe",
+              name: "tool_describe",
+              arguments: { name: options.deferredToolName },
+            };
+          } else {
+            protocolError = "Hermes tool_search did not return the deferred target";
+          }
+        } else if (toolResultCount === 2) {
+          if (
+            hasExpectedToolResult(1, "call_hermes_tool_describe", [
+              options.deferredToolName,
+              "parameters",
+              "challenge",
+            ])
+          ) {
+            plannedToolCall = {
+              id: "call_hermes_tool_call",
+              name: "tool_call",
+              arguments: {
+                name: options.deferredToolName,
+                arguments: { challenge: options.toolChallenge },
+              },
+            };
+          } else {
+            protocolError = "Hermes tool_describe did not return the deferred schema";
+          }
+        } else {
+          protocolError = "Hermes returned an unexpected number of tool results";
+        }
+      } else if (!sawAuthenticatedToolResult) {
+        const directToolName = [...visibleToolNames].find((name) =>
+          (options.toolNames ?? []).includes(name),
+        );
+        if (directToolName) {
+          plannedToolCall = {
+            id: "call_mcp_bridge_proof",
+            name: directToolName,
+            arguments: { challenge: options.toolChallenge },
+          };
+        }
+      }
       const responseMessage = sawAuthenticatedToolResult
         ? {
             role: "assistant",
             content: options.toolResultToken,
           }
-        : toolName && options.toolChallenge
-          ? {
-              role: "assistant",
-              content: null,
-              tool_calls: [
-                {
-                  index: 0,
-                  id: "call_mcp_bridge_proof",
-                  type: "function",
-                  function: {
-                    name: toolName,
-                    arguments: JSON.stringify(toolArguments),
+        : protocolError
+          ? { role: "assistant", content: `mock protocol error: ${protocolError}` }
+          : plannedToolCall && options.toolChallenge
+            ? {
+                role: "assistant",
+                content: null,
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: plannedToolCall.id,
+                    type: "function",
+                    function: {
+                      name: plannedToolCall.name,
+                      arguments: JSON.stringify(plannedToolCall.arguments),
+                    },
                   },
-                },
-              ],
-            }
-          : { role: "assistant", content: "ok" };
+                ],
+              }
+            : { role: "assistant", content: "ok" };
       const finishReason = "tool_calls" in responseMessage ? "tool_calls" : "stop";
       if (body.stream) {
         res.writeHead(200, {

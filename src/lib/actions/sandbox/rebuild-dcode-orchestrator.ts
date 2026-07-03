@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../../state/onboard-session";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createDcodeRebuildPreflightScope,
   type DcodeRebuildPreflightBail,
@@ -42,11 +43,13 @@ export type DcodeRebuildOrchestrator = {
   preflightCredentials(): Promise<boolean>;
   prepareImage(
     resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<boolean>;
@@ -107,13 +110,14 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, skipLiveRoute, gatewayPort) =>
+    prepareImage: (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return deps.ensureAgentBaseImage(rebuildAgent, scope.bail);
         const replacement = await prepareDcodeReplacementBeforeMutation({
           sandboxName,
           entry,
           resumeConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -127,7 +131,7 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, skipLiveRoute, gatewayPort) =>
+    revalidateBeforeDelete: (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -136,6 +140,7 @@ export function createDcodeRebuildOrchestrator(
           sandboxName,
           entry,
           resumeConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,

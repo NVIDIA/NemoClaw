@@ -10,6 +10,7 @@ import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { ROOT } from "../../runner";
 import { OPENCLAW_SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } from "../../sandbox-base-image";
+import type { ToolDisclosure } from "../../tool-disclosure";
 
 type PreflightInput = {
   agent: AgentDefinition | null;
@@ -19,6 +20,7 @@ type PreflightInput = {
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: "true" | "false" | null;
   webSearchConfig: WebSearchConfig | null;
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort: number;
@@ -85,6 +87,7 @@ export async function preflightRebuildImage(
       provider: input.provider,
       preferredInferenceApi: input.preferredInferenceApi,
       webSearchConfig: input.webSearchConfig,
+      toolDisclosure: input.toolDisclosure,
       hermesToolGateways: input.hermesToolGateways,
       sandboxGpuConfig: input.sandboxGpuConfig,
       gatewayPort: input.gatewayPort,

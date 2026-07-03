@@ -152,6 +152,7 @@ describe("onboard session", () => {
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.toolDisclosure).toBe("progressive");
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",
@@ -161,6 +162,25 @@ describe("onboard session", () => {
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
+  });
+
+  it("round-trips direct tool disclosure and defaults legacy sessions to progressive", () => {
+    session.saveSession(session.createSession({ toolDisclosure: "direct" }));
+    expect(requireLoadedSession(session.loadSession()).toolDisclosure).toBe("direct");
+    expect(requireDebugSummary(session.summarizeForDebug()).toolDisclosure).toBe("direct");
+
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.toolDisclosure;
+    expect(requireLoadedSession(normalizeLegacySession(legacy)).toolDisclosure).toBe("progressive");
+  });
+
+  it("marks corrupt persisted tool-disclosure state instead of treating it as legacy missing", () => {
+    const corrupt = session.createSession() as unknown as Record<string, unknown>;
+    corrupt.toolDisclosure = "everything";
+
+    const normalized = requireLoadedSession(session.normalizeSession(corrupt as never));
+    expect(normalized.toolDisclosure).toBe("progressive");
+    expect(session.hasInvalidSessionToolDisclosure(normalized)).toBe(true);
   });
 
   it("redacts credential-bearing endpoint URLs before persisting them", () => {

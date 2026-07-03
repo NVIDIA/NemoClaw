@@ -7,8 +7,8 @@ import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import type { AgentDefinition } from "../../agent/defs";
-import { GATEWAY_PORT } from "../../core/ports";
 import { createAgentSandbox } from "../../agent/onboard";
+import { GATEWAY_PORT } from "../../core/ports";
 import {
   type PreparedSandboxBuildContext,
   stageCreateSandboxBuildContext,
@@ -21,6 +21,7 @@ import {
   OPENCLAW_SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
 } from "../../sandbox-base-image";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 
 export type ManagedDcodeRebuildImageInput = {
@@ -28,6 +29,7 @@ export type ManagedDcodeRebuildImageInput = {
   model: string;
   provider: string;
   preferredInferenceApi: string | null;
+  toolDisclosure: ToolDisclosure;
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
 };
@@ -256,6 +258,7 @@ export async function prepareManagedDcodeRebuildImage(
       provider: input.provider,
       preferredInferenceApi: input.preferredInferenceApi,
       webSearchConfig: null,
+      toolDisclosure: input.toolDisclosure,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
       gatewayPort: input.gatewayPort ?? GATEWAY_PORT,

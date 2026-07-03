@@ -15,6 +15,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     sandboxGpuConfigChanged: false,
     messagingChannelConfigChanged: false,
     hermesToolGatewayConfigChanged: false,
+    toolDisclosureChanged: false,
     ...overrides,
   };
 }
@@ -30,6 +31,7 @@ describe("decideSandboxResume", () => {
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
     ["messaging", { messagingChannelConfigChanged: true }, true],
     ["Hermes tool gateway", { hermesToolGatewayConfigChanged: true }, true],
+    ["tool disclosure", { toolDisclosureChanged: true }, false],
   ] as const)("recreates for %s drift", (_label, overrides, removeRegistryEntry) => {
     expect(decideSandboxResume(resumeSignals(overrides))).toMatchObject({
       kind: "recreate",
