@@ -66,10 +66,11 @@ describe("tunnel CLI dispatch", () => {
     expect(r.out).toContain("tunnel status");
   });
 
-  it("deprecated stop --help exits 0 and shows alias usage", () => {
+  it("deprecated stop --help exits 0 and explains legacy full-stop behavior", () => {
     const r = run("stop --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain("stop");
-    expect(r.out).toContain("Deprecated alias");
+    expect(r.out).toContain("Deprecated full stop");
+    expect(r.out).toContain("releases the managed host gateway port");
   });
 });

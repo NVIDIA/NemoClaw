@@ -2121,7 +2121,9 @@ Use `$$nemoclaw <name> channels stop <channel>` when you only want to pause one 
 $$nemoclaw tunnel stop
 ```
 
-`$$nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
+`$$nemoclaw stop` remains as a deprecated legacy full stop.
+It stops the tunnel services and also releases the managed host gateway port.
+Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 
 ### `$$nemoclaw tunnel status`
 
@@ -2144,10 +2146,12 @@ This command remains as a compatibility alias to `$$nemoclaw tunnel start`.
 ### `$$nemoclaw stop`
 
 <Warning>
-Deprecated. Use `$$nemoclaw tunnel stop` instead.
+Deprecated legacy full stop.
+Use `$$nemoclaw tunnel stop` when the shared gateway should remain available.
 </Warning>
 
-This command remains as a compatibility alias to `$$nemoclaw tunnel stop`.
+This command stops tunnel services and also releases the managed host gateway port.
+It is retained for compatibility with full-stop automation; unlike `$$nemoclaw tunnel stop`, it intentionally tears down that host gateway.
 
 ### `$$nemoclaw status`
 

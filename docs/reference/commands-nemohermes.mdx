@@ -1710,7 +1710,9 @@ Use `nemohermes <name> channels stop <channel>` when you only want to pause one 
 nemohermes tunnel stop
 ```
 
-`nemohermes stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
+`nemohermes stop` remains as a deprecated legacy full stop.
+It stops the tunnel services and also releases the managed host gateway port.
+Use `nemohermes tunnel stop` when the shared gateway should remain available.
 
 ### `nemohermes tunnel status`
 
@@ -1733,10 +1735,12 @@ This command remains as a compatibility alias to `nemohermes tunnel start`.
 ### `nemohermes stop`
 
 <Warning>
-Deprecated. Use `nemohermes tunnel stop` instead.
+Deprecated legacy full stop.
+Use `nemohermes tunnel stop` when the shared gateway should remain available.
 </Warning>
 
-This command remains as a compatibility alias to `nemohermes tunnel stop`.
+This command stops tunnel services and also releases the managed host gateway port.
+It is retained for compatibility with full-stop automation; unlike `nemohermes tunnel stop`, it intentionally tears down that host gateway.
 
 ### `nemohermes status`
 
