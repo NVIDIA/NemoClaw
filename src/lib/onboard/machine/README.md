@@ -119,3 +119,7 @@ The FSM migration is considered complete when:
 4. the runner applies all handler results through `OnboardRuntime`;
 5. step helpers no longer implicitly own machine transitions;
 6. `src/lib/onboard.ts` contains entrypoint setup and dependency wiring rather than state sequencing.
+
+## Characterization traces
+
+`transition-traces.test.ts` in this directory pins the machine event and transition traces for the fresh, resume, recreate, success, and failure paths as they behave today (#6225). Those traces are a regression baseline: update them deliberately, in the same PR as an intentional behavior change (for example #6226, #6227, or #6228), never as a side effect. The journey-level lifecycle contract map, shared vocabulary, and destructive-boundary inventory live in `../AGENTS.md` (`src/lib/onboard/AGENTS.md`).
