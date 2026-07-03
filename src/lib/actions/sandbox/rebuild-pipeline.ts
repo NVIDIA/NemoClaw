@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
-import { BRAVE_API_KEY_ENV } from "../../inference/web-search";
+import { BRAVE_API_KEY_ENV, TAVILY_API_KEY_ENV } from "../../inference/web-search";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
@@ -39,6 +39,7 @@ export async function rebuildSandbox(
   return withMcpLifecycleLock(sandboxName, async () => {
     const scopedEnvKeys = [
       BRAVE_API_KEY_ENV,
+      TAVILY_API_KEY_ENV,
       MESSAGING_SETUP_APPLIER_ENV_KEY,
       "OPENSHELL_GATEWAY",
       DOCKER_GPU_PATCH_NETWORK_ENV,
@@ -131,6 +132,7 @@ async function rebuildSandboxUnlocked(
         staleRecovery,
         preparedRecoveryManifest: recoveryManifest,
         messagingPlan,
+        webSearchConfig: durableConfig.webSearchConfig,
         log,
         bail,
         relockShieldsIfNeeded,

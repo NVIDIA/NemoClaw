@@ -222,9 +222,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
   const ensureValidatedBraveSearchCredentialSpy = vi
-    .spyOn(onboardMod, "ensureValidatedBraveSearchCredential")
+    .spyOn(onboardMod, "ensureValidatedWebSearchCredential")
     .mockImplementation(
-      overrides.ensureValidatedBraveSearchCredential ?? (async () => "brave-key"),
+      overrides.ensureValidatedWebSearchCredential ??
+        overrides.ensureValidatedBraveSearchCredential ??
+        (async () => "web-search-key"),
     );
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")

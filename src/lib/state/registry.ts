@@ -35,6 +35,7 @@ import {
   serializeSandboxMessagingStateForDisk,
   setChannelDisabled as setRegistryChannelDisabled,
 } from "./registry-messaging";
+import type { WebSearchProvider } from "../inference/web-search";
 
 export type { McpBridgeEntry, SandboxMcpState } from "./registry-mcp";
 
@@ -95,6 +96,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
   webSearchEnabled?: boolean;
+  /** Durable provider identity for enabled managed web search. */
+  webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
   agentVersion?: string | null;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
@@ -459,6 +462,11 @@ export function registerSandbox(entry: SandboxEntry): void {
       policyTier: entry.policyTier || null,
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
+      webSearchProvider:
+        entry.webSearchEnabled === true &&
+        (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
+          ? entry.webSearchProvider
+          : null,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a

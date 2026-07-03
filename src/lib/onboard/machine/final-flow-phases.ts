@@ -77,6 +77,7 @@ export function createFinalOnboardFlowPhases<
       credentialEnv: context.credentialEnv,
       selectedMessagingChannels: context.selectedMessagingChannels,
       webSearchConfig: context.webSearchConfig,
+      webSearchConfigChanged: context.webSearchConfigChanged === true,
       webSearchSupported: context.webSearchSupported,
       hermesToolGateways: context.hermesToolGateways,
       agent: context.agent,

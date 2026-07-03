@@ -121,7 +121,7 @@ unset TAVILY_API_KEY
 nemo-deepagents <sandbox-name> rebuild
 ```
 
-The `tavily` preset only opens egress to `api.tavily.com:443`.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
 Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in.
 Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.

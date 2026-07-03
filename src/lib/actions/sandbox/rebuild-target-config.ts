@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import { webSearchProviderForConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
@@ -138,6 +139,12 @@ export function prepareRebuildTargetConfig(
     sessionSnapshot,
     sessionMatchesSandbox,
   );
+  const hermesToolGateways =
+    rebuildAgent === "hermes" &&
+    durableConfig.webSearchConfig &&
+    webSearchProviderForConfig(durableConfig.webSearchConfig) === "tavily"
+      ? hermesGateways.gateways.filter((gateway) => gateway !== "nous-web")
+      : hermesGateways.gateways;
   const credentialEnv =
     resumeConfig.provider === hermesProviderAuth.HERMES_PROVIDER_NAME
       ? durableConfig.hermesAuthMethod === "api_key"
@@ -150,7 +157,7 @@ export function prepareRebuildTargetConfig(
     sessionSnapshot,
     sessionMatchesSandbox,
     durableConfig,
-    hermesToolGateways: hermesGateways.gateways,
+    hermesToolGateways,
     hasHermesToolGateways: hermesGateways.recorded,
     credentialEnv,
     fromDockerfile: dockerfile.path,

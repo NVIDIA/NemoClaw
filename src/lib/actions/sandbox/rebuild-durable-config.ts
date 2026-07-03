@@ -14,7 +14,12 @@ import {
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
   HERMES_PROVIDER_NAME,
 } from "../../hermes-provider-auth";
-import type { WebSearchConfig } from "../../inference/web-search";
+import {
+  isWebSearchProvider,
+  type WebSearchConfig,
+  type WebSearchProvider,
+  webSearchProviderForConfig,
+} from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import type { Session } from "../../state/onboard-session";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
@@ -114,14 +119,40 @@ export function resolveRebuildDurableConfig(
   const legacyBravePolicy =
     entry.policies?.includes("brave") === true &&
     !entry.customPolicies?.some((policy) => policy.name === "brave");
+  const legacyTavilyPolicy =
+    entry.agent !== "langchain-deepagents-code" &&
+    entry.policies?.includes("tavily") === true &&
+    !entry.customPolicies?.some((policy) => policy.name === "tavily");
+  const recordedWebSearchProvider = entry.webSearchProvider;
   const webSearchEnabled =
     typeof entry.webSearchEnabled === "boolean"
       ? entry.webSearchEnabled
-      : matchingSession?.webSearchConfig?.fetchEnabled === true || legacyBravePolicy;
-  const webSearchError =
-    entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean"
-      ? "recorded webSearchEnabled value is not boolean"
-      : null;
+      : isWebSearchProvider(recordedWebSearchProvider) ||
+        matchingSession?.webSearchConfig?.fetchEnabled === true ||
+        legacyBravePolicy ||
+        legacyTavilyPolicy;
+  let webSearchError: string | null = null;
+  if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
+    webSearchError = "recorded webSearchEnabled value is not boolean";
+  } else if (
+    recordedWebSearchProvider !== undefined &&
+    recordedWebSearchProvider !== null &&
+    !isWebSearchProvider(recordedWebSearchProvider)
+  ) {
+    webSearchError = "recorded webSearchProvider value is invalid";
+  } else if (!webSearchEnabled && isWebSearchProvider(recordedWebSearchProvider)) {
+    webSearchError = "recorded webSearchProvider is set while web search is disabled";
+  }
+  let webSearchProvider: WebSearchProvider | null = null;
+  if (webSearchEnabled && !webSearchError) {
+    webSearchProvider = isWebSearchProvider(recordedWebSearchProvider)
+      ? recordedWebSearchProvider
+      : matchingSession?.webSearchConfig?.fetchEnabled === true
+        ? webSearchProviderForConfig(matchingSession.webSearchConfig)
+        : legacyTavilyPolicy
+          ? "tavily"
+          : "brave";
+  }
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined
       ? entry.fromDockerfile
@@ -159,7 +190,10 @@ export function resolveRebuildDurableConfig(
     fromDockerfileError,
     hermesAuthMethod,
     hermesAuthMethodError,
-    webSearchConfig: webSearchEnabled ? { fetchEnabled: true } : null,
+    webSearchConfig:
+      webSearchEnabled && webSearchProvider
+        ? { fetchEnabled: true, provider: webSearchProvider }
+        : null,
     webSearchError,
   };
 }
@@ -199,6 +233,9 @@ export function validatedRebuildRegistryUpdate(
     compatibleEndpointReasoning: resume.compatibleEndpointReasoning,
     nimContainer: resume.nimContainer,
     webSearchEnabled: durable.webSearchConfig?.fetchEnabled === true,
+    webSearchProvider: durable.webSearchConfig
+      ? webSearchProviderForConfig(durable.webSearchConfig)
+      : null,
     fromDockerfile,
     hermesAuthMethod: durable.hermesAuthMethod,
   };

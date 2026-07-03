@@ -212,6 +212,29 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(payload.doctorEnv.BRAVE_API_KEY).toBe("openshell:resolve:env:BRAVE_API_KEY");
   });
 
+  it("preserves only the selected Tavily placeholder when doctor runs after messaging render", () => {
+    const payload = parseDryRun({
+      OPENCLAW_VERSION: "2026.5.27",
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+    });
+
+    expect(payload.doctorEnv.TAVILY_API_KEY).toBe("openshell:resolve:env:TAVILY_API_KEY");
+    expect(payload.doctorEnv.BRAVE_API_KEY).toBeUndefined();
+  });
+
+  it("rejects an unknown selected web-search provider before running doctor", () => {
+    const result = runDryRun({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "unknown",
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram"]),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Unsupported NEMOCLAW_WEB_SEARCH_PROVIDER: unknown");
+  });
+
   it("fails fast on malformed messaging plans", () => {
     const result = runDryRun({
       OPENCLAW_VERSION: "2026.5.22",

@@ -54,6 +54,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_VLLM_MODEL",
       "NEMOCLAW_VLLM_EXTRA_ARGS_JSON",
       "NEMOCLAW_FROM_DOCKERFILE",
+      "NEMOCLAW_WEB_SEARCH_PROVIDER",
       "NEMOCLAW_POLICY_TIER",
       "NEMOCLAW_POLICY_MODE",
       "NEMOCLAW_POLICY_PRESETS",
@@ -115,6 +116,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_VLLM_MODEL: "ambient-vllm-model",
       NEMOCLAW_VLLM_EXTRA_ARGS_JSON: '{"ambient":true}',
       NEMOCLAW_FROM_DOCKERFILE: "/tmp/unrelated.Dockerfile",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
       NEMOCLAW_POLICY_TIER: "permissive",
       NEMOCLAW_POLICY_MODE: "customize",
       NEMOCLAW_POLICY_PRESETS: "ambient-preset",
@@ -144,6 +146,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_VLLM_MODEL).toBe("ambient-vllm-model");
     expect(env.NEMOCLAW_VLLM_EXTRA_ARGS_JSON).toBe('{"ambient":true}');
     expect(env.NEMOCLAW_FROM_DOCKERFILE).toBe("/tmp/unrelated.Dockerfile");
+    expect(env.NEMOCLAW_WEB_SEARCH_PROVIDER).toBe("tavily");
     expect(env.NEMOCLAW_POLICY_TIER).toBe("permissive");
     expect(env.NEMOCLAW_POLICY_MODE).toBe("customize");
     expect(env.NEMOCLAW_POLICY_PRESETS).toBe("ambient-preset");

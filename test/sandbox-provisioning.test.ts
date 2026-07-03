@@ -322,6 +322,7 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
         {
           NEMOCLAW_OPENCLAW_OTEL: "0",
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
           OPENCLAW_VERSION: "2026.5.22",
         },
       );

@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/web-search";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
@@ -34,6 +35,7 @@ export interface CreatedSandboxRegistryEntryInput {
   imageTag: string | null;
   appliedPolicies: string[];
   webSearchEnabled?: boolean;
+  webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
@@ -54,11 +56,19 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
 }
 
 export function creationFidelity(
-  webSearchEnabled: boolean,
+  webSearchConfig: WebSearchConfig | null,
   fromDockerfile: string | null,
   hermesAuthMethod: "oauth" | "api_key" | null,
-): Pick<SandboxEntry, "webSearchEnabled" | "fromDockerfile" | "hermesAuthMethod"> {
-  return { webSearchEnabled, fromDockerfile, hermesAuthMethod };
+): Pick<
+  SandboxEntry,
+  "webSearchEnabled" | "webSearchProvider" | "fromDockerfile" | "hermesAuthMethod"
+> {
+  return {
+    webSearchEnabled: webSearchConfig?.fetchEnabled === true,
+    webSearchProvider: webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null,
+    fromDockerfile,
+    hermesAuthMethod,
+  };
 }
 
 export function selection(
@@ -101,6 +111,8 @@ export function buildCreatedSandboxRegistryEntry(
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
     webSearchEnabled: input.webSearchEnabled === true,
+    webSearchProvider:
+      input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,
     fromDockerfile: input.fromDockerfile ?? null,
     hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,

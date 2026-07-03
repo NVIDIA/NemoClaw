@@ -327,7 +327,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation(() => undefined);

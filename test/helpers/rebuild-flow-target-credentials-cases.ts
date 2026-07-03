@@ -26,7 +26,7 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Brave Web Search credential preflight failed");
+      ).rejects.toThrow("Brave Search credential preflight failed");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
@@ -42,9 +42,41 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-      ).rejects.toThrow("Recorded Brave Web Search is unsupported");
+      ).rejects.toThrow("Recorded Brave Search is unsupported");
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects a Tavily credential already owned by MCP before rebuild mutation", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          webSearchEnabled: true,
+          webSearchProvider: "tavily",
+          mcp: {
+            bridges: {
+              search: {
+                server: "search",
+                agent: "openclaw",
+                url: "https://mcp.example.com/mcp",
+                env: ["TAVILY_API_KEY"],
+                policyName: "alpha-mcp-search",
+                addedAt: "2026-07-03T00:00:00.000Z",
+              },
+            },
+          },
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Web Search and MCP credential ownership conflict");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
     });
 
     it("preserves legacy Brave web search during a nonmatching-session rebuild", async () => {
@@ -58,8 +90,57 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
       ).resolves.toBeUndefined();
 
-      expect(harness.ensureValidatedBraveSearchCredentialSpy).toHaveBeenCalledWith(true);
-      expect(harness.session.webSearchConfig).toEqual({ fetchEnabled: true });
+      expect(harness.ensureValidatedBraveSearchCredentialSpy).toHaveBeenCalledWith(
+        { fetchEnabled: true, provider: "brave" },
+        true,
+      );
+      expect(harness.session.webSearchConfig).toEqual({ fetchEnabled: true, provider: "brave" });
+    });
+
+    it("reconciles stale Brave policy state to the durable Tavily provider", async () => {
+      const harness = createRebuildFlowHarness({
+        applyPreset: (name) => name === "tavily",
+        backupPolicyPresets: ["brave"],
+        sandboxEntry: {
+          policies: ["brave"],
+          webSearchEnabled: true,
+          webSearchProvider: "tavily",
+        },
+        sessionSandboxName: "some-other-sandbox",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "tavily");
+      expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "brave");
+      expect(harness.session.webSearchConfig).toEqual({
+        fetchEnabled: true,
+        provider: "tavily",
+      });
+    });
+
+    it("restores the caller Tavily credential environment after rebuild", async () => {
+      const restoreEnv = snapshotEnv(["TAVILY_API_KEY"]);
+      process.env.TAVILY_API_KEY = "caller-tavily-key";
+      try {
+        const harness = createRebuildFlowHarness({
+          applyPreset: () => true,
+          sandboxEntry: { webSearchEnabled: true, webSearchProvider: "tavily" },
+          ensureValidatedWebSearchCredential: async () => {
+            process.env.TAVILY_API_KEY = "validated-tavily-key";
+            return "validated-tavily-key";
+          },
+        });
+
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).resolves.toBeUndefined();
+        expect(process.env.TAVILY_API_KEY).toBe("caller-tavily-key");
+      } finally {
+        restoreEnv();
+      }
     });
 
     it("recreates unrelated-session targets from durable web, image, and Hermes auth state", async () => {
@@ -87,8 +168,14 @@ export function registerRebuildFlowTargetCredentialsTests(): void {
           harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
         ).resolves.toBeUndefined();
 
-        expect(harness.ensureValidatedBraveSearchCredentialSpy).toHaveBeenCalledWith(true);
-        expect(harness.session.webSearchConfig).toEqual({ fetchEnabled: true });
+        expect(harness.ensureValidatedBraveSearchCredentialSpy).toHaveBeenCalledWith(
+          { fetchEnabled: true, provider: "brave" },
+          true,
+        );
+        expect(harness.session.webSearchConfig).toEqual({
+          fetchEnabled: true,
+          provider: "brave",
+        });
         expect(harness.session.hermesAuthMethod).toBe("api_key");
         expect(harness.session.credentialEnv).toBe("NOUS_API_KEY");
         expect(harness.session.metadata).toMatchObject({ fromDockerfile: dockerfile });
