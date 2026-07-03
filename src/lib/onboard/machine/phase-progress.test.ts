@@ -6,65 +6,10 @@ import { describe, expect, it } from "vitest";
 import {
   createPhaseProgressReporter,
   ONBOARD_PHASE_LABELS,
-  type PhaseProgressOptions,
-  type PhaseProgressRecord,
   resolvePhaseProgressEnabled,
 } from "./phase-progress";
-import {
-  buildOnboardSequenceHandlers,
-  type OnboardSequencePhase,
-  runOnboardSequenceWithRunner,
-} from "./sequence-runner";
-
-interface Harness {
-  lines: string[];
-  records: PhaseProgressRecord[];
-  events: Array<{ name: string; attributes?: Record<string, unknown> }>;
-  clockMs: number;
-  timerCallback: (() => void) | null;
-  timerIntervalMs: number | null;
-  cleared: boolean;
-  options: PhaseProgressOptions;
-}
-
-function makeHarness(overrides: Partial<PhaseProgressOptions> = {}): Harness {
-  const state: Harness = {
-    lines: [],
-    records: [],
-    events: [],
-    clockMs: 0,
-    timerCallback: null,
-    timerIntervalMs: null,
-    cleared: false,
-    options: {},
-  };
-  state.options = {
-    enabled: true,
-    logLine: (line) => state.lines.push(line),
-    now: () => state.clockMs,
-    setTimer: (callback, intervalMs) => {
-      state.timerCallback = callback;
-      state.timerIntervalMs = intervalMs;
-      return { unref: () => {} };
-    },
-    clearTimer: () => {
-      state.cleared = true;
-    },
-    traceEvent: (name, attributes) => state.events.push({ name, attributes }),
-    record: (record) => state.records.push(record),
-    heartbeatIntervalMs: 30_000,
-    completionThresholdMs: 5_000,
-    ...overrides,
-  };
-  return state;
-}
-
-function fakePhase(
-  state: OnboardSequencePhase<string>["state"],
-  run: (context: string) => Promise<{ context: string; result: unknown }>,
-): OnboardSequencePhase<string> {
-  return { state, run: run as OnboardSequencePhase<string>["run"] };
-}
+import { fakePhase, makeHarness } from "./phase-progress-test-support";
+import type { OnboardSequencePhase } from "./sequence-runner";
 
 describe("resolvePhaseProgressEnabled", () => {
   it("honours an explicit truthy override", () => {
@@ -346,80 +291,5 @@ describe("createPhaseProgressReporter", () => {
       )
       .run("ctx");
     expect(harness.timerIntervalMs).toBe(expected);
-  });
-});
-
-describe("buildOnboardSequenceHandlers wiring (seam integration)", () => {
-  it("drives heartbeat + timing through the onboarding sequence seam", async () => {
-    const harness = makeHarness();
-    const reporter = createPhaseProgressReporter(harness.options);
-    const gatewayPhase = fakePhase("gateway", async () => {
-      // Simulate a silent wait that outlives one heartbeat interval.
-      harness.clockMs = 30_000;
-      harness.timerCallback?.();
-      harness.clockMs = 31_000;
-      return { context: "ctx", result: "ok" };
-    });
-
-    // The reporter is applied inside buildOnboardSequenceHandlers, so the wrapped
-    // handler must emit the heartbeat and record timing for the real seam.
-    const handlers = buildOnboardSequenceHandlers<string>([gatewayPhase], () => {}, reporter);
-    await handlers.gateway?.("ctx");
-
-    expect(
-      harness.lines.some((line) =>
-        line.includes("⏳ Still working on Gateway startup… (30s elapsed)"),
-      ),
-    ).toBe(true);
-    expect(harness.records[0]).toMatchObject({ phase: "gateway", status: "completed" });
-  });
-
-  it("is inert at the seam when the reporter is disabled", async () => {
-    const harness = makeHarness({ enabled: false });
-    const reporter = createPhaseProgressReporter(harness.options);
-    const phase = fakePhase("gateway", async () => ({ context: "ctx", result: "ok" }));
-    const handlers = buildOnboardSequenceHandlers<string>([phase], () => {}, reporter);
-    await handlers.gateway?.("ctx");
-    expect(harness.records).toHaveLength(0);
-    expect(harness.lines).toHaveLength(0);
-  });
-
-  it("emits a heartbeat when driven through the real sequence runner", async () => {
-    // Exercises the actual onboarding runner path (runOnboardSequenceWithRunner
-    // -> runOnboardMachine -> wrapped phase), not just the reporter in isolation.
-    const harness = makeHarness();
-    const reporter = createPhaseProgressReporter(harness.options);
-    let machineState = "gateway";
-    const runtime = {
-      async session() {
-        return { machine: { state: machineState } } as never;
-      },
-      async applyResult(result: { type?: string; next?: string }) {
-        machineState = result.type === "complete" ? "complete" : (result.next ?? machineState);
-        return { machine: { state: machineState } } as never;
-      },
-    };
-    const gatewayPhase: OnboardSequencePhase<Record<string, unknown>> = {
-      state: "gateway",
-      run: async (context) => {
-        // Simulate a silent gateway wait that outlives one heartbeat interval.
-        harness.clockMs = 30_000;
-        harness.timerCallback?.();
-        harness.clockMs = 31_000;
-        return { context, result: { type: "complete", metadata: { state: "gateway" } } as never };
-      },
-    };
-
-    await runOnboardSequenceWithRunner({
-      context: {},
-      runtime,
-      phases: [gatewayPhase],
-      phaseProgress: reporter,
-    });
-
-    expect(harness.lines.some((line) => line.includes("⏳ Still working on Gateway startup"))).toBe(
-      true,
-    );
-    expect(harness.records[0]).toMatchObject({ phase: "gateway", status: "completed" });
   });
 });
