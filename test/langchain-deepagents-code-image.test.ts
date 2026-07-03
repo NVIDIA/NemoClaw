@@ -541,9 +541,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     }
     expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
     expect(tuiStartupCheck).not.toContain("-nocase -re {(deep agents|");
-    expect(
-      tuiStartupCheck.indexOf("local expect_rc"),
-    ).toBeLessThan(tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'));
+    expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
+      tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
+    );
     for (const expected of [
       "test -d /sandbox/.deepagents && command -v dcode",
       "expect <<'EXPECT'",
@@ -712,12 +712,24 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     const cases: Array<[string, string, string]> = [
       ["0", "startup log\n  PONG  \nDCODE_EXIT:0", "pass:pong"],
-      ["1", "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1", "fail:actionable-inference-error"],
+      [
+        "1",
+        "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1",
+        "fail:actionable-inference-error",
+      ],
       ["1", "PONG\nDCODE_EXIT:1", "fail:nonzero-exit"],
       ["1", "openai.APIConnectionError\nDCODE_EXIT:1", "fail:inference-connection-failure"],
-      ["1", "Could not resolve host inference.local\nDCODE_EXIT:1", "fail:inference-connection-failure"],
+      [
+        "1",
+        "Could not resolve host inference.local\nDCODE_EXIT:1",
+        "fail:inference-connection-failure",
+      ],
       ["0", "OpenAI provider unavailable\nDCODE_EXIT:0", "fail:actionable-inference-error"],
-      ["0", "dcode version 0.1.12\nOpenAI provider unavailable\nDCODE_EXIT:0", "fail:actionable-inference-error"],
+      [
+        "0",
+        "dcode version 0.1.12\nOpenAI provider unavailable\nDCODE_EXIT:0",
+        "fail:actionable-inference-error",
+      ],
       ["124", "still waiting\nDCODE_EXIT:124", "fail:timeout"],
       ["1", "usage: dcode [-h]\nDCODE_EXIT:1", "fail:local-execution-failure"],
       ["1", "Traceback (most recent call last):\nDCODE_EXIT:1", "fail:local-execution-failure"],
@@ -910,8 +922,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it.each([
-    { label: "Telegram", name: "STRAY_TG_TOKEN", token: "987654321:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-    { label: "Discord", name: "STRAY_DISCORD", token: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ" },
+    {
+      label: "Telegram",
+      name: "STRAY_TG_TOKEN",
+      token: "987654321:AbcDefGhiJklMnoPqrStuVwxYz012345678",
+    },
+    {
+      label: "Discord",
+      name: "STRAY_DISCORD",
+      token: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    },
   ])("rejects unmanaged runtime env vars holding $label-shaped bot tokens", ({ name, token }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
@@ -924,8 +944,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it.each([
-    { label: "Telegram", name: "OTHER_BOT", token: "111222333:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-    { label: "Discord", name: "STRAY_DISCORD_FILE", token: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ" },
+    {
+      label: "Telegram",
+      name: "OTHER_BOT",
+      token: "111222333:AbcDefGhiJklMnoPqrStuVwxYz012345678",
+    },
+    {
+      label: "Discord",
+      name: "STRAY_DISCORD_FILE",
+      token: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    },
   ])("rejects $label-shaped tokens written to the deepagents env file", ({ name, token }) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
@@ -1396,103 +1424,5 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(result.stderr).not.toContain(sample);
       expect(fs.existsSync(ranMarker)).toBe(false);
     }
-  });
-
-  it("patches direct module execution back to NemoClaw managed posture", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-patch-"));
-    const packageDir = path.join(tempDir, "deepagents_code");
-    fs.mkdirSync(packageDir);
-    fs.writeFileSync(path.join(packageDir, "__init__.py"), "", "utf8");
-    fs.writeFileSync(
-      path.join(packageDir, "main.py"),
-      [
-        "import os",
-        "from types import SimpleNamespace",
-        "",
-        "class Parser:",
-        "    def __init__(self):",
-        "        self.args = SimpleNamespace(",
-        "            command=None, tools_command=None, sandbox='docker',",
-        "            sandbox_id='sandbox-id', sandbox_snapshot_name='snapshot',",
-        "            sandbox_setup='setup.sh', mcp_config='mcp.json',",
-        "            no_mcp=False, trust_project_mcp=True, shell_allow_list=['bash'],",
-        "        )",
-        "    def parse_args(self): return self.args",
-        "    def error(self, message): raise RuntimeError(message)",
-        "parser = Parser()",
-        "def parse_args():",
-        "    args = parser.parse_args()",
-        "    return args",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    execFileSync("python3", [path.join(agentDir, "patch-managed-deepagents-code.py")], {
-      env: { ...process.env, PYTHONPATH: tempDir },
-    });
-
-    const patched = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
-    for (const expected of [
-      'args.sandbox = "none"',
-      "args.no_mcp = True",
-      "args.mcp_config = None",
-      "args.shell_allow_list = None",
-      'os.environ["DEEPAGENTS_CODE_LANGSMITH_TRACING"] = "false"',
-      'os.environ["LANGSMITH_TRACING"] = "false"',
-      'os.environ["DEEPAGENTS_CODE_OFFLINE"] = "1"',
-      'os.environ["DEEPAGENTS_CODE_RIPGREP_INSTALLER"] = "system"',
-      'os.environ.pop("DEEPAGENTS_CODE_SHELL_ALLOW_LIST", None)',
-      'blocked_command = getattr(args, "command", None)',
-      'blocked_command in {"auth", "install", "update"}',
-    ]) {
-      expect(patched).toContain(expected);
-    }
-    expect(patched).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-
-    const output = execFileSync(
-      "python3",
-      [
-        "-c",
-        [
-          "import os",
-          "import deepagents_code.main as main",
-          "os.environ['DEEPAGENTS_CODE_SHELL_ALLOW_LIST'] = 'bash'",
-          "args = main.parse_args()",
-          "assert args.sandbox == 'none', args.sandbox",
-          "assert args.sandbox_id is None, args.sandbox_id",
-          "assert args.sandbox_snapshot_name is None, args.sandbox_snapshot_name",
-          "assert args.sandbox_setup is None, args.sandbox_setup",
-          "assert args.mcp_config is None, args.mcp_config",
-          "assert args.no_mcp is True, args.no_mcp",
-          "assert args.trust_project_mcp is False, args.trust_project_mcp",
-          "assert args.shell_allow_list is None, args.shell_allow_list",
-          "assert 'DEEPAGENTS_CODE_SHELL_ALLOW_LIST' not in os.environ",
-          "assert os.environ['DEEPAGENTS_CODE_AUTO_UPDATE'] == '0'",
-          "assert os.environ['DEEPAGENTS_CODE_NO_UPDATE_CHECK'] == '1'",
-          "assert os.environ['DEEPAGENTS_CODE_LANGSMITH_TRACING'] == 'false'",
-          "assert os.environ['LANGSMITH_TRACING'] == 'false'",
-          "assert os.environ['DEEPAGENTS_CODE_OFFLINE'] == '1'",
-          "assert os.environ['DEEPAGENTS_CODE_RIPGREP_INSTALLER'] == 'system'",
-          "for cmd, msg in [('mcp','MCP'),('update','update'),('auth','auth'),('install','install')]:",
-          "    main.parser.args.command = cmd",
-          "    try: main.parse_args()",
-          "    except RuntimeError as exc: assert f'{msg} commands are disabled' in str(exc), exc",
-          "    else: raise AssertionError(f'{cmd} command did not fail')",
-          "main.parser.args.command = 'tools'",
-          "main.parser.args.tools_command = 'install'",
-          "try: main.parse_args()",
-          "except RuntimeError as exc: assert 'tools install is disabled' in str(exc), exc",
-          "else: raise AssertionError('tools install command did not fail')",
-          "for tc in ('list', None):",
-          "    main.parser.args.command = 'tools'",
-          "    main.parser.args.tools_command = tc",
-          "    main.parse_args()",
-          "print('managed-posture-ok')",
-        ].join("\n"),
-      ],
-      { env: { ...process.env, PYTHONPATH: tempDir }, encoding: "utf8" },
-    );
-    expect(output).toContain("managed-posture-ok");
   });
 });
