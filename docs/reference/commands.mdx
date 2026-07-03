@@ -1132,8 +1132,7 @@ $$nemoclaw my-assistant policy-add pypi --yes
 The positional form is required in scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
-Messaging channel presets such as `telegram`, `discord`, `slack`, `wechat`, and `whatsapp` apply only to agents that support those channels.
-On a terminal-runtime agent such as DeepAgents, which has no inbound messaging gateway, `policy-add` rejects the preset with a clear error before any endpoint disclosure or prompt, matching `channels add`.
+Built-in preset choices are scoped to the sandbox's active agent. Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
 Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
@@ -1173,6 +1172,7 @@ Custom presets bypass the built-in preset review process and can widen sandbox e
 ### `$$nemoclaw <name> policy-list`
 
 List available policy presets and show which ones are applied to the sandbox.
+The available built-in rows are scoped to the sandbox's active agent, so unsupported messaging channel policies are not listed for agents without matching channel policy files.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 Preset summaries come only from the YAML `preset.description` field.
@@ -1721,13 +1721,14 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-$$nemoclaw update [--check] [--yes|-y]
+$$nemoclaw update [--check] [--fresh] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
-| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything. |
+| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state. |
+| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow. |
 
 `$$nemoclaw update` updates the host-side NemoClaw installation.
 The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
@@ -1949,6 +1950,17 @@ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $$nemoclaw tunnel start
 ```
 
+<AgentOnly variant="openclaw">
+
+When the tunnel comes up, NemoClaw adds the tunnel's public origin to `gateway.controlUi.allowedOrigins` in the in-sandbox OpenClaw config and restarts the gateway so the Web UI works through the tunnel without further configuration.
+For a quick tunnel this is the generated `https://<subdomain>.trycloudflare.com` origin, and for a named tunnel it is the configured hostname.
+NemoClaw prunes stale `*.trycloudflare.com` origins from earlier quick tunnels on each start and preserves other origins such as loopback, `NEMOCLAW_CORS_ORIGIN`, and custom domains.
+The gateway restarts only when the origin list changes, and that restart briefly interrupts any running agent task.
+Registration is best-effort.
+If it fails, `$$nemoclaw tunnel start` still succeeds and prints a warning that suggests setting `NEMOCLAW_CORS_ORIGIN` or opening the Web UI from the gateway host.
+
+</AgentOnly>
+
 `$$nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
 
 ### `$$nemoclaw tunnel stop`
@@ -2026,16 +2038,24 @@ If cloudflared is installed but not running, the host-service section reports wh
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
 ```bash
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
+The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+
+```bash
+$$nemoclaw my-assistant inference get
+```
+
 ### `$$nemoclaw inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
 The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`.
 
 <AgentOnly variant="openclaw">
 
@@ -2056,6 +2076,13 @@ Run `$$nemoclaw <name> shields down`, apply the inference change, then run `$$ne
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+```
+
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
+`$$nemoclaw <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>`.
+
+```bash
+$$nemoclaw my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
@@ -2297,7 +2324,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
-| `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | OpenShell gateway bind address. Docker-driver gateways on OpenShell 0.0.71 keep this on loopback while gateway JWT auth is active. |
+| `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | The OpenShell gateway uses this bind address; Docker-driver gateways on OpenShell 0.0.72 keep it on loopback while gateway JWT auth is active. |
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard or API forward |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
@@ -2311,7 +2338,7 @@ When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` v
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
-`NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but Docker-driver gateways on OpenShell 0.0.71 reject `0.0.0.0` while gateway JWT auth is active.
+`NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but Docker-driver gateways on OpenShell 0.0.72 reject `0.0.0.0` while gateway JWT auth is active.
 Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when you need remote browser/API access.
 
 `NEMOCLAW_DASHBOARD_BIND` controls the dashboard or API port forward bind address.
@@ -2539,7 +2566,7 @@ Set them before running `$$nemoclaw onboard`.
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `1`, or `0` | Selects Linux Docker-driver GPU routing. Unset or `auto` uses native OpenShell GPU injection on ordinary native Linux and the compatibility patch on Docker Desktop WSL and Jetson/Tegra. `1` forces the compatibility patch. `0` selects native injection on ordinary native Linux and Jetson/Tegra, but Docker Desktop WSL ignores it. On Jetson/Tegra, use `0` only for troubleshooting because it bypasses the device-group propagation needed for CUDA. |
-| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | Explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run. This mode uses host networking and mounts the Docker socket read-only, but the socket still exposes the privileged Docker API. Use it only on a trusted local host; prefer OpenShell 0.0.71's directly supported glibc 2.28+ path. See the [OpenShell 0.0.71 gateway auth review](../security/openshell-0.0.71-gateway-auth-review#source-of-truth-boundaries). |
+| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.72's directly supported glibc 2.28+ path; see the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for details. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
@@ -2604,6 +2631,7 @@ Set them before running `$$nemoclaw onboard` if a slow connection or large model
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls (2s apart, so ~60s by default) the post-create readiness wait tolerates before treating `Error` as terminal. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 ```bash
 export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600

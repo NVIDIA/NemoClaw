@@ -28,14 +28,17 @@ run_dcode() {
 # - Source boundary: upstream `deepagents_code` is third-party Python; the
 #   canonical secret-pattern contract lives at src/lib/security/secret-patterns.ts.
 #   Neither is callable from the Bash wrapper before exec, so this matcher
-#   mirrors canonical TOKEN_PREFIX_PATTERNS plus the Bearer- and name-context
-#   semantics from CONTEXT_PATTERNS that apply to a name=value boundary.
+#   mirrors canonical TOKEN_PREFIX_PATTERNS and SECRET_BLOCK_PATTERNS plus the
+#   Bearer- and name-context semantics from CONTEXT_PATTERNS that apply to a
+#   name=value boundary.
 # - Source-fix constraint: the upstream maintainer surface is independent; a
 #   Node shim at this boundary would double the process count and add another
 #   supply-chain hop. Bash is the only entrypoint available before exec.
 # - Scope:
 #     * Token-prefix and Bearer-prefix matches operate as unanchored substring
 #       regex (catches embedded/wrapped tokens).
+#     * Private-key block matching rejects canonical BEGIN/END markers across
+#       raw or escaped bodies before mutable metadata can reach status output.
 #     * Name-context rejection fires case-insensitively when the variable name
 #       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
 #       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
@@ -52,9 +55,10 @@ run_dcode() {
 #       identifiers (e.g. with hyphens) are still classified.
 # - Regression: the parity tests in
 #   test/langchain-deepagents-code-image.test.ts pin the canonical
-#   TOKEN_PREFIX_PATTERNS and CONTEXT_PATTERNS fingerprints (source + flags) and
-#   feed representative samples through the wrapper; any canonical change trips
-#   the fingerprint test and forces this matcher (and its samples) to update.
+#   TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and SECRET_BLOCK_PATTERNS
+#   fingerprints (source + flags) and feed representative samples through the
+#   wrapper; any canonical change trips the fingerprint test and forces this
+#   matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
@@ -65,11 +69,41 @@ run_dcode() {
 
 has_context_secret_shape() {
   local upper="${1^^}"
+  # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
+  # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+}
+
+has_private_key_block_shape() {
+  local value="$1"
+  local begin_marker="-----BEGIN "
+  local end_marker="-----END "
+  case "$value" in
+    *"$begin_marker"*"PRIVATE KEY-----"*"$end_marker"*"PRIVATE KEY-----"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+has_multiline_private_key_block_shape() {
+  local value="$1"
+  local begin_marker="-----BEGIN "
+  local end_marker="-----END "
+  local newline=$'\n'
+  case "$value" in
+    *"$begin_marker"*"PRIVATE KEY-----"*"$newline"*"$end_marker"*"PRIVATE KEY-----"*)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 has_non_slack_secret_shape() {
   local value="$1"
+  if has_private_key_block_shape "$value"; then
+    return 0
+  fi
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
@@ -158,6 +192,9 @@ trim_whitespace() {
 
 is_secret_shaped_value() {
   local value="$1"
+  if has_private_key_block_shape "$value"; then
+    return 0
+  fi
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
@@ -271,7 +308,13 @@ assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
   local -a lines=()
-  local line key value
+  local env_file_content line key value
+  # Scan the whole file before line parsing so raw multiline blocks cannot put
+  # their begin and end markers on different physical dotenv lines.
+  env_file_content="$(<"$env_file")"
+  if has_multiline_private_key_block_shape "$env_file_content"; then
+    refuse_secret_env "$env_file" "private-key block"
+  fi
   while IFS= read -r line || [ -n "$line" ]; do
     lines+=("$line")
   done <"$env_file"
@@ -320,6 +363,23 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
+# SECURITY: managed identity/status display boundary.
+# - Invalid state: config.toml and runtime environment values are mutable inside
+#   the sandbox and can contain terminal controls, credentials, unsafe endpoint
+#   components, or TOML forms outside the generated NemoClaw contract.
+# - Source boundary: this wrapper is the final boundary before those values are
+#   printed. Validating only the config writer would not protect later sandbox
+#   mutations, and upstream dcode does not expose a validated identity API.
+# - Source-fix constraint: this pre-exec Bash entrypoint cannot import the
+#   canonical TypeScript filters or a full TOML parser without adding a process
+#   and dependency. It therefore reads only known generated sections and exact
+#   quoted scalars; arrays, inline comments, and other forms are not accepted.
+# - Regression: test/dcode-wrapper-identity.test.ts covers malformed scalars,
+#   terminal controls, oversized and secret-shaped metadata, and unsafe endpoint
+#   forms. The composed startup/status handoff has a separate integration test.
+# - Removal condition: replace these local readers/filters when upstream dcode
+#   provides a validated identity API or every invocation uses a Node entrypoint
+#   that imports the canonical TypeScript contracts and a real TOML parser.
 toml_section_scalar() {
   local section="$1"
   local key="$2"
@@ -338,8 +398,12 @@ toml_section_scalar() {
     case "$line" in
       "$key = \""*)
         line="${line#"$key = \""}"
-        printf '%s' "${line%\"}"
-        return 0
+        case "$line" in
+          *\")
+            printf '%s' "${line%\"}"
+            return 0
+            ;;
+        esac
         ;;
     esac
   done <"$DEEPAGENTS_CONFIG_FILE"
@@ -409,11 +473,17 @@ terminal_safe_identity_value() {
 }
 
 safe_endpoint_identity_value() {
-  local value scheme authority
+  local value lower_value scheme authority
   value="$(terminal_safe_identity_value "$1")"
   [ -n "$value" ] || return 0
   case "$value" in
     *\\* | *\?* | *\#*) return 0 ;;
+  esac
+  lower_value="${value,,}"
+  # Encoded query, fragment, userinfo, or percent delimiters can conceal
+  # credential-bearing endpoint components from the literal checks above.
+  case "$lower_value" in
+    *%3f* | *%23* | *%40* | *%25*) return 0 ;;
   esac
   scheme="${value%%://*}"
   [ "$scheme" != "$value" ] || return 0

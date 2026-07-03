@@ -320,12 +320,25 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
   const script = sanitize.run ?? "";
   for (const fragment of [
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"',
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
     "scripts/e2e/sanitize-trace-timing.py",
     '"${NEMOCLAW_TRACE_DIR}"',
     '"${E2E_ARTIFACT_DIR}"',
   ]) {
     if (!script.includes(fragment))
       errors.push(`cloud-onboard trace sanitizer must retain ${fragment}`);
+  }
+  const sourceGuardIndex = script.indexOf(
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+  );
+  const sanitizeCommandIndex = script.indexOf("python3 scripts/e2e/sanitize-trace-timing.py");
+  if (
+    sourceGuardIndex === -1 ||
+    sanitizeCommandIndex === -1 ||
+    sourceGuardIndex > sanitizeCommandIndex
+  ) {
+    errors.push("cloud-onboard trace sanitizer must verify source path before reading traces");
   }
   const steps = job.steps ?? [];
   const configureIndex = steps.findIndex(

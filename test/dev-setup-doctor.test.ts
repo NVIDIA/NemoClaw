@@ -93,7 +93,10 @@ fi`,
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
     echo "true"
     ;;
-  *" config --get gpg.format "*) echo "ssh" ;;
+  *" config --get gpg.format "*)
+    if [ "\${FAKE_GIT_SIGN_FORMAT_UNSET:-}" = "1" ]; then exit 1; fi
+    echo "\${FAKE_GIT_SIGN_FORMAT-ssh}"
+    ;;
   *" config --get user.signingkey "*)
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
     echo "test-signing-key"
@@ -252,6 +255,48 @@ describe("contributor environment doctor", () => {
     expect(result.status).toBe(1);
     expect(result.output).toContain("Git commit signing is incomplete");
     expect(result.output).toContain("Git pre-push hook is missing");
+  });
+
+  it("rejects an unsupported git signing format with a precise remediation", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: "bogus" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).toContain("Git commit signing format is unsupported (bogus)");
+    expect(result.output).toContain(
+      "Next: Set gpg.format to openpgp, ssh, or x509, or run: git config --unset gpg.format",
+    );
+  });
+
+  it("accepts an unset git signing format and reports the openpgp default", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT_UNSET: "1" });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Git commit signing configured (openpgp)");
+  });
+
+  it("rejects an explicitly empty git signing format", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: "" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).not.toContain("Git commit signing configured");
+    expect(result.output).not.toContain("Ready to create a feature branch.");
+    expect(result.output).toContain("Git commit signing format is unsupported (empty)");
+  });
+
+  it.each(["openpgp", "x509"])("accepts the %s git signing format", (format) => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { FAKE_GIT_SIGN_FORMAT: format });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`Git commit signing configured (${format})`);
   });
 
   it("reports missing commands, dependencies, artifacts, and contributor identity", () => {

@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { SECRET_BLOCK_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+
 const WRAPPER = path.join(
   import.meta.dirname,
   "..",
@@ -38,6 +40,17 @@ const SAMPLE_CONFIG = [
 
 const OPAQUE = "Zx3Qw9Lp7Rt2Vn5Bd8Kf1Mh6Cg4Js0Ay";
 const CANONICAL_TLS_KEY_PATH = "/etc/openshell/tls/client/tls.key";
+
+function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
+  const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
+  return [
+    ["-----BEGIN", label].join(" "),
+    newline,
+    "opaque-test-body",
+    newline,
+    ["-----END", label].join(" "),
+  ].join("");
+}
 
 type Fixture = { wrapperPath: string; ranMarker: string; envFile: string; configDir: string };
 
@@ -239,6 +252,8 @@ describe.skipIf(!canRun)(
           `tvly-${OPAQUE}`,
           "API_KEY=opaquevalue12345",
           "TOKEN:opaquevalue12345",
+          fakePrivateKeyBlock(),
+          fakePrivateKeyBlock("RSA"),
           agentSecret,
         ];
         for (const secret of secretValues) {
@@ -260,6 +275,110 @@ describe.skipIf(!canRun)(
       });
     });
 
+    it("keeps private-key block filtering aligned with the canonical secret contract", () => {
+      expect(SECRET_BLOCK_PATTERNS.map((pattern) => `${pattern.source}::${pattern.flags}`)).toEqual(
+        [
+          "-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\\s\\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----::g",
+        ],
+      );
+
+      const samples = [fakePrivateKeyBlock("", "\n"), fakePrivateKeyBlock("RSA")];
+      for (const [index, sample] of samples.entries()) {
+        withTempDir((dir) => {
+          const fixture = buildFixture(dir, SAMPLE_CONFIG);
+          const varName = `NEMOCLAW_PARITY_BLOB_${index}`;
+          const run = runBashWrapper(fixture, ["status"], { [varName]: sample });
+
+          expect(run.status).not.toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stderr).toContain(varName);
+          expect(run.stderr).not.toContain(sample);
+          expect(run.stderr).not.toContain("opaque-test-body");
+
+          fs.writeFileSync(fixture.envFile, `${varName}="${sample}"\n`, "utf8");
+          const envFileRun = runBashWrapper(fixture, ["--version"], {});
+
+          expect(envFileRun.status).toBe(2);
+          expect(envFileRun.launched).toBe(false);
+          expect(envFileRun.stderr).toContain(path.join(dir, ".env"));
+          expect(envFileRun.stderr).not.toContain(sample);
+          expect(envFileRun.stderr).not.toContain("PRIVATE KEY-----");
+          expect(envFileRun.stderr).not.toContain("opaque-test-body");
+        });
+      }
+    });
+
+    it("falls back safely for malformed or unsupported generated config scalars", () => {
+      withTempDir((dir) => {
+        const cases = [
+          {
+            agent: "partial-agent",
+            config: SAMPLE_CONFIG.replace("[agents]", "[agents")
+              .replace('default = "backend-dev"', 'default = "partial-agent')
+              .replace('default = "openai:demo-model"', 'default = "openai:partial-model')
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://partial.example.test/v1',
+              ),
+            rejected: ["partial-agent", "partial-model", "partial.example.test"],
+          },
+          {
+            agent: "inline-agent",
+            config: SAMPLE_CONFIG.replace(
+              'default = "backend-dev"',
+              'default = "inline-agent" # unsupported inline comment',
+            )
+              .replace(
+                'default = "openai:demo-model"',
+                'default = "openai:inline-model" # unsupported inline comment',
+              )
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://inline.example.test/v1" # unsupported inline comment',
+              ),
+            rejected: ["inline-agent", "inline-model", "inline.example.test"],
+          },
+          {
+            agent: "array-agent",
+            config: SAMPLE_CONFIG.replace('default = "backend-dev"', 'default = ["array-agent"]')
+              .replace('default = "openai:demo-model"', 'default = ["openai:array-model"]')
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = ["https://array.example.test/v1"]',
+              ),
+            rejected: ["array-agent", "array-model", "array.example.test"],
+          },
+          {
+            agent: "nested-agent",
+            config: SAMPLE_CONFIG.replace("[agents]", "[agents.preferences]")
+              .replace('default = "backend-dev"', 'default = "nested-agent"')
+              .replace("[models]", "[models.preferences]")
+              .replace('default = "openai:demo-model"', 'default = "openai:nested-model"')
+              .replace("[models.providers.openai]", "[models.providers.openai.metadata]")
+              .replace(
+                'base_url = "https://inference.local/v1"',
+                'base_url = "https://nested.example.test/v1"',
+              ),
+            rejected: ["nested-agent", "nested-model", "nested.example.test"],
+          },
+        ];
+
+        for (const testCase of cases) {
+          const fixture = buildFixture(dir, testCase.config);
+          addAgentDir(fixture, testCase.agent);
+          const run = runBashWrapper(fixture, ["status"], {});
+
+          expect(run.status).toBe(0);
+          expect(run.launched).toBe(false);
+          expect(run.stdout).toContain("Agent:    agent (default)");
+          for (const rejected of testCase.rejected) {
+            expect(run.stdout).not.toContain(rejected);
+          }
+          expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+        }
+      });
+    });
+
     it("does not write unsafe endpoint values from mutable sources", () => {
       withTempDir((dir) => {
         const unsafeEndpoints = [
@@ -268,6 +387,11 @@ describe.skipIf(!canRun)(
           "https://example.test/v1#opaque-fragment",
           "https://status-user:opaque-password\\u0040example.test/v1",
           "https://example.test/v1\\u003Fapi_key=opaque-secret",
+          "https://example.test/v1%3Fapi_key%3Dopaque-secret",
+          "https://example.test/v1%3fapi_key%3dopaque-secret",
+          "https://example.test/v1%23opaque-fragment",
+          "https://status-user%3Aopaque-password%40example.test/v1",
+          "https://example.test/v1%253Fapi_key%253Dopaque-secret",
           "https",
         ];
         for (const endpoint of unsafeEndpoints) {
