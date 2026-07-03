@@ -53,10 +53,8 @@ const COMMON_SECRET_ENV_NAMES = [
   "GITHUB_TOKEN",
 ];
 const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
-  "full-e2e",
   "hermes-e2e",
   "hermes-root-entrypoint-smoke",
-  "openclaw-tui-chat-correlation",
 ]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
@@ -517,39 +515,6 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
-  }
-}
-
-function validateSerializedHostedAgentProofs(errors: string[], jobs: WorkflowRecord): void {
-  const specs = [
-    {
-      jobName: "full-e2e",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start"],
-    },
-    {
-      jobName: "openclaw-tui-chat-correlation",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start", "full-e2e"],
-    },
-  ] as const;
-
-  for (const { dependencies, jobName } of specs) {
-    const job = asRecord(jobs[jobName]);
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (
-      needs.length !== dependencies.length ||
-      dependencies.some((dependency) => !needs.includes(dependency))
-    ) {
-      errors.push(`${jobName} job must wait for ${dependencies.join(", ")}`);
-    }
-    const condition = stringValue(job.if);
-    if (!condition.includes("always()")) {
-      errors.push(`${jobName} job must remain runnable after skipped dependencies`);
-    }
-    for (const selector of ["inputs.jobs", "inputs.targets", `,${jobName},`]) {
-      if (!condition.includes(selector)) {
-        errors.push(`${jobName} job selector must include ${selector}`);
-      }
-    }
   }
 }
 
@@ -3861,7 +3826,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
-  validateSerializedHostedAgentProofs(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
   validateGatewayGuardRecoveryJob(errors, jobs);
   validateFreeStandingJobSelector(

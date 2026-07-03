@@ -78,6 +78,40 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("starts hosted OpenClaw proofs in the first wave after matrix generation", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { needs?: string | string[] }>;
+    };
+    const serializedDependencies = {
+      "full-e2e": ["generate-matrix", "token-rotation", "channels-stop-start"],
+      "openclaw-tui-chat-correlation": [
+        "generate-matrix",
+        "token-rotation",
+        "channels-stop-start",
+        "full-e2e",
+      ],
+    };
+
+    for (const [jobName, dependencies] of Object.entries(serializedDependencies)) {
+      expect(workflow.jobs[jobName]?.needs).toBe("generate-matrix");
+      workflow.jobs[jobName]!.needs = dependencies;
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "full-e2e job must depend on generate-matrix",
+          "openclaw-tui-chat-correlation job must depend on generate-matrix",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
