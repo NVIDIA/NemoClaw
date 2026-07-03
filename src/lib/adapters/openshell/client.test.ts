@@ -375,7 +375,7 @@ describe("openshell helpers", () => {
     const version = getInstalledOpenshellVersion("openshell", {
       spawnSyncImpl: stubSpawnSync({
         status: 0,
-        stdout: "openshell 0.0.11\n",
+        stdout: "built on 2026.7.1, openshell 0.0.11\n",
         stderr: "",
       }),
     });

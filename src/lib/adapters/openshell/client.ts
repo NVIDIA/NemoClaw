@@ -331,5 +331,5 @@ export function getInstalledOpenshellVersion(
     ...opts,
     ignoreError: true,
   });
-  return parseVersionFromText(versionResult.output);
+  return parseVersionFromText(versionResult.output, binary);
 }
