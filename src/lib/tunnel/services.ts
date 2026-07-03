@@ -23,6 +23,7 @@ import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
+import * as gatewayStop from "./gateway-stop";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +40,8 @@ export interface ServiceOptions {
   pidDir?: string;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
+  /** Also release the managed host gateway port (legacy full-stop only). */
+  releaseGatewayPort?: boolean;
 }
 
 export interface ServiceStatus {
@@ -620,6 +623,11 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
   // Stop host-side services.
   stopService(pidDir, "cloudflared");
+
+  if (opts.releaseGatewayPort) {
+    gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+  }
+
   info("All services stopped.");
 }
 

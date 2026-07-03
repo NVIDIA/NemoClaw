@@ -71,8 +71,30 @@ export function stripAnsi(value = ""): string {
   return String(value).replace(ANSI_RE, "");
 }
 
-export function parseVersionFromText(value = ""): string | null {
-  const match = String(value || "").match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function parseVersionFromText(value = "", versionCommand?: string): string | null {
+  const text = String(value || "");
+  const commandToken = versionCommand?.trim().split(/\s+/, 1)[0] ?? "";
+  const executable = commandToken.split("/").pop() ?? "";
+  if (executable) {
+    const executablePattern = new RegExp(`\\b${escapeRegExp(executable)}\\b`, "i");
+    let executableSeen = false;
+    for (const line of text.split(/\r?\n/)) {
+      const executableMatch = executablePattern.exec(line);
+      if (!executableMatch) continue;
+      executableSeen = true;
+      const versionMatch = line
+        .slice(executableMatch.index + executableMatch[0].length)
+        .match(/([0-9]+\.[0-9]+\.[0-9]+)/);
+      if (versionMatch) return versionMatch[1];
+    }
+    if (executableSeen) return null;
+  }
+
+  const match = text.match(/([0-9]+\.[0-9]+\.[0-9]+)/);
   return match ? match[1] : null;
 }
 
@@ -321,5 +343,5 @@ export function getInstalledOpenshellVersion(
     ...opts,
     ignoreError: true,
   });
-  return parseVersionFromText(versionResult.output);
+  return parseVersionFromText(versionResult.output, binary);
 }
