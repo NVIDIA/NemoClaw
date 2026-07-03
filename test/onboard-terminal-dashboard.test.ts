@@ -88,7 +88,13 @@ runner.runCapture = (command) => {
 
 registry.getSandbox = () =>
   scenario === "reuse"
-    ? { name: sandboxName, gpuEnabled: false, agent: "langchain-deepagents-code", dashboardPort: 18789 }
+    ? {
+        name: sandboxName,
+        gpuEnabled: false,
+        agent: "langchain-deepagents-code",
+        dashboardPort: 18789,
+        toolDisclosure: "progressive",
+      }
     : null;
 registry.registerSandbox = (entry) => {
   registerCalls.push(entry);

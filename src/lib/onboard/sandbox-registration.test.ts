@@ -175,6 +175,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:replacement",
       appliedPolicies: [],
+      toolDisclosure: "direct",
       plannedMessagingState: undefined,
       preservedMcpState,
       hermesToolGateways: [],
@@ -187,6 +188,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.mcp).toBe(preservedMcpState);
     expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
     expect(entry.compatibleEndpointReasoning).toBe("true");
+    expect(entry.toolDisclosure).toBe("direct");
   });
 
   it("normalizes invalid preferred inference API values", () => {

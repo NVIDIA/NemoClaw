@@ -215,6 +215,10 @@ export function validatedRebuildRegistryUpdate(
   fromDockerfile: string | null,
   credentialEnv: string | null,
 ): Partial<RebuildSandboxEntry> {
+  // toolDisclosure is intentionally absent: this preflight update still
+  // describes the running old image. Replacement onboarding commits the
+  // requested mode only after creation succeeds; retry rollback keeps the old
+  // registry value if recreation fails.
   return {
     provider: resume.provider,
     model: resume.model,

@@ -73,7 +73,11 @@ runner.runCapture = (command) => {
   }
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 registry.setDefault = () => true;
@@ -263,7 +267,11 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant NotReady";
   return "";
 };
-registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.getSandbox = () => ({
+  name: "my-assistant",
+  gpuEnabled: false,
+  toolDisclosure: "progressive",
+});
 sandboxState.getLatestBackup = () => {
   throw new Error("unexpected getLatestBackup without installer restore intent");
 };

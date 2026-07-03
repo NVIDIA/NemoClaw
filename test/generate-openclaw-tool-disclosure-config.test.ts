@@ -35,6 +35,17 @@ afterEach(() => {
 });
 
 describe("generate-openclaw-config.mts: tool disclosure", () => {
+  it("uses only OpenClaw's camel-case structured Tool Search key by default", () => {
+    const config = buildConfig(BASE_ENV);
+
+    expect(config.tools?.toolSearch).toEqual({
+      mode: "tools",
+      searchDefaultLimit: 8,
+      maxSearchLimit: 20,
+    });
+    expect(config.tools?.tool_search).toBeUndefined();
+  });
+
   it("restores direct tool exposure through the agent-neutral override", () => {
     const config = buildConfig({ ...BASE_ENV, NEMOCLAW_TOOL_DISCLOSURE: "direct" });
 
