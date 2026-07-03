@@ -10,6 +10,7 @@
 // staleness contract `status` uses (`evaluateStaleness`), so both surfaces agree.
 
 import { parseVersionFromText } from "../adapters/openshell/client";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
 
@@ -43,9 +44,11 @@ export function detectTerminalAgentVersionDrift(
   const expectedVersion = agent.expectedVersion;
   if (!expectedVersion) return null;
 
+  // Bound the probe so a hung `<agent> --version` can't wedge onboarding —
+  // mirrors the SSH probe in sandbox/version.ts (CodeRabbit review on #6230).
   const result = runCaptureOpenshell(
     ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
-    { ignoreError: true },
+    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
   );
   const output = typeof result === "string" ? result : (result?.output ?? null);
   const installedVersion = output ? parseVersionFromText(output) : null;

@@ -28,10 +28,11 @@ describe("detectTerminalAgentVersionDrift (#6193)", () => {
       expectedVersion: "0.1.13",
       schemeMismatch: false,
     });
-    // Probes through the injected OpenShell runner, not a direct SSH spawn.
+    // Probes through the injected OpenShell runner (not a direct SSH spawn),
+    // bounded by a timeout so a hung version command can't wedge onboarding.
     expect(runner).toHaveBeenCalledWith(
       ["sandbox", "exec", "-n", "dcode-sb", "--", "sh", "-lc", "dcode --version"],
-      { ignoreError: true },
+      expect.objectContaining({ ignoreError: true, timeout: expect.any(Number) }),
     );
   });
 
