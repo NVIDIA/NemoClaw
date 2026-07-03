@@ -40,7 +40,7 @@
     "format:ts": "cd nemoclaw && npm run lint:fix && npm run format",
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
-    "build:cli": "tsc -p tsconfig.src.json && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:cli": "tsc -p nemoclaw/tsconfig.shared.json && tsc -p tsconfig.src.json && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
@@ -72,7 +72,7 @@
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
-    "yaml": "^2.8.3"
+    "yaml": "2.8.3"
   },
   "bundleDependencies": [
     "p-retry"
