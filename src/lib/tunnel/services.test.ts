@@ -520,13 +520,6 @@ describe("stopAll", () => {
 describe("startAll tunnel-origin registration (#6212)", () => {
   let tmpDir: string;
   let pidDir: string;
-  let originalPath: string | undefined;
-  let originalCloudflareTunnelToken: string | undefined;
-  const savedSandboxEnv = {
-    NEMOCLAW_SANDBOX_NAME: process.env.NEMOCLAW_SANDBOX_NAME,
-    NEMOCLAW_SANDBOX: process.env.NEMOCLAW_SANDBOX,
-    SANDBOX_NAME: process.env.SANDBOX_NAME,
-  };
 
   function writeFakeCloudflared(lines: string[]): void {
     const binDir = join(tmpDir, "bin");
@@ -534,40 +527,28 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     const fakeCloudflared = join(binDir, "cloudflared");
     writeFileSync(fakeCloudflared, ["#!/usr/bin/env sh", ...lines].join("\n"));
     chmodSync(fakeCloudflared, 0o700);
-    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+    vi.stubEnv("PATH", `${binDir}:${process.env.PATH ?? ""}`);
   }
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-register-test-"));
     pidDir = join(tmpDir, "pids");
-    originalPath = process.env.PATH;
-    originalCloudflareTunnelToken = process.env.CLOUDFLARE_TUNNEL_TOKEN;
-    delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
-    delete process.env.NEMOCLAW_SANDBOX;
-    delete process.env.SANDBOX_NAME;
+    vi.stubEnv("CLOUDFLARE_TUNNEL_TOKEN", undefined);
+    vi.stubEnv("NEMOCLAW_SANDBOX_NAME", undefined);
+    vi.stubEnv("NEMOCLAW_SANDBOX", undefined);
+    vi.stubEnv("SANDBOX_NAME", undefined);
     vi.mocked(registerTunnelOrigin).mockReset();
   });
 
   afterEach(() => {
-    process.env.PATH = originalPath;
-    if (originalCloudflareTunnelToken === undefined) {
-      delete process.env.CLOUDFLARE_TUNNEL_TOKEN;
-    } else {
-      process.env.CLOUDFLARE_TUNNEL_TOKEN = originalCloudflareTunnelToken;
+    const state = readCloudflaredState(pidDir);
+    const runningPid = state.kind === "running" ? state.pid : Number.NaN;
+    try {
+      process.kill(runningPid, "SIGTERM");
+    } catch {
+      // Not running (NaN pid throws) or already exited.
     }
-    for (const [key, val] of Object.entries(savedSandboxEnv)) {
-      if (val !== undefined) process.env[key] = val;
-      else delete process.env[key];
-    }
-    const pid = readCloudflaredState(pidDir);
-    if (pid.kind === "running") {
-      try {
-        process.kill(pid.pid, "SIGTERM");
-      } catch {
-        // Process may have already exited.
-      }
-    }
+    vi.unstubAllEnvs();
     rmSync(tmpDir, { recursive: true, force: true });
     vi.restoreAllMocks();
   });
@@ -610,7 +591,7 @@ describe("startAll tunnel-origin registration (#6212)", () => {
     // with cloudflared absent from PATH (the "cloudflared not found" path).
     const emptyBin = join(tmpDir, "empty-bin");
     mkdirSync(emptyBin, { recursive: true });
-    process.env.PATH = emptyBin;
+    vi.stubEnv("PATH", emptyBin);
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await startAll({ pidDir, dashboardPort: 12345, sandboxName: "my-sandbox" });
