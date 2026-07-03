@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
+const INSTALLED_APPROVAL_POLICY = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py";
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 const CHANNEL_RUNTIME_SCRIPTS = path.join(import.meta.dirname, "..", "src/lib/messaging/channels");
 const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
@@ -158,8 +159,8 @@ function startScriptHeredoc(src: string, marker: string): string {
   }).outputText;
 }
 
-function trustedApprovalPolicyFile(): string {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
+function trustedApprovalPolicyFile(tmpDir?: string): string {
+  tmpDir ??= fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
   const helperPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
   fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), helperPath);
   fs.chmodSync(helperPath, 0o444);
@@ -882,10 +883,9 @@ describe("nemoclaw-start configure guard behavior", () => {
       `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
-    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
-      "/tmp/nemoclaw-proxy-env.sh",
-      proxyEnv,
-    );
+    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`
+      .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnv)
+      .replaceAll(INSTALLED_APPROVAL_POLICY, trustedApprovalPolicyFile(tmpDir));
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
