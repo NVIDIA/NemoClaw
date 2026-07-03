@@ -80,7 +80,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
-    writeFixture(path.join("scripts", "validate-openclaw-tool-search.mjs"));
+    writeFixture(path.join("scripts", "validate-openclaw-tool-search.mts"));
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
@@ -302,7 +302,7 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mjs")),
+        fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mts")),
       ).toBe(true);
       expect(
         fs.existsSync(

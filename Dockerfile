@@ -595,13 +595,13 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
-COPY scripts/validate-openclaw-tool-search.mjs /scripts/validate-openclaw-tool-search.mjs
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
-        /scripts/validate-openclaw-tool-search.mjs \
+        /scripts/validate-openclaw-tool-search.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod -R a+rX /src/lib/messaging \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
@@ -782,7 +782,7 @@ RUN set -eu; \
             NEMOCLAW_TOOL_DISCLOSURE="$mode" \
             NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
             node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
-        node /scripts/validate-openclaw-tool-search.mjs \
+        node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
             /usr/local/lib/node_modules/openclaw/dist \
             "$validation_home/.openclaw/openclaw.json" \
             "$mode" \

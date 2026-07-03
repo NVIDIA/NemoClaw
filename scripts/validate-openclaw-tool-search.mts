@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env -S node --experimental-strip-types
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -420,7 +420,7 @@ export async function validateOpenClawToolSearchRuntime({
 }
 
 function usage() {
-  return "Usage: validate-openclaw-tool-search.mjs <dist-dir> <config-path> <progressive|direct> <expected-version>";
+  return "Usage: validate-openclaw-tool-search.mts <dist-dir> <config-path> <progressive|direct> <expected-version>";
 }
 
 async function main(argv) {

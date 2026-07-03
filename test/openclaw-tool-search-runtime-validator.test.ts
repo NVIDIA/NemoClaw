@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { validateOpenClawToolSearchRuntime } from "../scripts/validate-openclaw-tool-search.mjs";
+import { validateOpenClawToolSearchRuntime } from "../scripts/validate-openclaw-tool-search.mts";
 
 const EXPECTED_VERSION = "2026.5.27";
 const PROGRESSIVE_CONFIG = {
