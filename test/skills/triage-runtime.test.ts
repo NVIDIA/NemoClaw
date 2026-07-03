@@ -11,14 +11,17 @@ import { describe, expect, it } from "vitest";
 interface TriageFixture {
   projectOutput: string;
   reviewDecisions?: Record<number, string>;
+  independentApprovals?: Record<number, boolean>;
   approvedOnly?: boolean;
 }
 
-const requiredChecks = ["checks", "commit-lint", "dco-check"].map((name) => ({
-  name,
-  status: "COMPLETED",
-  conclusion: "SUCCESS",
-}));
+const requiredChecks = ["checks", "commit-lint", "dco-check", "independent-human-approval"].map(
+  (name) => ({
+    name,
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+  }),
+);
 
 const pullRequests = [
   {
@@ -84,6 +87,11 @@ function runTriage(fixture: TriageFixture) {
       102: "APPROVED",
       103: "APPROVED",
     },
+    independentApprovals: fixture.independentApprovals ?? {
+      101: true,
+      102: true,
+      103: true,
+    },
     requiredChecks,
   };
 
@@ -100,7 +108,9 @@ if (args[0] === "api" && args[1] === "--paginate" && args[2]?.startsWith("repos/
   const number = Number(args[2]);
   process.stdout.write(JSON.stringify({
     reviewDecision: config.reviewDecisions[number] ?? "",
-    statusCheckRollup: config.requiredChecks,
+    statusCheckRollup: config.requiredChecks.filter(
+      (check) => check.name !== "independent-human-approval" || config.independentApprovals[number]
+    ),
     additions: 1,
     deletions: 1,
     changedFiles: 1,
@@ -160,10 +170,11 @@ describe("maintainer triage runtime behavior", () => {
     );
   });
 
-  it("applies --approved-only after review decisions are enriched", () => {
+  it("uses the independent check instead of generic approval in approved-only mode (#6222)", () => {
     const result = runTriage({
       projectOutput: "",
-      reviewDecisions: { 101: "APPROVED", 102: "REVIEW_REQUIRED", 103: "" },
+      reviewDecisions: { 101: "", 102: "APPROVED", 103: "APPROVED" },
+      independentApprovals: { 101: true, 102: false, 103: false },
       approvedOnly: true,
     });
 

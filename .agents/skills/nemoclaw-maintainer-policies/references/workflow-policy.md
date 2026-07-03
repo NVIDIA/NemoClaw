@@ -44,6 +44,30 @@ This is a contributor self-serve requirement, not a maintainer repair step.
 Maintainers should reject PRs that contain unverified commits or lack the DCO declaration.
 Do not merge, approve, or repair those PRs on behalf of the contributor.
 
+## Independent Human Approval
+
+Every PR requires one qualifying approval from an eligible human reviewer who has not contributed
+to that PR.
+Treat the PR opener, commit authors, recognized co-authors, human committers, and anyone who pushes
+or directly applies code as an append-only contributor set. Once a reviewer enters that set, keep
+their review as useful feedback but do not count it as the qualifying approval.
+
+Require the qualifying approval to cover the most recent reviewable push. Preserve earlier reviews;
+do not enable blanket stale-approval dismissal or require every prior reviewer to reapprove. One
+current independent approval is sufficient.
+
+The repository-side GitHub Actions adapter under `tools/independent-approval/` is interim defense in
+depth. Its PR-comment observations are not tamper-proof storage, and the shared `github-actions`
+identity does not provide the dedicated check-source isolation required for full enforcement. Do not
+treat its passing result as complete enforcement of this policy.
+
+Full enforcement requires a centrally governed GitHub App or equivalent service with durable
+append-only storage and a `main` ruleset that pins `independent-human-approval` to that dedicated
+source. The native ruleset must also require approval after the most recent reviewable push.
+Maintainer and contributor agents must stop before approval when the current actor is a PR
+contributor and hand the PR to another eligible human. A generic `reviewDecision: APPROVED` value is
+not proof of independence.
+
 ## Issue Classification
 
 Native GitHub Issue Type is the canonical issue-kind field:

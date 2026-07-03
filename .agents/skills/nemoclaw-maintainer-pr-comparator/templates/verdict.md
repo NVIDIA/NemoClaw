@@ -21,7 +21,7 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 | State OPEN | pass | pass |
 | CI green (latest SHA) | pass | fail (stale) |
 | Mergeable | pass | pass |
-| Branch protection | pass | pass |
+| Independent human approval | pass | fail (contributor/approver overlap) |
 | CodeRabbit threads | pass | yellow (2 unresolved) |
 | **Tier 1 — correctness** | | |
 | Test exercises bug path | pass | pass |
@@ -47,7 +47,7 @@ Render the final scorecard with `scripts/render-verdict.py`. Below is the human-
 ### Verdict: MERGE PR #A
 
 Reasoning trace:
-- PR #B failed Tier 0 (CI fail on latest SHA after force-push at SHA <hash>)
+- PR #B failed Tier 0 (no qualifying independent approval for latest SHA <hash>)
 - PR #A score 18.5 vs PR #B score 14.0
 - PR #A misses criterion 3; cherry-pick PR #B's test at <file:line> to cover it
 
@@ -58,7 +58,7 @@ Reasoning trace:
 3. Close PR #B with comment linking to #A and noting the cherry-pick
 
 ### Reasoning evidence
-- Tier 0 gate "CI green": PR #A latest SHA <hash>, all 12 required checks passed; PR #B latest SHA <hash>, "test-cli" failed at <log-line>
+- Tier 0 gate "independent human approval": PR #A has a passing check from the dedicated ruleset-pinned source for latest SHA <hash>; PR #B's only approver is in the append-only contributor set
 - Tier 1.1 PR #A: test at `<file>:<line-range>` asserts on <output>; pre-fix code returned <wrong-output>; assertion would have failed
 - Tier 1.3 PR #A fail: no test for empty-input edge case despite issue commenter raising it at `issue.comment.4`
 - ... <one entry per non-trivial judgment> ...

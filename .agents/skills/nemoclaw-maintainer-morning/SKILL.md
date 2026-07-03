@@ -26,7 +26,13 @@ Run the triage script to rank the full backlog:
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/triage.ts --approved-only
 ```
 
-If too few results, run without `--approved-only`. The script fetches open PRs through `gh`, reads Project 199 Priority, enriches candidates with review, CI, file, and risky-area data, and applies the scoring model documented in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
+If too few results, run without `--approved-only`. That flag retains only PRs whose
+`independent-human-approval` check passes; a generic `reviewDecision: APPROVED` value does not
+qualify. This name-based filter is a queue signal. Treat it as full policy evidence only when the
+`main` ruleset pins the check to the dedicated App or service source; the repository-side Actions
+adapter is interim defense in depth. The script fetches open PRs through `gh`, reads Project 199 Priority,
+enriches candidates with review, CI, file, and risky-area data, and applies the scoring model documented
+in [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md).
 
 Also use `find-review-pr` to surface `security` PRs whose Project Priority is `Urgent` or `High`. Merge these into the candidate pool.
 

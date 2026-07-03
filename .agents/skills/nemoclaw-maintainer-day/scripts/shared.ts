@@ -91,6 +91,8 @@ export const REQUIRED_CHECK_NAMES: string[] = [
   "dco-check", // dco-check.yaml
 ];
 
+export const INDEPENDENT_APPROVAL_CHECK_NAME = "independent-human-approval";
+
 // ---------------------------------------------------------------------------
 // Status check types
 // ---------------------------------------------------------------------------
@@ -103,6 +105,33 @@ export interface StatusCheck {
   status?: string; // CheckRun: COMPLETED, IN_PROGRESS, QUEUED, etc.
   conclusion?: string; // CheckRun: SUCCESS, FAILURE, NEUTRAL, SKIPPED, etc.
   state?: string; // StatusContext: SUCCESS, FAILURE, PENDING, ERROR
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export function latestStatusCheck(
+  checks: ReadonlyArray<StatusCheck>,
+  name: string,
+): StatusCheck | undefined {
+  return checks
+    .filter((check) => (check.name ?? check.context) === name)
+    .reduce<StatusCheck | undefined>((latest, check) => {
+      if (!latest) return check;
+      const latestTime = latest.completedAt ?? latest.startedAt ?? "";
+      const checkTime = check.completedAt ?? check.startedAt ?? "";
+      return checkTime >= latestTime ? check : latest;
+    }, undefined);
+}
+
+export function isStrictlySuccessful(check: StatusCheck | undefined): boolean {
+  if (!check) return false;
+  if (check.__typename === "StatusContext" || check.state) {
+    return (check.state ?? "").toUpperCase() === "SUCCESS";
+  }
+  return (
+    (check.status ?? "").toUpperCase() === "COMPLETED" &&
+    (check.conclusion ?? "").toUpperCase() === "SUCCESS"
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +141,7 @@ export interface StatusCheck {
 // Documented in nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md.
 // ---------------------------------------------------------------------------
 
-/** PR passed all checks and is already approved — only needs final gate */
+/** PR passed all checks and has an independent human approval — only needs final gate */
 export const SCORE_MERGE_NOW = 40;
 /** PR has green CI, no conflicts, not draft — ready for maintainer review */
 export const SCORE_REVIEW_READY = 35;

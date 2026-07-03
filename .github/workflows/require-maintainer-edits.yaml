@@ -37,4 +37,4 @@ jobs:
             exit 1
           fi
 
-          echo "Maintainer edits requirement satisfied."
+          echo "Maintainer edits requirement satisfied. A maintainer who pushes code becomes a PR contributor and must hand approval to another eligible human."

@@ -8,7 +8,10 @@ user_invocable: true
 
 Execute one pass of the maintainer loop, prioritizing version-targeted work.
 
-**Autonomy:** push small fixes and approve when gates pass. Never merge. Stop and ask for merge decisions, architecture decisions, and unclear contributor intent.
+**Autonomy:** push small fixes or approve when gates pass, but never do both on the same PR. A push
+or direct code application moves the current actor into the PR contributor set and requires a
+different eligible human to provide the qualifying approval. Never merge. Stop and ask for merge
+decisions, architecture decisions, and unclear contributor intent.
 
 ## References
 

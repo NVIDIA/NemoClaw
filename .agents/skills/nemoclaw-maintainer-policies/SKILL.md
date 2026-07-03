@@ -1,6 +1,6 @@
 ---
 name: nemoclaw-maintainer-policies
-description: Read-only maintainer policy reference for NemoClaw agents, engineers, and maintainers. Use when answering NemoClaw project-management workflow questions, including GitHub Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and maintainer workflow decisions. Trigger keywords - maintainer policy, workflow policy, project workflow, issue type, labels, label taxonomy, needs labels, project status, blocked issue, duplicate issue, daily release label, release train, triage policy.
+description: Read-only maintainer policy reference for NemoClaw agents, engineers, and maintainers. Use when answering NemoClaw project-management workflow questions, including independent PR approval, GitHub Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and maintainer workflow decisions. Trigger keywords - maintainer policy, workflow policy, independent approval, reviewer independence, project workflow, issue type, labels, label taxonomy, needs labels, project status, blocked issue, duplicate issue, daily release label, release train, triage policy.
 user_invocable: true
 ---
 
@@ -15,7 +15,7 @@ This is a policy-only skill package. `SKILL.md` is only the manifest and index.
 
 - **Broad overview:** When a new engineer asks how NemoClaw uses GitHub or how the maintainer workflow works, load [references/workflow-policy.md](references/workflow-policy.md), then [references/project-workflow.md](references/project-workflow.md), then [references/daily-flow.md](references/daily-flow.md). Use [references/release-train.md](references/release-train.md) only when release labels, cutoff, carry-forward, release history, or label pruning are involved.
 - **Agent implementation:** When building or updating an agent or app that applies or recommends workflow metadata, load [references/workflow-policy.md](references/workflow-policy.md), [references/triage-instructions.md](references/triage-instructions.md), [references/label-taxonomy.json](references/label-taxonomy.json), and [references/examples.md](references/examples.md), in that order.
-- **Load [references/workflow-policy.md](references/workflow-policy.md)** when answering source-of-truth, authorization, Issue Type, label boundary, or agent-owned label questions.
+- **Load [references/workflow-policy.md](references/workflow-policy.md)** when answering source-of-truth, authorization, independent PR approval, reviewer-to-contributor transitions, Issue Type, label boundary, or agent-owned label questions.
 - **Load [references/triage-instructions.md](references/triage-instructions.md)** when answering how to evaluate issues or PRs, when to ask for information, how to use `needs:*`, how to set confidence, or what suggestion payload shape to emit.
 - **Load [references/label-taxonomy.md](references/label-taxonomy.md)** when answering human-facing label meaning, label selection, label compatibility, unknown-label, `agt: *`, or release-label taxonomy questions.
 - **Load [references/label-taxonomy.json](references/label-taxonomy.json)** when validating machine-readable Issue Type, Project field, label, signal, compatibility, or write-policy values.

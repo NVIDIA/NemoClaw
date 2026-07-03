@@ -11,6 +11,8 @@ import { describe, expect, it } from "vitest";
 interface ComplianceFixture {
   body: string;
   commitOutput?: string;
+  currentActor?: { id: number; login: string; type: string };
+  statusChecks?: Array<Record<string, unknown>>;
   verified: boolean;
   reason?: string;
 }
@@ -41,12 +43,14 @@ function runGate(fixture: ComplianceFixture) {
     url: "https://github.com/NVIDIA/NemoClaw/pull/42",
     body: fixture.body,
     files: [],
-    statusCheckRollup: ["checks", "commit-lint", "dco-check"].map((name) => ({
-      __typename: "CheckRun",
-      name,
-      status: "COMPLETED",
-      conclusion: "SUCCESS",
-    })),
+    statusCheckRollup:
+      fixture.statusChecks ??
+      ["checks", "commit-lint", "dco-check", "independent-human-approval"].map((name) => ({
+        __typename: "CheckRun",
+        name,
+        status: "COMPLETED",
+        conclusion: "SUCCESS",
+      })),
     mergeStateStatus: "CLEAN",
     headRefOid: "abc123",
   };
@@ -56,6 +60,19 @@ function runGate(fixture: ComplianceFixture) {
     reason: fixture.reason ?? (fixture.verified ? "valid" : "unsigned"),
   };
   const commitOutput = fixture.commitOutput ?? JSON.stringify(commit);
+  const currentActor = fixture.currentActor ?? { id: 5_445, login: "cv", type: "User" };
+  const graphql = {
+    data: {
+      repository: {
+        pullRequest: {
+          author: { __typename: "User", login: "contributor", databaseId: 1_001 },
+          headRefOid: "abc123",
+          commits: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+          reviewThreads: { nodes: [] },
+        },
+      },
+    },
+  };
 
   fs.writeFileSync(
     ghPath,
@@ -63,7 +80,8 @@ function runGate(fixture: ComplianceFixture) {
 set -euo pipefail
 case "$1 $2" in
   "pr view") printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
-  "api graphql") printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
+  "api user") printf '%s' ${shellSingleQuote(JSON.stringify(currentActor))} ;;
+  "api graphql") printf '%s' ${shellSingleQuote(JSON.stringify(graphql))} ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments") printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
   "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(commitOutput)} ;;
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
@@ -103,13 +121,15 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
     state: fixture.state ?? "OPEN",
     body: fixture.body,
     headRefOid: fixture.headRefOid ?? "abc123",
-    statusCheckRollup: (fixture.checkNames ?? ["checks", "commit-lint", "dco-check"]).map(
-      (name) => ({
+    statusCheckRollup:
+      fixture.statusChecks ??
+      (
+        fixture.checkNames ?? ["checks", "commit-lint", "dco-check", "independent-human-approval"]
+      ).map((name) => ({
         name,
         status: "COMPLETED",
         conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
-      }),
-    ),
+      })),
     mergeable: fixture.mergeable ?? "MERGEABLE",
     mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
     reviewDecision: fixture.reviewDecision ?? "APPROVED",
@@ -168,7 +188,62 @@ describe("maintainer merge-gate contributor compliance", () => {
       dcoDeclarationPresent: true,
       unverifiedCommits: [],
     });
+    expect(output.gates.independentApproval).toMatchObject({ pass: true });
+    expect(output.gates.actorEligibleToApprove).toMatchObject({ pass: true, actor: "cv" });
     expect(output.allPass).toBe(true);
+  });
+
+  it("refuses approval when the current actor opened the PR (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      currentActor: { id: 1_001, login: "contributor", type: "User" },
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.actorEligibleToApprove).toMatchObject({
+      pass: false,
+      actor: "contributor",
+      contributorReasons: ["pr_opener"],
+    });
+    expect(output.gates.actorEligibleToApprove.details).toContain("cannot provide");
+  });
+
+  it("uses the newest independent check and does not count it as ordinary CI (#6222)", () => {
+    const ordinaryChecks = ["checks", "commit-lint", "dco-check"].map((name) => ({
+      __typename: "CheckRun",
+      name,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+    }));
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      statusChecks: [
+        ...ordinaryChecks,
+        {
+          __typename: "CheckRun",
+          name: "independent-human-approval",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+          completedAt: "2026-07-03T00:10:00Z",
+        },
+        {
+          __typename: "CheckRun",
+          name: "independent-human-approval",
+          status: "COMPLETED",
+          conclusion: "SKIPPED",
+          completedAt: "2026-07-03T00:20:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.ci.pass).toBe(true);
+    expect(output.gates.independentApproval.pass).toBe(false);
+    expect(output.allPass).toBe(false);
   });
 
   it("fails closed when the PR body lacks the DCO declaration", () => {
@@ -234,7 +309,9 @@ describe("maintainer PR comparator contributor compliance", () => {
       dco_declaration_present: true,
       commit_count: 1,
       unverified_commits: [],
+      independent_approval_status: "SUCCESS",
     });
+    expect(output.gates.independent_human_approval).toBe(true);
   });
 
   it("fails when a commit is not verified", () => {
@@ -362,7 +439,7 @@ describe("maintainer PR comparator contributor compliance", () => {
     const result = runComparatorGate({
       body: "Signed-off-by: Example User <user@example.com>",
       verified: true,
-      checkNames: ["checks", "commit-lint"],
+      checkNames: ["checks", "commit-lint", "independent-human-approval"],
     });
 
     expect(result.status).toBe(0);
@@ -370,6 +447,57 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.ci_green_latest_sha).toBe(false);
     expect(output.details.ci_missing_required_checks).toEqual(["dco-check"]);
     expect(output.failures).toContain("substantive:ci_failures=0,pending=0,missing=dco-check");
+  });
+
+  it("does not accept a generic approved decision without the independent check (#6222)", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkNames: ["checks", "commit-lint", "dco-check"],
+      reviewDecision: "APPROVED",
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.independent_human_approval).toBe(false);
+    expect(output.details).toMatchObject({
+      review_decision: "APPROVED",
+      independent_approval_status: "MISSING",
+    });
+    expect(output.failures).toContain("substantive:independent_approval=MISSING");
+  });
+
+  it("uses only the latest same-name independent check result (#6222)", () => {
+    const ordinaryChecks = ["checks", "commit-lint", "dco-check"].map((name) => ({
+      name,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+    }));
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      statusChecks: [
+        ...ordinaryChecks,
+        {
+          name: "independent-human-approval",
+          status: "COMPLETED",
+          conclusion: "SUCCESS",
+          completedAt: "2026-07-03T00:10:00Z",
+        },
+        {
+          name: "independent-human-approval",
+          status: "COMPLETED",
+          conclusion: "SKIPPED",
+          completedAt: "2026-07-03T00:20:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.ci_green_latest_sha).toBe(true);
+    expect(output.gates.independent_human_approval).toBe(false);
+    expect(output.details.independent_approval_status).toBe("SKIPPED");
   });
 
   it.each([

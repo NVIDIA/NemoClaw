@@ -82,9 +82,13 @@ Do **not** push to `origin` — that creates a separate branch on NVIDIA/NemoCla
 
 After any maintainer push, follow [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) before routing onward. Keep salvage narrow: address valid correctness, security, and test-coverage findings with the smallest safe follow-up; consult the user when feedback is ambiguous, design-changing, or outside the salvage scope.
 
+The maintainer who pushed is now a PR contributor and cannot provide the qualifying approval. Keep
+their earlier review as advisory feedback and request a different eligible human after CI settles.
+
 ## Step 10: Route to Merge Gate
 
-If PR looks ready after CI and automated feedback settle, follow [MERGE-GATE.md](MERGE-GATE.md).
+If PR looks ready after CI and automated feedback settle, hand it to an independent human and follow
+[MERGE-GATE.md](MERGE-GATE.md). Do not route the maintainer who pushed back into the approver role.
 
 ## Notes
 

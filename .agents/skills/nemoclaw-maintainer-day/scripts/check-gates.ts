@@ -21,13 +21,21 @@ import {
 } from "./pra-gate.ts";
 import {
   ghJson,
+  INDEPENDENT_APPROVAL_CHECK_NAME,
+  isStrictlySuccessful,
   isRiskyFile,
   isTestFile,
+  latestStatusCheck,
   parseStringArg,
   REQUIRED_CHECK_NAMES,
   run,
   type StatusCheck,
 } from "./shared.ts";
+import {
+  fetchCurrentContributors,
+  fetchObservations,
+} from "../../../../tools/independent-approval/github.mts";
+import { identityKey, mergeContributors } from "../../../../tools/independent-approval/policy.mts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -56,6 +64,8 @@ interface GateOutput {
       pendingChecks?: string[];
       missingChecks?: string[];
     };
+    independentApproval: GateResult;
+    actorEligibleToApprove: GateResult & { actor?: string; contributorReasons?: string[] };
     conflicts: GateResult & { mergeStateStatus?: string };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
@@ -64,6 +74,70 @@ interface GateOutput {
       dcoDeclarationPresent?: boolean;
       unverifiedCommits?: Array<{ sha: string; reason: string }>;
     };
+  };
+}
+
+function checkActorEligibleToApprove(
+  repo: string,
+  prNumber: number,
+): GateResult & { actor?: string; contributorReasons?: string[] } {
+  const rawActor = ghJson(["api", "user"]);
+  if (!rawActor || typeof rawActor !== "object" || Array.isArray(rawActor)) {
+    return { pass: false, details: "Could not resolve the current GitHub actor" };
+  }
+  const value = rawActor as { id?: unknown; login?: unknown; type?: unknown };
+  if (
+    !Number.isSafeInteger(value.id) ||
+    typeof value.login !== "string" ||
+    !value.login.trim() ||
+    value.type !== "User"
+  ) {
+    return { pass: false, details: "Current GitHub actor is not an eligible human user" };
+  }
+
+  try {
+    const snapshot = fetchCurrentContributors(repo, prNumber);
+    const observations = fetchObservations(repo, prNumber);
+    const contributors = mergeContributors([
+      snapshot.contributors,
+      ...observations.map((observation) => observation.contributors),
+    ]);
+    const actor = { id: value.id as number, login: value.login, type: value.type };
+    const contributor = contributors.find(
+      (candidate) => identityKey(candidate) === identityKey(actor),
+    );
+    if (contributor) {
+      return {
+        pass: false,
+        details: `@${actor.login} contributed to this PR and cannot provide its qualifying approval`,
+        actor: actor.login,
+        contributorReasons: contributor.reasons,
+      };
+    }
+    return {
+      pass: true,
+      details: `@${actor.login} is not in the observed PR contributor set`,
+      actor: actor.login,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { pass: false, details: `Could not verify current actor eligibility: ${message}` };
+  }
+}
+
+function checkIndependentApproval(statusCheckRollup: StatusCheck[] | null): GateResult {
+  const latest = latestStatusCheck(statusCheckRollup ?? [], INDEPENDENT_APPROVAL_CHECK_NAME);
+  if (!latest) {
+    return { pass: false, details: "Independent human approval check is missing" };
+  }
+
+  const pass = isStrictlySuccessful(latest);
+
+  return {
+    pass,
+    details: pass
+      ? "One current independent human approval is present"
+      : "Independent human approval has not passed for the latest reviewable push",
   };
 }
 
@@ -78,13 +152,15 @@ function checkCi(
     return { pass: false, details: "No status checks found" };
   }
 
+  const ciChecks = statusCheckRollup.filter(
+    (check) => (check.name ?? check.context) !== INDEPENDENT_APPROVAL_CHECK_NAME,
+  );
+
   // Check that all required checks are present.
   // Fork PRs from first-time contributors need "Approve and run" before
   // pull_request workflows execute. Until then only pull_request_target
   // checks (like check-pr-limit) and external bots (CodeRabbit) appear.
-  const presentNames = new Set(
-    statusCheckRollup.map((c) => c.name ?? c.context ?? "").filter(Boolean),
-  );
+  const presentNames = new Set(ciChecks.map((c) => c.name ?? c.context ?? "").filter(Boolean));
   const missingChecks = REQUIRED_CHECK_NAMES.filter((name) => !presentNames.has(name));
   if (missingChecks.length > 0) {
     return {
@@ -98,7 +174,7 @@ function checkCi(
   const failing: string[] = [];
   const pending: string[] = [];
 
-  for (const check of statusCheckRollup) {
+  for (const check of ciChecks) {
     const checkName = check.name ?? check.context ?? "(unknown)";
 
     // StatusContext (e.g. CodeRabbit) uses `state` instead of `status`/`conclusion`.
@@ -133,7 +209,7 @@ function checkCi(
   if (pending.length > 0) {
     return { pass: false, details: `${pending.length} pending check(s)`, pendingChecks: pending };
   }
-  return { pass: true, details: `All ${statusCheckRollup.length} checks green` };
+  return { pass: true, details: `All ${ciChecks.length} CI checks green` };
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +576,8 @@ function main(): void {
   }
 
   const ci = checkCi(prData.statusCheckRollup);
+  const independentApproval = checkIndependentApproval(prData.statusCheckRollup);
+  const actorEligibleToApprove = checkActorEligibleToApprove(repo, prNumber);
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
@@ -512,12 +590,22 @@ function main(): void {
     title: prData.title,
     allPass:
       ci.pass &&
+      independentApproval.pass &&
       conflicts.pass &&
       coderabbit.pass &&
       riskyCodeTested.pass &&
       prAdvisor.pass &&
       contributorCompliance.pass,
-    gates: { ci, conflicts, coderabbit, riskyCodeTested, prAdvisor, contributorCompliance },
+    gates: {
+      ci,
+      independentApproval,
+      actorEligibleToApprove,
+      conflicts,
+      coderabbit,
+      riskyCodeTested,
+      prAdvisor,
+      contributorCompliance,
+    },
   };
 
   console.log(JSON.stringify(output, null, 2));

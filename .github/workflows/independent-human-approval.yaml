@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Policy / Independent Human Approval Reconciler
+
+# This trusted default-branch workflow owns the repository-side interim check.
+# Review events reach it only through the unprivileged signal workflow below;
+# no pull request workflow can publish the required context directly.
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+  workflow_run:
+    workflows: ["Policy / Independent Approval Review Signal"]
+    types: [completed]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request to reconcile; omit to reconcile every open PR
+        required: false
+        type: string
+
+permissions: {}
+
+jobs:
+  record-contributors:
+    name: Record independent-approval contributors
+    if: ${{ github.event_name == 'pull_request_target' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted policy code from main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: trusted-policy
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Record append-only contributor observation
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_ACTION: ${{ github.event.action }}
+          EVENT_ACTOR_ID: ${{ github.event.sender.id }}
+          EVENT_ACTOR_LOGIN: ${{ github.event.sender.login }}
+          EVENT_ACTOR_TYPE: ${{ github.event.sender.type }}
+          EVENT_ID: ${{ github.run_id }}
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          node --experimental-strip-types --no-warnings \
+            trusted-policy/tools/independent-approval/github.mts record \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --event-action "$EVENT_ACTION" \
+            --event-id "$EVENT_ID" \
+            --expected-head-sha "$EXPECTED_HEAD_SHA" \
+            --before-sha "$BEFORE_SHA" \
+            --event-actor-id "$EVENT_ACTOR_ID" \
+            --event-actor-login "$EVENT_ACTOR_LOGIN" \
+            --event-actor-type "$EVENT_ACTOR_TYPE"
+
+  reconcile-event-pr:
+    name: Reconcile independent-approval policy
+    needs: [record-contributors]
+    if: >-
+      ${{ always() &&
+          ((github.event_name == 'pull_request_target' && needs.record-contributors.result == 'success') ||
+           (github.event_name == 'workflow_run' && github.event.workflow_run.pull_requests[0].number != null) ||
+           (github.event_name == 'workflow_dispatch' && inputs.pr_number != '')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted policy code from main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: trusted-policy
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Publish exact-head independent-approval check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || inputs.pr_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          node --experimental-strip-types --no-warnings \
+            trusted-policy/tools/independent-approval/github.mts publish \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER"
+
+  reconcile-open-prs:
+    name: Reconcile all open independent-approval checks
+    if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.pr_number == '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      checks: write
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted policy code from main
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: trusted-policy
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Reconcile every open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          node --experimental-strip-types --no-warnings \
+            trusted-policy/tools/independent-approval/github.mts reconcile-open \
+            --repo "$REPO"
