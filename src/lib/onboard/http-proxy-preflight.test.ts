@@ -5,6 +5,25 @@ import { describe, expect, it } from "vitest";
 
 import { redactProxyCredentials, warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 
+function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+  const originalColorDepth = Object.getOwnPropertyDescriptor(process.stderr, "getColorDepth");
+  Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
+  Object.defineProperty(process.stderr, "getColorDepth", {
+    value: () => colorDepth,
+    configurable: true,
+  });
+  try {
+    return callback();
+  } finally {
+    if (originalIsTTY) Object.defineProperty(process.stderr, "isTTY", originalIsTTY);
+    else Reflect.deleteProperty(process.stderr, "isTTY");
+    if (originalColorDepth)
+      Object.defineProperty(process.stderr, "getColorDepth", originalColorDepth);
+    else Reflect.deleteProperty(process.stderr, "getColorDepth");
+  }
+}
+
 describe("redactProxyCredentials", () => {
   it("returns plain proxy URLs unchanged", () => {
     expect(redactProxyCredentials("http://127.0.0.1:8118")).toBe("http://127.0.0.1:8118");
@@ -108,6 +127,25 @@ describe("warnIfHostProxyMissesLoopback", () => {
     expect(joined).not.toContain("s3cret");
     expect(joined).toContain("****");
     expect(joined).toContain("proxy.example.com:3128");
+  });
+
+  it("colors only the warning line on color-capable stderr and keeps proxy credentials redacted", () => {
+    withStderrColorDepth(24, () => {
+      const lines: string[] = [];
+      warnIfHostProxyMissesLoopback(
+        { http_proxy: "http://alice:s3cret@proxy.example.com:3128" },
+        (line) => lines.push(line),
+      );
+
+      expect(lines[0]).toBe(
+        "  \x1b[33m⚠ HTTP_PROXY/http_proxy is set without " +
+          "NO_PROXY=localhost,127.0.0.1,inference.local.\x1b[39m",
+      );
+      expect(lines.slice(1).join("\n")).not.toContain("\x1b[");
+      expect(lines.join("\n")).not.toContain("alice");
+      expect(lines.join("\n")).not.toContain("s3cret");
+      expect(lines.join("\n")).toContain("****@proxy.example.com:3128");
+    });
   });
 
   it("respects uppercase HTTP_PROXY too", () => {

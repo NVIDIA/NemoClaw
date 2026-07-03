@@ -16,16 +16,57 @@ function lines(spy: ReturnType<typeof vi.spyOn>): string[] {
   return spy.mock.calls.map((call: unknown[]) => String(call[0]));
 }
 
+function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
+  const originalIsTTY = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+  const originalColorDepth = Object.getOwnPropertyDescriptor(process.stderr, "getColorDepth");
+  Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
+  Object.defineProperty(process.stderr, "getColorDepth", {
+    value: () => colorDepth,
+    configurable: true,
+  });
+  try {
+    return callback();
+  } finally {
+    if (originalIsTTY) Object.defineProperty(process.stderr, "isTTY", originalIsTTY);
+    else Reflect.deleteProperty(process.stderr, "isTTY");
+    if (originalColorDepth)
+      Object.defineProperty(process.stderr, "getColorDepth", originalColorDepth);
+    else Reflect.deleteProperty(process.stderr, "getColorDepth");
+  }
+}
+
 describe("onboard preflight severity messages (#6004)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("prints the Docker-unreachable failure to stderr with a ✗ marker", () => {
-    const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    printDockerNotReachableError();
-    expect(err).toHaveBeenCalledOnce();
-    expect(lines(err)[0]).toBe("  ✗ Docker is not reachable. Please fix Docker and try again.");
+  it("colors representative failure and warning messages when stderr supports color", () => {
+    withStderrColorDepth(24, () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      printDockerNotReachableError();
+      printLowMemoryWarning({ totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 });
+      expect(lines(err)[0]).toBe(
+        "  \x1b[31m✗ Docker is not reachable. Please fix Docker and try again.\x1b[39m",
+      );
+      expect(lines(warn)[0]).toBe(
+        "  \x1b[33m⚠ Low memory detected (4000 MB RAM + 0 MB swap = 4000 MB total)\x1b[39m",
+      );
+    });
+  });
+
+  it("prints representative failure and warning messages without ANSI on plain stderr", () => {
+    withStderrColorDepth(1, () => {
+      const err = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      printDockerNotReachableError();
+      printLowMemoryWarning({ totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 });
+      expect(lines(err)[0]).toBe("  ✗ Docker is not reachable. Please fix Docker and try again.");
+      expect(lines(warn)[0]).toBe(
+        "  ⚠ Low memory detected (4000 MB RAM + 0 MB swap = 4000 MB total)",
+      );
+      expect([...lines(err), ...lines(warn)].join("\n")).not.toContain("\x1b[");
+    });
   });
 
   it("prints the unsupported-runtime failure to stderr with a ✗ marker", () => {
@@ -59,14 +100,6 @@ describe("onboard preflight severity messages (#6004)", () => {
       recommendedMemGib: 12,
     });
     expect(lines(warn).join("\n")).toContain("Docker Desktop → Settings → Resources");
-  });
-
-  it("prints the low-memory warning to stderr with a ⚠ marker", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    printLowMemoryWarning({ totalRamMB: 4000, totalSwapMB: 0, totalMB: 4000 });
-    expect(lines(warn)[0]).toContain(
-      "⚠ Low memory detected (4000 MB RAM + 0 MB swap = 4000 MB total)",
-    );
   });
 
   it("prints the swap-creation failure to stderr with a ⚠ marker", () => {
