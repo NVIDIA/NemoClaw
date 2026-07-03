@@ -52,6 +52,21 @@ describe("handleSandboxCreateResultFailure", () => {
     expect(d.exit).toHaveBeenCalledWith(3);
   });
 
+  it("forwards the post-prebuild image-ref create args to the recovery hints (#6002)", () => {
+    // After the BuildKit prebuild rewrites `--from <Dockerfile>` to a local
+    // image ref, the launch args passed here already carry that image ref. The
+    // handler must forward exactly those args so the hints reconstruct the
+    // create command from the real, post-rewrite --from value (not a stale
+    // Dockerfile path).
+    const createArgs = ["--from", "nemoclaw/sandbox-local:asst", "--name", "asst"];
+    const d = deps({ createArgs });
+    expect(() => handleSandboxCreateResultFailure({ status: 5, output: "upload 404" }, d)).toThrow(
+      "exit",
+    );
+    expect(d.printRecoveryHints).toHaveBeenCalledWith("upload 404", { createArgs });
+    expect(d.exit).toHaveBeenCalledWith(5);
+  });
+
   it("exits with code 1 when the failure status is falsy but non-zero-branch is reached", () => {
     // status !== 0 gate is the caller's; here we assert the `|| 1` fallback path
     // by passing a NaN-like status the caller would not normally send.
