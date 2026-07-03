@@ -1,0 +1,91 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "OpenShell 0.0.72 Compatibility Review"
+sidebar-title: "OpenShell 0.0.72 Review"
+description: "Review the OpenShell 0.0.72 release identity, gateway authentication boundary, policy round-trip behavior, and MCP and JSON-RPC compatibility."
+description-agent: "Documents NemoClaw's OpenShell 0.0.72 compatibility boundary, including gateway authentication, provider-composed policy handling, and MCP and JSON-RPC enforcement. Use when validating the OpenShell 0.0.72 dependency pin, reviewing `policy get --base` behavior, or assessing the gateway and network-policy security contract."
+keywords: ["openshell 0.0.72 compatibility", "nemoclaw policy round trip", "mcp json-rpc policy", "openshell gateway authentication"]
+content:
+  type: "reference"
+---
+
+This review covers NemoClaw's stable OpenShell `0.0.72` pin, Docker-driver gateway authentication, policy mutation, and MCP and JSON-RPC policy compatibility.
+The review was completed on June 29, 2026.
+
+## Release Identity
+
+- The stable tag is `NVIDIA/OpenShell@v0.0.72` at commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
+- The upstream [v0.0.72 release workflow](https://github.com/NVIDIA/OpenShell/actions/runs/28382086068) completed all 54 jobs at that commit, including the MCP conformance lane, package smoke tests, release publication, and GHCR tags.
+- NemoClaw pins the eight consumed CLI, gateway, and sandbox assets to the digests published by the [GitHub release API](https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72).
+- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`. Explicit operator overrides and the opt-in development channel remain separate trust decisions.
+
+## Source-of-Truth Boundaries
+
+The generated gateway authentication contract remains unchanged from the [OpenShell 0.0.71 gateway authentication review](./openshell-0.0.71-gateway-auth-review).
+The `v0.0.71...v0.0.72` source comparison does not change the gateway config loader, local TLS tables, mTLS user authentication, gateway JWT issuer, or `SandboxJwtAuthenticator` contract used by NemoClaw.
+The live `openshell-gateway-auth-source-contract.test.ts` scenario revalidates that NemoClaw keeps the main OpenShell listener on `127.0.0.1`, rejects unauthenticated Docker-origin calls, accepts a correctly scoped sandbox JWT over guest mTLS, rejects cross-sandbox tokens, and scrubs `OPENSHELL_DISABLE_GATEWAY_AUTH=true`.
+The inherited contract also continues to reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`.
+User principals remain blocked from sandbox-only methods.
+
+The compatibility container remains an explicit trusted-host fallback behind `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`.
+It uses host networking and read-only Docker socket access, so directly supported glibc 2.28 or newer hosts remain preferred.
+Wildcard gateway binds remain rejected while gateway JWT authentication is active.
+Review this fallback at every stable OpenShell bump and remove it in the same NemoClaw release that raises every supported Linux host to OpenShell's native glibc floor and passes the exact-head gateway-authentication and gateway-upgrade matrix without the flag.
+
+### Compatibility Container Opt-In
+
+- `invalidState`: A host below OpenShell's native glibc floor silently receives a privileged compatibility path, or the path is treated as equivalent to native execution even though read-only Docker socket access still exposes privileged Docker APIs.
+- `sourceBoundary`: OpenShell owns its native glibc floor; NemoClaw owns the explicit `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` opt-in, host-networking configuration, read-only socket mount, and gateway authentication controls.
+- `whyNotSourceFix`: NemoClaw cannot make an upstream binary support an older host libc, so supported legacy hosts require an explicit, audited container boundary until the host floor is raised.
+- `regressionTest`: `test/install-openshell-version-check.test.ts` proves the flag gates the fallback, while `src/lib/onboard/docker-driver-gateway-compat-container.test.ts` covers container launch, the trust boundary, and the glibc decision.
+- `removalCondition`: Remove the fallback when every supported Linux host meets OpenShell's native glibc 2.28-or-newer floor and the exact-head gateway-authentication and gateway-upgrade matrix passes without the flag.
+
+The release source boundary is the immutable upstream tag, its GitHub release asset digests, and the GHCR manifest digest produced by the linked release workflow.
+A mutable tag, a digest copied from another release, or a checksum file that disagrees with NemoClaw's table is an invalid state.
+NemoClaw cannot make an upstream release mutable source trustworthy after publication, so the installer independently pins every consumed archive and the stable runtime uses the immutable supervisor manifest.
+`install-openshell-version-check.test.ts` compares all eight archive mappings with the checked-in installer table, and `docker-driver-gateway-runtime.test.ts` locks the stable supervisor default while preserving an explicit operator override.
+These version-specific pins are removed only when NemoClaw drops `0.0.72` support or replaces them with independently verified artifacts for a newly supported release.
+
+### Dev Channel Opt-In
+
+- `invalidState`: A mutable development artifact is installed without SHA-256 verification or an explicit operator risk acknowledgment.
+- `sourceBoundary`: NVIDIA/OpenShell owns the mutable `dev` tag; NemoClaw owns the opt-in that permits consuming it for pre-release compatibility tests.
+- `whyNotSourceFix`: NemoClaw cannot make an upstream development tag immutable, so it must fail closed unless the operator explicitly accepts that unverified install.
+- `regressionTest`: `test/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
+- `removalCondition`: Remove the opt-in when NemoClaw no longer tests unreleased OpenShell builds or the development channel publishes artifacts through an independently verified immutable pipeline.
+
+The development channel is compatibility evidence only. Use it in trusted test environments, never as the stable shipping configuration.
+
+## Round-Trippable Policy Boundary
+
+OpenShell `0.0.72` reserves the `_provider_*` network-policy namespace for provider composition.
+`openshell policy get <sandbox> --full` returns the effective policy including those derived entries, while `policy set` rejects user-authored reserved keys.
+The invalid state occurs when a NemoClaw read-modify-write path feeds provider-composed `_provider_*` entries back into `openshell policy set`.
+
+Every NemoClaw policy read-modify-write path, including preset merges and blueprint additions, and every Shields snapshot-for-restore path therefore starts from:
+
+```bash
+openshell policy get --base <sandbox>
+```
+
+Read-only status and diagnostic views continue to use `--full`.
+Regression coverage verifies that mutation commands select `--base`, provider-composed entries never reach `policy set`, and existing MCP policy fields survive a preset or blueprint merge.
+
+## MCP and JSON-RPC Policy Support
+
+OpenShell `0.0.72` adds `protocol: mcp` for MCP Streamable HTTP and `protocol: json-rpc` for generic JSON-RPC-over-HTTP enforcement.
+MCP rules can match methods and `tools/call` tool names, support allow and deny rules, and fail closed for malformed or ambiguous request frames.
+The upstream MCP conformance lane passed `initialize`, `tools_call`, and `elicitation-sep1034-client-defaults` with no expected failures.
+
+This dependency PR preserves the new MCP and JSON-RPC YAML fields when NemoClaw merges existing policies.
+It does not widen NemoClaw's strict blueprint-addition schema to author new MCP endpoints because that is a separate product and API change.
+OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not stdio MCP or generic inbound traffic.
+
+## Local Contract Coverage
+
+- Installer and runner tests pin all eight published release digests.
+- The sticky-version guard replaces a too-new `0.0.73` install with `0.0.72`.
+- Policy tests cover `--base` command construction and MCP and JSON-RPC field preservation.
+- Blueprint tests prove the merged policy excludes reserved provider entries.
+- The live gateway authentication and gateway-upgrade scenarios run against `0.0.72`.

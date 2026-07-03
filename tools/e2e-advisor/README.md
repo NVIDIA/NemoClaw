@@ -7,7 +7,8 @@ The E2E Advisor is an SDK-powered PR reviewer for NemoClaw E2E coverage. It runs
 `NVIDIA/NemoClaw` pull requests, asks the advisor model to inspect the PR diff and repository, and posts a sticky
 PR comment with required/optional E2E recommendations.
 
-The advisor recommends E2E coverage from the PR diff and repository context rather than a fixed path-rule table. The advisor model is expected to inspect existing E2E workflows, scripts, source files, and nearby tests before recommending coverage.
+The advisor recommends E2E coverage from the PR diff and repository context rather than a fixed path-rule table. The advisor model is expected to inspect existing E2E workflows, target definitions, source files, and nearby tests before recommending coverage.
+The target advisor also emits canonical `gh workflow run e2e.yaml` commands that use the workflow's `targets` or `jobs` inputs.
 
 ## Workflow
 
@@ -16,10 +17,9 @@ The advisor recommends E2E coverage from the PR diff and repository context rath
 1. Runs on `pull_request` and `workflow_dispatch`.
 2. Skips user-fork PRs; it only analyzes PRs whose head repo is `NVIDIA/NemoClaw`.
 3. Installs the pinned Pi SDK package.
-4. Runs `tools/e2e-advisor/analyze.mts`.
+4. Runs `tools/e2e-advisor/analyze.mts` and `tools/e2e-advisor/targets.mts`.
 5. Writes artifacts under `artifacts/e2e-advisor/`.
-6. For eligible internal PRs, auto-dispatches the required selective E2E jobs.
-7. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-e2e-advisor -->`.
+6. Posts or updates sticky PR comments marked by `<!-- nemoclaw-e2e-advisor -->` and `<!-- nemoclaw-e2e-target-advisor -->`.
 
 ## Safety model
 
@@ -28,15 +28,9 @@ The advisor recommends E2E coverage from the PR diff and repository context rath
 - The workflow does not execute PR-provided scripts, tests, or package-manager lifecycle hooks.
 - Generated advisor credential config is written under `/tmp`, not under uploaded artifacts.
 - The job is gated to internal upstream PRs only.
-- Automatic E2E dispatch is further restricted to PR authors with GitHub `OWNER` or `MEMBER`
-  author association.
-- Auto-dispatch runs the trusted `nightly-e2e.yaml` workflow from `main` and passes the PR head SHA
-  as `target_ref`, so the workflow definition itself is not taken from the PR branch.
-- The dispatcher is TypeScript executed by Node with `--experimental-strip-types`, avoiding a
-  package install or build step in the secret-bearing advisor job.
-- The dispatcher does not use a hardcoded job allowlist. It derives dispatchable job names from the
-  target workflow's own `inputs.jobs` selective-dispatch predicates and ignores recommendations that
-  do not match those jobs.
+- Target recommendations include canonical `gh workflow run` commands for
+  `.github/workflows/e2e.yaml`, but the advisor job does not
+  trigger those commands automatically.
 
 ## Required secret
 
@@ -55,8 +49,8 @@ making deterministic recommendations.
 - `E2E_ADVISOR_GITHUB_TOKEN`
 
 If present, this token is used for sticky PR comments. Otherwise the workflow falls back to
-`github.token`. Commenting is best-effort. Automatic E2E dispatch uses `github.token` with the
-workflow's `actions: write` permission, not this optional comment token.
+`github.token`. Commenting is best-effort. The advisor only recommends target
+dispatch commands; it does not trigger E2E workflows automatically.
 
 ## Artifacts
 
@@ -66,8 +60,7 @@ workflow's `actions: write` permission, not this optional comment token.
 - `e2e-advisor-session.html` — exported advisor session transcript.
 - `e2e-advisor-final-result.json` — normalized result used for comments.
 - `e2e-advisor-summary.md` — markdown summary used in the job summary/comment.
-- `e2e-advisor-dispatch-result.json` — automatic E2E dispatch status.
-- `e2e-advisor-dispatch-summary.md` — markdown dispatch summary.
+- `e2e-target-advisor-*.{md,txt,json,html}` — target-selection prompt, raw transcript, normalized results, session export, and summary used for the target recommendation comment.
 
 ## Manual run
 
@@ -77,6 +70,12 @@ node --experimental-strip-types tools/e2e-advisor/analyze.mts \
   --head HEAD \
   --schema tools/e2e-advisor/schema.json \
   --out-dir artifacts/e2e-advisor
+
+node --experimental-strip-types tools/e2e-advisor/targets.mts \
+  --base origin/main \
+  --head HEAD \
+  --schema tools/e2e-advisor/targets-schema.json \
+  --out-dir artifacts/e2e-advisor
 ```
 
 Set `E2E_ADVISOR_API_KEY` locally, or configure the repository `PI_E2E_ADVISOR_API_KEY`
@@ -84,8 +83,8 @@ secret. Run `npm install` first so the Pi SDK dependency is available.
 
 ## Output contract
 
-`tools/e2e-advisor/schema.json` defines the normalized JSON result shape used by the PR comment,
-automatic dispatch, and future enforcement work.
+`tools/e2e-advisor/schema.json` defines the normalized coverage recommendation shape.
+`tools/e2e-advisor/targets-schema.json` defines the normalized target recommendation shape used by the `targets` and `jobs` dispatch commands.
 
 Future enforcement should be implemented as a single dynamic required check that verifies the
 recommended E2E jobs passed for the same PR head SHA.

@@ -13,12 +13,12 @@ import {
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
-import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
-export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -72,6 +72,8 @@ export interface AgentLegacyPaths {
   plugin: string | null;
 }
 
+export type AgentVersionScheme = "semver" | "calendar";
+
 export interface AgentDefinition {
   name: string;
   description?: string;
@@ -79,6 +81,7 @@ export interface AgentDefinition {
   binary_path?: string;
   version_command?: string;
   expected_version?: string;
+  version_scheme?: AgentVersionScheme;
   gateway_command?: string;
   runtime?: AgentRuntime;
   device_pairing?: boolean;
@@ -106,6 +109,7 @@ export interface AgentDefinition {
   readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
+  readonly versionScheme?: AgentVersionScheme | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
   readonly dockerfileBasePath: string | null;
@@ -176,6 +180,12 @@ function readString(record: ManifestRecord, key: string): string | undefined {
 function readBoolean(record: ManifestRecord, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+function readVersionScheme(record: ManifestRecord): AgentVersionScheme | undefined {
+  const value = record.version_scheme;
+  if (value === "semver" || value === "calendar") return value;
+  return undefined;
 }
 
 function readObject(record: ManifestRecord, key: string): ManifestRecord | undefined {
@@ -259,8 +269,8 @@ function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
   });
 }
 
-function isValidPort(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+function isValidPort(value: unknown, min = 1): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= 65535;
 }
 
 function readPortArray(record: ManifestRecord, key: string): number[] | undefined {
@@ -271,9 +281,9 @@ function readPortArray(record: ManifestRecord, key: string): number[] | undefine
   }
 
   const ports = value.map((entry, index) => {
-    if (!isValidPort(entry)) {
+    if (!isValidPort(entry, 1024)) {
       throw new Error(
-        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1 and 65535`,
+        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1024 and 65535`,
       );
     }
     return entry;
@@ -434,6 +444,7 @@ export function loadAgent(name: string): AgentDefinition {
   const binaryPath = readString(raw, "binary_path");
   const versionCommand = readString(raw, "version_command");
   const expectedVersion = readString(raw, "expected_version");
+  const versionScheme = readVersionScheme(raw);
   const gatewayCommand = readString(raw, "gateway_command");
   const runtime = readAgentRuntime(raw);
   const forwardPorts = readPortArray(raw, "forward_ports");
@@ -457,6 +468,7 @@ export function loadAgent(name: string): AgentDefinition {
     binary_path: binaryPath,
     version_command: versionCommand,
     expected_version: expectedVersion,
+    version_scheme: versionScheme,
     gateway_command: gatewayCommand,
     runtime,
     device_pairing: readBoolean(raw, "device_pairing"),
@@ -539,6 +551,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get expectedVersion(): string | null {
       return expectedVersion ?? null;
+    },
+
+    get versionScheme(): AgentVersionScheme | null {
+      return versionScheme ?? null;
     },
 
     get hasDevicePairing(): boolean {

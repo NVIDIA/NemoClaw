@@ -240,7 +240,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
     return {
       pid,
       desiredEnv: { OPENSHELL_GATEWAY_PORT: String(port) },
-      endpoint: `http://127.0.0.1:${port}`,
+      endpoint: `https://127.0.0.1:${port}`,
       gatewayBin: "/usr/bin/openshell-gateway",
       openshellVersion: "0.0.44",
       dockerHost: null,
@@ -270,7 +270,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const firstMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(firstDir),
       );
-      expect(firstMarker?.endpoint).toBe("http://127.0.0.1:8080");
+      expect(firstMarker?.endpoint).toBe("https://127.0.0.1:8080");
       expect(firstMarker?.pid).toBe(1111);
 
       // And it still validates against what the first sandbox expects — no drift,
@@ -283,7 +283,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const secondMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(secondDir),
       );
-      expect(secondMarker?.endpoint).toBe("http://127.0.0.1:8081");
+      expect(secondMarker?.endpoint).toBe("https://127.0.0.1:8081");
       expect(secondMarker?.pid).toBe(2222);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

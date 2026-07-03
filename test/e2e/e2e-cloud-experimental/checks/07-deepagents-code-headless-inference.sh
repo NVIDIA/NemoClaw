@@ -6,10 +6,16 @@
 #
 # Headless `dcode -n "<prompt>"`, run inside a built Deep Agents Code sandbox,
 # must route through the managed https://inference.local/v1 endpoint using the
-# placeholder OpenAI-compatible key NemoClaw writes into config.toml, and either
-# return a response or a deterministic, actionable provider/model error (never a
-# hang or ambiguous failure). No real provider/proxy credentials may appear in
-# config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or the captured output.
+# placeholder OpenAI-compatible key NemoClaw writes into config.toml. The login
+# shell path must return PONG with exit 0; provider, connection, DNS, timeout, and
+# ambiguous failures are not acceptable. No real provider/proxy credentials may
+# appear in config.toml, .env, .mcp.json, /tmp/nemoclaw-proxy-env.sh, or output.
+# Direct DNS/hosts resolution is intentionally not required: OpenShell's managed
+# proxy routes inference.local when the request follows the normalized path.
+# Keep these phases in one ordered acceptance check: the absent-DNS observation
+# must describe the same sandbox used by login, direct-exec, and connect, and the
+# final credential scan must cover every captured output. Per-phase diagnostics
+# retain failure attribution without splitting that shared evidence boundary.
 
 set -euo pipefail
 
@@ -32,6 +38,43 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
+sandbox_login_exec() {
+  # OpenShell exec sessions may carry their own environment. Remove it so this
+  # probe can only recover the proxy contract through /sandbox/.profile, then
+  # pin HOME so bash selects the sandbox user's trusted login startup file.
+  openshell sandbox exec --name "$SANDBOX_NAME" -- env \
+    -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY \
+    -u http_proxy -u https_proxy -u no_proxy \
+    -u ALL_PROXY -u all_proxy \
+    HOME=/sandbox bash -lc "$1" 2>&1
+}
+
+sandbox_direct_dcode() {
+  openshell sandbox exec --name "$SANDBOX_NAME" --timeout "$HEADLESS_TIMEOUT" -- dcode "$@" 2>&1
+}
+
+sandbox_dcode_wrapper_contract() {
+  # Keep the remote argv on one line: OpenShell rejects newline-bearing args.
+  # shellcheck disable=SC2016
+  sandbox_exec 'dcode_path="$(command -v dcode 2>/dev/null || true)"; [ "$dcode_path" = /usr/local/bin/dcode ] && [ -x /usr/local/lib/nemoclaw/dcode-launcher.sh ] && [ -x /usr/local/lib/nemoclaw/dcode-wrapper.sh ] && cmp -s /usr/local/bin/dcode /usr/local/lib/nemoclaw/dcode-launcher.sh && python3 -c '\''import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("deepagents_code") else 1)'\'' && printf "%s\\n" NEMOCLAW_DCODE_WRAPPER_CHAIN_OK'
+}
+
+nemoclaw_connect_probe() {
+  "${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}" "$SANDBOX_NAME" connect --probe-only 2>&1
+}
+
+sandbox_login_proxy_contract() {
+  # OpenShell rejects CR/LF in any exec argv element, so keep this remote login
+  # command on one physical line. inference.local is intentionally absent from
+  # NO_PROXY: OpenShell does not need to provision inference.local DNS/hosts
+  # into the sandbox because its managed proxy owns this L7 route. Adding
+  # inference.local here would bypass that proxy and force a direct DNS lookup.
+  local contract_command
+  # shellcheck disable=SC2016
+  contract_command='set -euo pipefail; contract_fail() { printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_FAIL:$1"; exit 1; }; proxy_file_metadata() { stat -c "%u:%a" "$1" 2>/dev/null || stat -f "%u:%Lp" "$1" 2>/dev/null; }; [ "${HOME:-}" = /sandbox ] || contract_fail home; runtime_uid="$(id -u)" || contract_fail runtime-user; sandbox_uid="$(id -u sandbox)" || contract_fail runtime-user; [ "$runtime_uid" != 0 ] && [ "$runtime_uid" = "$sandbox_uid" ] || contract_fail runtime-user; for file in /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port; do [ -f "$file" ] && [ ! -L "$file" ] && [ "$(proxy_file_metadata "$file")" = "0:444" ] || contract_fail proxy-file-trust; done; trusted_proxy_host="$(cat /usr/local/share/nemoclaw/dcode-proxy-host)" || contract_fail proxy-file-read; trusted_proxy_port="$(cat /usr/local/share/nemoclaw/dcode-proxy-port)" || contract_fail proxy-file-read; proxy_env=/tmp/nemoclaw-proxy-env.sh; [ -f "$proxy_env" ] && [ ! -L "$proxy_env" ] && [ "$(proxy_file_metadata "$proxy_env")" = "${runtime_uid}:444" ] || contract_fail proxy-env-file-metadata; [ -z "${ALL_PROXY+x}" ] || contract_fail all-proxy; [ -z "${all_proxy+x}" ] || contract_fail lower-all-proxy; proxy_url="${HTTP_PROXY:-}"; case "$proxy_url" in http://*:*) ;; *) contract_fail proxy-shape ;; esac; case "$proxy_url" in *"@"*) contract_fail proxy-credentials ;; esac; expected_proxy_url="http://${trusted_proxy_host}:${trusted_proxy_port}"; [ "$proxy_url" = "$expected_proxy_url" ] || contract_fail proxy-source; [ "$proxy_url" = "${HTTPS_PROXY:-}" ] || contract_fail https-proxy; [ "$proxy_url" = "${http_proxy:-}" ] || contract_fail lower-http-proxy; [ "$proxy_url" = "${https_proxy:-}" ] || contract_fail lower-https-proxy; expected_no_proxy="localhost,127.0.0.1,::1,${trusted_proxy_host}"; [ "${NO_PROXY:-}" = "$expected_no_proxy" ] || contract_fail no-proxy; [ "${no_proxy:-}" = "$expected_no_proxy" ] || contract_fail lower-no-proxy; printf "%s\n" "NEMOCLAW_DCODE_PROXY_ENV_OK"'
+  sandbox_login_exec "$contract_command"
+}
+
 sandbox_artifact_scan_command() {
   cat <<'SCAN'
 for path in /sandbox/.deepagents/config.toml /sandbox/.deepagents/.env /sandbox/.deepagents/.mcp.json /tmp/nemoclaw-proxy-env.sh; do
@@ -46,7 +89,7 @@ SCAN
 }
 
 # Secret-shaped patterns that must never appear in managed config or output.
-SECRET_PATTERN='nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|bot[0-9]{8,10}:[A-Za-z0-9_-]{35}|[0-9]{8,10}:[A-Za-z0-9_-]{35}|[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}'
+SECRET_PATTERN='nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|bot[0-9]{8,10}:[A-Za-z0-9_-]{35}|[0-9]{8,10}:[A-Za-z0-9_-]{35}|[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}|tvly-[A-Za-z0-9_-]{10,}|lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)*'
 
 PASSED=0
 FAILED=0
@@ -71,10 +114,22 @@ is_local_execution_failure() {
   grep -Eiq '(^|[[:space:]])(usage:|Traceback|SyntaxError|ImportError|ModuleNotFoundError|No module named|command not found|No such file or directory|Permission denied|invalid option)([[:space:]]|$)|DCODE_EXIT:12[67]'
 }
 
-is_actionable_inference_error() {
-  grep -Eiq 'inference\.local|provider|model|NVIDIA|OpenAI|API key|authentication|authorization|unauthorized|forbidden|rate[ -]?limit|quota|HTTP[[:space:]]*(401|403|404|429|5[0-9]{2})|status[[:space:]]*(401|403|404|429|5[0-9]{2})'
+is_dcode_wrapper_failure() {
+  grep -Eiq "(^|[[:space:]/])(dcode|dcode-launcher\\.sh|dcode-wrapper\\.sh):[[:space:]]*(command not found|No such file or directory|Permission denied)|No module named ['\\\"]?deepagents_code"
 }
 
+is_inference_connection_failure() {
+  grep -Eiq 'APIConnectionError|APITimeoutError|ConnectError|ConnectTimeout|ReadTimeout|Could not resolve host|Name or service not known|Temporary failure in name resolution|getaddrinfo.*(ENOTFOUND|EAI_AGAIN|failed|error)|nodename nor servname provided|DNS (lookup|resolution) (failed|error)|connection (timed out|refused)|request timed out'
+}
+
+is_actionable_inference_error() {
+  grep -Eiq 'API key|authentication|authorization|unauthorized|forbidden|rate[ -]?limit|quota|HTTP[[:space:]]*(401|403|404|429|5[0-9]{2})|status[[:space:]]*(401|403|404|429|5[0-9]{2})|(inference\.local|provider|model|NVIDIA|OpenAI).*(error|failed|failure|invalid|unavailable)|(error|failed|failure|invalid|unavailable).*(inference\.local|provider|model|NVIDIA|OpenAI)'
+}
+
+# Route reachability is proved separately with /v1/models. This classifier has
+# the stronger #6191 acceptance contract: dcode itself must be usable and return
+# exit-zero PONG, so authentication, quota, provider, and model errors are
+# intentionally failures rather than route-only success signals.
 classify_headless_output() {
   local dcode_exit="$1"
   local headless_output="$2"
@@ -86,8 +141,8 @@ classify_headless_output() {
     return 1
   fi
 
-  if [ -z "$(printf '%s' "$payload" | tr -d '[:space:]')" ]; then
-    printf '%s\n' "empty-output"
+  if printf '%s' "$payload" | is_dcode_wrapper_failure; then
+    printf '%s\n' "wrapper-missing"
     return 1
   fi
 
@@ -96,13 +151,28 @@ classify_headless_output() {
     return 1
   fi
 
-  if printf '%s' "$payload" | grep -Eiq '(^|[^[:alnum:]_])PONG([^[:alnum:]_]|$)'; then
-    printf '%s\n' "pong"
-    return 0
+  if printf '%s' "$payload" | is_inference_connection_failure; then
+    printf '%s\n' "inference-connection-failure"
+    return 1
   fi
 
   if printf '%s' "$payload" | is_actionable_inference_error; then
     printf '%s\n' "actionable-inference-error"
+    return 1
+  fi
+
+  if [ "$dcode_exit" != "0" ]; then
+    printf '%s\n' "nonzero-exit"
+    return 1
+  fi
+
+  if [ -z "$(printf '%s' "$payload" | tr -d '[:space:]')" ]; then
+    printf '%s\n' "empty-output"
+    return 1
+  fi
+
+  if printf '%s\n' "$payload" | tr -d '\r' | grep -Eiq '^[[:space:]]*PONG[[:space:]]*$'; then
+    printf '%s\n' "pong"
     return 0
   fi
 
@@ -117,12 +187,19 @@ main() {
     exit 1
   fi
 
-  if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
+  if ! sandbox_exec "test -d /sandbox/.deepagents" >/dev/null; then
     info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
     exit 0
   fi
 
   info "Running Deep Agents Code headless inference checks in sandbox: $SANDBOX_NAME"
+
+  wrapper_contract_output="$(sandbox_dcode_wrapper_contract || true)"
+  if printf '%s\n' "$wrapper_contract_output" | grep -Fxq "NEMOCLAW_DCODE_WRAPPER_CHAIN_OK"; then
+    pass "managed dcode launcher, wrapper, and Python module are installed"
+  else
+    fail_test "managed dcode wrapper chain is missing or incomplete"
+  fi
 
   # 1. config.toml points at the managed inference route, not a real provider host.
   config_output="$(sandbox_exec "cat /sandbox/.deepagents/config.toml 2>/dev/null" || true)"
@@ -137,20 +214,87 @@ main() {
     fail_test "config.toml does not use the managed placeholder API key env reference (captured config redacted from log)"
   fi
 
-  # 2. Headless dcode -n returns PONG or a deterministic, actionable inference error.
-  headless_output="$(sandbox_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG'; echo \"DCODE_EXIT:\$?\"")"
-  dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
-  if classification="$(classify_headless_output "${dcode_exit:-unknown}" "$headless_output")"; then
-    pass "dcode -n reached managed inference with ${classification} (exit ${dcode_exit:-unknown})"
+  # 2. Record whether direct DNS/hosts is absent. When it is, the following
+  # login, direct-exec, and connect successes prove they do not depend on it;
+  # a present route is informational and is not credited as that proof.
+  dns_hosts_output="$(sandbox_exec "if ! command -v getent >/dev/null 2>&1; then printf '%s\\n' NEMOCLAW_DCODE_DNS_PROBE_MISSING_GETENT; elif ! command -v timeout >/dev/null 2>&1; then printf '%s\\n' NEMOCLAW_DCODE_DNS_PROBE_MISSING_TIMEOUT; elif timeout 5 getent hosts inference.local >/dev/null 2>&1; then printf '%s\\n' NEMOCLAW_DCODE_DNS_PRESENT; else status=\$?; if [ \"\$status\" -eq 124 ]; then printf '%s\\n' NEMOCLAW_DCODE_DNS_PROBE_TIMEOUT; else printf '%s\\n' NEMOCLAW_DCODE_DNS_ABSENT; fi; fi")"
+  if printf '%s\n' "$dns_hosts_output" | grep -Fxq "NEMOCLAW_DCODE_DNS_PROBE_MISSING_GETENT"; then
+    direct_dns_state=unknown
+    fail_test "required DNS diagnostic tool getent is unavailable in the sandbox"
+  elif printf '%s\n' "$dns_hosts_output" | grep -Fxq "NEMOCLAW_DCODE_DNS_PROBE_MISSING_TIMEOUT"; then
+    direct_dns_state=unknown
+    fail_test "required DNS diagnostic tool timeout is unavailable in the sandbox"
+  elif printf '%s\n' "$dns_hosts_output" | grep -Fxq "NEMOCLAW_DCODE_DNS_ABSENT"; then
+    direct_dns_state=absent
+    pass "direct inference.local DNS/hosts is absent; exercising the proxy-only contract"
+  elif printf '%s\n' "$dns_hosts_output" | grep -Fxq "NEMOCLAW_DCODE_DNS_PRESENT"; then
+    direct_dns_state=present
+    info "direct inference.local DNS/hosts is present; proxy independence is not inferred from this observation"
   else
-    fail_test "dcode -n did not produce PONG or an allowlisted provider/model/inference error (${classification}, exit ${dcode_exit:-unknown})"
+    direct_dns_state=unknown
+    fail_test "could not observe the direct inference.local DNS/hosts state"
   fi
 
-  # 3. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
+  # 3. The login shell loaded the exact normalized proxy contract from .profile.
+  proxy_contract_output="$(sandbox_login_proxy_contract || true)"
+  if printf '%s\n' "$proxy_contract_output" | grep -Fxq "NEMOCLAW_DCODE_PROXY_ENV_OK"; then
+    pass "login shell loaded the normalized managed proxy environment"
+  else
+    proxy_contract_reason="$(printf '%s\n' "$proxy_contract_output" | sed -n 's/^NEMOCLAW_DCODE_PROXY_ENV_FAIL:\([a-z-]*\)$/\1/p' | tail -n1)"
+    fail_test "login shell did not load the normalized managed proxy environment (${proxy_contract_reason:-unknown contract mismatch})"
+  fi
+
+  # 4. The managed route is reachable through the normalized login-shell proxy.
+  route_output="$(sandbox_login_exec "curl -sS -o /dev/null -w 'HTTP_CODE:%{http_code}' --proxy \"\${HTTPS_PROXY}\" --noproxy \"\${NO_PROXY}\" --max-time 30 https://inference.local/v1/models" || true)"
+  route_code="$(printf '%s' "$route_output" | sed -n 's/.*HTTP_CODE:\([0-9][0-9][0-9]\).*/\1/p' | tail -n1)"
+  if [ "$route_code" = "200" ]; then
+    pass "login-shell proxy reached https://inference.local/v1/models"
+  else
+    fail_test "login-shell proxy did not receive HTTP 200 from https://inference.local/v1/models (HTTP ${route_code:-000})"
+  fi
+
+  # 5. The same login-shell path runs dcode and returns PONG.
+  headless_output="$(sandbox_login_exec "cd /sandbox && timeout ${HEADLESS_TIMEOUT} dcode -n 'Reply with exactly one word: PONG'; echo \"DCODE_EXIT:\$?\"" || true)"
+  dcode_exit="$(printf '%s' "$headless_output" | sed -n 's/.*DCODE_EXIT:\([0-9]\+\).*/\1/p' | tail -n1)"
+  if classification="$(classify_headless_output "${dcode_exit:-unknown}" "$headless_output")"; then
+    pass "login-shell dcode -n reached managed inference with ${classification} (exit ${dcode_exit:-unknown}; direct DNS/hosts ${direct_dns_state})"
+  else
+    fail_test "login-shell dcode -n did not exit 0 with PONG (${classification}, exit ${dcode_exit:-unknown})"
+  fi
+
+  # 6. The public direct-exec path reaches inference without shell startup files.
+  if direct_output="$(sandbox_direct_dcode -n "Reply with exactly one word: PONG")"; then
+    direct_exit=0
+  else
+    direct_exit=$?
+  fi
+  direct_headless_output="${direct_output}
+DCODE_EXIT:${direct_exit}"
+  if direct_classification="$(classify_headless_output "$direct_exit" "$direct_headless_output")"; then
+    pass "direct-exec dcode -n reached managed inference with ${direct_classification} (exit ${direct_exit}; direct DNS/hosts ${direct_dns_state})"
+  else
+    fail_test "direct-exec dcode -n did not exit 0 with PONG (${direct_classification}, exit ${direct_exit})"
+  fi
+
+  # 7. The user-facing connect readiness path accepts the same managed route.
+  if connect_output="$(nemoclaw_connect_probe)"; then
+    connect_exit=0
+    pass "nemoclaw connect --probe-only accepted the managed inference route (direct DNS/hosts ${direct_dns_state})"
+  else
+    connect_exit=$?
+    fail_test "nemoclaw connect --probe-only rejected the managed inference route (exit ${connect_exit})"
+  fi
+
+  # 8. No real secrets in managed config, runtime env files, artifacts, logs, or captured output.
   leak_scan="$(sandbox_exec "$(sandbox_artifact_scan_command)" || true)"
   combined="${config_output}
 ${leak_scan}
-${headless_output}"
+${dns_hosts_output}
+${proxy_contract_output}
+${route_output}
+${headless_output}
+${direct_headless_output}
+${connect_output}"
   if printf '%s' "$combined" | contains_secret; then
     fail_test "secret-shaped value found in config/env/output (redacted from log)"
   else

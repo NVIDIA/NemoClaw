@@ -22,8 +22,13 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 WORKDIR /opt/nemoclaw
-RUN npm ci && npm run build
+RUN npm ci \
+    && npm run build \
+    && node --experimental-strip-types \
+        /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
+        /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -38,6 +43,10 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+
+# OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
+# credential chains from attempting an impossible metadata discovery path.
+ENV AWS_EC2_METADATA_DISABLED=true
 
 # OpenClaw 2026.5.27 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
@@ -97,7 +106,19 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
-RUN npm ci --omit=dev
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
+# the primary security gate: it enforces the generated boundary's strict module
+# dependency allowlist before this stage copies it. The node check below is
+# defense in depth only and proves the copied runtime still exports the complete
+# audited interface; function availability does not replace dependency lockdown.
+RUN npm ci --omit=dev \
+    && test -f /usr/local/bin/node \
+    && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
+    && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$node_unsafe" \
+    && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$json5_unsafe"
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
@@ -529,10 +550,16 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/gateway-supervisor.sh /usr/local/lib/nemoclaw/gateway-supervisor.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
+COPY scripts/lib/normalize_mutable_config_perms.py /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py
+COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
+COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
+COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
+COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
 # blocks /opt/nemoclaw-blueprint/ from non-root users, but the entrypoint
 # needs to read these files to install Node runtime preloads under /tmp.
@@ -549,9 +576,20 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /scripts/generate-openclaw-config.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod -R a+rX /src/lib/messaging \
-    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control \
+        /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
+    && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
+        /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
+    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+        /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
+    && chmod 555 /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
         find /usr/local/lib/nemoclaw/preloads-compiled-channels -path '*/runtime/*.js' -type f \
             -exec sh -c 'for file do cp "$file" "/usr/local/lib/nemoclaw/preloads/$(basename "$file")"; done' sh {} +; \
@@ -613,9 +651,9 @@ ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # since terminal-based pairing is impossible in those contexts.
 # Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build — busts the Docker cache for the token-injection layer
-# so each image gets a fresh gateway auth token.
-# Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
+# Compatibility build arg for older custom Dockerfiles and rebuild tooling.
+# NemoClaw-managed images intentionally do not consume it; gateway auth tokens
+# are generated at container startup and are never baked into image layers.
 ARG NEMOCLAW_BUILD_ID=default
 # macOS OpenShell VM backend imports the Docker image into a virtiofs rootfs
 # where image uid/gid ownership is presented as the host user. The VM also
@@ -907,14 +945,23 @@ RUN set -eu; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
-# Stale-base fallback for the gateway-in-sandbox-group setup (#2681).
-# Newer base images already add the gateway user to the sandbox group, but
-# the derived image must remain build-clean against older sandbox-base:latest
-# tags too. The `id -nG` check makes this idempotent.
+# Stale-base fallback for the gateway/root-in-sandbox-group setup (#2681).
+# Newer base images already add both users to the sandbox group, but the
+# derived image must remain build-clean against older sandbox-base:latest
+# tags too. Root membership preserves PID 1 access when CAP_DAC_OVERRIDE is
+# dropped. The `id -nG` checks make this idempotent. Remove this block after
+# the minimum supported OpenClaw sandbox base tag is v0.0.71 or newer and
+# Dockerfile.base guarantees both memberships; keep that base contract covered
+# by test/sandbox-provisioning.test.ts.
 # hadolint ignore=DL4006
 RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \
             usermod -aG sandbox gateway; \
+        fi; \
+    fi \
+    && if id root >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
+        if ! id -nG root | tr ' ' '\n' | grep -qx sandbox; then \
+            usermod -aG sandbox root; \
         fi; \
     fi
 
@@ -1087,32 +1134,12 @@ RUN set -eu; \
 #           host-side delivery-chain monitoring (verify-deployment.ts, host
 #           port forward, sandbox status).
 #
-# The pgrep pattern matches both `openclaw gateway run` (the launcher
-# command nemoclaw-start runs) and `openclaw-gateway` (the older re-execed
-# binary form). Recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the
-# long-running gateway into a process whose argv is plain `openclaw` with
-# no `gateway` token at all (#4952), which that pattern cannot see — so on a
-# marker-present container whose in-container curl probe failed, the stale
-# pattern reported a live gateway as permanently unhealthy.
-#
-# When the pattern misses, fall back to the gateway PID that nemoclaw-start
-# recorded in /tmp/nemoclaw-gateway.pid (record_gateway_pid, written for both
-# the root and non-root launch paths and refreshed on every respawn) and
-# confirm THAT pid is still a live `openclaw` process. This deliberately does
-# not match any process merely named `openclaw`: a bare `pgrep -x openclaw`
-# would keep Docker healthy when the real gateway has died but an unrelated
-# `openclaw` one-shot (e.g. `openclaw agent ...`) happens to be running,
-# defeating restart/self-healing. The recorded-pid check is gateway-specific
-# and survives PID reuse via the comm prefix guard. `ps -o comm=` reads the
-# (15-char) process name, which is `openclaw` for the re-execed gateway and
-# `openclaw-gatewa(y)` for the legacy form — both match `openclaw*`.
-#
-# pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
-# shell that Docker spawns to run this CMD — that shell's argv contains
-# the literal 'openclaw gateway' string we're searching for, and
-# without --ignore-ancestors `pgrep -f` would happily report it as the
-# live gateway even after the real process exited (procps 4.0+ supports
-# this flag; the base image pins procps to 2:4.0.4-9).
+# nemoclaw-start records `pid starttime` for the exact gateway process in
+# /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
+# refused, validate both values against `/proc/<pid>/stat` field 22 before
+# accepting the exact OpenClaw gateway cmdline fallback.  A numeric PID or
+# OpenClaw-looking argv alone is insufficient because either can belong to a
+# recycled process.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
@@ -1123,11 +1150,12 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
         [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
-        if ! pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1; then \
-            gwpid="$(cat /tmp/nemoclaw-gateway.pid 2>/dev/null)"; \
-            case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
-            case "$(ps -p "$gwpid" -o comm= 2>/dev/null)" in openclaw*) ;; *) exit 1 ;; esac; \
-        fi; \
+        gwpid=; gwstart=; gwextra=; \
+        IFS=' ' read -r gwpid gwstart gwextra </tmp/nemoclaw-gateway.pid 2>/dev/null || exit 1; \
+        case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
+        case "${gwstart:-x}" in *[!0-9]*) exit 1 ;; esac; \
+        [ -z "$gwextra" ] || exit 1; \
+        python3 -c 'import pathlib, sys; proc = pathlib.Path(sys.argv[1]); expected = sys.argv[2].encode("ascii"); port = sys.argv[3].encode(); parse = lambda data: (lambda fields: (fields[0], fields[19]))(data.rsplit(b") ", 1)[1].split()); before = parse((proc / "stat").read_bytes()); raw = (proc / "cmdline").read_bytes(); after = parse((proc / "stat").read_bytes()); trimmed = raw.rstrip(b"\0"); padding = len(raw) - len(trimmed); title = padding >= 1 and trimmed in (b"openclaw", b"openclaw-gateway"); argv = raw[:-1].split(b"\0") if padding == 1 else []; interpreters = (b"node", b"nodejs", b"/usr/local/bin/node", b"/usr/local/bin/nodejs", b"/usr/bin/node", b"/usr/bin/nodejs"); launchers = (b"/usr/local/bin/openclaw", b"/usr/local/lib/node_modules/openclaw/openclaw.mjs"); index = 1 if argv and argv[0] in interpreters else 0; command = index < len(argv) and argv[index] in launchers and argv[index + 1:] in ([b"gateway", b"run", b"--port", port], [b"gateway", b"run", b"--port=" + port]); identity = before[1] == expected == after[1] and before[0] != b"Z" and after[0] != b"Z"; raise SystemExit(not (identity and (title or command)))' "/proc/$gwpid" "$gwstart" "$port" 2>/dev/null || exit 1; \
         [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,

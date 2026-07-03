@@ -192,6 +192,7 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -220,6 +221,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
+      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",
@@ -328,6 +330,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
+      "prepare_hermes_nonroot_runtime() { retry_tirith_marker_if_needed; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
@@ -416,6 +419,7 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
   const fakeBin = path.join(tmpDir, "bin");
   const fakeInit = path.join(tmpDir, "sandbox-init.sh");
+  const fakeSupervisor = path.join(tmpDir, "gateway-supervisor.sh");
   const marker = path.join(tmpDir, "dirname-called");
   const sourcePathLog = path.join(tmpDir, "source-path.log");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -433,6 +437,7 @@ function runHermesSandboxInitPreludeWithFakePath() {
       "harden_resource_limits() { :; }",
     ].join("\n"),
   );
+  fs.writeFileSync(fakeSupervisor, "# supervisor fixture\n");
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const start = src.indexOf(
@@ -441,7 +446,8 @@ function runHermesSandboxInitPreludeWithFakePath() {
   const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
   const prelude = src
     .slice(start, end)
-    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit);
+    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit)
+    .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", fakeSupervisor);
 
   fs.writeFileSync(
     scriptPath,
@@ -493,6 +499,7 @@ function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
   const pidDir = path.join(procRoot, String(pid));
   fs.mkdirSync(pidDir, { recursive: true });
   fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+  fs.writeFileSync(path.join(pidDir, "status"), "Name:\tfixture\nUid:\t1000\t1000\t1000\t1000\n");
 }
 
 function lstatIfPresent(entry: string): fs.Stats | null {
@@ -753,7 +760,7 @@ function runRuntimeShellEnvBootstrap() {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
     });
     const envFileContent = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
     const envFileMode = fs.existsSync(envFile)
@@ -798,6 +805,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
@@ -1009,6 +1017,8 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
+
+  // PATH-shadow regression lives in test/hermes-start-path-shadow.test.ts.
 
   it("rejects raw secret-shaped values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";

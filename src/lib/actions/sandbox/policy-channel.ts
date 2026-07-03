@@ -4,11 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { type AgentDefinition, loadAgent } from "../../agent/defs";
+import type { AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
@@ -19,6 +18,7 @@ import {
   getMessagingManifestAvailabilityContext,
   isMessagingChannelSupportedByAgent,
   isMessagingHookConflictError,
+  listMessagingPolicyPresetMetadata,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -29,7 +29,9 @@ import {
   tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { resolveAgentForSandbox } from "../../sandbox/version";
 import { hashCredential } from "../../security/credential-hash";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
@@ -37,6 +39,7 @@ const onboardProviders = require("../../onboard/providers");
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
+import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 
 const onboardSession =
   require("../../state/onboard-session") as typeof import("../../state/onboard-session");
@@ -60,10 +63,10 @@ import {
 } from "../../sandbox/channels";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
-import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -137,12 +140,31 @@ export async function addSandboxPolicy(
   }
 
   const sandboxAgent = registry.getSandbox(sandboxName)?.agent ?? null;
-  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent);
+  const agent = resolveAgentForSandbox(sandboxName);
+  const allPresets = filterSetupPolicyPresetsForAgent(policies.listPresets(), sandboxAgent).filter(
+    (preset: { name: string }) => {
+      const manifest = resolveChannelManifest(preset.name);
+      return !manifest || channelSupportedByAgent(manifest, agent);
+    },
+  );
   const applied = policies.getAppliedPresets(sandboxName);
 
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();
+    const channelManifest = resolveChannelManifest(normalized);
+    if (channelManifest && !channelSupportedByAgent(channelManifest, agent)) {
+      console.error(
+        `  Channel '${channelManifest.id}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
+      );
+      console.error(
+        `  Channel-supported agents: ${formatSupportedMessagingAgentIds(channelManifest.supportedAgents)}.`,
+      );
+      console.error(
+        `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+      );
+      process.exit(1);
+    }
     const preset = allPresets.find((item: { name: string }) => item.name === normalized);
     if (!preset) {
       console.error(`  Unknown preset '${presetArg}'.`);
@@ -221,6 +243,21 @@ async function applyExternalPreset(
   }
   if (!loaded) return false;
 
+  const agent = resolveAgentForSandbox(sandboxName);
+  const unsupportedChannel = unsupportedMessagingChannelForPresetContent(loaded.content, agent);
+  if (unsupportedChannel) {
+    console.error(
+      `  Preset '${loaded.presetName}' targets the '${unsupportedChannel.id}' channel, which does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
+    );
+    console.error(
+      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(unsupportedChannel.supportedAgents)}.`,
+    );
+    console.error(
+      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+    );
+    return false;
+  }
+
   const endpoints = policies.getPresetEndpoints(loaded.content);
   if (endpoints.length > 0) {
     console.log(`  [${loaded.presetName}] Endpoints that would be opened: ${endpoints.join(", ")}`);
@@ -269,30 +306,25 @@ export function listSandboxPolicies(sandboxName: string) {
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
+  const sandboxEntry = registry.getSandbox(sandboxName);
+  const provenanceContext = {
+    tierName: sandboxEntry?.policyTier ?? null,
+    agentName: sandboxEntry?.agent ?? null,
+  };
+
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p: { name: string; description: string }) => {
     const inRegistry = registryPresets.includes(p.name);
     const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
-
-    let marker;
-    let suffix = "";
-    if (inGateway === null) {
-      // Gateway unreachable — fall back to registry-only display
-      marker = inRegistry ? "●" : "○";
-    } else if (inRegistry && inGateway) {
-      marker = "●";
-    } else if (!inRegistry && !inGateway) {
-      marker = "○";
-    } else if (inGateway && !inRegistry) {
-      marker = "●";
-      suffix = " (active on gateway, missing from local state)";
-    } else {
-      // inRegistry && !inGateway
-      marker = "○";
-      suffix = " (recorded locally, not active on gateway)";
-    }
-    console.log(`    ${marker} ${p.name} — ${p.description}${suffix}`);
+    console.log(
+      formatPolicyListPresetRow({
+        preset: p,
+        provenanceContext,
+        inRegistry,
+        inGateway,
+      }),
+    );
   });
 
   if (gatewayPresets === null) {
@@ -315,12 +347,6 @@ export function listSandboxPolicies(sandboxName: string) {
 
 // ── Messaging channels ───────────────────────────────────────────
 
-function resolveAgentForSandbox(sandboxName: string): AgentDefinition {
-  const entry = registry.getSandbox(sandboxName);
-  const agentName = entry?.agent || "openclaw";
-  return loadAgent(agentName);
-}
-
 function knownManifestChannelNames(): string[] {
   return messagingManifestRegistry.list().map((manifest) => manifest.id);
 }
@@ -337,6 +363,30 @@ function availableManifestChannelsForAgent(agent: AgentDefinition): ChannelManif
 
 function channelSupportedByAgent(manifest: ChannelManifest, agent: AgentDefinition): boolean {
   return isMessagingChannelSupportedByAgent(manifest, agent);
+}
+
+// Custom presets (--from-file / --from-dir) have no channel identity of
+// their own, so the built-in name-based gate above cannot see them. Detect
+// a messaging channel by content instead: match the preset's network_policies
+// keys against every channel's known policy keys, then apply the same
+// agent-support gate as the built-in path.
+function unsupportedMessagingChannelForPresetContent(
+  content: string,
+  agent: AgentDefinition,
+): ChannelManifest | null {
+  if (typeof content !== "string") return null;
+  const policyKeys = new Set(policies.parsePresetPolicyKeys(content));
+  if (policyKeys.size === 0) return null;
+  for (const preset of listMessagingPolicyPresetMetadata()) {
+    const channelPolicyKeys = [
+      ...preset.policyKeys,
+      ...Object.values(preset.agentPolicyKeys).flatMap((keys) => keys ?? []),
+    ];
+    if (!channelPolicyKeys.some((key) => policyKeys.has(key))) continue;
+    const manifest = resolveChannelManifest(preset.channelId);
+    if (manifest && !channelSupportedByAgent(manifest, agent)) return manifest;
+  }
+  return null;
 }
 
 export function listSandboxChannels(sandboxName: string) {
@@ -1120,7 +1170,11 @@ async function rollbackChannelAdd(
   return result;
 }
 
-export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(
+  sandboxName: string,
+  channelName: string,
+  retryAction: "add" | "start" = "add",
+): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1128,7 +1182,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
       );
       return false;
     }
@@ -1139,7 +1193,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
     );
     return false;
   }
@@ -1424,6 +1478,21 @@ async function sandboxChannelsSetEnabled(
   const plan = await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
   if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
+    process.exit(1);
+  }
+  // Rebuild persists only the presets it actually restores. Re-apply a
+  // restarted channel's preset before a queued or immediate rebuild so the
+  // registry and backup manifest carry the enabled plan's policy intent.
+  // If policy application fails, put the plan back in its disabled state so
+  // runtime configuration cannot later be rebuilt without the required egress.
+  if (!disabled && !applyChannelPresetIfAvailable(sandboxName, normalized, "start")) {
+    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);
+    if (!rolledBack) {
+      console.error(
+        `  ${YW}⚠${R} Could not restore '${normalized}' to disabled state after its policy preset failed to apply.`,
+      );
+      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${normalized}`);
+    }
     process.exit(1);
   }
   const state = disabled ? "disabled" : "enabled";

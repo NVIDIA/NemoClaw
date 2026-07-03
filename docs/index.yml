@@ -63,6 +63,9 @@ navigation:
               - page: "Tool-Calling Reliability"
                 path: inference/tool-calling-reliability.mdx
                 slug: tool-calling-reliability
+              - page: "Model Capability Audit"
+                path: _build/agent-variants/inference/model-capability-audit.openclaw.generated.mdx
+                slug: model-capability-audit
               - page: "Switch Inference Providers"
                 path: _build/agent-variants/inference/switch-inference-providers.openclaw.generated.mdx
                 slug: switch-inference-providers
@@ -137,6 +140,15 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
+                slug: trusted-computing-base
+              - page: "OpenShell 0.0.71 Review"
+                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
+                slug: openshell-0.0.71-gateway-auth-review
               - page: "OpenClaw Controls"
                 path: security/openclaw-controls.mdx
                 slug: openclaw-controls
@@ -159,6 +171,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.openclaw.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.openclaw.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.openclaw.generated.mdx
                 slug: network-policies
@@ -228,6 +243,9 @@ navigation:
               - page: "Use Local Inference"
                 path: _build/agent-variants/inference/use-local-inference.hermes.generated.mdx
                 slug: use-local-inference
+              - page: "Model Capability Audit"
+                path: _build/agent-variants/inference/model-capability-audit.hermes.generated.mdx
+                slug: model-capability-audit
               - page: "Switch Inference Providers"
                 path: _build/agent-variants/inference/switch-inference-providers.hermes.generated.mdx
                 slug: switch-inference-providers
@@ -283,6 +301,15 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
+              - page: "OpenShell 0.0.72 Compatibility Review"
+                path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
+                slug: openshell-0.0.72-compatibility-review
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
+                slug: trusted-computing-base
+              - page: "OpenShell 0.0.71 Review"
+                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
+                slug: openshell-0.0.71-gateway-auth-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default
@@ -302,6 +329,9 @@ navigation:
               - page: "CLI Selection Guide"
                 path: _build/agent-variants/reference/cli-selection-guide.hermes.generated.mdx
                 slug: cli-selection-guide
+              - page: "Host Files and State"
+                path: _build/agent-variants/reference/host-files-and-state.hermes.generated.mdx
+                slug: host-files-and-state
               - page: "Network Policies"
                 path: _build/agent-variants/reference/network-policies.hermes.generated.mdx
                 slug: network-policies

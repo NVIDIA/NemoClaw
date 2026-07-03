@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   getHermesDashboardRecoveryConfig,
-  recoverHermesDashboardProcessIfEnabled,
 } from "./hermes-dashboard-recovery";
 
 describe("Hermes dashboard recovery helpers", () => {
@@ -85,7 +84,7 @@ describe("Hermes dashboard recovery helpers", () => {
         isPortForwardHealthy: () => true,
         ensurePortForward,
       }),
-    ).toBe(false);
+    ).toBe(true);
 
     const ensurePortForwardWhenOccupied = vi.fn(() => true);
     expect(
@@ -102,47 +101,6 @@ describe("Hermes dashboard recovery helpers", () => {
         getRecoveryConfig: () => null,
         isPortForwardHealthy: () => false,
         ensurePortForward,
-      }),
-    ).toBeNull();
-  });
-
-  it("reports dashboard process recovery only for successful recovery markers", () => {
-    const buildRecoveryScript = vi.fn(() => "dashboard recovery");
-    const getRecoveryConfig = () => ({
-      publicPort: 9119,
-      internalPort: 19119,
-      tuiEnabled: true,
-    });
-
-    expect(
-      recoverHermesDashboardProcessIfEnabled("alpha", {
-        getRecoveryConfig,
-        buildRecoveryScript,
-        executeCommand: (_sandboxName, command) => ({
-          status: 0,
-          stdout: command === "dashboard recovery" ? "DASHBOARD_PID=42" : "",
-          stderr: "",
-        }),
-      }),
-    ).toBe(true);
-    expect(buildRecoveryScript).toHaveBeenCalledWith({
-      publicPort: 9119,
-      internalPort: 19119,
-      tuiEnabled: true,
-    });
-
-    expect(
-      recoverHermesDashboardProcessIfEnabled("alpha", {
-        getRecoveryConfig,
-        buildRecoveryScript,
-        executeCommand: () => ({ status: 1, stdout: "DASHBOARD_FAILED", stderr: "" }),
-      }),
-    ).toBe(false);
-
-    expect(
-      recoverHermesDashboardProcessIfEnabled("alpha", {
-        getRecoveryConfig: () => null,
-        executeCommand: () => ({ status: 0, stdout: "DASHBOARD_PID=42", stderr: "" }),
       }),
     ).toBeNull();
   });

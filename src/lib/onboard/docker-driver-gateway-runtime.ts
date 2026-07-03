@@ -17,6 +17,10 @@ import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import * as vmDriverProcess from "./vm-driver-process";
 
+const OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS: Readonly<Record<string, string>> = {
+  "0.0.72": "sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+};
+
 export type DockerDriverGatewayRuntimeDrift = { reason: string };
 
 type RunCapture = (args: string[], opts?: { ignoreError?: boolean }) => string;
@@ -163,20 +167,27 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       installedVersion ??
       deps.getBlueprintMaxOpenshellVersion() ??
       deps.supportedOpenshellFallbackVersion;
-    return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
+    const manifestDigest = OPENSHELL_SUPERVISOR_MANIFEST_DIGESTS[supportedVersion];
+    return manifestDigest
+      ? `ghcr.io/nvidia/openshell/supervisor@${manifestDigest}`
+      : `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
   }
 
   function getDockerDriverGatewayEnv(
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
-    return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+    const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });
+    if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
+    return gatewayEnv;
   }
 
   function isPidAlive(pid: number): boolean {

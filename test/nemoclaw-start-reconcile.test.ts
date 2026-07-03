@@ -25,6 +25,7 @@ interface RunReconcileOptions {
    */
   gatewayRawOutput?: string;
   env?: Record<string, string>;
+  locked?: boolean;
 }
 
 describe("agent identity reconciliation with provider (#3175)", () => {
@@ -89,7 +90,7 @@ describe("agent identity reconciliation with provider (#3175)", () => {
       "set -euo pipefail",
       "id() { echo 0; }",
       "chown() { return 0; }",
-      `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo sandbox; return 0; fi; command stat "$@"; }`,
+      `stat() { if [ "$1" = "-c" ] && [ "$2" = "%U" ] && [ "$3" = ${JSON.stringify(openclawDir)} ]; then echo ${options.locked ? "root" : "sandbox"}; return 0; fi; command stat "$@"; }`,
       'relax_config_for_write() { chmod 644 "$@"; }',
       'lock_config_after_write() { chmod 444 "$@"; }',
       helperFns,
@@ -160,6 +161,26 @@ describe("agent identity reconciliation with provider (#3175)", () => {
     expect(result.status).toBe(0);
     expect(config.agents.defaults.model.primary).toBe("inference/nvidia/same-model");
     expect(hash).toBe("oldhash\n");
+  });
+
+  it("never rewrites the host-sealed config while shields are up", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "inference/old-model" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "nvidia/new-model", name: "inference/nvidia/new-model" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, { locked: true });
+
+    expect(result.status).toBe(0);
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+    expect(result.stderr).toContain("Shields are up");
   });
 
   it("falls back to an inference-qualified model ref when provider metadata lacks name", () => {

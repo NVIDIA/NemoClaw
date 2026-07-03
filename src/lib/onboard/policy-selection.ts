@@ -13,19 +13,21 @@ import {
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
 import {
-  hasDisabledMessagingPolicyPreset,
-  mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
   mergeRequiredMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
-import {
-  isOpenclawAgent,
-  mergeRequiredOpenclawOtelPolicyPresets,
-  requiredOpenclawOtelPolicyPresets,
-} from "./openclaw-otel-policy-presets";
+import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { seedInitialPolicyContext } from "./policy-context-seed";
+import {
+  agentRequiredPresetAdditions,
+  emitSuppressedAgentRequiredPresetsNote,
+  filterSuppressedAgentRequiredPresets,
+  RESTRICTED_TIER_NAME,
+} from "./policy-tier-suppression";
 import { withPolicyApplicationTrace } from "./tracing";
+
+export { suppressedAgentRequiredPresets } from "./policy-tier-suppression";
 
 type Preset = { name: string; access?: string };
 type SupportOptions = { webSearchSupported?: boolean | null };
@@ -86,6 +88,7 @@ export type SetupPolicySelectionDeps = {
   ) => void;
   selectPolicyTier: () => Promise<string>;
   setPolicyTier?: (sandboxName: string, tierName: string) => void;
+  getRecordedPolicyTier?: (sandboxName: string) => string | null | undefined;
   selectTierPresetsAndAccess: (
     tierName: string,
     presets: Preset[],
@@ -99,6 +102,7 @@ export type PreparedPolicyResumeSelection = {
   policyPresets: string[];
   recordedPolicyPresetsNeedReconcile: boolean;
   disabledMessagingPolicyPresetApplied: boolean;
+  suppressedAgentRequiredPresetsLive: boolean;
 };
 
 export function mergeRequiredSetupPolicyPresets(
@@ -109,6 +113,7 @@ export function mergeRequiredSetupPolicyPresets(
     agent?: string | null;
     knownPresetNames?: string[] | Set<string> | null;
     env?: NodeJS.ProcessEnv;
+    tierName?: string | null;
   } = {},
 ): string[] {
   const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(policyPresets, options.agent);
@@ -128,7 +133,8 @@ export function mergeRequiredSetupPolicyPresets(
       env: options.env,
     },
   );
-  return filterSetupPolicyPresetNamesForAgent(mergedPresets, options.agent);
+  const agentScoped = filterSetupPolicyPresetNamesForAgent(mergedPresets, options.agent);
+  return filterSuppressedAgentRequiredPresets(agentScoped, options.tierName, options.agent);
 }
 
 export function isStaleBuiltinBravePolicyPreset(
@@ -176,9 +182,8 @@ export function computeSetupPresetSuggestions(
   };
   if (webSearchConfig) add("brave");
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
-  if (isOpenclawAgent(agent)) {
-    add("openclaw-pricing");
-    for (const preset of requiredOpenclawOtelPolicyPresets(agent, env)) add(preset);
+  if (tierName !== RESTRICTED_TIER_NAME) {
+    for (const preset of agentRequiredPresetAdditions(agent, env)) add(preset);
   }
   if (tierName === "open" && typeof agent === "string" && agent.trim().toLowerCase() === "hermes") {
     for (const preset of allHermesToolGatewayPolicyPresets()) add(preset);
@@ -195,85 +200,7 @@ export function computeSetupPresetSuggestions(
   return suggestions;
 }
 
-export function preparePolicyPresetResumeSelection(
-  deps: { policies: PoliciesApi },
-  sandboxName: string,
-  options: {
-    recordedPolicyPresets: string[] | null;
-    disabledChannels?: string[] | null;
-    enabledChannels?: string[] | null;
-    hermesToolGateways?: string[] | null;
-    agent?: string | null;
-    webSearchConfig?: WebSearchConfig | null;
-    webSearchSupported?: boolean | null;
-    env?: NodeJS.ProcessEnv;
-  },
-): PreparedPolicyResumeSelection {
-  const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const appliedPolicyPresets = deps.policies.getAppliedPresets(sandboxName);
-  const selectablePolicyPresets = [
-    ...filterSetupPolicyPresetsForAgent(
-      deps.policies.listSetupPolicyPresets(sandboxName, supportOptions),
-      options.agent,
-    ),
-    ...filterSetupPolicyPresetNamesForAgent(appliedPolicyPresets, options.agent).map((name) => ({
-      name,
-    })),
-  ];
-  const customPolicyPresetNames = new Set(
-    deps.policies.listCustomPresets(sandboxName).map((preset) => preset.name),
-  );
-  const clampedRecordedPolicyPresets = deps.policies.clampSetupPolicyPresetNames(
-    options.recordedPolicyPresets || [],
-    selectablePolicyPresets,
-    supportOptions,
-    customPolicyPresetNames,
-  );
-  const isStaleBuiltinBrave = (name: string) =>
-    isStaleBuiltinBravePolicyPreset(name, {
-      webSearchConfig: options.webSearchConfig,
-      customPresetNames: customPolicyPresetNames,
-    });
-  let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinBrave(name)),
-    options.disabledChannels,
-  );
-  const recordedPolicyPresetsNeedReconcile =
-    Array.isArray(options.recordedPolicyPresets) &&
-    policyPresets.length !== options.recordedPolicyPresets.length;
-  const appliedPolicyPresetsForSupport = deps.policies
-    .clampSetupPolicyPresetNames(
-      appliedPolicyPresets,
-      selectablePolicyPresets,
-      supportOptions,
-      customPolicyPresetNames,
-    )
-    .filter((name) => !isStaleBuiltinBrave(name));
-  const disabledMessagingPolicyPresetApplied = hasDisabledMessagingPolicyPreset(
-    appliedPolicyPresetsForSupport,
-    options.disabledChannels,
-  );
-  policyPresets = mergeAppliedPolicyPresetsForDisabledMessagingCleanup(
-    policyPresets,
-    appliedPolicyPresetsForSupport,
-    options.disabledChannels,
-  );
-  if (Array.isArray(options.recordedPolicyPresets)) {
-    policyPresets = mergeRequiredSetupPolicyPresets(policyPresets, {
-      enabledChannels: options.enabledChannels,
-      hermesToolGateways: options.hermesToolGateways,
-      agent: options.agent,
-      knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
-      env: options.env,
-    });
-  }
-
-  return {
-    policyPresets,
-    recordedPolicyPresetsNeedReconcile,
-    disabledMessagingPolicyPresetApplied,
-  };
-}
+export { preparePolicyPresetResumeSelection } from "./policy-resume-selection";
 
 export async function setupPoliciesWithSelection(
   deps: SetupPolicySelectionDeps,
@@ -352,6 +279,10 @@ async function setupPoliciesWithSelectionInner(
           customPresetNames,
         )
       : null;
+  // Resume (selectedPresets !== null) keeps the recorded tier so stale
+  // suppressed presets from that tier still get filtered; fresh onboarding
+  // below uses the newly-selected `tierName` from `selectPolicyTier()`.
+  const recordedTierName = deps.getRecordedPolicyTier?.(sandboxName) ?? null;
   if (chosen !== null) {
     const knownSelectablePresets = new Set(selectablePresets.map((preset) => preset.name));
     chosen = mergeRequiredSetupPolicyPresets(chosen, {
@@ -360,6 +291,7 @@ async function setupPoliciesWithSelectionInner(
       agent,
       knownPresetNames: knownSelectablePresets,
       env: deps.env,
+      tierName: recordedTierName,
     });
     chosen = pruneDisabledPresets(chosen);
   }
@@ -390,6 +322,7 @@ async function setupPoliciesWithSelectionInner(
       env: deps.env,
     }),
   );
+  const suppressedNames = emitSuppressedAgentRequiredPresetsNote(tierName, agent, deps.note);
 
   if (deps.isNonInteractive()) {
     const policyMode = (deps.env?.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
@@ -431,6 +364,7 @@ async function setupPoliciesWithSelectionInner(
       agent,
       knownPresetNames: knownPresets,
       env: deps.env,
+      tierName,
     });
     chosen = pruneDisabledPresets(chosen);
 
@@ -442,18 +376,22 @@ async function setupPoliciesWithSelectionInner(
 
     if (!isAuthoritative) {
       const chosenSet = new Set(chosen);
-      const preserved: string[] = [];
+      // `kept` is the subset of `appliedForPreservation` that actually carries
+      // forward — chosen-set duplicates, stale built-in brave, and
+      // tier-suppressed agent-required presets (e.g. restricted's
+      // openclaw-pricing / openclaw-diagnostics-otel-local) are intentionally
+      // excluded so suppression survives the preservation pass.
+      const kept: string[] = [];
       for (const name of appliedForPreservation) {
         if (chosenSet.has(name)) continue;
         if (isStaleBuiltinBrave(name)) continue;
+        if (suppressedNames.has(name)) continue;
         chosen.push(name);
         chosenSet.add(name);
-        preserved.push(name);
+        kept.push(name);
       }
-      if (preserved.length > 0) {
-        deps.note(
-          `  [non-interactive] Preserving previously-applied presets: ${preserved.join(", ")}`,
-        );
+      if (kept.length > 0) {
+        deps.note(`  [non-interactive] Preserving previously-applied presets: ${kept.join(", ")}`);
       }
     }
 
@@ -486,6 +424,7 @@ async function setupPoliciesWithSelectionInner(
         agent,
         knownPresetNames: knownNames,
         env: deps.env,
+        tierName,
       },
     ),
   );

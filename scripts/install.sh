@@ -49,6 +49,7 @@ resolve_repo_root() {
 }
 DEFAULT_NEMOCLAW_VERSION="0.1.0"
 DEFAULT_INSTALL_REF="lkg"
+INSTALL_TAG_EXAMPLE="vX.Y.Z"
 TOTAL_STEPS=3
 
 is_mutable_install_ref() {
@@ -532,7 +533,7 @@ print_done() {
   local _needs_cli_refresh=false
   needs_shell_reload && _needs_cli_refresh=true
 
-  # #5735: do not claim a clean install when the post-onboard auto-upgrade of a
+  # #5735: do not claim a clean install when the automatic upgrade of a
   # pre-existing sandbox failed (it may have been destroyed before its recreate
   # failed). Surface an explicit incomplete/recovery status instead.
   if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
@@ -623,9 +624,9 @@ usage() {
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
-  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: lkg)\n"
+  printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
   printf "                                  In curl pipes, set this on bash or export it first.\n"
-  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash\n"
+  printf "                                  Example: curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=%s bash\n" "$INSTALL_TAG_EXAMPLE"
   printf "    NEMOCLAW_INSTALL_REF          Exact Git ref/SHA to install\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
   printf "                                  | gemini | ollama | custom | nim-local | vllm | routed\n"
@@ -909,7 +910,7 @@ ONBOARD_RAN=false
 # auto-onboarding (#3276).
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
-# #5735: set when the post-onboard auto-upgrade of pre-existing sandboxes
+# #5735: set when automatic recovery/upgrade of pre-existing sandboxes
 # reported a failure. A failed/destructive rebuild must not be reported as a
 # clean install, so print_done downgrades the final banner when this is true.
 _UPGRADE_SANDBOXES_FAILED=false
@@ -1721,18 +1722,14 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
-  local old_cli_runner="$1" old_openshell_version="$2"
+  local old_cli_runner="$1"
 
   if "$old_cli_runner" backup-all 2>&1; then
     return 0
   fi
 
-  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-    return 1
-  fi
-
   warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
-  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
+  warn "Retrying with the current ${_CLI_DISPLAY} CLI, which supports NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP."
   if ! prepare_current_cli_for_preupgrade_backup; then
     warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
     return 1
@@ -1867,12 +1864,12 @@ EOF
 preinstall_backup_and_retire_legacy_gateway() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   [ -f "$reg_file" ] || return 0
-  command_exists openshell || return 0
 
   local sandbox_count
   sandbox_count="$(registered_sandbox_count)"
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+  command_exists openshell || return 0
 
   if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
     error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
@@ -1906,11 +1903,11 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
+  if ! run_preupgrade_backup "$old_cli_runner"; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. Fix the OpenShell gateway state, rerun '${_CLI_BIN} backup-all', then rerun the installer."
+    error "Pre-upgrade backup failed. If the failures are running sandboxes whose in-sandbox SSH endpoint is unreachable, rerun the installer with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 to continue and recover them after the upgrade (any uncommitted state since the last successful backup will be lost); otherwise restore the affected sandbox or stop its container, then rerun '${_CLI_BIN} backup-all'."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -2145,6 +2142,27 @@ run_installer_host_preflight() {
   fi
 
   [[ "$status" -ne 10 ]]
+}
+
+recover_preexisting_sandboxes_before_onboard() {
+  local cli_runner="$1"
+  if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -le 0 ] 2>/dev/null; then
+    return 0
+  fi
+
+  info "Recovering and upgrading pre-existing sandboxes before onboarding…"
+  # `--auto` is the existing non-interactive maintenance path. When the
+  # pre-upgrade backup signal is present, the CLI also recovers registered
+  # non-Ready sandboxes from their validated latest backup. It attempts every
+  # eligible sandbox before returning non-zero for any failure.
+  if "$cli_runner" upgrade-sandboxes --auto 2>&1; then
+    return 0
+  fi
+
+  _UPGRADE_SANDBOXES_FAILED=true
+  warn "One or more existing sandboxes could not be recovered automatically."
+  warn "Generic onboarding will not run; review the affected sandbox and preserved backup diagnostics above."
+  return 1
 }
 
 run_onboard() {
@@ -2726,23 +2744,12 @@ main() {
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
+      if ! recover_preexisting_sandboxes_before_onboard "$_cli_runner"; then
+        finalize_install
+        return 1
+      fi
       run_onboard || error "Onboarding did not complete successfully."
       ONBOARD_RAN=true
-      # After onboard, check for stale sandboxes that need rebuilding (#1904).
-      # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
-        info "Checking for sandboxes that need upgrading…"
-        # #5735: a non-zero exit here can mean an existing sandbox was rebuilt
-        # destructively and its recreate failed. Record it so print_done reports
-        # the install as incomplete with recovery guidance instead of a clean
-        # banner. The CLI already prints the affected sandbox name and the
-        # preserved backup path on failure.
-        if ! "$_cli_runner" upgrade-sandboxes --auto 2>&1; then
-          _UPGRADE_SANDBOXES_FAILED=true
-          warn "One or more existing sandboxes could not be upgraded automatically."
-          warn "Review the messages above — affected sandboxes may need '${_CLI_BIN} onboard --resume' or '${_CLI_BIN} <name> rebuild', and any backup path shown above can restore workspace state."
-        fi
-      fi
       restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
     elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
       error "Skipping onboarding until the host prerequisites above are fixed."
@@ -2757,9 +2764,8 @@ main() {
 }
 
 # Print the completion summary, then propagate a fatal/non-zero result when the
-# post-onboard auto-upgrade of a pre-existing sandbox failed (#5735, PRA-5). The
-# new sandbox may have onboarded fine, but a failed auto-upgrade can have left an
-# *existing* sandbox destroyed or backup-only, so the install must not be
+# automatic recovery of a pre-existing sandbox failed (#5735, PRA-5). A failed
+# recovery can have left an existing sandbox destroyed or backup-only, so the install must not be
 # reported as success. print_done() has already shown the affected sandbox and
 # recovery guidance (and the "completed with warnings" banner); exiting non-zero
 # here is what keeps automation and operators from treating it as a clean

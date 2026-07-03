@@ -56,6 +56,8 @@ When Ubuntu needs first-run account setup, the script opens a handoff window and
 It enables Docker Desktop WSL integration for the target distro, restarts Docker Desktop only when Docker was already running, and leaves your global default WSL distro unchanged.
 If the target Ubuntu distro is already registered, the script confirms it uses WSL 2, converts it from WSL 1 when needed, and verifies Docker is reachable from WSL.
 If Windows requires a reboot after enabling WSL features, the script prompts for the reboot and registers a one-time continuation for the next sign-in.
+When the Ubuntu install command completes but the distro is not registered yet, the script requests a reboot only when WSL output says a reboot is required.
+Any WSL install transcript printed for troubleshooting removes PowerShell transcript metadata and temporary local paths before display.
 If Docker Desktop shows first-run prompts, complete them and return to the PowerShell window.
 
 For advanced options, download the script first and run `Get-Help "$env:TEMP\bootstrap-windows.ps1" -Detailed`.
@@ -183,5 +185,21 @@ Then continue with [Quickstart with Hermes](../quickstart) to install NemoClaw a
 All NemoClaw commands run inside WSL, not in PowerShell.
 
 ## Troubleshooting
+
+### Cursor blocks the starter prompt install command
+
+Cursor can block Windows terminal automation before NemoClaw runs when the Legacy Terminal Tool is disabled or when Run Mode is locked to **Allowlist with Sandbox**.
+This is a Cursor security restriction, not a NemoClaw installer failure.
+If your AI assistant reports this restriction, use one of these recovery paths:
+
+1. Enable the terminal capability your organization allows, then ask the assistant to retry the approved install command from the starter prompt.
+2. If your organization permits manually created local scripts but not automated terminal execution, ask the assistant to create a local `.bat` or `.ps1` fallback file.
+   The assistant must show you the exact file contents before you run it, and you should inspect and approve those contents first.
+3. Start Docker Desktop and confirm WSL integration before running the fallback file.
+
+Do not paste API keys, bot tokens, or other secrets into chat while using the fallback path.
+Enter credentials only into the local terminal, browser, or secure prompt that needs them.
+Do not embed real credentials in the generated `.bat` or `.ps1` file.
+Docker Desktop must be running before the NemoClaw install command can continue.
 
 For Windows-specific troubleshooting, refer to the [Windows Subsystem for Linux section](../../reference/troubleshooting#windows-subsystem-for-linux) in the Troubleshooting guide.

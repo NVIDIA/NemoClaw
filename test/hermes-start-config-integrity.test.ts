@@ -132,6 +132,45 @@ function runHermesDashboardHomePrepAsRoot() {
   }
 }
 
+function runLockedParentStartupPreflight(parentMetadata: string) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-parent-preflight-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const mainStart = src.indexOf('if [ "$(id -u)" -eq 0 ]; then', src.indexOf("# ── Main"));
+  const rootBranchEnd = src.indexOf("\nelif ", mainStart);
+  expect(mainStart).toBeGreaterThanOrEqual(0);
+  expect(rootBranchEnd).toBeGreaterThan(mainStart);
+  const rootBranch = `${src.slice(mainStart, rootBranchEnd)}\nfi`;
+  const [parentOwner, parentMode] = parentMetadata.split(" ");
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n" || command id "$@"; }',
+      "recover_startup_hermes_mutation() { return 0; }",
+      "hermes_restart_seal_orphaned() { return 1; }",
+      "hermes_config_root_is_locked() { return 0; }",
+      `stat() { case "\${2:-}" in '%U:%G') printf '%s\\n' ${shellQuote(parentOwner)} ;; '%a') printf '%s\\n' ${shellQuote(parentMode)} ;; *) return 1 ;; esac; }`,
+      extractShellFunctionFromSource(src, "hermes_locked_parent_is_protected"),
+      rootBranch,
+      'printf "startup-continued\\n"',
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("agents/hermes/start.sh config integrity", () => {
   it("verifies the strict Hermes hash through the sandbox identity in root mode", () => {
     const result = runHermesConfigIntegrityVerifierAsRoot();
@@ -155,5 +194,17 @@ describe("agents/hermes/start.sh config integrity", () => {
     expect(result.stdout).not.toContain("cmd=chown");
     expect(result.stdout).toContain("/config.yaml");
     expect(result.stdout).toContain("/.env");
+  });
+
+  it("continues locked startup only when /sandbox has the sticky root-owned posture", () => {
+    const protectedParent = runLockedParentStartupPreflight("root:sandbox 1775");
+    expect(protectedParent.status, protectedParent.stderr).toBe(0);
+    expect(protectedParent.stdout).toContain("startup-continued");
+
+    const unprotectedParent = runLockedParentStartupPreflight("sandbox:sandbox 755");
+    expect(unprotectedParent.status).toBe(1);
+    expect(unprotectedParent.stderr).toContain("HERMES_LOCKED_PARENT_UNPROTECTED");
+    expect(unprotectedParent.stderr).toContain("trusted backup and recreate");
+    expect(unprotectedParent.stderr).not.toContain("run shields up");
   });
 });

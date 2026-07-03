@@ -566,10 +566,10 @@ export function printDashboardUi(
  * The URL filter normalises empty `URL.port` results to the scheme
  * default. `new URL("http://h:80").port` returns `""` because WHATWG
  * URL elides the default scheme port; a strict `urlPort === String(port)`
- * comparison would silently drop URLs for ports 80 and 443 even though
- * the underlying `forward_ports` validation accepts them. The
- * normalisation keeps the filter sound while still excluding any URL
- * whose port truly does not match the declared entry.
+ * comparison would silently drop scheme-default URLs from older or
+ * direct-call agent definitions. The normalisation keeps the filter
+ * sound while still excluding any URL whose port truly does not match
+ * the declared entry.
  */
 function printAdditionalForwardPorts(
   agent: AgentDefinition,
@@ -580,7 +580,7 @@ function printAdditionalForwardPorts(
   if (declared.length === 0) return;
   const apiPort = agent.healthProbe?.port;
   for (const port of declared) {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) continue;
     if (port === primaryPort) continue;
     const isApi = port === apiPort;
     const sectionLabel = isApi ? "OpenAI-compatible API" : "additional port";

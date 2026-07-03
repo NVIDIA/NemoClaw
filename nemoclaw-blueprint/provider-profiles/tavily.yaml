@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+id: tavily
+display_name: Tavily Search
+description: Tavily Search API access
+category: agent
+credentials:
+  - name: api_key
+    description: Tavily Search API key
+    env_vars:
+      - TAVILY_API_KEY
+    required: true
+    auth_style: bearer
+    header_name: authorization
+    query_param: ''
+endpoints:
+  - host: api.tavily.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  # OpenShell attributes Deep Agents Code Tavily requests to this managed
+  # Python venv, which its strict Landlock policy mounts read-only.
+  - /opt/venv/bin/python3*
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

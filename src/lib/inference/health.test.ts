@@ -230,6 +230,10 @@ describe("inference health", () => {
       expect(capturedArgv.join(" ")).not.toContain("nvapi-test");
       expect(capturedArgv.join(" ")).not.toContain("Authorization: Bearer");
       expect(capturedArgv).toContain("--config");
+      // PR #5975: Kimi health probe must route the bearer through the central
+      // auth-config helper, identifiable by its `nemoclaw-kimi-health-curl-`
+      // tmpfile prefix.
+      expect(authConfigPath).toContain("nemoclaw-kimi-health-curl-");
       expect(authConfigContent).toContain("Authorization: Bearer nvapi-test");
       expect(fs.existsSync(authConfigPath)).toBe(false);
       expect(capturedArgv).toContain("--connect-timeout");
@@ -273,7 +277,7 @@ describe("inference health", () => {
       expect(result?.detail).toContain("provider-level /models");
     });
 
-    it("reports Kimi health as not probed when credential lookup fails", () => {
+    it("reports Kimi health as unhealthy when credential lookup fails", () => {
       let called = false;
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "moonshotai/kimi-k2.6",
@@ -294,8 +298,9 @@ describe("inference health", () => {
       });
 
       expect(called).toBe(false);
-      expect(result?.ok).toBe(true);
+      expect(result?.ok).toBe(false);
       expect(result?.probed).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("credential store unavailable");
     });
   });

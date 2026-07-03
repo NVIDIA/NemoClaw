@@ -149,7 +149,7 @@ describe("runAgentJsonPassthrough", () => {
       runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
         getOpenshellBinary: () => "/usr/local/bin/openshell",
         provenanceLines: () => {
-          throw new RangeError("Maximum call stack size exceeded");
+          throw new SyntaxError("Unexpected token in OpenClaw JSON output");
         },
         spawnSync,
       }),
