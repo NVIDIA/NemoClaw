@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import type { FSWatcher } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildFernPreviewArgs, resolveFernPreviewInstance } from "./fern-preview-config";
 
 type FernConfig = {
   version?: unknown;
@@ -21,7 +22,6 @@ const fernRoot = path.join(repoRoot, "fern");
 const watchRoots = ["docs", "fern"];
 const ignoredDirectoryNames = new Set([".fern-cache", ".git", "_build", "node_modules"]);
 const debounceMs = 500;
-const defaultFernPreviewInstance = "nvidia-nemoclaw-staging.docs.buildwithfern.com/nemoclaw";
 
 const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
@@ -33,7 +33,7 @@ if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(trimmedFern
 const fernVersion = trimmedFernVersion;
 
 const branchName = currentBranchName();
-const fernPreviewInstance = process.env.FERN_STAGING_INSTANCE?.trim() || defaultFernPreviewInstance;
+const fernPreviewInstance = resolveFernPreviewInstance(process.env.FERN_STAGING_INSTANCE);
 let running = false;
 let pending = false;
 let debounceTimer: NodeJS.Timeout | undefined;
@@ -171,18 +171,11 @@ function runFernGenerate(reason: string): void {
   running = true;
   pending = false;
 
-  const args = [
-    "--yes",
-    `fern-api@${fernVersion}`,
-    "generate",
-    "--docs",
-    "--instance",
-    fernPreviewInstance,
-    "--preview",
-    "--id",
-    branchName,
-    "--force",
-  ];
+  const args = buildFernPreviewArgs({
+    fernVersion,
+    instance: fernPreviewInstance,
+    previewId: branchName,
+  });
 
   console.log(`\n[${new Date().toLocaleTimeString()}] Running Fern (${reason})`);
   if (!syncAgentVariantDocs()) {
