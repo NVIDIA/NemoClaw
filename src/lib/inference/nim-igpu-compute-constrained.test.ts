@@ -13,17 +13,19 @@ const NIM_DIST_PATH = require.resolve("./nim");
 const RUNNER_PATH = require.resolve("../runner");
 const fs = require("fs");
 
+// Route the firmware reads detectGpu makes without branching in the test body.
 function withFirmwareModel(model: string, fn: () => void): void {
-  const origReadFileSync = fs.readFileSync;
-  fs.readFileSync = (p: string, ...args: unknown[]) => {
-    if (p === "/sys/class/dmi/id/product_name") return model;
-    if (p === "/sys/firmware/devicetree/base/model") return "";
-    return origReadFileSync(p, ...args);
+  const orig = fs.readFileSync;
+  const overrides: Record<string, string> = {
+    "/sys/class/dmi/id/product_name": model,
+    "/sys/firmware/devicetree/base/model": "",
   };
+  fs.readFileSync = (p: string, ...args: unknown[]) =>
+    p in overrides ? overrides[p] : orig(p, ...args);
   try {
     fn();
   } finally {
-    fs.readFileSync = origReadFileSync;
+    fs.readFileSync = orig;
   }
 }
 
@@ -47,14 +49,16 @@ function loadNimWithMockedRunner(runCapture: Mock) {
   };
 }
 
+// Answer the `name,memory.total` nvidia-smi query with a fixed row set; every
+// other command yields "" (a linear predicate, no branching).
 function nvidiaSmiRunner(smiOutput: string): Mock {
-  return vi.fn((cmd: string | string[]) => {
-    if (!Array.isArray(cmd)) throw new Error("expected argv array");
-    if (cmd[0] === "nvidia-smi" && cmd.some((a: string) => a.includes("name,memory.total"))) {
-      return smiOutput;
-    }
-    return "";
-  });
+  return vi.fn((cmd: string | string[]) =>
+    Array.isArray(cmd) &&
+    cmd[0] === "nvidia-smi" &&
+    cmd.some((a: string) => a.includes("name,memory.total"))
+      ? smiOutput
+      : "",
+  );
 }
 
 // #3707: the Windows-ARM N1X iGPU (the denylisted JMJWOA-Generic placeholder
@@ -63,20 +67,16 @@ function nvidiaSmiRunner(smiOutput: string): Mock {
 // computeConstrained. A genuine discrete NVIDIA GPU never reaches that path and
 // must stay untagged.
 describe("detectGpu computeConstrained tagging (#3707)", () => {
-  // detectGpu applies an ARM64-Linux kernel-interface trust gate. Pin
+  // detectGpu applies an ARM64-Linux kernel-interface trust gate; pin
   // /proc/driver/nvidia present so genuine discrete GPUs are trusted on the
-  // arm64 CI runner (matches the detectGpu suite's default).
-  let origExistsSync: typeof fs.existsSync | undefined;
+  // arm64 runner (matches the detectGpu suite default).
+  let savedExistsSync: typeof fs.existsSync;
   beforeEach(() => {
-    origExistsSync = fs.existsSync;
-    fs.existsSync = (p: string) =>
-      p === "/proc/driver/nvidia" ? true : (origExistsSync as typeof fs.existsSync)(p);
+    savedExistsSync = fs.existsSync;
+    fs.existsSync = (p: string) => (p === "/proc/driver/nvidia" ? true : savedExistsSync(p));
   });
   afterEach(() => {
-    if (origExistsSync) {
-      fs.existsSync = origExistsSync;
-      origExistsSync = undefined;
-    }
+    fs.existsSync = savedExistsSync;
   });
 
   it("marks the proof-passed N1X iGPU computeConstrained", () => {
