@@ -27,6 +27,12 @@ const IMAGE_BUILD_JOBS = [
   "build-hermes-sandbox-image",
   "build-sandbox-images-arm64",
 ] as const;
+const OPENCLAW_IMAGE_CONSUMER_JOBS = [
+  "runtime-overrides",
+  "test-e2e-sandbox",
+  "test-e2e-gateway-isolation",
+  "test-e2e-port-overrides",
+] as const;
 const DOCKERHUB_SECRETS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 const FORBIDDEN_RUNTIME_SECRETS = [
   "NVIDIA_API_KEY",
@@ -275,16 +281,26 @@ function validateSecretScopeAndRegistryWrites(
 }
 
 function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
-  const jobName = "build-sandbox-images";
-  const job = workflow.jobs[jobName] ?? {};
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("build-sandbox-images timeout must cover the 45-minute runtime override budget");
+  const producerName = "build-sandbox-images";
+  const producer = workflow.jobs[producerName] ?? {};
+  const runtimeName = "runtime-overrides";
+  const runtimeJob = workflow.jobs[runtimeName] ?? {};
+  if (producer["timeout-minutes"] !== 15) {
+    errors.push("build-sandbox-images must retain its 15-minute producer budget");
   }
-  const build = requireStep(errors, jobName, job, "Build production image");
+  if (runtimeJob["timeout-minutes"] !== 60) {
+    errors.push("runtime-overrides timeout must cover its 45-minute probe budget");
+  }
+  for (const consumerName of OPENCLAW_IMAGE_CONSUMER_JOBS) {
+    if (workflow.jobs[consumerName]?.needs !== producerName) {
+      errors.push(`${consumerName} must remain an independent consumer of build-sandbox-images`);
+    }
+  }
+  const build = requireStep(errors, producerName, producer, "Build production image");
   const runtime = requireStep(
     errors,
-    jobName,
-    job,
+    runtimeName,
+    runtimeJob,
     "Run runtime overrides test against production image",
   );
   if (
@@ -293,32 +309,111 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   ) {
     errors.push("OpenClaw production image must be built once under nemoclaw-production");
   }
-  const allRuns = steps(job)
+  const allRuns = steps(producer)
     .map((step) => step.run ?? "")
     .join("\n");
   if ((allRuns.match(/docker build --build-arg BASE_IMAGE=/gu) ?? []).length !== 1) {
     errors.push("OpenClaw production image must have exactly one source build");
   }
-  const runtimeEnv = record(runtime.env);
+  if (
+    findStep(producer, "Run runtime overrides test against production image") ||
+    allRuns.includes("test/e2e/live/runtime-overrides.test.ts")
+  ) {
+    errors.push("OpenClaw producer must not run the failure-isolated runtime probe");
+  }
+  for (const stepName of ["Set up Node", "Install root dependencies"]) {
+    if (findStep(producer, stepName)) {
+      errors.push(`OpenClaw producer must not run '${stepName}'`);
+    }
+    if (steps(runtimeJob).filter((step) => step.name === stepName).length !== 1) {
+      errors.push(`runtime-overrides must run '${stepName}' exactly once`);
+    }
+  }
+  const save = requireStep(errors, producerName, producer, "Save images to tarballs");
+  if (
+    steps(producer).filter((step) => step.name === "Save images to tarballs").length !== 1 ||
+    !(save.run ?? "").includes(
+      "docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz",
+    )
+  ) {
+    errors.push("OpenClaw producer must save the production image for sibling consumers");
+  }
+  const isolationUpload = requireStep(errors, producerName, producer, "Upload isolation image");
+  if (
+    steps(producer).filter((step) => step.name === "Upload isolation image").length !== 1 ||
+    !(isolationUpload.uses ?? "").startsWith("actions/upload-artifact@") ||
+    !FULL_SHA_ACTION.test(isolationUpload.uses ?? "") ||
+    !isDeepStrictEqual(record(isolationUpload.with), {
+      name: "isolation-image",
+      path: "/tmp/isolation-image.tar.gz",
+      "retention-days": 1,
+    }) ||
+    stepIndex(producer, save.name ?? "") >= stepIndex(producer, isolationUpload.name ?? "")
+  ) {
+    errors.push("OpenClaw producer must upload the saved production image exactly once");
+  }
+  const runtimeEnv = record(runtimeJob.env);
   if (runtimeEnv.NEMOCLAW_TEST_IMAGE !== "nemoclaw-production") {
     errors.push("runtime overrides must consume the prebuilt OpenClaw production image");
   }
   if (runtimeEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("runtime overrides must enable the live E2E fixture");
   }
+  if (runtimeEnv.E2E_TARGET_ID !== "runtime-overrides") {
+    errors.push("runtime overrides must retain its canonical target id");
+  }
   if (
     runtimeEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/runtime-overrides"
   ) {
     errors.push("runtime overrides must retain its canonical artifact directory");
   }
+  if (findStep(runtimeJob, AUTH_STEP_NAME)) {
+    errors.push("runtime overrides must not authenticate to Docker Hub");
+  }
   if (!(runtime.run ?? "").includes("test/e2e/live/runtime-overrides.test.ts")) {
     errors.push("runtime overrides step must run its live Vitest target");
   }
-  if (/\bdocker\s+build\b/u.test(runtime.run ?? "")) {
+  if (
+    /\bdocker\s+build\b/u.test(
+      steps(runtimeJob)
+        .map((step) => step.run ?? "")
+        .join("\n"),
+    )
+  ) {
     errors.push("runtime overrides step must not rebuild the prebuilt image");
   }
-  if (stepIndex(job, "Build production image") >= stepIndex(job, runtime.name ?? "")) {
-    errors.push("runtime overrides must run after the OpenClaw production image build");
+  const download = requireStep(errors, runtimeName, runtimeJob, "Download image artifact");
+  if (
+    steps(runtimeJob).filter((step) => step.name === "Download image artifact").length !== 1 ||
+    !(download.uses ?? "").startsWith("actions/download-artifact@") ||
+    !FULL_SHA_ACTION.test(download.uses ?? "") ||
+    !isDeepStrictEqual(record(download.with), { name: "isolation-image", path: "/tmp" })
+  ) {
+    errors.push("runtime overrides must download the saved OpenClaw production image");
+  }
+  const load = requireStep(errors, runtimeName, runtimeJob, "Load image");
+  if (
+    steps(runtimeJob).filter((step) => step.name === "Load image").length !== 1 ||
+    !(load.run ?? "").includes("/tmp/isolation-image.tar.gz | docker load") ||
+    !(load.run ?? "").includes("docker image inspect nemoclaw-production")
+  ) {
+    errors.push("runtime overrides must load the saved OpenClaw production image");
+  }
+  const upload = requireStep(errors, runtimeName, runtimeJob, "Upload runtime overrides artifacts");
+  if (
+    steps(runtimeJob).filter((step) => step.name === "Upload runtime overrides artifacts")
+      .length !== 1 ||
+    upload.if !== "always()" ||
+    upload.uses !== "./.github/actions/upload-e2e-artifacts"
+  ) {
+    errors.push("runtime overrides must always use the shared E2E artifact uploader");
+  }
+  if (
+    stepIndex(runtimeJob, download.name ?? "") >= stepIndex(runtimeJob, load.name ?? "") ||
+    stepIndex(runtimeJob, load.name ?? "") >= stepIndex(runtimeJob, runtime.name ?? "") ||
+    stepIndex(runtimeJob, runtime.name ?? "") >= stepIndex(runtimeJob, upload.name ?? "")
+  ) {
+    errors.push("runtime overrides image handoff and artifact upload steps are out of order");
   }
 }
 

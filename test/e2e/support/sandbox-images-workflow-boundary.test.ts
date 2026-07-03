@@ -16,19 +16,20 @@ function readWorkflows() {
 }
 
 describe("sandbox image workflow boundary", () => {
-  it("reuses one guarded auth mapping and ends every image build with cleanup", () => {
+  it("reuses workflow setup anchors and ends every image build with cleanup", () => {
     const { imageWorkflow } = readWorkflows();
-    const jobNames = [
+    const imageJobNames = [
       "build-sandbox-images",
       "build-hermes-sandbox-image",
       "build-sandbox-images-arm64",
     ];
-    const canonicalAuth = imageWorkflow.jobs["build-sandbox-images"].steps?.find(
+    const producer = imageWorkflow.jobs["build-sandbox-images"];
+    const canonicalAuth = producer.steps?.find(
       (step) => step.name === "Authenticate to Docker Hub",
     );
     expect(canonicalAuth).toBeDefined();
 
-    for (const jobName of jobNames) {
+    for (const jobName of imageJobNames) {
       const job = imageWorkflow.jobs[jobName];
       const auth = job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
       expect(auth, `${jobName} auth alias`).toBe(canonicalAuth);
@@ -38,6 +39,30 @@ describe("sandbox image workflow boundary", () => {
         shell: "bash",
         run: "bash .github/scripts/docker-auth-cleanup.sh",
       });
+    }
+
+    const canonicalCheckout = producer.steps?.find((step) => step.name === "Checkout");
+    expect(canonicalCheckout).toBeDefined();
+    for (const job of Object.values(imageWorkflow.jobs)) {
+      expect(job.steps?.find((step) => step.name === "Checkout")).toBe(canonicalCheckout);
+    }
+    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    for (const stepName of ["Set up Node", "Install root dependencies"]) {
+      const canonicalStep = hermes.steps?.find((step) => step.name === stepName);
+      expect(canonicalStep).toBeDefined();
+      expect(
+        imageWorkflow.jobs["runtime-overrides"].steps?.find((step) => step.name === stepName),
+      ).toBe(canonicalStep);
+    }
+    const gateway = imageWorkflow.jobs["test-e2e-gateway-isolation"];
+    for (const stepName of ["Download image artifact", "Load image"]) {
+      const canonicalStep = gateway.steps?.find((step) => step.name === stepName);
+      expect(canonicalStep).toBeDefined();
+      for (const jobName of ["runtime-overrides", "test-e2e-port-overrides"]) {
+        expect(imageWorkflow.jobs[jobName].steps?.find((step) => step.name === stepName)).toBe(
+          canonicalStep,
+        );
+      }
     }
   });
 
@@ -63,21 +88,63 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects an undersized timeout, rebuilding, or failing to reuse the OpenClaw image", () => {
+  it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const openClaw = imageWorkflow.jobs["build-sandbox-images"];
-    openClaw["timeout-minutes"] = 15;
-    const runtime = openClaw.steps!.find(
+    const producer = imageWorkflow.jobs["build-sandbox-images"];
+    producer["timeout-minutes"] = 60;
+    const runtimeJob = imageWorkflow.jobs["runtime-overrides"];
+    runtimeJob["timeout-minutes"] = 45;
+    runtimeJob.needs = "runtime-overrides";
+    runtimeJob.env!.NEMOCLAW_TEST_IMAGE = "nemoclaw-runtime-overrides-rebuilt";
+    runtimeJob.env!.E2E_TARGET_ID = "runtime-overrides-drifted";
+    const runtimeSteps = runtimeJob.steps!;
+    const runtime = runtimeSteps.find(
       (step) => step.name === "Run runtime overrides test against production image",
     )!;
-    runtime.env!.NEMOCLAW_TEST_IMAGE = "nemoclaw-runtime-overrides-rebuilt";
     runtime.run = `${runtime.run}\ndocker build -t nemoclaw-runtime-overrides-rebuilt .`;
+    producer.steps!.push({ ...runtime });
+    producer.steps!.push({ ...runtimeSteps.find((step) => step.name === "Set up Node")! });
+    const save = producer.steps!.find((step) => step.name === "Save images to tarballs")!;
+    save.run = save.run!.replace("docker save nemoclaw-production", "docker save rebuilt-image");
+    producer.steps!.push({ ...save });
+    const isolationUpload = producer.steps!.find((step) => step.name === "Upload isolation image")!;
+    isolationUpload.with!.path = "/tmp/rebuilt-image.tar.gz";
+    const downloadIndex = runtimeSteps.findIndex((step) => step.name === "Download image artifact");
+    const download = runtimeSteps[downloadIndex];
+    runtimeSteps[downloadIndex] = {
+      ...download,
+      with: { ...download.with, name: "rebuilt-image" },
+    };
+    const loadIndex = runtimeSteps.findIndex((step) => step.name === "Load image");
+    const load = runtimeSteps[loadIndex];
+    runtimeSteps[loadIndex] = {
+      ...load,
+      run: "gunzip -c /tmp/isolation-image.tar.gz | docker load",
+    };
+    const upload = runtimeSteps.find((step) => step.name === "Upload runtime overrides artifacts")!;
+    delete upload.if;
+    runtimeSteps.splice(downloadIndex, 0, runtimeSteps.pop()!);
+    runtimeSteps.push({
+      ...producer.steps!.find((step) => step.name === "Authenticate to Docker Hub")!,
+    });
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
-        "build-sandbox-images timeout must cover the 45-minute runtime override budget",
+        "build-sandbox-images must retain its 15-minute producer budget",
+        "runtime-overrides timeout must cover its 45-minute probe budget",
+        "runtime-overrides must remain an independent consumer of build-sandbox-images",
+        "OpenClaw producer must not run the failure-isolated runtime probe",
+        "OpenClaw producer must not run 'Set up Node'",
+        "OpenClaw producer must save the production image for sibling consumers",
+        "OpenClaw producer must upload the saved production image exactly once",
         "runtime overrides must consume the prebuilt OpenClaw production image",
+        "runtime overrides must retain its canonical target id",
+        "runtime overrides must not authenticate to Docker Hub",
         "runtime overrides step must not rebuild the prebuilt image",
+        "runtime overrides must download the saved OpenClaw production image",
+        "runtime overrides must load the saved OpenClaw production image",
+        "runtime overrides must always use the shared E2E artifact uploader",
+        "runtime overrides image handoff and artifact upload steps are out of order",
       ]),
     );
   });
