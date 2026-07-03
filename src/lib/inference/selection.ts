@@ -7,16 +7,10 @@ export interface InferenceSelection {
   endpointUrl: string | null;
   credentialEnv: string | null;
   preferredInferenceApi: string | null;
-  compatibleEndpointReasoning: "true" | "false" | null;
   nimContainer: string | null;
 }
 
-export type InferenceSelectionInput =
-  | (Partial<Omit<InferenceSelection, "compatibleEndpointReasoning">> & {
-      compatibleEndpointReasoning?: unknown;
-    })
-  | null
-  | undefined;
+export type InferenceSelectionInput = Partial<InferenceSelection> | null | undefined;
 
 function nullableString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -35,10 +29,6 @@ function nullableInferenceApi(value: unknown): string | null {
   return normalized && SUPPORTED_INFERENCE_APIS.has(normalized) ? normalized : null;
 }
 
-function nullableBooleanString(value: unknown): "true" | "false" | null {
-  return value === "true" || value === "false" ? value : null;
-}
-
 export function normalizeInferenceSelection(input: InferenceSelectionInput): InferenceSelection {
   return {
     provider: nullableString(input?.provider),
@@ -46,7 +36,6 @@ export function normalizeInferenceSelection(input: InferenceSelectionInput): Inf
     endpointUrl: nullableString(input?.endpointUrl),
     credentialEnv: nullableString(input?.credentialEnv),
     preferredInferenceApi: nullableInferenceApi(input?.preferredInferenceApi),
-    compatibleEndpointReasoning: nullableBooleanString(input?.compatibleEndpointReasoning),
     nimContainer: nullableString(input?.nimContainer),
   };
 }

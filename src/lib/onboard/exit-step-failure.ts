@@ -14,7 +14,6 @@ export interface ExitStepFailureSessionDeps {
 
 export interface OnboardExitFailureProcessLike {
   once(event: "exit", listener: (code: number) => void): unknown;
-  removeListener?(event: "exit", listener: (code: number) => void): unknown;
 }
 
 export function markLastStartedStepFailed(
@@ -36,13 +35,9 @@ export function registerIncompleteOnboardExitFailureHandler(
   isComplete: () => boolean,
   message: string,
   processLike: OnboardExitFailureProcessLike = process,
-): () => void {
-  const listener = (code: number) => {
+): void {
+  processLike.once("exit", (code) => {
     if (isComplete() || code === 0) return;
     markLastStartedStepFailed(deps, message);
-  };
-  processLike.once("exit", listener);
-  return () => {
-    processLike.removeListener?.("exit", listener);
-  };
+  });
 }

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { buildDockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
 import {
@@ -18,34 +18,12 @@ import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
   BASE_GATEWAY_STATE_DIR_NAME,
-  createGatewayNameBoundClassifiers,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
 } from "./gateway-binding";
-
-describe("gateway-name-bound classifiers", () => {
-  it("resolves the gateway-name getter for every classification", () => {
-    let gatewayName = "nemoclaw";
-    const isSelectedGateway = vi.fn(() => true);
-    const state = {
-      hasStaleGateway: vi.fn(() => false),
-      isSelectedGateway,
-      isGatewayHealthy: vi.fn(() => true),
-      getGatewayReuseState: vi.fn(() => "healthy" as const),
-    } as unknown as typeof import("../state/gateway");
-    const classifiers = createGatewayNameBoundClassifiers(state, () => gatewayName);
-
-    classifiers.isSelectedGateway("first");
-    expect(isSelectedGateway).toHaveBeenLastCalledWith("first", "nemoclaw");
-
-    gatewayName = "nemoclaw-19080";
-    classifiers.isSelectedGateway("second");
-    expect(isSelectedGateway).toHaveBeenLastCalledWith("second", "nemoclaw-19080");
-  });
-});
 
 describe("gateway-binding resolver (#4422)", () => {
   it("keeps the bare nemoclaw names for the default gateway port", () => {

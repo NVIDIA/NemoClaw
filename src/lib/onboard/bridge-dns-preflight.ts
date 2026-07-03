@@ -75,7 +75,6 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   ].join(" ");
   console.error(`${indent}${sudoPrefix}sh -c '${shBody.replace(/'/g, "'\"'\"'")}'`);
 }
-
 import {
   BUSYBOX_PROBE_IMAGE,
   DEFAULT_HOST_DNS_PROBE_HOSTNAME,
@@ -149,11 +148,7 @@ export function printDockerBridgeContainerStartFailure(
  * wall (mirroring the [[assertCdiNvidiaGpuSpecPresent]] resume backstop
  * pattern at #3152).
  */
-export function assertDockerBridgeAndContainerDnsHealthy(
-  host: Host,
-  nonInteractive = false,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
+export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteractive = false): void {
   // A minimal bridge-backed container start catches Docker/kernel failures
   // (notably Jetson veth "operation not supported") before longer gateway or
   // sandbox build work starts. Only veth/timeout/killed/daemon-unreachable
@@ -171,7 +166,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(
     bridgeStart.reason === "docker_daemon_unreachable"
   ) {
     printDockerBridgeContainerStartFailure(bridgeStart, host);
-    exitProcess(1);
+    process.exit(1);
   } else {
     console.warn(
       `  ⚠ Bridge container start probe inconclusive (reason: ${bridgeStart.reason ?? "unknown"}).`,
@@ -191,7 +186,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(
   // validation dies with `curl: (6) Could not resolve host: ...`. Catch
   // that here, before provider validation, and keep it distinct from the
   // container-DNS line.
-  assertHostDnsHealthy(host, { nonInteractive, exit: exitProcess });
+  assertHostDnsHealthy(host, { nonInteractive });
 
   // DNS resolution from inside containers (#2101). A corp firewall that
   // blocks outbound UDP:53 to public resolvers leaves the sandbox build
@@ -237,7 +232,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(
       },
       host,
     );
-    exitProcess(1);
+    process.exit(1);
   }
   if (dns.reason === "docker_daemon_unreachable") {
     printDockerBridgeContainerStartFailure(
@@ -251,7 +246,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(
       },
       host,
     );
-    exitProcess(1);
+    process.exit(1);
   }
   if (dns.reason === "timeout" || dns.reason === "killed") {
     console.error("  ✗ Container DNS probe did not complete.");
@@ -267,7 +262,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(
   }
   console.error("");
   printContainerDnsRemediation(host);
-  exitProcess(1);
+  process.exit(1);
 }
 
 /**

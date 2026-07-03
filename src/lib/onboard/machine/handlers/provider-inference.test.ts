@@ -149,60 +149,6 @@ function baseOptions(
 }
 
 describe("handleProviderInferenceState", () => {
-  it("does not repeat provider mutations after an authoritative route was prepared and smoked", async () => {
-    const session = createSession({
-      sandboxName: "alpha",
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      preferredInferenceApi: "openai-completions",
-    });
-    const { deps, calls } = createDeps();
-
-    const result = await handleProviderInferenceState({
-      ...baseOptions(deps, session),
-      resume: true,
-      sandboxName: "alpha",
-      authoritativeInferencePrevalidated: true,
-    });
-
-    expect(calls.setupNim).not.toHaveBeenCalled();
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.recoverProvider).not.toHaveBeenCalled();
-    expect(calls.repair).not.toHaveBeenCalled();
-    expect(calls.reconcileRouter).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-    expect(calls.skipped).toHaveBeenCalledWith(
-      "provider_selection",
-      "nvidia-prod / nvidia/test (prevalidated)",
-    );
-    expect(calls.recordSkip).toHaveBeenNthCalledWith(1, "provider_selection", {
-      reason: "resume",
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-    });
-    expect(calls.recordSkip).toHaveBeenNthCalledWith(2, "inference", {
-      reason: "resume",
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-    });
-    expect(calls.complete).toHaveBeenNthCalledWith(
-      1,
-      "provider_selection",
-      expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
-    );
-    expect(calls.complete).toHaveBeenNthCalledWith(
-      2,
-      "inference",
-      expect.objectContaining({ provider: "nvidia-prod", model: "nvidia/test" }),
-    );
-    expect(result).toMatchObject({
-      sandboxName: "alpha",
-      provider: "nvidia-prod",
-      model: "nvidia/test",
-    });
-  });
-
   it("runs provider selection and inference setup on a fresh flow", async () => {
     const { deps, calls } = createDeps();
 

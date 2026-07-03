@@ -6,7 +6,6 @@ import * as webSearch from "../inference/web-search";
 import { listMessagingCredentialMetadata } from "../messaging/channels";
 import { type ChannelDef, getChannelTokenKeys } from "../sandbox/channels";
 import * as braveProviderProfile from "./brave-provider-profile";
-import { extraPlaceholderProviderSlug } from "./extra-placeholder-keys";
 
 export type NamedMessagingChannel = { name: string } & ChannelDef;
 
@@ -36,12 +35,6 @@ export interface CreateSandboxMessagingPrepInput {
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   providerExistsInGateway(name: string): boolean;
-  /** Rebuild-only provider/channel set validated before the old sandbox was removed. */
-  authoritativeReuse?: {
-    providers: readonly string[];
-    channels: readonly string[];
-    extraPlaceholderKeys: readonly string[];
-  } | null;
 }
 
 export interface CreateSandboxMessagingPrepResult {
@@ -57,7 +50,6 @@ export interface CreateSandboxMessagingPrepResult {
 export function prepareCreateSandboxMessaging(
   input: CreateSandboxMessagingPrepInput,
 ): CreateSandboxMessagingPrepResult {
-  const authoritativeReuse = input.authoritativeReuse ?? null;
   const enabledEnvKeys =
     input.enabledChannels != null
       ? new Set(
@@ -78,9 +70,7 @@ export function prepareCreateSandboxMessaging(
     .map((credential) => ({
       name: credential.providerNameTemplate.replaceAll("{sandboxName}", input.sandboxName),
       envKey: credential.providerEnvKey,
-      token: authoritativeReuse
-        ? null
-        : input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
+      token: input.getValidatedMessagingTokenByEnvKey(input.channels, credential.providerEnvKey),
     }))
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
@@ -88,14 +78,11 @@ export function prepareCreateSandboxMessaging(
   const braveWebSearchEnabled = braveProviderProfile.shouldEnableBraveWebSearch(
     input.webSearchConfig,
   );
-  const braveProviderName = `${input.sandboxName}-brave-search`;
-  const reusingBraveProvider = Boolean(authoritativeReuse?.providers.includes(braveProviderName));
-  const braveApiKey =
-    braveWebSearchEnabled && !authoritativeReuse
-      ? input.getCredential(webSearch.BRAVE_API_KEY_ENV) ||
-        input.normalizeCredentialValue(input.env[webSearch.BRAVE_API_KEY_ENV])
-      : null;
-  const missingBraveApiKey = braveWebSearchEnabled && !braveApiKey && !reusingBraveProvider;
+  const braveApiKey = braveWebSearchEnabled
+    ? input.getCredential(webSearch.BRAVE_API_KEY_ENV) ||
+      input.normalizeCredentialValue(input.env[webSearch.BRAVE_API_KEY_ENV])
+    : null;
+  const missingBraveApiKey = braveWebSearchEnabled && !braveApiKey;
   if (missingBraveApiKey) {
     return {
       disabledChannelNames,
@@ -110,35 +97,22 @@ export function prepareCreateSandboxMessaging(
 
   if (braveWebSearchEnabled) {
     messagingTokenDefs.push({
-      name: braveProviderName,
+      name: `${input.sandboxName}-brave-search`,
       envKey: webSearch.BRAVE_API_KEY_ENV,
-      token: authoritativeReuse ? null : braveApiKey,
+      token: braveApiKey,
       providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
     });
   }
 
-  const extraPlaceholderKeys = authoritativeReuse
-    ? [...new Set(authoritativeReuse.extraPlaceholderKeys)]
-    : input.registerExtraPlaceholderProviders(input.sandboxName, messagingTokenDefs);
-  if (authoritativeReuse) {
-    for (const envKey of extraPlaceholderKeys) {
-      messagingTokenDefs.push({
-        name: `${input.sandboxName}-extra-${extraPlaceholderProviderSlug(envKey)}`,
-        envKey,
-        token: null,
-        providerType: "generic",
-      });
-    }
-  }
+  const extraPlaceholderKeys = input.registerExtraPlaceholderProviders(
+    input.sandboxName,
+    messagingTokenDefs,
+  );
   const hasMessagingTokens = messagingTokenDefs.some(({ token }) => !!token);
-  const reusableMessagingProviders: string[] = authoritativeReuse
-    ? [...new Set(authoritativeReuse.providers)]
-    : [];
-  const reusableMessagingChannels: string[] = authoritativeReuse
-    ? [...new Set(authoritativeReuse.channels)]
-    : [];
+  const reusableMessagingProviders: string[] = [];
+  const reusableMessagingChannels: string[] = [];
 
-  if (!authoritativeReuse && input.enabledChannels != null) {
+  if (input.enabledChannels != null) {
     for (const { name, envKey, token } of messagingTokenDefs) {
       if (token) continue;
       const channel = input.getMessagingChannelForEnvKey(envKey);

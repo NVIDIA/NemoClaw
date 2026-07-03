@@ -9,19 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 vi.mock("../policy", () => ({
-  extractPresetEntries: (content: string) =>
-    content.match(/^network_policies:\n([\s\S]*)$/m)?.[1]?.trimEnd() ?? null,
-  mergePresetIntoPolicy: (policy: string, presetEntries: string) =>
-    `${policy.trimEnd()}\n${presetEntries}\n`,
-  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => {
-    const missingPresets: string[] = presetNames.filter((name) => name === "missing-preset");
-    return {
-      policy: `${policy.trimEnd()}\n  slack: {}\n`,
-      appliedPresets: presetNames.filter((name) => !missingPresets.includes(name)),
-      missingPresets,
-    };
-  },
-  networkPoliciesHasAllowedIps: () => false,
+  mergePresetNamesIntoPolicy: (policy: string, presetNames: string[]) => ({
+    policy: `${policy.trimEnd()}\n  slack: {}\n`,
+    appliedPresets: presetNames,
+    missingPresets: [],
+  }),
 }));
 
 import {
@@ -271,57 +263,6 @@ network_policies:
 
     expect(prepared.appliedPresets).toEqual(["slack", "nous-web"]);
     expect(prepared.cleanup?.()).toBe(true);
-  });
-
-  it("merges persisted custom policy content into the prepared boot policy", () => {
-    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
-
-    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
-      additionalPresetContents: [
-        {
-          name: "internal-api",
-          content: "network_policies:\n  internal-api:\n    endpoints: []\n",
-        },
-      ],
-    });
-
-    expect(prepared.policyPath).not.toBe(basePolicyPath);
-    expect(fs.readFileSync(prepared.policyPath, "utf-8")).toContain("internal-api");
-    expect(prepared.cleanup?.()).toBe(true);
-  });
-
-  it("rejects invalid persisted custom policy YAML before create (#6195)", () => {
-    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
-
-    expect(() =>
-      prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
-        additionalPresetContents: [
-          {
-            name: "unsafe-internal-api",
-            content: "network_policies:\n  unsafe-internal-api: [\n",
-          },
-        ],
-      }),
-    ).toThrow("custom preset 'unsafe-internal-api' is invalid YAML");
-  });
-
-  it("cleans earlier GPU temp policy state when a recorded preset is missing", () => {
-    const basePolicyPath = tmpPolicy(BASE_POLICY_FIXTURE);
-    const before = new Set(
-      fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith("nemoclaw-gpu-policy-")),
-    );
-
-    expect(() =>
-      prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
-        directGpu: true,
-        additionalPresets: ["missing-preset"],
-      }),
-    ).toThrow("missing policy preset(s): missing-preset");
-
-    const after = fs
-      .readdirSync(os.tmpdir())
-      .filter((name) => name.startsWith("nemoclaw-gpu-policy-") && !before.has(name));
-    expect(after).toEqual([]);
   });
 
   it("merges openclaw-diagnostics-otel-local at create time when OTEL is enabled and the tier is known non-restricted", () => {

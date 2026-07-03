@@ -1,6 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+const { startGatewayForRecovery } = require("./onboard") as {
+  startGatewayForRecovery: (options?: {
+    gatewayName?: string;
+    gatewayPort?: number;
+  }) => Promise<void>;
+};
+
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 import {
@@ -142,16 +149,6 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
 
   if (shouldStartGateway) {
     try {
-      // Load the large onboard facade only when recovery actually needs to
-      // start a gateway. Rebuild imports this module while onboard imports the
-      // lifecycle helpers, so a top-level require creates a partial-module
-      // cycle exactly on the pre-delete safety path.
-      const { startGatewayForRecovery } = require("./onboard") as {
-        startGatewayForRecovery: (options?: {
-          gatewayName?: string;
-          gatewayPort?: number;
-        }) => Promise<void>;
-      };
       await startGatewayForRecovery({
         gatewayName,
         gatewayPort: resolveGatewayPortFromName(gatewayName) ?? undefined,

@@ -130,11 +130,6 @@ function createFixture({
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          ...(fromDockerfile ? {} : { nemoclawVersion: "0.1.0" }),
-          imageTag: "nemoclaw-sandbox:test",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          dashboardPort: 18789,
           policies: [],
           agent: rebuildTarget.agent,
           ...(rebuildTargetMessagingPlan
@@ -146,11 +141,6 @@ function createFixture({
           model: "m",
           provider: "p",
           gpuEnabled: false,
-          nemoclawVersion: "0.1.0",
-          imageTag: "nemoclaw-sandbox:test",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          dashboardPort: 18789,
           policies: [],
           agent: lastOnboarded.agent,
           ...(lastOnboardedMessagingPlan
@@ -223,15 +213,9 @@ function createFixture({
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-if (a[0]==="--version")                      { process.stdout.write("openshell 0.0.71\\n"); process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("Server Status\\n\\nGateway: nemoclaw\\nServer: https://127.0.0.1:8080/\\nStatus: Connected\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { process.exit(0); }
-if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"p","model":"m"}\\n'); process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -244,11 +228,9 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-if (a[0]==="info") { process.stdout.write('{"ServerVersion":"28.0.0","Driver":"overlay2","CgroupVersion":"2","OperatingSystem":"Linux","Name":"fixture"}\\n'); process.exit(0); }
 if (a[0]==="build") { process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
-if (a[0]==="run") { process.stdout.write("Server: 127.0.0.11\\nAddress: 127.0.0.11:53\\n** server can't find fixture.invalid: NXDOMAIN\\n"); process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -334,19 +316,8 @@ function readSessionMessagingPlan(
   return readSession(fixture).messagingPlan;
 }
 
-function readRegistryEntry(fixture: ReturnType<typeof createFixture>) {
-  const registry = JSON.parse(
-    fs.readFileSync(path.join(fixture.nemoclawDir, "sandboxes.json"), "utf-8"),
-  );
-  return registry.sandboxes[fixture.sandboxName];
-}
-
-function combinedOutput(result: ReturnType<typeof runRebuild>): string {
-  return `${result.stdout || ""}\n${result.stderr || ""}`;
-}
-
-describe("rebuild isolates a target from an unrelated stale session before atomic replacement (#2201)", () => {
-  it("selects OpenClaw from the registry and leaves the unrelated Hermes session untouched on preflight failure", {
+describe("rebuild syncs agent from registry instead of a stale session (#2201)", () => {
+  it("rebuild openclaw after hermes was onboarded last (reporter scenario)", {
     timeout: 60_000,
   }, () => {
     // Exact scenario from the bug report: user has openclaw + hermes,
@@ -355,38 +326,26 @@ describe("rebuild isolates a target from an unrelated stale session before atomi
       rebuildTarget: { name: "openclaw", agent: null },
       lastOnboarded: { name: "hermes", agent: "hermes" },
     });
-    const result = runRebuild(f);
-    const output = combinedOutput(result);
-
-    expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Target:\s+OpenClaw/);
-    expect(output).toContain("has no live recorded runtime");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(readRegistryEntry(f).agent).toBeNull();
-    expect(readSessionAgent(f)).toBe("hermes");
+    runRebuild(f);
+    // With fix: session.agent = null (synced from openclaw registry entry)
+    // Without fix: session.agent stays "hermes" (from hermes onboard)
+    expect(readSessionAgent(f)).toBeNull();
   });
 
-  it("selects Hermes from the registry and leaves the unrelated OpenClaw session untouched on preflight failure", {
+  it("rebuild hermes after openclaw was onboarded last (reverse scenario)", {
     timeout: 60_000,
   }, () => {
     const f = createFixture({
       rebuildTarget: { name: "hermes", agent: "hermes" },
       lastOnboarded: { name: "openclaw", agent: null },
     });
-    const result = runRebuild(f);
-    const output = combinedOutput(result);
-
-    expect(result.status).not.toBe(0);
-    expect(output).toMatch(/Target:\s+Hermes/);
-    expect(output).toContain("has no live recorded runtime");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(readRegistryEntry(f).agent).toBe("hermes");
-    expect(readSessionAgent(f)).toBeNull();
+    runRebuild(f);
+    // With fix: session.agent = "hermes" (synced from hermes registry entry)
+    // Without fix: session.agent stays null (from openclaw onboard)
+    expect(readSessionAgent(f)).toBe("hermes");
   });
 
-  it("does not move a stale messaging plan onto the target when preflight fails", {
+  it("does not inherit messaging plan from a stale session for another sandbox", {
     timeout: 60_000,
   }, () => {
     const f = createFixture({
@@ -397,17 +356,8 @@ describe("rebuild isolates a target from an unrelated stale session before atomi
         messagingPlanChannels: ["telegram"],
       },
     });
-    const result = runRebuild(f);
-    const output = combinedOutput(result);
-
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("Sandbox is untouched — no data was lost");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(readRegistryEntry(f).messaging).toBeUndefined();
-    expect(readSessionMessagingPlan(f)).toMatchObject({
-      sandboxName: "hermes",
-      channels: [expect.objectContaining({ channelId: "telegram" })],
-    });
+    runRebuild(f);
+    expect(readSessionMessagingPlan(f)).toBeNull();
   });
 });
 

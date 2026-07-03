@@ -3,11 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResourceProfileSelectionDeps } from "./resource-profile-selection";
-import {
-  appendResourceFlagsForProfile,
-  preflightAuthoritativeResourceProfile,
-  selectResourceProfileForSandbox,
-} from "./resource-profile-selection.js";
+import { selectResourceProfileForSandbox } from "./resource-profile-selection.js";
 
 function makeDeps(
   overrides: Partial<ResourceProfileSelectionDeps> = {},
@@ -134,37 +130,5 @@ describe("selectResourceProfileForSandbox", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       "  Invalid percentage '101%': must be an integer between 1% and 100%",
     );
-  });
-});
-
-describe("authoritative resource replay", () => {
-  it("fails closed when OpenShell cannot apply a persisted profile", () => {
-    const args = ["sandbox", "create"];
-
-    expect(() =>
-      appendResourceFlagsForProfile(args, { cpu: "4", memory: "8Gi" }, "/bin/echo", makeDeps(), {
-        required: true,
-      }),
-    ).toThrow("Cannot replay persisted sandbox resources");
-    expect(args).toEqual(["sandbox", "create"]);
-  });
-
-  it("preserves ordinary onboarding's graceful resource fallback", () => {
-    const args = ["sandbox", "create"];
-    const deps = makeDeps();
-
-    expect(() =>
-      appendResourceFlagsForProfile(args, { cpu: "4", memory: "8Gi" }, "/bin/echo", deps),
-    ).not.toThrow();
-    expect(args).toEqual(["sandbox", "create"]);
-    expect(deps.note).toHaveBeenCalledWith(
-      "  OpenShell does not support resource flags — sandbox will use default limits.",
-    );
-  });
-
-  it("keeps legacy no-profile rebuilds on OpenShell defaults without probing support", () => {
-    expect(() =>
-      preflightAuthoritativeResourceProfile(null, "/definitely/missing/openshell"),
-    ).not.toThrow();
   });
 });

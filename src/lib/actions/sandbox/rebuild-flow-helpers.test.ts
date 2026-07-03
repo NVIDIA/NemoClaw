@@ -7,14 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
-type AgentDefsModule = typeof import("../../agent/defs");
-type AgentOnboardModule = typeof import("../../agent/onboard");
 type SandboxStateModule = typeof import("../../state/sandbox");
 type UserManagedFilesProbeModule = typeof import("../../state/user-managed-files-probe");
 
 const requireDist = createRequire(import.meta.url);
-const agentDefsPath = "../../agent/defs.js";
-const agentOnboardPath = "../../agent/onboard.js";
 const rebuildFlowHelpersPath = "./rebuild-flow-helpers.js";
 const sandboxStatePath = "../../state/sandbox.js";
 const userManagedFilesProbePath = "../../state/user-managed-files-probe.js";
@@ -22,14 +18,6 @@ const userManagedFilesProbePath = "../../state/user-managed-files-probe.js";
 function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
   delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
   return requireDist(rebuildFlowHelpersPath);
-}
-
-function loadAgentDefs(): AgentDefsModule {
-  return requireDist(agentDefsPath);
-}
-
-function loadAgentOnboard(): AgentOnboardModule {
-  return requireDist(agentOnboardPath);
 }
 
 function loadSandboxState(): SandboxStateModule {
@@ -229,22 +217,5 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
       true,
     );
     expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it("fails closed before mutation when the recorded agent definition is unavailable (#6195)", () => {
-    vi.spyOn(loadAgentDefs(), "loadAgent").mockImplementation(() => {
-      throw new Error("Unknown agent: removed-agent");
-    });
-    const ensureBaseImageSpy = vi.spyOn(loadAgentOnboard(), "ensureAgentBaseImage");
-
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
-
-    expect(() => ensureRebuildAgentBaseImage("removed-agent", makeBail())).toThrow(
-      "bail: Unknown agent: removed-agent",
-    );
-    expect(ensureBaseImageSpy).not.toHaveBeenCalled();
-    const errors = errorSpy.mock.calls.flat().map(String).join("\n");
-    expect(errors).toContain("agent base image could not be built");
-    expect(errors).toContain("Sandbox is untouched");
   });
 });

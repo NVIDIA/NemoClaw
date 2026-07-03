@@ -2,13 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Regression coverage for issue #3113: rebuild may auto-unlock shields only
- * after the replacement target passes atomic preflight.
+ * Tests for issue #3113: rebuild should auto-unlock when shields are UP.
  *
  * When the user has opted into shields-up (lockdown), rebuild used to abort
  * at the backup step because state dirs are root-owned. Rebuild must
- * temporarily unlock for backup, complete the rebuild, then re-lock. A failed
- * replacement preflight must now leave that shields state unchanged.
+ * temporarily unlock for backup, complete the rebuild, then re-lock.
  */
 
 import { spawnSync } from "node:child_process";
@@ -99,10 +97,6 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           model: "meta/llama-3.3-70b-instruct",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          nemoclawVersion: "0.1.0",
-          dashboardPort: 18789,
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
           policies: [],
           agent: null,
           openshellDriver: "vm",
@@ -178,14 +172,13 @@ function createFixture(opts: { shieldsLocked: boolean }) {
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-if (a[0]==="--version" || a[0]==="-V")       { process.stdout.write("openshell 0.0.71\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="policy" && a[1]==="get")         { process.stdout.write("version: 1\\nnetwork_policies:\\n  test: {}\\n"); process.exit(0); }
 if (a[0]==="policy" && a[1]==="set")         { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"); process.exit(0); }
+if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"nvidia-prod","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
@@ -195,11 +188,6 @@ process.exit(0);
 `,
     { mode: 0o755 },
   );
-  for (const binary of ["openshell-gateway", "openshell-sandbox"]) {
-    fs.writeFileSync(path.join(tmpDir, binary), "#!/usr/bin/env node\nprocess.exit(0);\n", {
-      mode: 0o755,
-    });
-  }
 
   // Fake docker — covers both the basic cases and kubectl exec proxying.
   // For shields lock/unlock, we return zero exit with the data shields.ts
@@ -217,7 +205,6 @@ function writeLockState(state) {
   fs.writeFileSync(lockStatePath, state);
 }
 if (a[0]==="build")  { process.exit(0); }
-if (a[0]==="info")   { process.stdout.write('{"ServerVersion":"28.0.0","OperatingSystem":"Docker Engine","Driver":"overlay2","CgroupVersion":"2","NCPU":8,"MemTotal":17179869184}\\n'); process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 if (a[0]==="ps")     { process.stdout.write("openshell-${sandboxName}-abc123\\n"); process.exit(0); }
@@ -283,9 +270,8 @@ if (a[0]==="exec") {
   // shields-up lock verification expects:
   //   stat → "444 root:root" / "755 root:root"
   //   lsattr → "----i------"
-  // If the shields window opens, shields-down verification expects
-  // 660 sandbox:sandbox / 2770 sandbox:sandbox. The assertions below ensure
-  // strict replacement preflight fails before these mutations are attempted.
+  // We are testing the auto-unlock path: shields-down is called on a locked sandbox,
+  // verification should look like 660 sandbox:sandbox / 2770 sandbox:sandbox.
   if (cmd[0]==="python3" && cmd[1]==="-I" && cmd[2]==="-c") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="-i") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="+i") { writeLockState("locked"); process.exit(0); }
@@ -346,7 +332,7 @@ process.exit(0);
     { mode: 0o755 },
   );
 
-  return { tmpDir, nemoclawDir, sandboxName, snapshotPath, lockStatePath };
+  return { tmpDir, nemoclawDir, sandboxName, snapshotPath };
 }
 
 function runRebuild(fixture: ReturnType<typeof createFixture>) {
@@ -369,31 +355,33 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-describe("rebuild shields handling under atomic preflight (#3113)", () => {
-  it("leaves locked shields in place when replacement preflight fails", { timeout: 60_000 }, () => {
+describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
+  it("detects locked shields and prints auto-unlock notice", { timeout: 60_000 }, () => {
     const f = createFixture({ shieldsLocked: true });
     const r = runRebuild(f);
     const output = (r.stdout || "") + (r.stderr || "");
 
-    // This focused fixture has no authenticated live gateway runtime. Atomic
-    // rebuild must reject it before opening the shields window or starting a
-    // backup, rather than silently accepting a timeout/signal or null status.
+    // This focused fixture intentionally stops later in rebuild when the fake
+    // gateway cannot perform the recreate. Assert the exact handled failure,
+    // rather than silently accepting a timeout/signal or null spawn status.
     expect(r.status, output).toBe(1);
     expect(r.signal).toBeNull();
     expect(r.error).toBeUndefined();
 
-    expect(output).toContain("Rebuild preflight failed");
-    expect(output).toContain("Sandbox is untouched");
-    expect(output).not.toContain("Shields are UP");
-    expect(output).not.toContain("temporarily unlocking for rebuild backup");
-    expect(output).not.toContain("Capturing current policy snapshot");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(fs.readFileSync(f.lockStatePath, "utf-8")).toBe("locked");
+    // Without the fix this would be:
+    //   "Failed to back up sandbox state. Aborting rebuild to prevent data loss."
+    expect(output).not.toContain("Aborting rebuild to prevent data loss");
+    // With the fix, rebuild detects shields-up and unlocks before backup.
+    expect(output).toContain("Shields are UP");
+    expect(output).toContain("temporarily unlocking for rebuild backup");
+    // Shields-down was invoked programmatically (no permissive policy printout
+    // is required to assert; we just verify the snapshot capture step ran).
+    expect(output).toContain("Capturing current policy snapshot");
+    // Backup proceeds.
+    expect(output).toContain("Backing up sandbox state");
   });
 
-  it("leaves an unconfigured shields state untouched when replacement preflight fails", {
-    timeout: 60_000,
-  }, () => {
+  it("skips auto-unlock when shields are not configured", { timeout: 60_000 }, () => {
     const f = createFixture({ shieldsLocked: false });
     const r = runRebuild(f);
     const output = (r.stdout || "") + (r.stderr || "");
@@ -402,11 +390,8 @@ describe("rebuild shields handling under atomic preflight (#3113)", () => {
     expect(r.signal).toBeNull();
     expect(r.error).toBeUndefined();
 
-    expect(output).toContain("Rebuild preflight failed");
-    expect(output).toContain("Sandbox is untouched");
     expect(output).not.toContain("Shields are UP");
     expect(output).not.toContain("temporarily unlocking for rebuild backup");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(fs.readFileSync(f.lockStatePath, "utf-8")).toBe("unlocked");
+    expect(output).toContain("Backing up sandbox state");
   });
 });

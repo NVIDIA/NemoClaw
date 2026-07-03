@@ -6,22 +6,6 @@ import { describe, expect, it } from "vitest";
 import { buildDockerDriverGatewayEnv } from "./docker-driver-gateway-env";
 
 describe("buildDockerDriverGatewayEnv", () => {
-  it("uses an explicit authoritative gateway port for every generated endpoint", () => {
-    const env = buildDockerDriverGatewayEnv({
-      platform: "linux",
-      gatewayPort: 19080,
-      stateDir: "/tmp/nemoclaw-gateway-19080",
-      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
-      resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
-    });
-
-    expect(env).toMatchObject({
-      OPENSHELL_SERVER_PORT: "19080",
-      OPENSHELL_SSH_GATEWAY_PORT: "19080",
-      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:19080",
-    });
-  });
-
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
     const env = buildDockerDriverGatewayEnv({
       platform: "linux",

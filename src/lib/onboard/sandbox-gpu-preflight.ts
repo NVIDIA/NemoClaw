@@ -28,23 +28,20 @@ export interface SandboxGpuFlagOptions {
   noGpu?: boolean;
 }
 
-export function resolveSandboxGpuFlagFromOptions(
-  opts: SandboxGpuFlagOptions,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-): SandboxGpuFlag {
+export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): SandboxGpuFlag {
   const requestedGpuPassthrough = opts.gpu === true;
   const optedOutGpuPassthrough = opts.noGpu === true;
   const sandboxGpuFlag = opts.sandboxGpu ?? null;
   if (requestedGpuPassthrough && optedOutGpuPassthrough) {
     console.error("  --gpu and --no-gpu cannot both be set.");
-    exitProcess(1);
+    process.exit(1);
   }
   if (
     (requestedGpuPassthrough && sandboxGpuFlag === "disable") ||
     (optedOutGpuPassthrough && sandboxGpuFlag === "enable")
   ) {
     console.error("  --gpu/--no-gpu conflict with the sandbox GPU flags.");
-    exitProcess(1);
+    process.exit(1);
   }
   if (sandboxGpuFlag) return sandboxGpuFlag;
   if (requestedGpuPassthrough) return "enable";
@@ -83,14 +80,11 @@ export function sandboxGpuRemediationLines(
   ];
 }
 
-export function exitOnSandboxGpuConfigErrors(
-  config: SandboxGpuConfig,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
+export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
   if (config.errors.length > 0) {
     console.error("");
     for (const error of config.errors) console.error(`  ✗ ${error}`);
-    exitProcess(1);
+    process.exit(1);
   }
 }
 
@@ -129,10 +123,7 @@ export function dockerNvidiaRuntimeAvailable(deps: SandboxGpuPreflightDeps = {})
   }
 }
 
-function validateJetsonSandboxGpuPreflight(
-  deps: SandboxGpuPreflightDeps,
-  exitProcess: (code: number) => never,
-): void {
+function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void {
   if (!dockerNvidiaRuntimeAvailable(deps)) {
     console.error("");
     console.error("  ✗ Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU.");
@@ -143,7 +134,7 @@ function validateJetsonSandboxGpuPreflight(
     console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
     console.error("      sudo systemctl restart docker");
     console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
-    exitProcess(1);
+    process.exit(1);
   }
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
 }
@@ -292,15 +283,14 @@ export function createDirectSandboxGpuVerifier(
 export function validateSandboxGpuPreflight(
   config: SandboxGpuConfig,
   deps: SandboxGpuPreflightDeps = {},
-  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
-  exitOnSandboxGpuConfigErrors(config, exitProcess);
+  exitOnSandboxGpuConfigErrors(config);
   if (!config.sandboxGpuEnabled) return;
   const platform = deps.platform ?? process.platform;
   if (platform !== "linux") return;
 
   if (config.hostGpuPlatform === "jetson") {
-    validateJetsonSandboxGpuPreflight(deps, exitProcess);
+    validateJetsonSandboxGpuPreflight(deps);
     return;
   }
 
@@ -324,7 +314,7 @@ export function validateSandboxGpuPreflight(
     })) {
       console.error(`    ${line}`);
     }
-    exitProcess(1);
+    process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }

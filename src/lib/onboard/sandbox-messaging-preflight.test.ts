@@ -173,19 +173,6 @@ describe("prepareSandboxMessagingPreflight", () => {
     expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
   });
 
-  it("does not repeat conflict hooks after authoritative rebuild prevalidation", async () => {
-    const enforceMessagingChannelConflicts = vi.fn(async () => undefined);
-    const deps = createDeps({
-      readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "slack", "demo")),
-      enforceMessagingChannelConflicts,
-    });
-
-    await prepareSandboxMessagingPreflight({ ...baseInput, conflictsPrevalidated: true }, deps);
-
-    expect(enforceMessagingChannelConflicts).not.toHaveBeenCalled();
-    expect(deps.prepareCreateSandboxMessaging).toHaveBeenCalled();
-  });
-
   it("lets interactive users continue through a matching-token conflict", async () => {
     const deps = createDeps({
       readMessagingPlanFromEnv: vi.fn(() => createPlan("demo", "telegram", "same")),

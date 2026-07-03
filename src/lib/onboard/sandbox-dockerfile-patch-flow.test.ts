@@ -32,8 +32,6 @@ describe("prepareSandboxDockerfilePatch", () => {
       webSearchConfig: { fetchEnabled: true },
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
-      gatewayPort: 19080,
-      exitOnFailure: false,
       log,
       deps: {
         isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
@@ -60,8 +58,6 @@ describe("prepareSandboxDockerfilePatch", () => {
       sandboxGpuConfig,
       {
         dockerDriverGateway: true,
-        gatewayPort: 19080,
-        exitOnFailure: false,
         log,
       },
     );

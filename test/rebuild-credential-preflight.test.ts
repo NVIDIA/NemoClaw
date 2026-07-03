@@ -83,7 +83,6 @@ function createFixture(opts: {
   providerRegistered?: boolean;
   registeredProviders?: string[];
   activeSessionCount?: number | null;
-  inferenceProbeHttpStatus?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -99,7 +98,6 @@ function createFixture(opts: {
     providerRegistered = true,
     registeredProviders,
     activeSessionCount = 0,
-    inferenceProbeHttpStatus = null,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -121,10 +119,6 @@ function createFixture(opts: {
           model: "meta/llama-3.3-70b-instruct",
           provider,
           gpuEnabled: false,
-          nemoclawVersion: "0.1.0",
-          dashboardPort: 18789,
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
           policies: [],
           agent,
           ...(agents ? { agents } : {}),
@@ -230,9 +224,6 @@ function createFixture(opts: {
   const workspaceDir = path.join(fakeRoot, "workspace");
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "test-workspace");
-  const deletedMarker = path.join(tmpDir, "sandbox-deleted");
-  const atomicityMarker = path.join(fakeRoot, "rebuild-atomicity-marker.txt");
-  fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
@@ -248,37 +239,13 @@ function createFixture(opts: {
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
-const fs = require("node:fs");
 const a = process.argv.slice(2);
 const registeredProviders = ${registeredProvidersLiteral};
-const deletedMarker = ${JSON.stringify(deletedMarker)};
-const atomicityMarker = ${JSON.stringify(atomicityMarker)};
-const sandboxIsLive = () => !fs.existsSync(deletedMarker);
-if (a[0]==="--version" || a[0]==="-V")         { process.stdout.write("openshell 0.0.71\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write(sandboxIsLive() ? "${sandboxName} Ready\\n" : "No sandboxes found.\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(deletedMarker, "deleted\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="exec") {
-  const nameIndex = a.indexOf("--name");
-  const targetName = nameIndex >= 0 ? a[nameIndex + 1] : null;
-  if (targetName !== "${sandboxName}" || !sandboxIsLive()) process.exit(3);
-  const command = a.join(" ");
-  if (command.includes("rebuild-atomicity-marker.txt")) {
-    process.stdout.write(fs.readFileSync(atomicityMarker, "utf-8"));
-    process.exit(0);
-  }
-  if (!command.includes("https://inference.local/")) {
-    process.stderr.write("unexpected sandbox exec command\\n");
-    process.exit(4);
-  }
-  const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
-  process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + probeStatus + "\\n");
-  if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
-  process.stderr.write("upstream rejected stored provider credential\\n");
-  process.exit(1);
-}
-if (a[0]==="status")                         { process.stdout.write("Status: Connected\\nGateway: nemoclaw\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway: nemoclaw\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
+if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
@@ -292,11 +259,6 @@ process.exit(0);
 `,
     { mode: 0o755 },
   );
-  for (const binary of ["openshell-gateway", "openshell-sandbox"]) {
-    fs.writeFileSync(path.join(tmpDir, binary), "#!/usr/bin/env node\nprocess.exit(0);\n", {
-      mode: 0o755,
-    });
-  }
 
   // ── Fake ps for active SSH session detection ──────────────────
   const activeSessionLines = Array.from(
@@ -320,8 +282,6 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-if (a[0]==="--version") { process.stdout.write("Docker version 27.0.0\\n"); process.exit(0); }
-if (a[0]==="info") { process.stdout.write('{"ServerVersion":"27.0.0","Driver":"overlay2","NCPU":8,"MemTotal":17179869184,"CgroupVersion":"2","Name":"test"}\\n'); process.exit(0); }
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
@@ -370,22 +330,12 @@ function runRebuild(
   extraEnv: Record<string, string> = {},
   options: { yes?: boolean; input?: string } = {},
 ) {
-  const args = [fixture.sandboxName, "rebuild"];
-  if (options.yes !== false) args.push("--yes");
-  return runCli(fixture, args, extraEnv, options.input);
-}
-
-function runCli(
-  fixture: ReturnType<typeof createFixture>,
-  args: string[],
-  extraEnv: Record<string, string> = {},
-  input?: string,
-) {
-  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), ...args];
+  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
+  if (options.yes !== false) argv.push("--yes");
   return spawnSync(process.execPath, argv, {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    input,
+    input: options.input,
     env: {
       HOME: fixture.tmpDir,
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
@@ -407,13 +357,6 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
   } catch {
     return false;
   }
-}
-
-function expectCredentialGatePassedToStrictRuntimePreflight(output: string): void {
-  expect(output).toContain("replacement onboarding checks did not pass");
-  expect(output).toContain("Sandbox is untouched");
-  expect(output).not.toContain("provider credential not found");
-  expect(output).not.toContain("Backing up sandbox state");
 }
 
 describe("atomic rebuild (#2273)", () => {
@@ -453,7 +396,8 @@ describe("atomic rebuild (#2273)", () => {
 
       expect(output).toContain("Proceed? [y/N]:");
       expect(output).not.toContain("Cancelled.");
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
+      expect(output).not.toContain("preflight failed");
+      expect(output).toContain("Backing up sandbox state");
     });
 
     it("aborts multi-agent rebuild before prompting, preflight, or backup", {
@@ -546,7 +490,7 @@ describe("atomic rebuild (#2273)", () => {
       expect(registryHasSandbox(f)).toBe(true);
     });
 
-    it("uses the registered gateway provider without importing credentials.json", {
+    it("proceeds when credential is saved in credentials.json (not in env)", {
       timeout: 60_000,
     }, () => {
       // Credential saved in credentials.json but NOT in process.env
@@ -561,46 +505,10 @@ describe("atomic rebuild (#2273)", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
-      expect(output).not.toContain("Missing credential: NVIDIA_INFERENCE_API_KEY");
-      expect(registryHasSandbox(f)).toBe(true);
-    });
-
-    it("preserves the listed sandbox when the registered provider credential returns 401 (#6195)", {
-      timeout: 60_000,
-    }, () => {
-      const f = createFixture({
-        agent: "langchain-deepagents-code",
-        provider: "nvidia-prod",
-        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-        providerRegistered: true,
-        inferenceProbeHttpStatus: 401,
-      });
-
-      const result = runRebuild(f);
-      const output = (result.stderr || "") + (result.stdout || "");
-
-      expect(result.status).not.toBe(0);
-      expect(output).toContain("credentials or route for provider 'nvidia-prod' were rejected");
-      expect(output).toContain("HTTP 401");
-      expect(output).toContain("Sandbox is untouched");
-      expect(output).not.toContain("Backing up sandbox state");
-      expect(output).not.toContain("Old sandbox deleted");
-      expect(registryHasSandbox(f)).toBe(true);
-      const liveList = spawnSync(path.join(f.tmpDir, "openshell"), ["sandbox", "list"], {
-        encoding: "utf-8",
-      });
-      expect(liveList.status).toBe(0);
-      expect(liveList.stdout).toContain(`${f.sandboxName} Ready`);
-      const marker = runCli(f, [
-        f.sandboxName,
-        "exec",
-        "--",
-        "cat",
-        "/sandbox/rebuild-atomicity-marker.txt",
-      ]);
-      expect(marker.status, marker.stderr).toBe(0);
-      expect(marker.stdout).toContain("dcode-atomicity-marker");
+      // Should NOT show preflight failure
+      expect(output).not.toContain("preflight failed");
+      // Should proceed to backup step
+      expect(output).toContain("Backing up sandbox state");
     });
 
     it("aborts before backup when the gateway provider is missing even with host credential", {
@@ -629,7 +537,7 @@ describe("atomic rebuild (#2273)", () => {
       expect(registryHasSandbox(f)).toBe(true);
     });
 
-    it("preserves Hermes messaging state when strict runtime preflight aborts", {
+    it("copies Hermes messaging channels from the registry into the rebuild resume session", {
       timeout: 60_000,
     }, () => {
       const f = createFixture({
@@ -644,19 +552,18 @@ describe("atomic rebuild (#2273)", () => {
 
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
-      const registry = JSON.parse(
-        fs.readFileSync(path.join(f.nemoclawDir, "sandboxes.json"), "utf-8"),
+      expect(output).toContain("Creating new sandbox with current image");
+
+      const session = JSON.parse(
+        fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
       );
+      expect(session.agent).toBe("hermes");
       expect(
-        registry.sandboxes[f.sandboxName].messaging.plan.channels.map(
-          (channel: { channelId: string }) => channel.channelId,
-        ),
+        session.messagingPlan?.channels.map((channel: { channelId: string }) => channel.channelId),
       ).toEqual(["discord"]);
-      expect(registryHasSandbox(f)).toBe(true);
     });
 
-    it("runs strict runtime preflight before a forced Hermes base-image build", {
+    it("aborts rebuild before backup when forced Hermes base image build fails", {
       timeout: 60_000,
     }, () => {
       const f = createFixture({
@@ -673,8 +580,11 @@ describe("atomic rebuild (#2273)", () => {
       const output = (result.stderr || "") + (result.stdout || "");
 
       expect(result.status).not.toBe(0);
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
-      expect(output).not.toContain("agent base image could not be built");
+      expect(output).toContain("Rebuild preflight failed");
+      expect(output).toContain("agent base image could not be built");
+      expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
       expect(registryHasSandbox(f)).toBe(true);
     });
 
@@ -697,8 +607,10 @@ describe("atomic rebuild (#2273)", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
-      expect(output).not.toContain("Missing credential");
+      // Should NOT show preflight failure
+      expect(output).not.toContain("preflight failed");
+      // Should proceed to backup step
+      expect(output).toContain("Backing up sandbox state");
     });
 
     it.each([
@@ -719,13 +631,15 @@ describe("atomic rebuild (#2273)", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      // Must NOT bail with the usual missing-credential failure.
+      // Must NOT bail with the usual missing-credential failure
+      expect(output).not.toContain("preflight failed");
       expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
       // Must surface the migration notice so testers know the legacy
       // behaviour was intentionally bypassed
       expect(output).toContain("GH #2519");
       expect(output).toContain(provider);
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
+      // Must continue into the backup step
+      expect(output).toContain("Backing up sandbox state");
     }, 60_000);
 
     it("fails closed when a matching session omits the remote target provider credential", {
@@ -843,10 +757,10 @@ describe("atomic rebuild (#2273)", () => {
 
       expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
       expect(output).not.toContain("provider credential not found");
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
+      expect(output).toContain("Backing up sandbox state");
     });
 
-    it("does not recreate a missing Hermes Provider from an ambient API key", {
+    it("registers an exported Hermes API key in OpenShell when the provider is missing", {
       timeout: 60_000,
     }, () => {
       const f = createFixture({
@@ -860,11 +774,9 @@ describe("atomic rebuild (#2273)", () => {
       const result = runRebuild(f, { NOUS_API_KEY: "nous-key-from-env" });
       const output = (result.stderr || "") + (result.stdout || "");
 
-      expect(result.status).not.toBe(0);
-      expect(output).toContain("Hermes Provider is not registered in OpenShell");
-      expect(output).toContain("credentials must be stored in OpenShell");
-      expect(output).not.toContain("Backing up sandbox state");
-      expect(registryHasSandbox(f)).toBe(true);
+      expect(output).not.toContain("Missing credential: NOUS_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).toContain("Backing up sandbox state");
     });
 
     it("uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_INFERENCE_API_KEY", {
@@ -886,7 +798,7 @@ describe("atomic rebuild (#2273)", () => {
 
       expect(output).not.toContain("Missing credential: NVIDIA_INFERENCE_API_KEY");
       expect(output).not.toContain("provider credential not found");
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
+      expect(output).toContain("Backing up sandbox state");
     });
 
     it("still aborts when nvidia-prod is missing from the gateway AND the env", {
@@ -937,11 +849,13 @@ describe("atomic rebuild (#2273)", () => {
   });
 
   describe("Layer 3: recovery on recreate failure", () => {
-    it("does not destroy the sandbox when strict recreate preflight fails", {
+    it("prints recovery instructions when recreate fails after destroy", {
       timeout: 60_000,
     }, () => {
-      // The fake runtime cannot satisfy the full authoritative recreate
-      // contract, so the rebuild must stop before backup/delete.
+      // Credential IS present so preflight passes, but onboard will
+      // fail because the fake openshell doesn't support full onboard.
+      // The key thing: rebuild should catch the failure and print
+      // recovery instructions instead of silently exiting.
       const f = createFixture({
         credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         savedCredential: {
@@ -957,11 +871,16 @@ describe("atomic rebuild (#2273)", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      expectCredentialGatePassedToStrictRuntimePreflight(output);
-      expect(output).not.toContain("State backed up");
-      expect(output).not.toContain("Old sandbox deleted");
-      expect(output).not.toContain("Creating new sandbox");
-      expect(registryHasSandbox(f)).toBe(true);
+      // Should show the backup was created
+      expect(output).toContain("State backed up");
+      // Should show sandbox was deleted
+      expect(output).toContain("Old sandbox deleted");
+      // Should show recovery instructions (not just die silently)
+      expect(output).toContain("Recreate failed");
+      expect(output).toContain("recover manually");
+      expect(output).toContain("onboard --resume");
+      // Should mention where the backup is
+      expect(output).toContain("rebuild-backups");
     });
 
     it("preflight failure exits non-zero when credential is missing", { timeout: 60_000 }, () => {

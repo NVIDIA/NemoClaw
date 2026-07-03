@@ -4,9 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  attachNamedSandboxProviders,
   deleteProviderWithRecovery,
-  detachNamedSandboxProviders,
   detachSandboxProviders,
   emitProviderDetachResidualHint,
   parseAttachedSandboxes,
@@ -222,98 +220,6 @@ describe("detachSandboxProviders", () => {
         argv[4] === "spark-nemo-brave-search",
     );
     expect(braveCall).toBeDefined();
-  });
-});
-
-describe("exact rebuild provider attachment transactions", () => {
-  it("deduplicates exact names and tracks only providers it detached", () => {
-    const responses = new Map<string, RunResult>([
-      [
-        "sandbox provider detach alpha global-provider",
-        { status: 1, stderr: "status: NotAttached, provider 'global-provider' is not attached" },
-      ],
-    ]);
-    const { runOpenshell, calls } = buildRunOpenshell(responses);
-
-    const result = detachNamedSandboxProviders(
-      "alpha",
-      ["alpha-brave-search", "global-provider", "alpha-brave-search"],
-      { runOpenshell },
-    );
-
-    expect(calls).toEqual([
-      ["sandbox", "provider", "detach", "alpha", "alpha-brave-search"],
-      ["sandbox", "provider", "detach", "alpha", "global-provider"],
-    ]);
-    expect(result).toEqual({ detached: ["alpha-brave-search"], failures: [] });
-  });
-
-  it("treats provider disappearance as fatal exact-state drift", () => {
-    const { runOpenshell } = buildRunOpenshell(
-      new Map([
-        [
-          "sandbox provider detach alpha alpha-brave-search",
-          { status: 1, stderr: "status: NotFound, provider 'alpha-brave-search' not found" },
-        ],
-      ]),
-    );
-
-    expect(detachNamedSandboxProviders("alpha", ["alpha-brave-search"], { runOpenshell })).toEqual({
-      detached: [],
-      failures: [
-        {
-          name: "alpha-brave-search",
-          output: "status: NotFound, provider 'alpha-brave-search' not found",
-        },
-      ],
-    });
-  });
-
-  it("does not accept unrelated text containing not attached", () => {
-    const { runOpenshell } = buildRunOpenshell(
-      new Map([
-        [
-          "sandbox provider detach alpha alpha-brave-search",
-          {
-            status: 1,
-            stderr: "provider proxy failed because shield is not attached to its anchor",
-          },
-        ],
-      ]),
-    );
-
-    expect(
-      detachNamedSandboxProviders("alpha", ["alpha-brave-search"], { runOpenshell }),
-    ).toMatchObject({
-      detached: [],
-      failures: [{ name: "alpha-brave-search" }],
-    });
-  });
-
-  it("reattaches the exact detached set and reports rollback failures", () => {
-    const { runOpenshell, calls } = buildRunOpenshell(
-      new Map([
-        [
-          "sandbox provider attach alpha alpha-slack-bridge",
-          { status: 1, stderr: "gateway unavailable" },
-        ],
-      ]),
-    );
-
-    const result = attachNamedSandboxProviders(
-      "alpha",
-      ["alpha-brave-search", "alpha-slack-bridge"],
-      { runOpenshell },
-    );
-
-    expect(calls).toEqual([
-      ["sandbox", "provider", "attach", "alpha", "alpha-slack-bridge"],
-      ["sandbox", "provider", "attach", "alpha", "alpha-brave-search"],
-    ]);
-    expect(result).toEqual({
-      attached: ["alpha-brave-search"],
-      failures: [{ name: "alpha-slack-bridge", output: "gateway unavailable" }],
-    });
   });
 });
 

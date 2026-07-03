@@ -13,8 +13,8 @@ import {
   stageOptimizedSandboxBuildContext,
 } from "../sandbox/build-context";
 import {
-  CUSTOM_BUILD_CONTEXT_WARN_BYTES,
   createCustomBuildContextFilter,
+  CUSTOM_BUILD_CONTEXT_WARN_BYTES,
   isInsideIgnoredCustomBuildContextPath,
 } from "./custom-build-context";
 
@@ -32,11 +32,6 @@ export interface CreateSandboxBuildContextInput {
 
 export interface CreateSandboxBuildContextResult extends StagedBuildContext {
   cleanupBuildCtx(): boolean;
-}
-
-/** Exact staged + patched context transferred from rebuild preflight to onboard. */
-export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
-  buildId: string;
 }
 
 function createCleanupBuildContext(buildCtx: string): () => boolean {

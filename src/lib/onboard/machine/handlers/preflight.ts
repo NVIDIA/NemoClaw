@@ -35,8 +35,6 @@ export interface PreflightStateOptions<
   gpuRequested: boolean;
   noGpu: boolean;
   env: NodeJS.ProcessEnv;
-  /** Exact fatal-runtime result prepared by rebuild before the old sandbox was removed. */
-  authoritativePreflight?: { gpu: Gpu; sandboxGpuConfig: Config } | null;
   deps: {
     getSandbox(name: string): SandboxEntry | null;
     getResumeSandboxGpuOverrides(
@@ -114,7 +112,6 @@ export async function handlePreflightState<
   gpuRequested,
   noGpu,
   env,
-  authoritativePreflight = null,
   deps,
 }: PreflightStateOptions<Gpu, SandboxEntry, Host, Config>): Promise<
   PreflightStateResult<Gpu, Config>
@@ -134,38 +131,6 @@ export async function handlePreflightState<
     : { flag: null, device: null };
   const effectiveSandboxGpuFlag = explicitSandboxGpuFlag ?? resumedSandboxGpuOverrides.flag;
   const effectiveSandboxGpuDevice = sandboxGpuDevice ?? resumedSandboxGpuOverrides.device;
-
-  if (authoritativePreflight) {
-    const gpu = authoritativePreflight.gpu;
-    const sandboxGpuConfig = authoritativePreflight.sandboxGpuConfig;
-    const gpuPassthrough = sandboxGpuConfig.sandboxGpuEnabled;
-    deps.skippedStepMessage("preflight", "prevalidated rebuild runtime");
-    await deps.recordStateSkipped("preflight", {
-      reason: "resume",
-      validation: "authoritative-runtime",
-    });
-    session = await deps.recordStepComplete("preflight");
-    if (session && session.gpuPassthrough !== gpuPassthrough) {
-      session = deps.updateSession((current) => {
-        current.gpuPassthrough = gpuPassthrough;
-        return current;
-      });
-    }
-    return {
-      gpu,
-      sandboxGpuConfig,
-      resumePreflight: true,
-      resumeHasResolvedGpuIntent: true,
-      requestedGpuPassthrough: gpuRequested,
-      gpuPassthrough,
-      effectiveSandboxGpuFlag,
-      effectiveSandboxGpuDevice,
-      session,
-      stateResult: advanceTo("gateway", {
-        metadata: { state: "preflight", gpuPassthrough, prevalidated: true },
-      }),
-    };
-  }
 
   let gpu: Gpu;
   if (resumePreflight) {

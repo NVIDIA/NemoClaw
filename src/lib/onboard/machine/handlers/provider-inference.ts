@@ -30,8 +30,6 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   sandboxName: string | null;
   agent: Agent;
   forceProviderSelection?: boolean;
-  /** Rebuild validated the exact provider/model route before deleting the old sandbox. */
-  authoritativeInferencePrevalidated?: boolean;
   initial: {
     model: string | null;
     provider: string | null;
@@ -216,7 +214,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   sandboxName,
   agent,
   forceProviderSelection: initialForceProviderSelection = false,
-  authoritativeInferencePrevalidated = false,
   initial,
   selectedMessagingChannels,
   env,
@@ -244,56 +241,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
-
-  if (authoritativeInferencePrevalidated) {
-    const selected = requireSelection(provider, model, deps);
-    provider = selected.provider;
-    model = selected.model;
-    const updates = deps.toSessionUpdates({
-      provider,
-      model,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-      preferredInferenceApi,
-      compatibleEndpointReasoning,
-      nimContainer,
-    });
-    deps.skippedStepMessage("provider_selection", `${provider} / ${model} (prevalidated)`);
-    await deps.recordStateSkipped("provider_selection", {
-      reason: "resume",
-      provider,
-      model,
-    });
-    await deps.recordStepComplete("provider_selection", updates);
-    const providerStateResult = advanceTo("inference", {
-      metadata: { state: "provider_selection", provider, model },
-    });
-    deps.skippedStepMessage("inference", `${provider} / ${model} (prevalidated)`);
-    await deps.recordStateSkipped("inference", { reason: "resume", provider, model });
-    session = await deps.recordStepComplete("inference", updates);
-    const stateResult = advanceTo("sandbox", {
-      metadata: { state: "inference", provider, model },
-    });
-    return {
-      sandboxName,
-      model,
-      provider,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-      preferredInferenceApi,
-      compatibleEndpointReasoning,
-      nimContainer,
-      webSearchConfig,
-      session,
-      stateResult,
-      stateResults: [providerStateResult, stateResult],
-      retryStateResults,
-    };
-  }
 
   while (true) {
     let forceInferenceSetup = false;

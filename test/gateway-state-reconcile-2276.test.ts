@@ -101,11 +101,6 @@ function writeDefaultRegistry() {
           model: "nvidia/nemotron-3-super-120b-a12b",
           provider: "nvidia-prod",
           gpuEnabled: false,
-          nemoclawVersion: "0.1.0",
-          imageTag: "nemoclaw-sandbox:test",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          dashboardPort: 18789,
           policies: [],
         },
       },
@@ -157,7 +152,7 @@ function emit(r) {
 }
 
 if (args[0] === "--version") {
-  process.stdout.write("openshell 0.0.71\\n");
+  process.stdout.write("openshell 0.0.25\\n");
   process.exit(0);
 }
 
@@ -289,23 +284,6 @@ beforeEach(() => {
 
   fs.mkdirSync(homeLocalBin, { recursive: true });
   fs.mkdirSync(registryDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(homeLocalBin, "docker"),
-    `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0] === "info") {
-  process.stdout.write('{"ServerVersion":"28.0.0","Driver":"overlay2","CgroupVersion":"2","OperatingSystem":"Linux","Name":"fixture"}\\n');
-  process.exit(0);
-}
-if (args[0] === "image" && args[1] === "inspect") process.exit(0);
-if (args[0] === "run") {
-  process.stdout.write("Server: 127.0.0.11\\nAddress: 127.0.0.11:53\\n** server can't find fixture.invalid: NXDOMAIN\\n");
-  process.exit(0);
-}
-process.exit(0);
-`,
-    { mode: 0o755 },
-  );
   writeDefaultRegistry();
   writeDefaultSession();
 });
@@ -732,8 +710,8 @@ describe("skill install gives guidance instead of removal for the wrong active g
 // (a) locates the preserved entry (no "does not exist"), (b) does NOT dead-end
 // at "Cannot back up state", and (c) reports the stale state and proceeds to
 // recreate from the preserved registry metadata instead of aborting.
-describe("connect preserves the registry for an atomic rebuild retry in scenario 14 (#4497)", () => {
-  it("after a non-destructive connect, failed rebuild preflight leaves recovery state intact", {
+describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
+  it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({
@@ -755,11 +733,11 @@ describe("connect preserves the registry for an atomic rebuild retry in scenario
     assert.equal(connect.sessionSandboxName, SANDBOX_NAME, "session must survive connect");
     assert.doesNotMatch(connect.stderr, /Removed stale local registry entry/);
 
-    // Step 4: rebuild must locate the preserved entry and run replacement
-    // preflight before any backup/delete. This subprocess fixture deliberately
-    // has no exact Docker-driver gateway PID/mTLS identity, so the safe result
-    // is a retryable, non-destructive preflight failure. Focused rebuild-flow
-    // tests cover successful stale recovery once that exact preflight passes.
+    // Step 4: the previously-suggested rebuild must RECOVER the stale sandbox.
+    // The live `sandbox list` does not report it, so rebuild enters its
+    // stale-recovery path: it locates the preserved registry entry, skips the
+    // impossible backup (instead of dead-ending at "Cannot back up state"),
+    // and proceeds to recreate from the preserved metadata.
     const repoRoot = path.join(import.meta.dirname, "..");
     const rebuild = spawnSync(
       process.execPath,
@@ -774,6 +752,10 @@ describe("connect preserves the registry for an atomic rebuild retry in scenario
           PATH: `${homeLocalBin}:/usr/bin:/bin`,
           NO_COLOR: "1",
           NEMOCLAW_NON_INTERACTIVE: "1",
+          // The recreate handoff (onboard --resume) fails fast in this stubbed
+          // HOME — fine: the assertions below target the recovery markers that
+          // are emitted BEFORE the recreate, proving rebuild crossed the
+          // backup gate that previously blocked it.
           NVIDIA_INFERENCE_API_KEY: "",
           NEMOCLAW_PROVIDER_KEY: "",
         },
@@ -797,42 +779,28 @@ describe("connect preserves the registry for an atomic rebuild retry in scenario
       new RegExp(`Rebuild sandbox '${SANDBOX_NAME}'`),
       `rebuild must enter the rebuild flow, got:\n${rebuildOut}`,
     );
-    // It must fail before backup/delete and preserve the recovery inputs.
+    // It must recognize the stale state and skip the impossible backup.
     assert.match(
       rebuildOut,
-      /has no live recorded runtime/,
-      `rebuild must reject the incomplete replacement runtime, got:\n${rebuildOut}`,
+      /absent from the live OpenShell gateway/,
+      `rebuild must report the stale-recovery state (#4497), got:\n${rebuildOut}`,
     );
     assert.match(
       rebuildOut,
-      /Sandbox is untouched — no data was lost/,
-      `rebuild must report its non-destructive contract, got:\n${rebuildOut}`,
+      /No live workspace state to back up/,
+      `rebuild must skip backup on stale recovery (#4497), got:\n${rebuildOut}`,
     );
     assert.doesNotMatch(
       rebuildOut,
       /Backing up sandbox state/,
       `rebuild must not attempt backup on a stale sandbox (#4497), got:\n${rebuildOut}`,
     );
-    assert.doesNotMatch(
+    // And it must proceed to recreate from the preserved metadata — this line
+    // is printed right before the onboard --resume handoff.
+    assert.match(
       rebuildOut,
       /Creating new sandbox with current image/,
-      `rebuild must not recreate before strict preflight passes, got:\n${rebuildOut}`,
-    );
-    const registryAfter = JSON.parse(
-      fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf-8"),
-    );
-    assert.ok(registryAfter.sandboxes?.[SANDBOX_NAME], "registry entry must remain retryable");
-    const callsAfter = fs
-      .readFileSync(callLogFile, "utf-8")
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as string[]);
-    assert.equal(
-      callsAfter.some(
-        (args) => args[0] === "sandbox" && args[1] === "delete" && args[2] === SANDBOX_NAME,
-      ),
-      false,
-      "strict preflight failure must not delete the sandbox",
+      `rebuild must proceed to recreate the sandbox (#4497), got:\n${rebuildOut}`,
     );
   });
 });

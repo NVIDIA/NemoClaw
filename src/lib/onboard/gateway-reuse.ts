@@ -11,7 +11,7 @@ export type GatewayReuseSnapshot = {
 };
 
 export interface GatewayReuseDeps {
-  gatewayName: string | (() => string);
+  gatewayName: string;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
   runOpenshell(args: string[], opts?: Record<string, unknown>): { status: number | null };
   cliDisplayName(): string;
@@ -23,13 +23,9 @@ export interface GatewayReuseHelpers {
 }
 
 export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseHelpers {
-  const currentGatewayName = () =>
-    typeof deps.gatewayName === "function" ? deps.gatewayName() : deps.gatewayName;
-
   function getGatewayReuseSnapshot(): GatewayReuseSnapshot {
-    const gatewayName = currentGatewayName();
     const gatewayStatus = deps.runCaptureOpenshell(["status"], { ignoreError: true });
-    const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", gatewayName], {
+    const gwInfo = deps.runCaptureOpenshell(["gateway", "info", "-g", deps.gatewayName], {
       ignoreError: true,
     });
     const activeGatewayInfo = deps.runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
@@ -41,7 +37,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
         gatewayStatus,
         gwInfo,
         activeGatewayInfo,
-        gatewayName,
+        deps.gatewayName,
       ),
     };
   }
@@ -49,19 +45,18 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
   function selectNamedGatewayForReuseIfNeeded(
     snapshot: GatewayReuseSnapshot,
   ): GatewayReuseSnapshot {
-    const gatewayName = currentGatewayName();
     if (
       !shouldSelectNamedGatewayForReuse(
         snapshot.gatewayStatus,
         snapshot.gwInfo,
         snapshot.activeGatewayInfo,
-        gatewayName,
+        deps.gatewayName,
       )
     ) {
       return snapshot;
     }
 
-    const selectResult = deps.runOpenshell(["gateway", "select", gatewayName], {
+    const selectResult = deps.runOpenshell(["gateway", "select", deps.gatewayName], {
       ignoreError: true,
       suppressOutput: true,
     });
@@ -71,7 +66,7 @@ export function createGatewayReuseHelpers(deps: GatewayReuseDeps): GatewayReuseH
 
     const refreshed = getGatewayReuseSnapshot();
     if (refreshed.gatewayReuseState === "healthy") {
-      process.env.OPENSHELL_GATEWAY = gatewayName;
+      process.env.OPENSHELL_GATEWAY = deps.gatewayName;
       console.log(`  ✓ Selected existing ${deps.cliDisplayName()} gateway`);
     }
     return refreshed;

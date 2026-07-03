@@ -11,10 +11,6 @@ type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
 
-// Warm the large CommonJS source graph outside the per-test hook timeout.
-requireDist("./rebuild.js");
-delete require.cache[requireDist.resolve("./rebuild.js")];
-
 const driftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
   drift: {
@@ -31,30 +27,6 @@ function mockExit() {
   }) as never);
 }
 
-function healthyGatewayRecovery(gatewayName: string) {
-  const state = {
-    state: "healthy_named" as const,
-    status: `Gateway: ${gatewayName}\nStatus: Connected`,
-    gatewayInfo: `Gateway: ${gatewayName}`,
-    activeGateway: gatewayName,
-  };
-  return { recovered: true, before: state, after: state, attempted: false };
-}
-
-const sandboxGpuConfig = {
-  mode: "0" as const,
-  hostGpuDetected: false,
-  hostGpuPlatform: null,
-  sandboxGpuEnabled: false,
-  sandboxGpuDevice: null,
-  errors: [],
-};
-const runtimePreflightResult = {
-  gpu: null,
-  host: { dockerReachable: true, runtime: "docker", notes: [] },
-  sandboxGpuConfig,
-};
-
 describe("rebuild gateway drift preflight", () => {
   let rebuildSandbox: RebuildSandbox;
   let exitSpy: ReturnType<typeof mockExit>;
@@ -66,11 +38,6 @@ describe("rebuild gateway drift preflight", () => {
   let runOpenshellSpy: MockInstance;
   let printIssueSpy: MockInstance;
   let recoverNamedGatewayRuntimeSpy: MockInstance;
-  let acquireOnboardLockSpy: MockInstance;
-  let releaseOnboardLockSpy: MockInstance;
-  let authoritativePreflightSpy: MockInstance;
-  let inferenceRouteReadySpy: MockInstance;
-  let imagePreflightSpy: MockInstance;
 
   beforeEach(async () => {
     spies = [];
@@ -86,8 +53,6 @@ describe("rebuild gateway drift preflight", () => {
     const onboardSession = requireDist("../../state/onboard-session.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const agentRuntime = requireDist("../../agent/runtime.js");
-    const onboardMod = requireDist("../../onboard.js");
-    const imagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 
     printIssueSpy = vi
       .spyOn(gatewayDrift, "printOpenShellStateRpcIssue")
@@ -106,30 +71,7 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-      .mockImplementation((...args: unknown[]) => {
-        const options = args[0] as { gatewayName?: string } | undefined;
-        return Promise.resolve(healthyGatewayRecovery(options?.gatewayName ?? "nemoclaw"));
-      });
-    acquireOnboardLockSpy = vi
-      .spyOn(onboardSession, "acquireOnboardLock")
-      .mockReturnValue({ acquired: true, lockFile: "/tmp/onboard.lock", stale: false });
-    releaseOnboardLockSpy = vi
-      .spyOn(onboardSession, "releaseOnboardLock")
-      .mockImplementation(() => undefined);
-    authoritativePreflightSpy = vi
-      .spyOn(onboardMod, "preflightAuthoritativeRebuildTarget")
-      .mockResolvedValue(runtimePreflightResult);
-    inferenceRouteReadySpy = vi.spyOn(onboardMod, "isInferenceRouteReady").mockReturnValue(true);
-    imagePreflightSpy = vi.spyOn(imagePreflight, "preflightRebuildImage").mockResolvedValue({
-      ok: true,
-      preparedBuildContext: {
-        buildCtx: "/tmp/rebuild-drift-preflight",
-        stagedDockerfile: "/tmp/rebuild-drift-preflight/Dockerfile",
-        buildId: "drift-build",
-        dockerGpuPatchNetwork: null,
-        cleanupBuildCtx: vi.fn(() => true),
-      },
-    });
+      .mockResolvedValue({ recovered: true });
 
     spies.push(
       detectPreflightIssueSpy,
@@ -137,11 +79,6 @@ describe("rebuild gateway drift preflight", () => {
       captureOpenshellSpy,
       runOpenshellSpy,
       recoverNamedGatewayRuntimeSpy,
-      acquireOnboardLockSpy,
-      releaseOnboardLockSpy,
-      authoritativePreflightSpy,
-      inferenceRouteReadySpy,
-      imagePreflightSpy,
       printIssueSpy,
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
@@ -150,12 +87,7 @@ describe("rebuild gateway drift preflight", () => {
         policies: [],
         nimContainer: null,
         agent: null,
-        nemoclawVersion: "0.0.72",
-        dashboardPort: 18789,
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
       } as never),
-      vi.spyOn(registry, "listExtraProviders").mockReturnValue([]),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
@@ -176,28 +108,16 @@ describe("rebuild gateway drift preflight", () => {
     errorSpy.mockRestore();
   });
 
-  it("fails after target recovery but before replacement or liveness preflights on gateway drift", async () => {
+  it("fails before version or liveness RPCs when gateway image drift is detected", async () => {
     await expect(rebuildSandbox("alpha", ["--yes"])).rejects.toThrow("process.exit(1)");
 
     expect(printIssueSpy).toHaveBeenCalledWith(
       driftIssue,
       expect.objectContaining({ command: "nemoclaw alpha rebuild" }),
     );
-    expect(checkAgentVersionSpy).toHaveBeenCalledOnce();
-    expect(acquireOnboardLockSpy).toHaveBeenCalledWith("nemoclaw alpha rebuild");
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw",
-      recoverableStates: [
-        "missing_named",
-        "named_unhealthy",
-        "named_unreachable",
-        "connected_other",
-      ],
-    });
-    expect(authoritativePreflightSpy).not.toHaveBeenCalled();
-    expect(imagePreflightSpy).not.toHaveBeenCalled();
+    expect(checkAgentVersionSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).not.toHaveBeenCalled();
-    expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
   it("recovers the named gateway and retries the liveness query before entering stale recovery", async () => {
@@ -255,29 +175,8 @@ describe("rebuild gateway drift preflight", () => {
         "connected_other",
       ],
     });
-    expect(authoritativePreflightSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        authoritativeResumeConfig: true,
-        controlUiPort: 18789,
-        model: "nvidia/nemotron",
-        provider: "ollama-local",
-        sandboxName: "alpha",
-        targetGatewayName: "nemoclaw",
-        targetGatewayPort: 8080,
-      }),
-    );
-    expect(imagePreflightSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        gatewayPort: 8080,
-        model: "nvidia/nemotron",
-        provider: "ollama-local",
-      }),
-    );
-    expect(inferenceRouteReadySpy).toHaveBeenCalledWith("ollama-local", "nvidia/nemotron");
-    expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
-    // One early inference-route eligibility read plus the failed liveness read
-    // and its post-recovery retry.
-    expect(listCalls).toBe(3);
+    // The liveness query ran twice (initial failure + post-recovery retry).
+    expect(listCalls).toBe(2);
   });
 
   it("recovers the persisted non-default gateway when the sandbox is bound to nemoclaw-<port>", async () => {
@@ -298,8 +197,6 @@ describe("rebuild gateway drift preflight", () => {
     const onboardSession = requireDist("../../state/onboard-session.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const agentRuntime = requireDist("../../agent/runtime.js");
-    const onboardMod = requireDist("../../onboard.js");
-    const imagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 
     let listCalls = 0;
     detectPreflightIssueSpy = vi
@@ -333,30 +230,7 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-      .mockImplementation((...args: unknown[]) => {
-        const options = args[0] as { gatewayName?: string } | undefined;
-        return Promise.resolve(healthyGatewayRecovery(options?.gatewayName ?? "nemoclaw"));
-      });
-    acquireOnboardLockSpy = vi
-      .spyOn(onboardSession, "acquireOnboardLock")
-      .mockReturnValue({ acquired: true, lockFile: "/tmp/onboard.lock", stale: false });
-    releaseOnboardLockSpy = vi
-      .spyOn(onboardSession, "releaseOnboardLock")
-      .mockImplementation(() => undefined);
-    authoritativePreflightSpy = vi
-      .spyOn(onboardMod, "preflightAuthoritativeRebuildTarget")
-      .mockResolvedValue(runtimePreflightResult);
-    inferenceRouteReadySpy = vi.spyOn(onboardMod, "isInferenceRouteReady").mockReturnValue(true);
-    imagePreflightSpy = vi.spyOn(imagePreflight, "preflightRebuildImage").mockResolvedValue({
-      ok: true,
-      preparedBuildContext: {
-        buildCtx: "/tmp/rebuild-drift-preflight",
-        stagedDockerfile: "/tmp/rebuild-drift-preflight/Dockerfile",
-        buildId: "drift-build",
-        dockerGpuPatchNetwork: null,
-        cleanupBuildCtx: vi.fn(() => true),
-      },
-    });
+      .mockResolvedValue({ recovered: true });
     checkAgentVersionSpy = vi
       .spyOn(sandboxVersion, "checkAgentVersion")
       .mockReturnValue({ expectedVersion: "0.1.0", sandboxVersion: "0.0.1" } as never);
@@ -365,17 +239,13 @@ describe("rebuild gateway drift preflight", () => {
       .mockImplementation(() => undefined);
 
     const destroy = requireDist("./destroy.js");
+    const onboardMod = requireDist("../../onboard.js");
     spies.push(
       detectPreflightIssueSpy,
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
       captureOpenshellSpy,
       runOpenshellSpy,
       recoverNamedGatewayRuntimeSpy,
-      acquireOnboardLockSpy,
-      releaseOnboardLockSpy,
-      authoritativePreflightSpy,
-      inferenceRouteReadySpy,
-      imagePreflightSpy,
       printIssueSpy,
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "alpha",
@@ -384,12 +254,9 @@ describe("rebuild gateway drift preflight", () => {
         policies: [],
         nimContainer: null,
         agent: null,
-        nemoclawVersion: "0.0.72",
-        dashboardPort: 18789,
         gatewayName: "nemoclaw-12345",
         gatewayPort: 12345,
       } as never),
-      vi.spyOn(registry, "listExtraProviders").mockReturnValue([]),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
@@ -418,15 +285,7 @@ describe("rebuild gateway drift preflight", () => {
         "connected_other",
       ],
     });
-    expect(authoritativePreflightSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        targetGatewayName: "nemoclaw-12345",
-        targetGatewayPort: 12345,
-      }),
-    );
-    expect(imagePreflightSpy).toHaveBeenCalledWith(expect.objectContaining({ gatewayPort: 12345 }));
-    expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
-    expect(listCalls).toBe(3);
+    expect(listCalls).toBe(2);
   });
 
   it("does not recover generic sandbox list failures", async () => {
@@ -437,17 +296,7 @@ describe("rebuild gateway drift preflight", () => {
       "Failed to query running sandboxes from OpenShell.",
     );
 
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(1);
-    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      gatewayName: "nemoclaw",
-      recoverableStates: [
-        "missing_named",
-        "named_unhealthy",
-        "named_unreachable",
-        "connected_other",
-      ],
-    });
-    expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
-    expect(releaseOnboardLockSpy).toHaveBeenCalledOnce();
+    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+    expect(captureOpenshellSpy).toHaveBeenCalledTimes(1);
   });
 });

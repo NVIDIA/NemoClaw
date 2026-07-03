@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type { InferenceSelection } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
@@ -79,9 +79,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
-  /** Resolved resource intent used for exact rebuild replay. */
-  resourceCpu?: string | null;
-  resourceMemory?: string | null;
   // True once the onboard policy step has fully completed and reconciled the
   // effective preset selection (set by the post-policy registry write). Absent
   // on a sandbox whose registration recorded only boot-time presets but whose
@@ -99,8 +96,6 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   nemoclawVersion?: string | null;
   imageTag?: string | null;
   messaging?: SandboxMessagingState;
-  /** Additional OpenShell placeholder env keys attached to this sandbox. */
-  extraPlaceholderKeys?: string[];
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
@@ -445,13 +440,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellDriver: entry.openshellDriver || null,
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
-      customPolicies:
-        Array.isArray(entry.customPolicies) && entry.customPolicies.length > 0
-          ? entry.customPolicies.map((policy) => ({ ...policy }))
-          : undefined,
       policyTier: entry.policyTier || null,
-      resourceCpu: entry.resourceCpu ?? null,
-      resourceMemory: entry.resourceMemory ?? null,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a
@@ -462,10 +451,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
       messaging: cloneSandboxMessagingState(entry.messaging),
-      extraPlaceholderKeys:
-        Array.isArray(entry.extraPlaceholderKeys) && entry.extraPlaceholderKeys.length > 0
-          ? [...new Set(entry.extraPlaceholderKeys)]
-          : undefined,
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
           ? [...entry.hermesToolGateways]

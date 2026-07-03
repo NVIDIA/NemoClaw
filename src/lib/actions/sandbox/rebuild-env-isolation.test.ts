@@ -47,44 +47,6 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_PROVIDER_KEY",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_MODEL",
-      "NEMOCLAW_COMPAT_MODEL",
-      "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
-      "NEMOCLAW_PREFERRED_API",
-      "NEMOCLAW_REASONING",
-      "NEMOCLAW_VLLM_MODEL",
-      "NEMOCLAW_FROM_DOCKERFILE",
-      "NEMOCLAW_SANDBOX_GPU",
-      "NEMOCLAW_SANDBOX_GPU_DEVICE",
-      "NEMOCLAW_DASHBOARD_PORT",
-      "CHAT_UI_URL",
-      "NEMOCLAW_RESOURCE_PROFILE",
-      "NEMOCLAW_CPU",
-      "NEMOCLAW_RAM",
-      "NEMOCLAW_POLICY_TIER",
-      "NEMOCLAW_POLICY_PRESETS",
-      "NEMOCLAW_POLICY_MODE",
-      "NEMOCLAW_HERMES_AUTH_METHOD",
-      "NEMOCLAW_HERMES_AUTH",
-      "NEMOCLAW_NOUS_AUTH_METHOD",
-      "NEMOCLAW_HERMES_DASHBOARD",
-      "NEMOCLAW_HERMES_DASHBOARD_PORT",
-      "NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT",
-      "NEMOCLAW_HERMES_DASHBOARD_TUI",
-      "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
-      "NEMOCLAW_DOCKER_GPU_PATCH",
-      "NEMOCLAW_EXTRA_AGENTS_JSON",
-      "NEMOCLAW_EXTRA_PLACEHOLDER_KEYS",
-      "NEMOCLAW_CONTEXT_WINDOW",
-      "NEMOCLAW_MAX_TOKENS",
-      "NEMOCLAW_INFERENCE_INPUTS",
-      "NEMOCLAW_AGENT_TIMEOUT",
-      "NEMOCLAW_AGENT_HEARTBEAT_EVERY",
-      "NEMOCLAW_PROXY_HOST",
-      "NEMOCLAW_PROXY_PORT",
-      "NEMOCLAW_OPENCLAW_OTEL",
-      "NEMOCLAW_OPENCLAW_OTEL_ENDPOINT",
-      "NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME",
-      "NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE",
     ]);
   });
 });
@@ -135,11 +97,6 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
       NEMOCLAW_MODEL: "some-model",
-      NEMOCLAW_SANDBOX_GPU: "bogus",
-      NEMOCLAW_POLICY_TIER: "bogus",
-      NEMOCLAW_RESOURCE_PROFILE: "bogus",
-      NEMOCLAW_VLLM_MODEL: "bogus",
-      NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
     };
@@ -150,18 +107,12 @@ describe("isolateAmbientRecreateEnv", () => {
       expect(env[name]).toBeUndefined();
     }
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
-    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBeUndefined();
 
     restore();
 
     expect(env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus");
     expect(env.NEMOCLAW_MODEL).toBe("some-model");
-    expect(env.NEMOCLAW_SANDBOX_GPU).toBe("bogus");
-    expect(env.NEMOCLAW_POLICY_TIER).toBe("bogus");
-    expect(env.NEMOCLAW_RESOURCE_PROFILE).toBe("bogus");
-    expect(env.NEMOCLAW_VLLM_MODEL).toBe("bogus");
-    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.
     expect("NEMOCLAW_PROVIDER" in env).toBe(false);

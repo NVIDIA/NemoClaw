@@ -62,9 +62,5 @@
   {
     "name": "NEMOCLAW_FORWARD_RECOVERY_WAIT_MS",
     "reason": "Internal Vitest-only override that shortens the bounded post-start forward-settle poll in subprocess fixtures. Production uses the built-in three-second window."
-  },
-  {
-    "name": "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
-    "reason": "Internal authoritative-rebuild handoff carrying the prevalidated Docker GPU patch network into sandbox creation. NemoClaw computes, isolates, and restores it; users must not set it."
   }
 ]

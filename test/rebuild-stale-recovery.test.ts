@@ -79,13 +79,9 @@ function createStaleFixture(
           model: "meta/llama-3.3-70b-instruct",
           provider,
           gpuEnabled: false,
-          nemoclawVersion: "0.1.0",
-          imageTag: "nemoclaw-sandbox:test",
-          gatewayName: gatewayName ?? "nemoclaw",
-          gatewayPort: gatewayName === "nemoclaw-9000" ? 9000 : 8080,
-          dashboardPort: 18789,
           policies: [],
           agent: null,
+          ...(gatewayName ? { gatewayName } : {}),
         },
       },
     }),
@@ -117,7 +113,7 @@ function createStaleFixture(
       webSearchConfig: null,
       policyPresets: [],
       messagingPlan: null,
-      metadata: { gatewayName: gatewayName ?? "nemoclaw", fromDockerfile: null },
+      metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {},
     }),
     { mode: 0o600 },
@@ -151,7 +147,6 @@ const a = process.argv.slice(2);
 if (a[0]==="sandbox" && a[1]==="list")       { ${listBody} }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="get")        { process.stderr.write("Error:   × Not Found: sandbox not found\\n"); process.exit(1); }
-if (a[0]==="--version")                      { process.stdout.write("openshell 0.0.71\\n"); process.exit(0); }
 if (a[0]==="status")                         { ${statusBody} }
 if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
@@ -168,12 +163,10 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
-if (a[0]==="info") { process.stdout.write('{"ServerVersion":"28.0.0","Driver":"overlay2","CgroupVersion":"2","OperatingSystem":"Linux","Name":"fixture"}\\n'); process.exit(0); }
 if (a[0]==="build") { process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 if (a[0]==="ps") { process.exit(0); }
-if (a[0]==="run") { process.stdout.write("Server: 127.0.0.11\\nAddress: 127.0.0.11:53\\n** server can't find fixture.invalid: NXDOMAIN\\n"); process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -225,38 +218,33 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("is not running. Cannot back up state");
   });
 
-  it("fails closed before stale recovery when the replacement runtime cannot be verified", {
+  it("reports the stale state and recreates from preserved registry metadata", {
     timeout: 90_000,
   }, () => {
     const f = createStaleFixture({ liveListIncludesSandbox: false });
     const result = runRebuild(f);
     const output = (result.stderr || "") + (result.stdout || "");
 
-    // Atomic rebuild now validates the exact replacement runtime before it
-    // checks liveness or touches the old sandbox. This lightweight subprocess
-    // fixture intentionally has no recorded Docker-driver gateway PID.
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("has no live recorded runtime");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
+    // Surfaces the recovery state to the operator.
+    expect(output).toContain("absent from the live OpenShell gateway");
+    expect(output).toContain("No live workspace state to back up");
+    // Skips the (impossible) backup step entirely.
     expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(output).not.toContain("Creating new sandbox with current image");
-    expect(registryHasSandbox(f)).toBe(true);
+    // Proceeds to recreate — this line is printed right before onboard() runs,
+    // proving the rebuild crossed the backup gate that previously blocked it.
+    expect(output).toContain("Creating new sandbox with current image");
   });
 
-  it("does not back up a live sandbox until replacement preflight passes", {
+  it("still backs up normally when the live sandbox IS present (control case)", {
     timeout: 90_000,
   }, () => {
     const f = createStaleFixture({ liveListIncludesSandbox: true });
     const result = runRebuild(f);
     const output = (result.stderr || "") + (result.stdout || "");
 
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("has no live recorded runtime");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
-    expect(output).not.toContain("Backing up sandbox state");
-    expect(output).not.toContain("Deleting old sandbox");
-    expect(registryHasSandbox(f)).toBe(true);
+    // Live sandbox present → normal backup path, not stale recovery.
+    expect(output).toContain("Backing up sandbox state");
+    expect(output).not.toContain("absent from the live OpenShell gateway");
   });
 
   it("does NOT destroy/recreate when a foreign gateway is active (multi-gateway guard)", {
@@ -275,9 +263,8 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("No live workspace state to back up");
     expect(output).not.toContain("Deleting old sandbox");
     expect(output).not.toContain("Creating new sandbox with current image");
-    // Must surface the target-gateway failure and preserve the registry entry.
-    expect(output).toContain("could not select the target gateway 'nemoclaw'");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
+    // Must surface the wrong-gateway guidance and preserve the registry entry.
+    expect(output).toContain("NOT been removed");
     expect(registryHasSandbox(f)).toBe(true);
   });
 
@@ -296,21 +283,25 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     expect(output).not.toContain("No live workspace state to back up");
     expect(output).not.toContain("Deleting old sandbox");
     expect(output).not.toContain("Creating new sandbox with current image");
-    expect(output).toContain("could not select the target gateway 'nemoclaw-9000'");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
+    expect(output).toContain("openshell gateway select nemoclaw-9000");
     expect(registryHasSandbox(f)).toBe(true);
   });
 
-  it("preserves the registry entry when recovery preflight fails", { timeout: 90_000 }, () => {
+  it("preserves the registry entry when the recovery recreate fails", { timeout: 90_000 }, () => {
+    // Stale recovery removes the registry entry before the recreate (the
+    // recreate re-adds it on success). The fixture's onboard --resume cannot
+    // complete, so the recreate fails — the entry must be restored so the
+    // recommended `rebuild --yes` stays retryable instead of failing at
+    // dispatch with "not found in registry" (#4497).
     const f = createStaleFixture({ liveListIncludesSandbox: false });
     const result = runRebuild(f);
     const output = (result.stderr || "") + (result.stdout || "");
 
-    expect(result.status).not.toBe(0);
-    expect(output).toContain("has no live recorded runtime");
-    expect(output).toContain("Sandbox is untouched — no data was lost");
-    expect(output).not.toContain("Deleting old sandbox");
-    // The preserved entry and default selection remain retryable verbatim.
+    // Proof we took the stale-recovery path and the recreate did not succeed.
+    expect(output).toContain("No live workspace state to back up");
+    expect(output).toContain("Recovery recreate failed");
+    // The preserved entry must survive the failed recreate, and the full
+    // registry snapshot (including defaultSandbox) must be restored verbatim.
     expect(registryHasSandbox(f)).toBe(true);
     const reg = JSON.parse(fs.readFileSync(path.join(f.nemoclawDir, "sandboxes.json"), "utf-8"));
     expect(reg.defaultSandbox).toBe(f.sandboxName);

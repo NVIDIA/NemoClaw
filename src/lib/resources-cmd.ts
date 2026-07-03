@@ -9,10 +9,10 @@
  * auto-select profiles and models based on available hardware.
  */
 
-import { execSync, spawnSync } from "child_process";
-import * as fs from "fs";
 import * as os from "os";
+import * as fs from "fs";
 import * as path from "path";
+import { spawnSync, execSync } from "child_process";
 import * as YAML from "yaml";
 
 import { dockerSpawnSync } from "./adapters/docker";
@@ -196,7 +196,7 @@ export function printHardwareResources(json: boolean): HardwareResources {
 
 /**
  * Resolve a resource value that may be a percentage or absolute quantity.
- * Throws on invalid values so callers can surface clear errors.
+ * Throws on invalid percentages so callers can surface clear errors.
  */
 export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
@@ -219,17 +219,7 @@ export function resolveResourceValue(value: string, total: number, unit: "cpu" |
     const resultGi = Math.max(1, Math.floor(resultMB / 1024));
     return `${resultGi}Gi`;
   }
-  // Absolute values use Kubernetes quantity syntax because OpenShell passes
-  // these values through to its sandbox runtime. Validate locally so an
-  // authoritative rebuild can reject malformed persisted state before delete.
-  const quantityMatch = trimmed.match(
-    /^\+?(\d+(?:\.\d*)?|\.\d+)(?:(?:[eE][+-]?\d+)|(?:[EPTGMK]i)|[EPTGMkKmun])?$/,
-  );
-  if (!quantityMatch || Number(quantityMatch[1]) <= 0) {
-    throw new Error(
-      `Invalid ${unit} quantity '${trimmed}': expected a positive Kubernetes resource quantity`,
-    );
-  }
+  // Absolute value — pass through as-is
   return trimmed;
 }
 
@@ -265,51 +255,10 @@ export function resolveProfile(profile: ResourceProfile, hw: HardwareResources):
 }
 
 /**
- * Append resource flags to an OpenShell sandbox create args array, throwing
- * when the CLI cannot accept them or the profile cannot be resolved. Callers
- * that must preserve persisted resource intent use this fail-closed form.
- */
-export function appendResourceFlagsOrThrow(
-  args: string[],
-  profile: ResourceProfile,
-  openshellBinary = "openshell",
-): void {
-  let result: ReturnType<typeof spawnSync>;
-  try {
-    result = spawnSync(openshellBinary, ["sandbox", "create", "--help"], {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not inspect OpenShell sandbox resource flag support: ${detail}`);
-  }
-  if (result.error) {
-    throw new Error(
-      `Could not inspect OpenShell sandbox resource flag support: ${result.error.message}`,
-    );
-  }
-  const help = String(result.stdout || "");
-  const hasFlag = (name: string) => new RegExp(`(^|\\s)--${name}(\\s|,|$)`).test(help);
-  if (result.status !== 0 || !hasFlag("cpu") || !hasFlag("memory")) {
-    throw new Error(
-      "OpenShell sandbox create does not support both required --cpu and --memory flags.",
-    );
-  }
-
-  const resolved = resolveProfile(profile, getHardwareResources());
-  const resolvedArgs: string[] = [];
-  if (resolved.cpu) resolvedArgs.push("--cpu", resolved.cpu);
-  if (resolved.memory) resolvedArgs.push("--memory", resolved.memory);
-  if (resolvedArgs.length === 0) throw new Error("Sandbox resource profile resolved no values.");
-  args.push(...resolvedArgs);
-}
-
-/**
- * Best-effort resource flag append used by ordinary onboarding. It preserves
- * the existing graceful fallback to OpenShell defaults when flags are absent
- * or a profile cannot be resolved.
+ * Append resource flags to an openshell sandbox create args array.
+ * Resolves percentage values against detected hardware before passing.
+ * Gracefully degrades: checks `openshell sandbox create --help` for flag
+ * support and skips silently if the installed OpenShell doesn't have them.
  */
 export function appendResourceFlags(
   args: string[],
@@ -317,7 +266,24 @@ export function appendResourceFlags(
   openshellBinary = "openshell",
 ): boolean {
   try {
-    appendResourceFlagsOrThrow(args, profile, openshellBinary);
+    const result = spawnSync(openshellBinary, ["sandbox", "create", "--help"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const help = result.stdout || "";
+    const hasFlag = (name: string) => new RegExp(`(^|\\s)--${name}(\\s|,|$)`).test(help);
+    if (result.status !== 0 || !hasFlag("cpu") || !hasFlag("memory")) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  try {
+    const hw = getHardwareResources();
+    const resolved = resolveProfile(profile, hw);
+    if (resolved.cpu) args.push("--cpu", resolved.cpu);
+    if (resolved.memory) args.push("--memory", resolved.memory);
     return true;
   } catch {
     return false;

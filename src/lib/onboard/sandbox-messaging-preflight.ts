@@ -8,9 +8,9 @@ import {
   type MessagingConflictGuardDeps,
 } from "./messaging-conflict-guard";
 import {
+  prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
   type CreateSandboxMessagingPrepInput,
   type CreateSandboxMessagingPrepResult,
-  prepareCreateSandboxMessaging as defaultPrepareCreateSandboxMessaging,
   type NamedMessagingChannel,
 } from "./messaging-prep";
 
@@ -20,9 +20,6 @@ export interface SandboxMessagingPreflightInput {
   enabledChannels: readonly string[] | null;
   webSearchConfig: WebSearchConfig | null;
   env: NodeJS.ProcessEnv | Record<string, string | undefined>;
-  /** Rebuild-only: the exact staged plan already passed the conflict guard pre-delete. */
-  conflictsPrevalidated?: boolean;
-  authoritativeReuse?: CreateSandboxMessagingPrepInput["authoritativeReuse"];
 }
 
 export interface SandboxMessagingPreflightDeps {
@@ -67,9 +64,7 @@ export async function prepareSandboxMessagingPreflight(
   deps: SandboxMessagingPreflightDeps,
 ): Promise<SandboxMessagingPreflightResult> {
   const disabledChannels = deps.resolveDisabledChannels(input.sandboxName);
-  if (!input.conflictsPrevalidated) {
-    await checkMessagingPlanConflicts(input.sandboxName, disabledChannels, deps);
-  }
+  await checkMessagingPlanConflicts(input.sandboxName, disabledChannels, deps);
 
   const result = (deps.prepareCreateSandboxMessaging ?? defaultPrepareCreateSandboxMessaging)({
     sandboxName: input.sandboxName,
@@ -84,7 +79,6 @@ export async function prepareSandboxMessagingPreflight(
     registerExtraPlaceholderProviders: deps.registerExtraPlaceholderProviders,
     getMessagingChannelForEnvKey: deps.getMessagingChannelForEnvKey,
     providerExistsInGateway: deps.providerExistsInGateway,
-    authoritativeReuse: input.authoritativeReuse,
   });
 
   if (result.missingBraveApiKey) {
@@ -98,7 +92,7 @@ export async function prepareSandboxMessagingPreflight(
   return { ...result, disabledChannels };
 }
 
-export async function checkMessagingPlanConflicts(
+async function checkMessagingPlanConflicts(
   sandboxName: string,
   disabledChannels: readonly string[],
   deps: SandboxMessagingPreflightDeps,
