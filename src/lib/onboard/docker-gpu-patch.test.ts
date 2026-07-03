@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
+import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -27,7 +27,6 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
-import { waitForCreatedSandboxReadyWithTrace } from "./sandbox-readiness-tracing";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -944,32 +943,8 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
   });
 
-  it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
-    const outputs = ["my-sandbox   Provisioning   1s ago", "my-sandbox   Error          3s ago"];
-    let i = 0;
-    const runCaptureOpenshell = vi.fn(() => outputs[Math.min(i++, outputs.length - 1)]);
-    const sleep = vi.fn();
-
-    const ready = waitForCreatedSandboxReadyWithTrace({
-      sandboxName: "my-sandbox",
-      // 600 / 2 = 300 readyAttempts. Without short-circuit we'd loop 300
-      // times. With short-circuit we should bail out after the 2nd poll.
-      timeoutSecs: 600,
-      runCaptureOpenshell,
-      isSandboxReady,
-      getSandboxFailurePhase,
-      sleep,
-    });
-
-    expect(ready).toEqual({
-      ready: false,
-      reason: "terminal_failure_phase",
-      failurePhase: "Error",
-    });
-    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
-    // Should not sleep after detecting the terminal phase.
-    expect(sleep).toHaveBeenCalledTimes(1);
-  });
+  // Create/readiness-wait Error-phase behavior (including the #6043 transient
+  // debounce and its env contract) lives in sandbox-readiness-tracing.test.ts.
 
   it("short-circuits the supervisor-reconnect wait when the sandbox enters Error phase", () => {
     // Without the short-circuit, a patched container that crashes on startup

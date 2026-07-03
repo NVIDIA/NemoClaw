@@ -722,12 +722,16 @@ exit 1
 
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-disclosure-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
-
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       try {
         try {
           policies.applyPreset("test-sandbox", "npm");
@@ -743,7 +747,8 @@ exit 1
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
-        exitSpy.mockRestore();
+        vi.unstubAllEnvs();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
 
@@ -850,14 +855,6 @@ exit 1
     });
   });
 
-  describe("buildPolicyGetCommand", () => {
-    it("returns an argv array with sandbox name as a separate element", () => {
-      const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd[0]).toMatch(/openshell$/);
-      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
-    });
-  });
-
   // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
   // (the installer's user-local location) but PATH from a non-interactive shell does
   // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
@@ -874,7 +871,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
 
       origHome = process.env.HOME;
       origPath = process.env.PATH;
@@ -912,7 +913,7 @@ exit 1
     it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
@@ -977,7 +978,10 @@ exit 1
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
-      const resolveSpy = vi.spyOn(resolveOpenshellModule, "resolveOpenshell").mockReturnValue(null);
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -1010,7 +1014,6 @@ exit 1
     const CUSTOM = "network_policies:\n  example:\n    host: example.com\n";
     const DEGRADED =
       '#!/bin/sh\nif [ "$1" = "policy" ] && [ "$2" = "get" ]; then echo "error: gateway is restarting"; fi\nexit 0\n';
-    const EMPTY_OK = "#!/bin/sh\nexit 0\n";
 
     let tmpHome: string;
     let fakeOpenshell: string;
@@ -1067,25 +1070,6 @@ exit 1
       }
     });
 
-    it("still applies applyPresetContent when policy get returns an empty policy (fresh sandbox)", () => {
-      fs.writeFileSync(fakeOpenshell, EMPTY_OK, { mode: 0o755 });
-      const logs: string[] = [];
-      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
-        logs.push(a.map((x) => String(x)).join(" "));
-      });
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-      try {
-        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
-          custom: { sourcePath: "/tmp/x.yaml" },
-        });
-        expect(result).toBe(true);
-        expect(logs.join("\n")).toContain("Applied preset:");
-      } finally {
-        logSpy.mockRestore();
-        errSpy.mockRestore();
-      }
-    });
-
     it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
       fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
       const errs: string[] = [];
@@ -1123,7 +1107,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       origHome = process.env.HOME;
       process.env.HOME = tmpHome;
       resolveSpy = vi
@@ -1334,20 +1322,17 @@ exit 1
   });
 
   describe("mergePresetIntoPolicy", () => {
-    // Legacy list-style entries (backward compat — uses text-based fallback)
-    const sampleEntries = "  - host: example.com\n    allow: true";
+    const sampleEntries = "  example:\n    endpoints:\n      - host: example.com";
 
-    it("appends network_policies when current policy has content but no version header", () => {
+    it("refuses an unmarked current mapping without a policy root", () => {
       const versionless = "some_key:\n  foo: bar";
-      const merged = policies.mergePresetIntoPolicy(versionless, sampleEntries);
-      expect(merged).toContain("version:");
-      expect(merged).toContain("some_key:");
-      expect(merged).toContain("network_policies:");
-      expect(merged).toContain("example.com");
+      expect(() => policies.mergePresetIntoPolicy(versionless, sampleEntries)).toThrow(
+        /current policy is not a valid YAML mapping/,
+      );
     });
 
     it("appends preset entries when current policy has network_policies but no version", () => {
-      const versionlessWithNp = "network_policies:\n  - host: existing.com\n    allow: true";
+      const versionlessWithNp = "network_policies:\n  existing:\n    host: existing.com";
       const merged = policies.mergePresetIntoPolicy(versionlessWithNp, sampleEntries);
       expect(merged).toContain("version:");
       expect(merged).toContain("existing.com");
@@ -1355,7 +1340,7 @@ exit 1
     });
 
     it("keeps existing version when present", () => {
-      const withVersion = "version: 2\n\nnetwork_policies:\n  - host: old.com";
+      const withVersion = "version: 2\nnetwork_policies:\n  old:\n    host: old.com";
       const merged = policies.mergePresetIntoPolicy(withVersion, sampleEntries);
       expect(merged).toContain("version: 2");
       expect(merged).toContain("example.com");
@@ -1368,19 +1353,20 @@ exit 1
       expect(merged).toContain("example.com");
     });
 
-    it("rebuilds from a clean scaffold when current policy read is truncated", () => {
-      const merged = policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries);
-      expect(merged).toBe(
-        "version: 1\n\nnetwork_policies:\n  - host: example.com\n    allow: true",
-      );
+    it("fails closed when the current policy read is truncated", () => {
+      expect(() =>
+        policies.mergePresetIntoPolicy("Version: 3\nHash: abc123", sampleEntries),
+      ).toThrow(/Cannot merge policy preset: the current policy is not a valid YAML mapping/);
     });
 
-    it("adds a blank line after synthesized version headers", () => {
-      const merged = policies.mergePresetIntoPolicy("some_key:\n  foo: bar", sampleEntries);
-      expect(merged.startsWith("version: 1\n\nsome_key:")).toBe(true);
+    it("fails closed when preset entries are malformed or not a mapping", () => {
+      for (const invalidEntries of ["  broken: [unterminated", "  - host: example.com"]) {
+        expect(() => policies.mergePresetIntoPolicy("version: 1", invalidEntries)).toThrow(
+          /preset network_policies entries must be a valid YAML mapping/,
+        );
+      }
     });
 
-    // --- Structured merge tests (real preset format) ---
     const realisticEntries =
       "  pypi_access:\n" +
       "    name: pypi_access\n" +
@@ -2167,11 +2153,11 @@ exit 1
       expect(result).not.toContain("pypi");
     });
 
-    it("returns policy unchanged when network_policies is a legacy array", () => {
+    it("rejects removal when network_policies is a legacy array", () => {
       const current = "version: 1\n\nnetwork_policies:\n  - host: pypi.org\n    allow: true\n";
-      const result = policies.removePresetFromPolicy(current, pypiEntries);
-      expect(result).toContain("pypi.org");
-      expect(result).toContain("allow: true");
+      expect(() => policies.removePresetFromPolicy(current, pypiEntries)).toThrow(
+        /current policy is not a valid YAML mapping/i,
+      );
     });
   });
 
