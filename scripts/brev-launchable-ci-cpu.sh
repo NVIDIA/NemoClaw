@@ -27,7 +27,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.71)
+#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.72)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.71}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.72}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -127,11 +127,11 @@ openshell_cli_asset_for_arch() {
 openshell_cli_pinned_sha256() {
   local release_tag="$1" asset="$2"
   case "${release_tag}:${asset}" in
-    v0.0.71:openshell-x86_64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716"
+    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
       ;;
-    v0.0.71:openshell-aarch64-unknown-linux-musl.tar.gz)
-      printf '%s\n' "b86b33d9e7c960cd04bc99a9539964f1cb84ae4a9886dd437c0566b64e093390"
+    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
       ;;
     *)
       return 1
