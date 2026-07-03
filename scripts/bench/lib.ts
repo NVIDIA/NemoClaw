@@ -7,15 +7,17 @@
 
 import os from "node:os";
 
-import { redactFull, redactUrl } from "../../src/lib/security/redact";
+import { redactFull } from "../../src/lib/security/redact";
+
+export {
+  ingestPolicyOverhead,
+  ingestSandboxColdStart,
+  POLICY_APPLICATION_SPAN,
+  SANDBOX_PHASE_SPAN,
+  SANDBOX_READINESS_SPAN,
+} from "./trace-ingest";
 
 export const BENCH_SCHEMA_VERSION = "nemoclaw.bench.v1" as const;
-
-// Span names emitted by src/lib/onboard/tracing.ts into the nemoclaw.trace_timing
-// artifact. The harness ingests these rather than re-instrumenting onboarding.
-export const SANDBOX_CREATE_SPAN = "nemoclaw.sandbox.create_stream";
-export const SANDBOX_READINESS_SPAN = "nemoclaw.sandbox.readiness_wait";
-export const POLICY_APPLICATION_SPAN = "nemoclaw.policy.application";
 
 export type MetricId = "inference-round-trip" | "sandbox-cold-start" | "policy-shield-overhead";
 export type MetricStatus = "ok" | "unsupported" | "error";
@@ -66,6 +68,18 @@ export interface BenchReport {
   metrics: BenchMetric[];
 }
 
+export function buildBenchTarget(
+  baseUrl: string | undefined,
+  model: string | undefined,
+  apiKeyPresent: boolean,
+): BenchTarget {
+  return {
+    base_url: baseUrl ? redactBaseUrl(baseUrl) : "(none)",
+    model: scrubSecrets(model ?? "(none)"),
+    api_key_present: apiKeyPresent,
+  };
+}
+
 export function computeStats(samplesMs: readonly number[]): LatencyStats {
   const sorted = [...samplesMs].sort((a, b) => a - b);
   const n = sorted.length;
@@ -110,18 +124,24 @@ export function collectEnvironment(): BenchEnvironment {
 // Drop URL userinfo and scrub any secret-shaped substring so the report is safe
 // to share. Never let a credential reach JSON/Markdown output.
 export function redactBaseUrl(rawUrl: string): string {
-  const stripped = stripUrlUserInfo(rawUrl);
-  return redactUrl(stripped) ?? redactFull(stripped);
-}
-
-function stripUrlUserInfo(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "(invalid URL)";
     url.username = "";
     url.password = "";
-    return url.toString();
+    for (const key of [...url.searchParams.keys()]) {
+      if (
+        /(?:^|[-_])(?:api[-_]?key|key|password|secret|client[-_]?secret|credential|signature|sig|token|auth|authorization|bearer|access[-_]?token)$/i.test(
+          key,
+        )
+      ) {
+        url.searchParams.set(key, "<REDACTED>");
+      }
+    }
+    url.hash = "";
+    return redactFull(url.toString());
   } catch {
-    return rawUrl;
+    return "(invalid URL)";
   }
 }
 
@@ -158,6 +178,7 @@ async function postChatCompletion(options: InferenceRoundTripOptions): Promise<C
   try {
     const response = await options.fetchImpl(buildChatCompletionsUrl(options.baseUrl), {
       method: "POST",
+      redirect: "error",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${options.apiKey}`,
@@ -223,90 +244,6 @@ export async function runInferenceRoundTrip(
 function describeError(error: unknown): string {
   if (error instanceof Error) return `${error.name}: ${error.message}`;
   return String(error);
-}
-
-// --- Trace-artifact ingestion (sandbox cold-start + policy-shield overhead) ---
-
-interface TraceLikeSpan {
-  name?: unknown;
-  duration_ms?: unknown;
-}
-
-function extractSpans(artifact: unknown): TraceLikeSpan[] {
-  const resourceSpans = (artifact as { resource_spans?: unknown })?.resource_spans;
-  if (!Array.isArray(resourceSpans)) return [];
-  const spans: TraceLikeSpan[] = [];
-  for (const resourceSpan of resourceSpans) {
-    const scopeSpans = (resourceSpan as { scope_spans?: unknown })?.scope_spans;
-    if (!Array.isArray(scopeSpans)) continue;
-    for (const scopeSpan of scopeSpans) {
-      const inner = (scopeSpan as { spans?: unknown })?.spans;
-      if (Array.isArray(inner)) spans.push(...(inner as TraceLikeSpan[]));
-    }
-  }
-  return spans;
-}
-
-function spanDurationMs(spans: readonly TraceLikeSpan[], name: string): number | undefined {
-  for (const span of spans) {
-    if (span?.name === name && typeof span.duration_ms === "number") {
-      return round3(span.duration_ms);
-    }
-  }
-  return undefined;
-}
-
-export function ingestSandboxColdStart(artifact: unknown): BenchMetric {
-  const spans = extractSpans(artifact);
-  const create = spanDurationMs(spans, SANDBOX_CREATE_SPAN);
-  const readiness = spanDurationMs(spans, SANDBOX_READINESS_SPAN);
-  const base: BenchMetric = {
-    id: "sandbox-cold-start",
-    status: "ok",
-    unit: "ms",
-    source: "trace-artifact",
-    interpretation: "advisory-non-normative",
-  };
-  if (create === undefined && readiness === undefined) {
-    return {
-      ...base,
-      status: "unsupported",
-      source: "none",
-      reason:
-        "no sandbox create/readiness spans in the trace artifact (re-run `nemoclaw onboard` with NEMOCLAW_TRACE=1, then pass --trace <file>)",
-    };
-  }
-  const breakdown: Record<string, number> = {};
-  if (create !== undefined) breakdown.create_stream_ms = create;
-  if (readiness !== undefined) breakdown.readiness_wait_ms = readiness;
-  const total = round3((create ?? 0) + (readiness ?? 0));
-  return { ...base, breakdown, stats: singleValueStats(total) };
-}
-
-export function ingestPolicyOverhead(artifact: unknown): BenchMetric {
-  const spans = extractSpans(artifact);
-  const policy = spanDurationMs(spans, POLICY_APPLICATION_SPAN);
-  const base: BenchMetric = {
-    id: "policy-shield-overhead",
-    status: "ok",
-    unit: "ms",
-    source: "trace-artifact",
-    interpretation: "advisory-non-normative",
-  };
-  if (policy === undefined) {
-    return {
-      ...base,
-      status: "unsupported",
-      source: "none",
-      reason:
-        "no policy.application span in the trace artifact (re-run `nemoclaw onboard` with NEMOCLAW_TRACE=1, then pass --trace <file>)",
-    };
-  }
-  return { ...base, stats: singleValueStats(policy) };
-}
-
-function singleValueStats(value: number): LatencyStats {
-  return { min_ms: value, median_ms: value, p95_ms: value, mean_ms: value, max_ms: value };
 }
 
 export function unsupportedTraceMetric(id: MetricId): BenchMetric {

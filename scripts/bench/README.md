@@ -22,8 +22,13 @@ not for gating.
 | Metric | Source | Notes |
 |--------|--------|-------|
 | `inference-round-trip` | live request | Times N OpenAI-compatible `/v1/chat/completions` calls (warm-up + samples), reports min/median/p95/mean/max. |
-| `sandbox-cold-start` | onboard trace | `nemoclaw.sandbox.create_stream` + `nemoclaw.sandbox.readiness_wait` spans from a `NEMOCLAW_TRACE` artifact. Marked `unsupported` when no trace is supplied. |
+| `sandbox-cold-start` | onboard trace | Total duration of the emitted `nemoclaw.onboard.phase.sandbox` span, which encloses sandbox creation and readiness. The nested `nemoclaw.sandbox.readiness_wait` span is reported as an optional breakdown without being added twice. |
 | `policy-shield-overhead` | onboard trace | `nemoclaw.policy.application` span. Marked `unsupported` when no trace is supplied. |
+
+Trace metrics require a completed NemoClaw onboard trace with successful root
+and metric spans. A valid trace without a selected metric reports that metric as
+`unsupported`; a malformed trace or failed metric span reports `error` and exits
+non-zero.
 
 ## Prerequisites
 
@@ -95,5 +100,5 @@ Run `npm run bench -- --help` for all flags.
 }
 ```
 
-The harness exits non-zero when a selected metric errors or when required
-prerequisites (endpoint, model, API key) are missing.
+The harness exits non-zero when a selected metric errors, a supplied trace is
+invalid, or required prerequisites (endpoint, model, API key) are missing.

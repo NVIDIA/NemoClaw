@@ -19,11 +19,11 @@ import {
   BENCH_SCHEMA_VERSION,
   type BenchMetric,
   type BenchReport,
+  buildBenchTarget,
   collectEnvironment,
   hasBlockingError,
   ingestPolicyOverhead,
   ingestSandboxColdStart,
-  redactBaseUrl,
   renderMarkdownReport,
   runInferenceRoundTrip,
   unsupportedTraceMetric,
@@ -206,11 +206,7 @@ async function buildReport(options: CliOptions): Promise<BenchReport> {
     schema_version: BENCH_SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
     environment: collectEnvironment(),
-    target: {
-      base_url: options.baseUrl ? redactBaseUrl(options.baseUrl) : "(none)",
-      model: options.model ?? "(none)",
-      api_key_present: apiKey.value !== undefined,
-    },
+    target: buildBenchTarget(options.baseUrl, options.model, apiKey.value !== undefined),
     metrics,
   };
 }

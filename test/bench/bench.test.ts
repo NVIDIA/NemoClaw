@@ -1,21 +1,36 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   BENCH_SCHEMA_VERSION,
   type BenchReport,
+  buildBenchTarget,
   buildChatCompletionsUrl,
   computeStats,
   hasBlockingError,
   ingestPolicyOverhead,
   ingestSandboxColdStart,
+  POLICY_APPLICATION_SPAN,
   redactBaseUrl,
   renderMarkdownReport,
   runInferenceRoundTrip,
+  SANDBOX_PHASE_SPAN,
+  SANDBOX_READINESS_SPAN,
   unsupportedTraceMetric,
 } from "../../scripts/bench/lib";
+import {
+  finishOnboardTrace,
+  startOnboardTrace,
+  withSandboxPhaseTrace,
+} from "../../src/lib/onboard/tracing";
+import type { TraceArtifact, TraceSpan } from "../../src/lib/trace";
+import { resetTraceForTests } from "../../src/lib/trace";
 
 function queueClock(values: readonly number[]): () => number {
   let index = 0;
@@ -45,10 +60,64 @@ const inferenceOptionsBase = {
   timeoutMs: 1000,
 };
 
-function traceArtifact(spans: Array<{ name: string; duration_ms: number }>): unknown {
+const TRACE_ID = "0123456789abcdef0123456789abcdef";
+const ROOT_SPAN_ID = "0123456789abcdef";
+let spanSequence = 1;
+
+function traceSpan(
+  name: string,
+  durationMs: number,
+  overrides: Partial<TraceSpan> = {},
+): TraceSpan {
   return {
-    resource_spans: [{ resource: { attributes: {} }, scope_spans: [{ scope: {}, spans }] }],
-    summary: {},
+    trace_id: TRACE_ID,
+    span_id: (spanSequence++).toString(16).padStart(16, "0"),
+    parent_span_id: ROOT_SPAN_ID,
+    name,
+    kind: "INTERNAL",
+    start_time_unix_nano: "1000000",
+    end_time_unix_nano: "2000000",
+    duration_ms: durationMs,
+    status: { code: "OK" },
+    attributes: {},
+    events: [],
+    ...overrides,
+  };
+}
+
+function traceArtifact(
+  spans: TraceSpan[],
+  options: {
+    rootStatus?: TraceSpan["status"];
+    rootDurationMs?: number;
+    summaryTraceId?: string;
+    scopeName?: string;
+  } = {},
+): TraceArtifact {
+  const root = traceSpan("nemoclaw.onboard", options.rootDurationMs ?? 3000, {
+    span_id: ROOT_SPAN_ID,
+    parent_span_id: undefined,
+    status: options.rootStatus ?? { code: "OK" },
+  });
+  return {
+    resource_spans: [
+      {
+        resource: { attributes: { "service.name": "nemoclaw" } },
+        scope_spans: [
+          {
+            scope: { name: options.scopeName ?? "nemoclaw.onboard", version: "1.0.0" },
+            spans: [root, ...spans],
+          },
+        ],
+      },
+    ],
+    summary: {
+      trace_id: options.summaryTraceId ?? TRACE_ID,
+      generated_at: "2026-07-03T00:00:00.000Z",
+      total_duration_ms: 3000,
+      slowest_spans: [],
+      output_path: ".e2e/traces/test.json",
+    },
   };
 }
 
@@ -101,6 +170,33 @@ describe("redactBaseUrl", () => {
   it("passes through a clean URL host and path", () => {
     expect(redactBaseUrl("https://inference.local/v1")).toContain("inference.local/v1");
   });
+
+  it("redacts credential-bearing query parameters", () => {
+    const redacted = redactBaseUrl(
+      "https://inference.local/v1?api_key=clear-api-secret&password=clear-password&key=clear-key&authorization=clear-auth",
+    );
+    expect(redacted).not.toContain("clear-api-secret");
+    expect(redacted).not.toContain("clear-password");
+    expect(redacted).not.toContain("clear-key");
+    expect(redacted).not.toContain("clear-auth");
+  });
+
+  it("does not echo malformed or unsupported endpoint URLs", () => {
+    expect(redactBaseUrl("https//user:clear-password@host")).toBe("(invalid URL)");
+    expect(redactBaseUrl("file:///tmp/clear-secret")).toBe("(invalid URL)");
+  });
+
+  it("builds a shareable target without URL or model secrets", () => {
+    const target = buildBenchTarget(
+      "https://inference.local/v1?api_key=clear-api-secret",
+      "model api_key=clear-model-secret",
+      true,
+    );
+    const serialized = JSON.stringify(target);
+    expect(serialized).not.toContain("clear-api-secret");
+    expect(serialized).not.toContain("clear-model-secret");
+    expect(target.api_key_present).toBe(true);
+  });
 });
 
 describe("runInferenceRoundTrip", () => {
@@ -142,18 +238,59 @@ describe("runInferenceRoundTrip", () => {
     expect(metric.status).toBe("error");
     expect(metric.reason).toContain("ECONNREFUSED");
   });
+
+  it("refuses redirects so prompts stay on the configured origin", async () => {
+    let requestInit: RequestInit | undefined;
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      requestInit = init;
+      return { ok: true, status: 200, text: async () => "{}" } as Response;
+    };
+    const metric = await runInferenceRoundTrip({
+      ...inferenceOptionsBase,
+      samples: 1,
+      fetchImpl,
+      clock: queueClock([0, 5]),
+    });
+    expect(metric.status).toBe("ok");
+    expect(requestInit?.redirect).toBe("error");
+  });
 });
 
 describe("trace ingestion", () => {
-  it("reads sandbox cold-start spans into a breakdown", () => {
-    const metric = ingestSandboxColdStart(
-      traceArtifact([
-        { name: "nemoclaw.sandbox.create_stream", duration_ms: 1200 },
-        { name: "nemoclaw.sandbox.readiness_wait", duration_ms: 800 },
-      ]),
-    );
+  it("ingests the canonical sandbox phase emitted by onboarding", () => {
+    const traceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bench-trace-"));
+    const tracePath = path.join(traceDir, "onboard.json");
+    const previousTraceFile = process.env.NEMOCLAW_TRACE_FILE;
+    process.env.NEMOCLAW_TRACE_FILE = tracePath;
+    resetTraceForTests();
+    try {
+      const handle = startOnboardTrace({ agent: "openclaw" }, process.env);
+      withSandboxPhaseTrace("bench", "openai", "test-model", "openclaw", () => undefined);
+      finishOnboardTrace(handle, true);
+      const artifact = JSON.parse(fs.readFileSync(tracePath, "utf8")) as unknown;
+      expect(ingestSandboxColdStart(artifact)).toMatchObject({
+        status: "ok",
+        breakdown: { sandbox_phase_ms: expect.any(Number) },
+      });
+    } finally {
+      resetTraceForTests();
+      delete process.env.NEMOCLAW_TRACE_FILE;
+      Object.assign(
+        process.env,
+        previousTraceFile === undefined ? {} : { NEMOCLAW_TRACE_FILE: previousTraceFile },
+      );
+      fs.rmSync(traceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the enclosing sandbox phase as cold-start total without double-counting readiness", () => {
+    const phase = traceSpan(SANDBOX_PHASE_SPAN, 2000);
+    const readiness = traceSpan(SANDBOX_READINESS_SPAN, 800, {
+      parent_span_id: phase.span_id,
+    });
+    const metric = ingestSandboxColdStart(traceArtifact([phase, readiness]));
     expect(metric.status).toBe("ok");
-    expect(metric.breakdown).toEqual({ create_stream_ms: 1200, readiness_wait_ms: 800 });
+    expect(metric.breakdown).toEqual({ sandbox_phase_ms: 2000, readiness_wait_ms: 800 });
     expect(metric.stats?.median_ms).toBe(2000);
   });
 
@@ -165,9 +302,7 @@ describe("trace ingestion", () => {
   });
 
   it("reads the policy.application span", () => {
-    const metric = ingestPolicyOverhead(
-      traceArtifact([{ name: "nemoclaw.policy.application", duration_ms: 42 }]),
-    );
+    const metric = ingestPolicyOverhead(traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, 42)]));
     expect(metric.status).toBe("ok");
     expect(metric.stats?.median_ms).toBe(42);
   });
@@ -177,9 +312,61 @@ describe("trace ingestion", () => {
     expect(metric.status).toBe("unsupported");
   });
 
-  it("tolerates a malformed artifact without throwing", () => {
-    expect(ingestSandboxColdStart(null).status).toBe("unsupported");
-    expect(ingestPolicyOverhead({ resource_spans: "nope" }).status).toBe("unsupported");
+  it("reports malformed supplied traces as errors", () => {
+    expect(ingestSandboxColdStart(null)).toMatchObject({ status: "error" });
+    expect(ingestPolicyOverhead({ resource_spans: "nope" })).toMatchObject({
+      status: "error",
+    });
+  });
+
+  it("rejects artifacts from a foreign trace scope", () => {
+    const artifact = traceArtifact([], { scopeName: "other.tool" });
+    expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects a failed onboard root", () => {
+    const artifact = traceArtifact([traceSpan(SANDBOX_PHASE_SPAN, 2000)], {
+      rootStatus: { code: "ERROR", message: "onboard failed" },
+    });
+    expect(ingestSandboxColdStart(artifact).status).toBe("error");
+    expect(ingestPolicyOverhead(artifact).status).toBe("error");
+  });
+
+  it("rejects failed and invalid metric spans", () => {
+    const failed = traceArtifact([
+      traceSpan(SANDBOX_PHASE_SPAN, 2000, { status: { code: "ERROR" } }),
+    ]);
+    const negative = traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, -25)]);
+    const nonFinite = traceArtifact([traceSpan(POLICY_APPLICATION_SPAN, Number.POSITIVE_INFINITY)]);
+    expect(ingestSandboxColdStart(failed)).toMatchObject({ status: "error" });
+    expect(ingestPolicyOverhead(negative)).toMatchObject({ status: "error" });
+    expect(ingestPolicyOverhead(nonFinite)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects spans from a different trace identity", () => {
+    const artifact = traceArtifact([
+      traceSpan(SANDBOX_PHASE_SPAN, 2000, {
+        trace_id: "ffffffffffffffffffffffffffffffff",
+      }),
+    ]);
+    expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects readiness durations larger than the enclosing sandbox phase", () => {
+    const phase = traceSpan(SANDBOX_PHASE_SPAN, 1000);
+    const readiness = traceSpan(SANDBOX_READINESS_SPAN, 1001, {
+      parent_span_id: phase.span_id,
+    });
+    const artifact = traceArtifact([phase, readiness]);
+    expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
+  });
+
+  it("rejects readiness spans outside the sandbox phase", () => {
+    const artifact = traceArtifact([
+      traceSpan(SANDBOX_PHASE_SPAN, 1000),
+      traceSpan(SANDBOX_READINESS_SPAN, 500, { parent_span_id: ROOT_SPAN_ID }),
+    ]);
+    expect(ingestSandboxColdStart(artifact)).toMatchObject({ status: "error" });
   });
 });
 
