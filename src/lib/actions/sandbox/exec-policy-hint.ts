@@ -8,6 +8,7 @@ import {
   getLogsProbeTimeoutMs,
   parseLineTimestamp,
 } from "../../domain/sandbox/logs";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
 
 /**
  * Denial-adjacent guidance for the `nemoclaw <name> exec -- ...` path (#5978).
@@ -144,12 +145,24 @@ export function findRecentPolicyDenial(
   return match;
 }
 
+// Render the sandbox name safely into the breadcrumb. The name reaches here as
+// a host CLI argument, but the copyable commands and quoted label go to a
+// terminal, so an out-of-spec value (control characters, TTY escapes, an
+// over-length label) must not be echoed verbatim. Valid RFC-1123 labels render
+// as-is; anything else falls back to `<name>`, matching the connect-shell
+// breadcrumb's sanitization contract (scripts/nemoclaw-start.sh).
+function displaySandboxName(sandboxName: string): string {
+  const valid = sandboxName.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(sandboxName);
+  return valid ? sandboxName : "<name>";
+}
+
 /** Render the concise, denial-adjacent stderr hint. */
 export function buildPolicyDenialExecHint(
   cliName: string,
-  sandboxName: string,
+  rawSandboxName: string,
   endpoint: string | null,
 ): string {
+  const sandboxName = displaySandboxName(rawSandboxName);
   const target = endpoint ? ` for ${endpoint}` : "";
   return [
     `${cliName}: recent network policy denial detected${target} inside sandbox '${sandboxName}'.`,

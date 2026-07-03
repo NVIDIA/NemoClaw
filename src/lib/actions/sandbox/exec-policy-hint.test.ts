@@ -166,6 +166,19 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     expect(generic).toContain("recent network policy denial detected inside sandbox 'oc-fresh'");
     expect(generic).toContain("nemoclaw oc-fresh logs --tail 50");
   });
+
+  it.each([
+    ["control characters / TTY escapes", "oc[31m\ninjected"],
+    ["shell metacharacters", "oc; rm -rf /"],
+    ["uppercase (not an RFC-1123 label)", "OC-Fresh"],
+    ["over-length label", "a".repeat(64)],
+  ])("renders the <name> placeholder for an unsafe sandbox name: %s", (_label, unsafe) => {
+    const hint = buildPolicyDenialExecHint("nemoclaw", unsafe, "example.com:443");
+    expect(hint).toContain("nemoclaw <name> logs --tail 50");
+    expect(hint).toContain("nemoclaw <name> policy-add <preset>");
+    expect(hint).not.toContain(unsafe);
+    expect(hint).not.toContain("");
+  });
 });
 
 describe("shouldProbePolicyDenial (#5978)", () => {
