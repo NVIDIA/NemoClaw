@@ -365,6 +365,17 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
   });
 
+  it("records the accepted SRI-only messaging plugin provenance boundary", () => {
+    const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
+
+    expect(review).toContain("Messaging Plugin Registry Provenance Boundary");
+    expect(review).toContain("`registryTarballUrl` policy is explicitly `not-pinned`");
+    expect(review).toContain(
+      "accepted state only while the exact package spec, registry SRI, and packed-byte SRI",
+    );
+    expect(review).toContain("carries exact tarball URLs for every messaging plugin");
+  });
+
   it("keeps the rebuild-resume compatibility shim tied to its removal tracker", () => {
     const source = readFileSync(REBUILD_RESUME_SESSION, "utf-8");
 
