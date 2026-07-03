@@ -22,9 +22,8 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
   const startupBlock = source.match(
     /^launch_hermes_gateway\nstart_gateway_log_stream\nwait_for_hermes_gateway_internal "\$GATEWAY_PID"\nensure_hermes_supervised_auxiliaries\nif ! commit_hermes_mcp_applied_if_pending; then\n[\s\S]*?^restore_hermes_config_permissions_after_dashboard_start$/m,
   )?.[0];
-  if (!startupBlock) {
-    throw new Error("Expected executable root Hermes gateway startup block");
-  }
+  expect(startupBlock).toBeDefined();
+  const startupScript = startupBlock as string;
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-root-start-"));
   const scriptPath = path.join(tempDir, "run.sh");
@@ -41,7 +40,7 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
       `commit_hermes_mcp_applied_if_pending() { trace commit-applied; return ${commitStatus}; }`,
       "stop_hermes_gateway_fail_closed() { trace stop-fail-closed; }",
       "restore_hermes_config_permissions_after_dashboard_start() { trace restore-permissions; }",
-      startupBlock,
+      startupScript,
       "trace startup-complete",
     ].join("\n"),
     { mode: 0o700 },
