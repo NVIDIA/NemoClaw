@@ -2026,16 +2026,24 @@ If cloudflared is installed but not running, the host-service section reports wh
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference get`.
 
 ```bash
 $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
+The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+
+```bash
+$$nemoclaw my-assistant inference get
+```
+
 ### `$$nemoclaw inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
 The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
+It is also available in sandbox-first form as `$$nemoclaw <name> inference set --provider <provider> --model <model>`.
 
 <AgentOnly variant="openclaw">
 
@@ -2056,6 +2064,13 @@ Run `$$nemoclaw <name> shields down`, apply the inference change, then run `$$ne
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+```
+
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
+`$$nemoclaw <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>`.
+
+```bash
+$$nemoclaw my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.

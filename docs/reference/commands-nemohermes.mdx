@@ -1648,16 +1648,24 @@ If cloudflared is installed but not running, the host-service section reports wh
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `nemohermes <name> inference get`.
 
 ```bash
 nemohermes inference get
 nemohermes inference get --json
 ```
 
+The sandbox-first grammar `nemohermes <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `nemohermes <name> inference set`.
+
+```bash
+nemohermes my-assistant inference get
+```
+
 ### `nemohermes inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
 The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
+It is also available in sandbox-first form as `nemohermes <name> inference set --provider <provider> --model <model>`.
 
 For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) and does not rebuild or restart the gateway.
 Keeping the placeholder preserves dashboard and API authentication after provider switches.
@@ -1669,6 +1677,13 @@ Run `nemohermes <name> shields down`, apply the inference change, then run `nemo
 
 ```bash
 nemohermes inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+```
+
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
+`nemohermes <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `nemohermes inference set --provider <provider> --model <model> --sandbox <name>`.
+
+```bash
+nemohermes my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
