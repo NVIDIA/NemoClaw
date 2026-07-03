@@ -635,7 +635,10 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
-  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (kept behind OpenShell provider rewrite)\n"
+  printf "    NEMOCLAW_WEB_SEARCH_PROVIDER  brave | tavily | none (Hermes supports tavily only)\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search for OpenClaw when the provider is unset\n"
+  printf "    TAVILY_API_KEY                Enable Tavily Search when no higher-precedence supported key is set\n"
+  printf "                                  Web search keys stay behind OpenShell credential rewrite\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    Messaging credential env vars Auto-enable matching messaging policy support\n"
@@ -2530,7 +2533,7 @@ describe_express_install() {
 
   case "$tier" in
     balanced)
-      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, brave when supported"
+      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, and the selected web-search preset"
       policy_summary="${policy_summary}, and local-inference access when needed"
       ;;
     restricted)

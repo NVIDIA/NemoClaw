@@ -69,7 +69,7 @@ nemohermes onboard
 ## Respond to the Wizard
 
 The onboard wizard asks for an inference provider, model, any required credential, and sandbox name before it prints the review summary.
-After you confirm, NemoClaw registers inference, prompts for supported messaging channels, builds and starts the sandbox, sets up Hermes, then applies the selected network policy tier and presets.
+After you confirm, NemoClaw registers inference, prompts for optional Tavily Search and supported messaging channels, builds and starts the sandbox, sets up Hermes, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
 The default Hermes sandbox name is `hermes`.
@@ -83,9 +83,14 @@ Sandbox name [hermes]: my-hermes
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the [Inference Options](../inference/inference-options) page.
-The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
+The Hermes wizard offers Tavily Search as its web search provider.
+Hermes does not support the NemoClaw Brave Search path.
+If you enable Tavily Search, enter `TAVILY_API_KEY` when prompted.
+NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
 If you authenticate Hermes through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, or managed code execution.
 Those choices add the matching Hermes policy presets to the sandbox.
+If you select both Tavily Search and the managed Nous web gateway, Tavily becomes the Hermes web search and extract backend.
+NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
 API-key mode is inference-only and does not enable managed tool gateways.
 
 After provider and model selection, review the summary and confirm the build.
@@ -107,17 +112,25 @@ export NEMOCLAW_AGENT=hermes
 export NEMOCLAW_NON_INTERACTIVE=1
 export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 export NEMOCLAW_SANDBOX_NAME=my-hermes
+export NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
+export TAVILY_API_KEY=<your-tavily-key>
 export NVIDIA_INFERENCE_API_KEY=<your-key>
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Use the provider variables from [Inference Options](../inference/inference-options) when you choose a different provider.
+Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` when you want to disable web search explicitly.
+When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` because Brave Search is unsupported for Hermes.
+Changing or disabling Tavily requires a sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
+Rerun onboarding with the new selection and accept the recreation, or pass `--recreate-sandbox`.
 If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemohermes onboard --resume`.
 For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
 
 ## Connect to Hermes
 
 When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, the Hermes dashboard URL, and the OpenAI-compatible API URL.
+When Tavily is enabled, onboarding reads the generated Hermes configuration to confirm `web.backend: tavily` and sends a real search request through OpenShell's request-body credential rewrite path.
+This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 Hermes exposes its built-in browser dashboard on port `18789`.
 NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary announces both URLs.
 NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.

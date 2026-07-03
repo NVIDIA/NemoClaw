@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
-import type { WebSearchConfig } from "../inference/web-search";
+import { normalizeWebSearchConfig, type WebSearchConfig } from "../inference/web-search";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
@@ -297,7 +297,8 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 }
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
-  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+  if (!isObject(value) || value.fetchEnabled !== true) return null;
+  return normalizeWebSearchConfig(value as Partial<WebSearchConfig>);
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -475,8 +476,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
-    webSearchConfig:
-      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     toolDisclosure: normalizeToolDisclosure(overrides.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
@@ -1015,7 +1015,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
   if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
+    safe.webSearchConfig = normalizeWebSearchConfig(
+      updates.webSearchConfig as Partial<WebSearchConfig>,
+    );
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }

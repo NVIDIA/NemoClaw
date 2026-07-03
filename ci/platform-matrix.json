@@ -210,7 +210,7 @@
     {
       "name": "Web search backend",
       "status": "caveated",
-      "notes": "Runtime-configurable web-search backend plumbed through the OpenShell gateway. Brave is the currently-implemented backend. See `src/lib/onboard/brave-provider-profile.ts` and `src/lib/onboard/web-search-flow.ts`. Users supply backend credentials during an onboard prompt. NemoClaw does not bundle a key."
+      "notes": "Onboarding supports Brave and Tavily for OpenClaw and Tavily for Hermes. Provider selection, agent configuration, and credential attachment are build-time inputs, so changing the provider recreates the sandbox. OpenShell replaces resolver placeholders at egress, including JSON request-body rewriting for Hermes Tavily. Users supply the backend credential; NemoClaw does not bundle a key."
     }
   ],
 

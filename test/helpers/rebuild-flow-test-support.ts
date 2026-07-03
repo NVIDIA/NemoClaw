@@ -69,6 +69,7 @@ export type RebuildFlowOverrides = {
   };
   backupPolicyPresets?: string[];
   ensureValidatedBraveSearchCredential?: () => Promise<unknown>;
+  ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
   customImagePreflight?: { ok: true; imageTag: string | null } | { ok: false; detail: string };

@@ -395,12 +395,14 @@ If GitHub release metadata is unavailable, the script uses its bundled fallback 
 
 During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
 If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
+Brave Search uses an external OpenClaw plugin and can reach this install path.
+Tavily ships with the pinned OpenClaw runtime, so NemoClaw verifies the bundled extension instead of installing a separate Tavily package.
 
 Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin.
 For example, if the plugin is for web search, disable that feature and resume onboarding:
 
 ```bash
-NEMOCLAW_WEB_SEARCH_ENABLED=0 $$nemoclaw onboard --resume
+NEMOCLAW_WEB_SEARCH_PROVIDER=none $$nemoclaw onboard --resume
 ```
 
 If you want the feature, fix the network or policy path first, then resume onboarding:
@@ -408,6 +410,50 @@ If you want the feature, fix the network or policy path first, then resume onboa
 ```bash
 $$nemoclaw onboard --resume
 ```
+
+### Web search verification reports a warning
+
+When web search is enabled, onboarding checks the selected agent configuration and sends a real search request through the sandbox egress path.
+The verification is best effort, so a failed check prints a warning and lets onboarding finish.
+
+First confirm that the provider credential and matching policy preset exist.
+
+```bash
+$$nemoclaw credentials list
+$$nemoclaw <name> policy-list
+```
+
+Look for `<name>-brave-search` with the `brave` preset or `<name>-tavily-search` with the `tavily` preset.
+Do not replace an `openshell:resolve:env:<KEY>` value in the sandbox configuration with a raw API key.
+
+<AgentOnly variant="openclaw">
+
+Confirm that OpenClaw reports the provider selected during onboarding.
+
+```bash
+$$nemoclaw <name> config get --key tools.web.search --format yaml
+```
+
+The provider should be `brave` or `tavily` and `enabled` should be `true`.
+If the provider is wrong, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=brave` or `tavily` and the matching `BRAVE_API_KEY` or `TAVILY_API_KEY`.
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Confirm that the generated Hermes configuration selects the Tavily backend.
+
+```bash
+$$nemoclaw <name> exec -- cat /sandbox/.hermes/config.yaml
+```
+
+The output should include a `web` mapping with `backend: tavily`.
+If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`.
+
+</AgentOnly>
+
+Rerunning onboarding with a different provider recreates the sandbox because the provider configuration and credential attachment are build-time inputs.
+NemoClaw validates the replacement key before it removes the existing sandbox, then backs up and restores the supported workspace state during recreation.
+If the configuration is correct but the egress probe fails, keep the matching preset applied and inspect the blocked request with `openshell term` before widening any policy rule.
 
 ### Sandbox containers cannot reach the gateway
 
@@ -1960,7 +2006,7 @@ Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
 For credentials, use the supported host-side setup flow.
-Re-run onboarding for inference or Brave Search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
+Rerun onboarding for inference or web search credentials, or use `$$nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```bash
@@ -2165,11 +2211,20 @@ nemohermes credentials list
 
 Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
 
-### `Brave Search` policy preset has no effect under Hermes
+### Brave Search is unsupported under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (refer to [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
-If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
-Configure Hermes web search from the agent's own configuration inside the sandbox.
+Hermes does not have a NemoClaw Brave Search backend.
+Adding the `brave` preset to a Hermes sandbox opens Brave's endpoints but does not configure Hermes to use the credential.
+Use Tavily Search through NemoClaw onboarding instead.
+
+```bash
+NEMOCLAW_WEB_SEARCH_PROVIDER=tavily \
+TAVILY_API_KEY=<your-tavily-key> \
+  nemohermes onboard --recreate-sandbox
+```
+
+NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes.
+If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
 ### Re-onboarding asks every messaging prompt again
 

@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../../messaging";
+import { type WebSearchConfig, webSearchProviderForConfig } from "../../inference/web-search";
 import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
+import { isStaleBuiltinWebSearchPolicyPreset } from "../../onboard/policy-selection";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { backupSandboxStateForRebuild, type RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
@@ -18,6 +20,7 @@ export interface RebuildBackupPhaseInput {
   staleRecovery: boolean;
   preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
+  webSearchConfig: WebSearchConfig | null;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -53,12 +56,28 @@ export function runRebuildBackupPhase(
   const enabledChannelIds = (input.messagingPlan?.channels ?? [])
     .filter((channel) => !channel.disabled)
     .map((channel) => channel.channelId);
-  const policyPresets = mergeRebuildMessagingPolicyPresets(
+  const mergedPolicyPresets = mergeRebuildMessagingPolicyPresets(
     backupManifest?.policyPresets,
     registryPolicyPresets,
     enabledChannelIds,
     disabledChannels,
   );
+  const customPresetNames = new Set(
+    (input.sandboxEntry.customPolicies ?? []).map((policy) => policy.name),
+  );
+  const policyPresets = mergedPolicyPresets.filter(
+    (name) =>
+      !isStaleBuiltinWebSearchPolicyPreset(name, {
+        webSearchConfig: input.webSearchConfig,
+        customPresetNames,
+      }) && !(customPresetNames.has(name) && ["brave", "tavily", "nous-web"].includes(name)),
+  );
+  if (input.webSearchConfig) {
+    const activePreset = webSearchProviderForConfig(input.webSearchConfig);
+    if (!customPresetNames.has(activePreset) && !policyPresets.includes(activePreset)) {
+      policyPresets.push(activePreset);
+    }
+  }
   const sessionPolicyPresets = resolveRecreatePolicyPresets(
     policyPresets,
     input.sandboxEntry.policyPresetsFinalized === true,

@@ -136,7 +136,7 @@ Each row below is a launch-facing capability claim that NemoClaw makes in docs, 
 | Agent skills | Tested | Packaged agent skills are discoverable by Cursor, Claude Code, and other coding assistants under `.agents/skills/`. Skills also install into the sandbox with `$$nemoclaw <name> skill install`. |
 | State migration | Tested | Sandbox state migrates across rebuilds with credentials intentionally excluded. Hermes excludes `auth.json` and restores its SQLite session DB through the backup API. OpenClaw config merge prevents stale state from overwriting fresh values. |
 | Blueprint versioning | Tested | Versioned, digest-verified, and reproducible blueprint lifecycle. Drives `$$nemoclaw <name> rebuild` and the migration safeguards above. |
-| Web search backend | Tested with limitations | Runtime-configurable web-search backend plumbed through the OpenShell gateway. Brave is the currently-implemented backend. See `src/lib/onboard/brave-provider-profile.ts` and `src/lib/onboard/web-search-flow.ts`. Users supply backend credentials during an onboard prompt. NemoClaw does not bundle a key. |
+| Web search backend | Tested with limitations | Onboarding supports Brave and Tavily for OpenClaw and Tavily for Hermes. Provider selection, agent configuration, and credential attachment are build-time inputs, so changing the provider recreates the sandbox. OpenShell replaces resolver placeholders at egress, including JSON request-body rewriting for Hermes Tavily. Users supply the backend credential; NemoClaw does not bundle a key. |
 {/* capability-status:end */}
 
 ## Deployment Paths

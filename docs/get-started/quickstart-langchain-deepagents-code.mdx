@@ -93,6 +93,8 @@ Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not back up `.deepagents/.env` or user-authored portions of `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
 NemoClaw restores its managed MCP definitions separately from the credential-free registry; service credentials remain in OpenShell provider state.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, successfully builds the replacement from a pinned base and fingerprinted context, and revalidates the target and route.
+Initial failures stop before backup. NemoClaw checks the target, route, and retained build inputs again after backup, immediately before deletion, so late failures can leave a backup but keep the existing sandbox intact.
 
 ## Optional Web Search
 
@@ -119,7 +121,7 @@ unset TAVILY_API_KEY
 nemo-deepagents <sandbox-name> rebuild
 ```
 
-The `tavily` preset only opens egress to `api.tavily.com:443`.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
 Attaching the credential provider alone does not authorize the managed Python interpreter; the explicit policy preset is the interpreter-level opt-in.
 Export `TAVILY_API_KEY` only for registration, then remove it from the host shell; the gateway injects the stored value at egress, and the sandbox never sees the raw value.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.

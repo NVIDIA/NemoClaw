@@ -115,7 +115,7 @@ describe("resolveRebuildDurableConfig", () => {
       { name: "alpha", policies: ["brave"], nemoclawVersion: "0.1.0" },
       session,
     );
-    expect(config.webSearchConfig).toEqual({ fetchEnabled: true });
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "brave" });
   });
 
   it("does not mistake a legacy custom policy named brave for web search", () => {
@@ -186,6 +186,69 @@ describe("resolveRebuildDurableConfig", () => {
       null,
     );
     expect(config.webSearchError).toContain("not boolean");
+  });
+
+  it("preserves an explicit durable Tavily provider", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+        fromDockerfile: null,
+      },
+      createSession({ sandboxName: "other" }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it("backfills a legacy enabled provider from the matching Tavily session", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        provider: "compatible-endpoint",
+        model: "model",
+        webSearchEnabled: true,
+        fromDockerfile: null,
+      },
+      createSession({
+        sandboxName: "alpha",
+        provider: "compatible-endpoint",
+        model: "model",
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+  });
+
+  it("does not infer managed Tavily from the DCode interpreter opt-in preset", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        policies: ["tavily"],
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other" }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+  });
+
+  it("fails closed for an invalid durable web-search provider", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        webSearchEnabled: true,
+        webSearchProvider: "other" as never,
+        fromDockerfile: null,
+      },
+      null,
+    );
+    expect(config.webSearchError).toContain("webSearchProvider");
   });
 
   it.each([

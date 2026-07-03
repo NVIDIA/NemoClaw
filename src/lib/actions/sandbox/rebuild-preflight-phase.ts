@@ -4,7 +4,16 @@
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
 import type { RebuildManifest } from "../../state/sandbox";
-import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import {
+  preflightRebuildCredentials,
+  type RebuildBail,
+  type RebuildLog,
+} from "./rebuild-credential-preflight";
+import {
+  createDcodeRebuildOrchestrator,
+  type DcodeRebuildOrchestrator,
+  isDcodeRebuildAgent,
+} from "./rebuild-dcode-orchestrator";
 import {
   type RebuildAgentBaseImagePreflight,
   type RebuildLiveState,
@@ -43,6 +52,7 @@ export interface RebuildPreflightPhaseResult {
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;
+  dcodePreflight: DcodeRebuildOrchestrator;
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;
@@ -78,51 +88,90 @@ export async function runRebuildPreflightPhase(
 
   const rebuildAgent = sandboxEntry.agent || null;
   const agentName = getRebuildAgentDisplayName(sandboxName);
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
-  const versionCheck = await confirmRebuildIntent(
+  const dcodePreflight = createDcodeRebuildOrchestrator({
     sandboxName,
-    agentName,
-    skipConfirm,
-    activeSessionCount,
+    entry: sandboxEntry,
+    rebuildAgent,
+    log,
     bail,
-  );
-  if (!versionCheck) return null;
-
-  const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
-  let retainOnboardLock = false;
+    deps: {
+      checkGatewaySchema: (name, scopedBail) =>
+        checkRebuildGatewaySchemaPreflight(name, sandboxEntry, scopedBail),
+      preflightCredentials: (_name, entry, scopedLog, scopedBail) =>
+        preflightRebuildCredentials(entry, scopedLog, scopedBail),
+      // Non-DCode rebuilds stay on the existing typed base-image preflight.
+      // The orchestrator only calls this dependency when its DCode scope is disabled.
+      ensureAgentBaseImage: () => true,
+    },
+  });
+  let retainDcodePreflight = false;
   try {
-    assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
-    const preparedTarget = await prepareRebuildTargetPreflights({
-      sandboxName,
-      sandboxEntry,
-      rebuildAgent,
-      // Reaching this point means either --yes was supplied or confirmation
-      // succeeded, matching the previous `skipConfirm || confirmed` contract.
-      autoYes: true,
-      requestedToolDisclosure,
-      log,
-      bail,
-    });
-    if (!preparedTarget) return null;
-
-    const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
-    if (!liveState) return null;
-    retainOnboardLock = true;
-    return {
-      sandboxEntry,
-      rebuildAgent,
-      versionCheck,
-      ...preparedTarget,
-      liveState,
-      recoveryManifest,
-      releaseOnboardLock,
-      log,
-      bail,
-    };
-  } finally {
-    if (!retainOnboardLock) {
-      process.removeListener("exit", releaseOnboardLock);
-      releaseOnboardLock();
+    if (
+      !isDcodeRebuildAgent(rebuildAgent) &&
+      !checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)
+    ) {
+      return null;
     }
+    const versionCheck = await confirmRebuildIntent(
+      sandboxName,
+      agentName,
+      skipConfirm,
+      activeSessionCount,
+      bail,
+    );
+    if (!versionCheck) return null;
+
+    const releaseOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+    let retainOnboardLock = false;
+    try {
+      assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+      const preparedTarget = await prepareRebuildTargetPreflights({
+        sandboxName,
+        sandboxEntry,
+        rebuildAgent,
+        // Reaching this point means either --yes was supplied or confirmation
+        // succeeded, matching the previous `skipConfirm || confirmed` contract.
+        autoYes: true,
+        requestedToolDisclosure,
+        log,
+        bail,
+      });
+      if (!preparedTarget) return null;
+
+      const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
+      if (!liveState) return null;
+      if (isDcodeRebuildAgent(rebuildAgent)) {
+        const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
+        const imageReady = await dcodePreflight.prepareImage(
+          preparedTarget.targetConfig.resumeConfig,
+          preparedTarget.targetConfig.durableConfig.toolDisclosure,
+          recoveryRecreate,
+          preparedTarget.recreateOptions.targetGatewayPort,
+        );
+        if (!imageReady || !dcodePreflight.preparedReplacement) return null;
+        preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+      }
+      retainOnboardLock = true;
+      retainDcodePreflight = true;
+      return {
+        sandboxEntry,
+        rebuildAgent,
+        versionCheck,
+        ...preparedTarget,
+        liveState,
+        recoveryManifest,
+        dcodePreflight,
+        releaseOnboardLock,
+        log,
+        bail,
+      };
+    } finally {
+      if (!retainOnboardLock) {
+        process.removeListener("exit", releaseOnboardLock);
+        releaseOnboardLock();
+      }
+    }
+  } finally {
+    if (!retainDcodePreflight) dcodePreflight.cleanup();
   }
 }

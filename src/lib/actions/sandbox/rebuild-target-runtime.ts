@@ -2,11 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import * as nim from "../../inference/nim";
+import {
+  webSearchEnvFor,
+  webSearchLabelFor,
+  webSearchProviderForConfig,
+} from "../../inference/web-search";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
-import { agentSupportsWebSearch } from "../../onboard/web-search-support";
+import { agentSupportsWebSearchProvider } from "../../onboard/web-search-support";
 import { redact } from "../../security/redact";
 import {
   preflightRebuildCredentials,
@@ -22,7 +27,10 @@ import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
 
 const onboardModule = require("../../onboard") as {
-  ensureValidatedBraveSearchCredential: (nonInteractive?: boolean) => Promise<unknown>;
+  ensureValidatedWebSearchCredential: (
+    config: NonNullable<RebuildDurableConfig["webSearchConfig"]>,
+    nonInteractive?: boolean,
+  ) => Promise<unknown>;
   preflightAuthoritativeRebuildTarget: (
     options: RebuildRecreateOnboardOpts & {
       model: string;
@@ -32,22 +40,25 @@ const onboardModule = require("../../onboard") as {
   ) => Promise<void>;
 };
 
-async function preflightRebuildBraveSearchCredential(
+async function preflightRebuildWebSearchCredential(
   durableConfig: RebuildDurableConfig,
   bail: RebuildBail,
 ): Promise<boolean> {
-  if (!durableConfig.webSearchConfig) return true;
+  const config = durableConfig.webSearchConfig;
+  if (!config) return true;
+  const provider = webSearchProviderForConfig(config);
+  const label = webSearchLabelFor(provider);
   try {
-    const credential = await onboardModule.ensureValidatedBraveSearchCredential(true);
+    const credential = await onboardModule.ensureValidatedWebSearchCredential(config, true);
     if (typeof credential !== "string" || !credential.trim()) {
-      throw new Error("Brave Search credential validation did not return a usable key.");
+      throw new Error(`${label} credential validation did not return a usable key.`);
     }
     return true;
   } catch (err) {
     printRebuildPreflightFailure(
-      "Brave Web Search credential is invalid.",
+      `${label} credential is invalid.`,
       err instanceof Error ? err.message : String(err),
-      "Brave Web Search credential preflight failed",
+      `${label} credential preflight failed`,
       bail,
     );
     return false;
@@ -60,18 +71,41 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
+  options: { skipImagePreflight?: boolean } = {},
 ): Promise<boolean> {
+  const webSearchConfig = target.durableConfig.webSearchConfig;
+  const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
   if (
-    target.durableConfig.webSearchConfig &&
-    !agentSupportsWebSearch(target.agentDefinition, target.fromDockerfile)
+    webSearchProvider &&
+    !agentSupportsWebSearchProvider(
+      target.agentDefinition,
+      webSearchProvider,
+      target.fromDockerfile,
+    )
   ) {
+    const label = webSearchLabelFor(webSearchProvider);
     printRebuildPreflightFailure(
-      "the recorded agent/image does not support Brave Web Search.",
+      `the recorded agent/image does not support ${label}.`,
       "Recreate with a supported image before enabling recorded web-search state.",
-      "Recorded Brave Web Search is unsupported by the rebuild image",
+      `Recorded ${label} is unsupported by the rebuild image`,
       bail,
     );
     return false;
+  }
+  if (webSearchProvider) {
+    const credentialEnv = webSearchEnvFor(webSearchProvider);
+    const collidingBridge = Object.values(sb.mcp?.bridges ?? {}).find((entry) =>
+      entry.env.includes(credentialEnv),
+    );
+    if (collidingBridge) {
+      printRebuildPreflightFailure(
+        `the recorded ${webSearchLabelFor(webSearchProvider)} credential is also owned by MCP server '${collidingBridge.server}'.`,
+        `Use a distinct credential name; ${credentialEnv} cannot be shared across managed providers.`,
+        "Web Search and MCP credential ownership conflict",
+        bail,
+      );
+      return false;
+    }
   }
 
   const managesDashboard = shouldManageDashboardForAgent(target.agentDefinition);
@@ -108,30 +142,34 @@ export async function preflightRebuildTargetRuntime(
     return false;
   }
 
-  const customImage = await rebuildImagePreflight.preflightRebuildImage({
-    agent: target.agentDefinition,
-    fromDockerfile: target.fromDockerfile,
-    model: target.resumeConfig.model,
-    provider: target.resumeConfig.provider,
-    preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
-    compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
-    webSearchConfig: target.durableConfig.webSearchConfig,
-    toolDisclosure: target.durableConfig.toolDisclosure,
-    hermesToolGateways: target.hermesToolGateways,
-    sandboxGpuConfig,
-    gatewayPort: recreateOptions.targetGatewayPort,
-    chatUiUrl: managesDashboard ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}` : "",
-  });
-  if (!customImage.ok) {
-    printRebuildPreflightFailure(
-      "the replacement sandbox image did not build.",
-      redact(customImage.detail),
-      "Replacement sandbox image preflight failed",
-      bail,
-    );
-    return false;
+  if (!options.skipImagePreflight) {
+    const customImage = await rebuildImagePreflight.preflightRebuildImage({
+      agent: target.agentDefinition,
+      fromDockerfile: target.fromDockerfile,
+      model: target.resumeConfig.model,
+      provider: target.resumeConfig.provider,
+      preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
+      compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
+      webSearchConfig: target.durableConfig.webSearchConfig,
+      toolDisclosure: target.durableConfig.toolDisclosure,
+      hermesToolGateways: target.hermesToolGateways,
+      sandboxGpuConfig,
+      gatewayPort: recreateOptions.targetGatewayPort,
+      chatUiUrl: managesDashboard
+        ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
+        : "",
+    });
+    if (!customImage.ok) {
+      printRebuildPreflightFailure(
+        "the replacement sandbox image did not build.",
+        redact(customImage.detail),
+        "Replacement sandbox image preflight failed",
+        bail,
+      );
+      return false;
+    }
   }
-  if (!(await preflightRebuildBraveSearchCredential(target.durableConfig, bail))) return false;
+  if (!(await preflightRebuildWebSearchCredential(target.durableConfig, bail))) return false;
 
   // Credential preflight must use the same trusted selection. Legacy registry
   // rows may recover provider/model from their own matching onboard session;

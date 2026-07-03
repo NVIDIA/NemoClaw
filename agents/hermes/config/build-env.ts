@@ -5,6 +5,8 @@ import { Buffer } from "node:buffer";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 
+export type HermesWebSearchProvider = "tavily";
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
@@ -12,6 +14,7 @@ export type HermesBuildSettings = {
   upstreamProvider: string;
   inferenceApi: string;
   toolDisclosure: "progressive" | "direct";
+  webSearchProvider: HermesWebSearchProvider | null;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -33,6 +36,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
     toolDisclosure: readToolDisclosure(env),
+    webSearchProvider: readWebSearchProvider(env),
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
@@ -45,6 +49,16 @@ function readToolDisclosure(env: NodeJS.ProcessEnv): "progressive" | "direct" {
   const value = (env.NEMOCLAW_TOOL_DISCLOSURE || "progressive").trim().toLowerCase();
   if (value === "progressive" || value === "direct") return value;
   throw new Error("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
+}
+
+function readWebSearchProvider(env: NodeJS.ProcessEnv): HermesWebSearchProvider | null {
+  if (env.NEMOCLAW_WEB_SEARCH_ENABLED !== "1") return null;
+
+  const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "tavily").trim();
+  if (provider === "tavily") return provider;
+  throw new Error(
+    `Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily", got ${JSON.stringify(provider)}`,
+  );
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {

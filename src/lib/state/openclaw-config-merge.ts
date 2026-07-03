@@ -21,6 +21,10 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   managedChannels: MANAGED_OPENCLAW_CHANNEL_NAMES,
   /** Current generated entries win by id; backup-only user entries are kept. */
   currentGeneratedEntryMaps: ["plugins.entries"],
+  /** Fresh web-search selection owns these bundled/external plugin entries. */
+  managedWebSearchPluginEntries: ["brave", "tavily"],
+  /** Fresh web-search selection owns this path, including its absence. */
+  managedWebSearchConfigPaths: ["tools.web.search"],
   /**
    * Provider entries are reconciled by id: the fresh rebuild owns routing and
    * credential fields, while backed-up non-secret model tuning is restored.
@@ -40,6 +44,9 @@ const MANAGED_OPENCLAW_CHANNELS = new Set<string>(
 
 const PROVIDER_RUNTIME_OWNED_FIELDS = OPENCLAW_CONFIG_RESTORE_OWNERSHIP.providerRuntimeOwnedFields;
 const MODEL_RUNTIME_OWNED_FIELDS = OPENCLAW_CONFIG_RESTORE_OWNERSHIP.modelRuntimeOwnedFields;
+const MANAGED_WEB_SEARCH_PLUGIN_ENTRIES = new Set<string>(
+  OPENCLAW_CONFIG_RESTORE_OWNERSHIP.managedWebSearchPluginEntries,
+);
 
 function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
   return isRecord(value);
@@ -104,12 +111,51 @@ function mergeOpenClawEntryMap(
   currentEntries: unknown,
 ): Record<string, unknown> | undefined {
   if (!isPlainJsonObject(backupEntries) && !isPlainJsonObject(currentEntries)) return undefined;
-  return {
-    ...(isPlainJsonObject(backupEntries) ? cloneJson(backupEntries) : {}),
+  const merged: Record<string, unknown> = {};
+  if (isPlainJsonObject(backupEntries)) {
+    for (const [key, value] of Object.entries(backupEntries)) {
+      // Search-provider plugins are selected by the fresh rebuild. Omitting
+      // one is meaningful: provider switches and disablement must not restore
+      // a stale Brave/Tavily entry from the durable snapshot.
+      if (MANAGED_WEB_SEARCH_PLUGIN_ENTRIES.has(key)) continue;
+      merged[key] = cloneJson(value);
+    }
+  }
+  if (isPlainJsonObject(currentEntries)) {
     // Current generated entries win so rebuild does not restore stale runtime
     // placeholders, model routing, or plugin enablement for NemoClaw-managed ids.
-    ...(isPlainJsonObject(currentEntries) ? cloneJson(currentEntries) : {}),
-  };
+    Object.assign(merged, cloneJson(currentEntries));
+  }
+  return merged;
+}
+
+function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
+  if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
+  if (!isPlainJsonObject(currentTools) && currentTools !== undefined && currentTools !== null) {
+    return cloneJson(currentTools);
+  }
+  const current = isPlainJsonObject(currentTools) ? currentTools : {};
+
+  const merged = mergeJsonObjects(current, backupTools);
+  const backupWeb = isPlainJsonObject(backupTools.web) ? backupTools.web : {};
+  const currentWeb = isPlainJsonObject(current.web) ? current.web : {};
+  const mergedWeb = mergeJsonObjects(currentWeb, backupWeb);
+
+  // The fresh generator owns tools.web.search, including omission when web
+  // search is disabled. Preserve unrelated user web-tool settings around it.
+  if ("search" in currentWeb) mergedWeb.search = cloneJson(currentWeb.search);
+  else delete mergedWeb.search;
+
+  if (Object.keys(mergedWeb).length > 0) merged.web = mergedWeb;
+  else delete merged.web;
+
+  // Tool Search is generated from NemoClaw's current disclosure selection.
+  // Its absence is authoritative, just like omission of web.search above.
+  for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
+    if (field in current) merged[field] = cloneJson(current[field]);
+    else delete merged[field];
+  }
+  return merged;
 }
 
 function modelEntryId(entry: unknown): string | null {
@@ -227,30 +273,11 @@ function mergeOpenClawModels(backupModels: unknown, currentModels: unknown): unk
 
 function mergeOpenClawPlugins(backupPlugins: unknown, currentPlugins: unknown): unknown {
   if (!isPlainJsonObject(backupPlugins)) return cloneJson(currentPlugins);
-  if (!isPlainJsonObject(currentPlugins)) return cloneJson(backupPlugins);
+  const current = isPlainJsonObject(currentPlugins) ? currentPlugins : {};
 
-  const merged = mergeJsonObjects(currentPlugins, backupPlugins);
-  const entries = mergeOpenClawEntryMap(backupPlugins.entries, currentPlugins.entries);
+  const merged = mergeJsonObjects(current, backupPlugins);
+  const entries = mergeOpenClawEntryMap(backupPlugins.entries, current.entries);
   if (entries) merged.entries = entries;
-  return merged;
-}
-
-function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
-  if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
-  if (!isPlainJsonObject(currentTools)) {
-    if (currentTools !== undefined && currentTools !== null) return cloneJson(currentTools);
-    const restored = cloneJson(backupTools);
-    for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
-      delete restored[field];
-    }
-    return restored;
-  }
-
-  const merged = mergeJsonObjects(currentTools, backupTools);
-  for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
-    if (field in currentTools) merged[field] = cloneJson(currentTools[field]);
-    else delete merged[field];
-  }
   return merged;
 }
 

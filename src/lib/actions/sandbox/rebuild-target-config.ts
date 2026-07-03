@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { loadAgent } from "../../agent/defs";
+import { webSearchProviderForConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import type { RebuildBail } from "./rebuild-credential-preflight";
+import { isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import {
   type RebuildDurableConfig,
   resolveRebuildDockerfile,
@@ -127,6 +129,15 @@ export function prepareRebuildTargetConfig(
     requestedToolDisclosure,
   );
   if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
+  if (isDcodeRebuildAgent(rebuildAgent) && durableConfig.fromDockerfile) {
+    printRebuildPreflightFailure(
+      "the managed DCode registry entry conflicts with a recorded custom Dockerfile.",
+      "Managed DCode rebuilds must use the verified managed image path.",
+      "Managed DCode rebuild cannot use a recorded custom Dockerfile",
+      bail,
+    );
+    return null;
+  }
 
   const dockerfile = resolveRebuildDockerfile(durableConfig.fromDockerfile);
   if (!dockerfile.ok) {
@@ -145,6 +156,12 @@ export function prepareRebuildTargetConfig(
     sessionSnapshot,
     sessionMatchesSandbox,
   );
+  const hermesToolGateways =
+    rebuildAgent === "hermes" &&
+    durableConfig.webSearchConfig &&
+    webSearchProviderForConfig(durableConfig.webSearchConfig) === "tavily"
+      ? hermesGateways.gateways.filter((gateway) => gateway !== "nous-web")
+      : hermesGateways.gateways;
   const credentialEnv =
     resumeConfig.provider === hermesProviderAuth.HERMES_PROVIDER_NAME
       ? durableConfig.hermesAuthMethod === "api_key"
@@ -157,7 +174,7 @@ export function prepareRebuildTargetConfig(
     sessionSnapshot,
     sessionMatchesSandbox,
     durableConfig,
-    hermesToolGateways: hermesGateways.gateways,
+    hermesToolGateways,
     hasHermesToolGateways: hermesGateways.recorded,
     credentialEnv,
     fromDockerfile: dockerfile.path,
