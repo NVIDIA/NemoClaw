@@ -88,11 +88,14 @@ describe("buildOnboardSequenceHandlers wiring (seam integration)", () => {
 });
 
 describe("phase-progress pipeline (real reporter + real timing registry)", () => {
-  // Runtime validation of the full observability pipeline with the genuine
-  // reporter — default `Date.now`, default `setInterval`/`clearInterval` driven
-  // by fake timers, and the real module-level `recordPhaseTiming` registry
-  // (only `logLine` is captured). Ties the whole chain end-to-end: phase runs →
-  // heartbeat fires → timing recorded → summary emitted → registry cleared.
+  // Runtime validation of the reporter→registry→summary pipeline with the
+  // genuine reporter — default `Date.now`, default `setInterval`/`clearInterval`
+  // driven by fake timers, and the real module-level `recordPhaseTiming`
+  // registry (only `logLine` is captured): phase runs → heartbeat fires →
+  // timing recorded into the real registry → summary renders from it. The
+  // terminal-seam reset is owned by `runFinalOnboardFlowSequence` and proven
+  // against that production path in flow-slices.test.ts, so it is not re-tested
+  // here (calling resetPhaseTimings() directly would be circular).
   beforeEach(() => {
     resetPhaseTimings();
     vi.useFakeTimers();
@@ -102,7 +105,7 @@ describe("phase-progress pipeline (real reporter + real timing registry)", () =>
     resetPhaseTimings();
   });
 
-  it("runs a phase, fires a heartbeat, records timing, emits the summary, then clears", async () => {
+  it("runs a phase, fires a heartbeat, records timing, then renders the summary", async () => {
     const lines: string[] = [];
     const reporter = createPhaseProgressReporter({
       enabled: true,
@@ -135,10 +138,7 @@ describe("phase-progress pipeline (real reporter + real timing registry)", () =>
     const timings = getPhaseTimings();
     expect(timings).toHaveLength(1);
     expect(timings[0]).toMatchObject({ phase: "gateway", status: "completed" });
-    // summary emitted from the registry
+    // summary renders from the real registry
     expect(formatPhaseTimingsSummary()).toContain("Gateway startup");
-    // registry cleared at the terminal seam
-    resetPhaseTimings();
-    expect(getPhaseTimings()).toHaveLength(0);
   });
 });
