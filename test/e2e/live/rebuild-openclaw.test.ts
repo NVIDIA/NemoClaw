@@ -232,15 +232,13 @@ function seedRegistryAndSession(): void {
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
-  const existingDashboardPort = registry.sandboxes[SANDBOX_NAME]?.dashboardPort;
-  if (
-    typeof existingDashboardPort !== "number" ||
-    !Number.isInteger(existingDashboardPort) ||
-    existingDashboardPort < 1 ||
-    existingDashboardPort > 65535
-  ) {
-    throw new Error(`phase-1 onboard did not persist a valid dashboard port for ${SANDBOX_NAME}`);
-  }
+  const existingDashboardPort = Number(registry.sandboxes[SANDBOX_NAME]?.dashboardPort);
+  expect(
+    Number.isInteger(existingDashboardPort) &&
+      existingDashboardPort >= 1 &&
+      existingDashboardPort <= 65535,
+    `phase-1 onboard did not persist a valid dashboard port for ${SANDBOX_NAME}`,
+  ).toBe(true);
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
     createdAt: new Date().toISOString(),

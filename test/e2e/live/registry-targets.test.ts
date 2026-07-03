@@ -97,18 +97,21 @@ for (const target of listTargets()) {
               `SUPPORTED_LIFECYCLES whitelist together.`,
           );
         }
-        if (profile === "dcode-rebuild-invalid-credential") {
-          const entry = readRegistrySandboxEntry(instance.sandboxName);
-          lifecycleResult = await lifecycle.simulate(
-            profile,
-            instance,
-            dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
-              entry,
-              secrets.required("NVIDIA_INFERENCE_API_KEY"),
-            ),
-          );
-        } else {
-          lifecycleResult = await lifecycle.simulate(profile, instance);
+        switch (profile) {
+          case "dcode-rebuild-invalid-credential": {
+            const entry = readRegistrySandboxEntry(instance.sandboxName);
+            lifecycleResult = await lifecycle.simulate(
+              profile,
+              instance,
+              dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+                entry,
+                secrets.required("NVIDIA_INFERENCE_API_KEY"),
+              ),
+            );
+            break;
+          }
+          default:
+            lifecycleResult = await lifecycle.simulate(profile, instance);
         }
       }
 

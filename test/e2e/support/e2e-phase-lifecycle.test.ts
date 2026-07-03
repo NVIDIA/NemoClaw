@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
 
+import { restoreEnv } from "../../helpers/env-test-helpers.ts";
+
 import {
   type CommandRunner,
   GatewayClient,
@@ -396,7 +398,6 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
           agent: "langchain-deepagents-code",
           gatewayName: "nemoclaw-8081",
           provider: "compatible-endpoint",
-          credentialEnv: "COMPATIBLE_API_KEY",
           model: "nvidia/model-from-registry",
         },
         "valid-key",
@@ -485,7 +486,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       const routeProbes = runner.calls.filter(
         (call) =>
           call.command === "openshell" &&
-          call.args.includes("https://inference.local/v1/chat/completions"),
+          call.args.some((arg) => arg === "https://inference.local/v1/chat/completions"),
       );
       expect(routeProbes.length).toBeGreaterThanOrEqual(3);
       for (const probe of routeProbes) {
@@ -514,8 +515,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       );
       expect(repeatedUpdates).toHaveLength(2);
     } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
+      restoreEnv("HOME", previousHome);
       fs.rmSync(home, { force: true, recursive: true });
     }
   });
@@ -612,8 +612,7 @@ describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
       expect(updates).toHaveLength(3);
       expect(updates[2].options?.env?.COMPATIBLE_API_KEY).toBe(options.validCredential);
     } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
+      restoreEnv("HOME", previousHome);
       fs.rmSync(home, { force: true, recursive: true });
     }
   });
