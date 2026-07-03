@@ -27,6 +27,10 @@ interface HarnessOptions {
   duplicateError?: string;
 }
 
+function throwHarnessError(message: string): never {
+  throw new Error(message);
+}
+
 function makeHarness(options: HarnessOptions) {
   const events: Event[] = [];
   const input: DockerDriverGatewayCutoverInput = {
@@ -71,11 +75,11 @@ function makeHarness(options: HarnessOptions) {
     rememberDockerDriverGatewayPid: (pid) => events.push({ type: "remember-pid", pid }),
     reapDuplicateHostGatewaysExceptOrFail: (keepPid, _gatewayBin, extraPids) => {
       events.push({ type: "duplicate-reap", keepPid, extraPids });
-      if (options.duplicateError) throw new Error(options.duplicateError);
+      options.duplicateError && throwHarnessError(options.duplicateError);
     },
     reapHostGatewayBeforeLaunchOrFail: ({ extraPids }) => {
       events.push({ type: "prelaunch-reap", extraPids });
-      if (options.prelaunchError) throw new Error(options.prelaunchError);
+      options.prelaunchError && throwHarnessError(options.prelaunchError);
     },
     isGatewayPortAvailable: async () => options.postReapPortAvailable ?? true,
     reportUntrustedGatewayPort: (message) => {
@@ -91,7 +95,7 @@ function makeHarness(options: HarnessOptions) {
     events,
     async run(): Promise<"reused" | "launch"> {
       const action = await runDockerDriverGatewayCutover(input, deps);
-      if (action === "launch") events.push({ type: "spawn-fresh" });
+      action === "launch" && events.push({ type: "spawn-fresh" });
       return action;
     },
   };
