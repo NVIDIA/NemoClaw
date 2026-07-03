@@ -298,6 +298,25 @@ describe.skipIf(!canRun)(
       }
     });
 
+    it("falls back safely when generated config scalars are malformed", () => {
+      withTempDir((dir) => {
+        const malformedConfig = SAMPLE_CONFIG.replace("[agents]", "[agents")
+          .replace('default = "openai:demo-model"', 'default = "openai:partial-model')
+          .replace(
+            'base_url = "https://inference.local/v1"',
+            'base_url = "https://partial.example.test/v1',
+          );
+        const run = runBashWrapper(buildFixture(dir, malformedConfig), ["status"], {});
+
+        expect(run.status).toBe(0);
+        expect(run.launched).toBe(false);
+        expect(run.stdout).toContain("Agent:    agent (default)");
+        expect(run.stdout).not.toContain("partial-model");
+        expect(run.stdout).not.toContain("partial.example.test");
+        expect(run.stdout).toContain("Endpoint: https://inference.local/v1");
+      });
+    });
+
     it("does not write unsafe endpoint values from mutable sources", () => {
       withTempDir((dir) => {
         const unsafeEndpoints = [

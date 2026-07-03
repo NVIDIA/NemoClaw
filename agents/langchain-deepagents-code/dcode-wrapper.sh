@@ -342,6 +342,10 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
+# Identity output intentionally reads only the exact quoted scalar shape written
+# by NemoClaw. This is not a general TOML parser: malformed values, inline
+# comments, and unsupported forms are ignored, then the caller uses a safe
+# default and applies terminal/secret filtering before printing.
 toml_section_scalar() {
   local section="$1"
   local key="$2"
@@ -360,8 +364,12 @@ toml_section_scalar() {
     case "$line" in
       "$key = \""*)
         line="${line#"$key = \""}"
-        printf '%s' "${line%\"}"
-        return 0
+        case "$line" in
+          *\")
+            printf '%s' "${line%\"}"
+            return 0
+            ;;
+        esac
         ;;
     esac
   done <"$DEEPAGENTS_CONFIG_FILE"
