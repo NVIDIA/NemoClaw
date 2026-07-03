@@ -744,7 +744,6 @@ describe("nim", () => {
             count: 1,
             totalMemoryMB: 65471,
             wslDockerDesktopGpuProofPassed: true,
-            computeConstrained: true, // N1X iGPU: skip computeIntensive models (#3707)
           });
           expect(proveArm64WslDockerDesktopGpu).toHaveBeenCalledWith(["JMJWOA-Generic-GPU"]);
         });

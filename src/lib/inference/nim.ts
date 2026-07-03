@@ -510,13 +510,9 @@ export function detectGpu(deps: DetectGpuDeps = {}): GpuDetection | null {
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",
-          // The Windows-ARM N1X iGPU (denylisted JMJWOA-Generic placeholder that
-          // cleared the bounded CUDA proof) is an integrated, memory-shared device
-          // like Jetson: it cannot serve a computeIntensive 35B/30B model within
-          // the agent-loop timeout. Mark it computeConstrained so the Ollama
-          // bootstrap-model selector excludes those entries (#3707). Only the
-          // proof-pass placeholder path reaches this; a real discrete WSL2 GPU has
-          // a genuine name and never sets wslDockerDesktopGpuProofPassed.
+          // The proof-passed Windows-ARM N1X iGPU is memory-shared like Jetson
+          // and cannot serve a computeIntensive model in-loop, so tag it
+          // computeConstrained to exclude those Ollama bootstrap models (#3707).
           ...(platform === "jetson" || wslDockerDesktopGpuProofPassed
             ? { computeConstrained: true }
             : {}),
