@@ -5,6 +5,19 @@ import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 
 export const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
+const GENERATED_SANDBOX_EXEC_MARKER_PATTERN = new RegExp(
+  `^${SANDBOX_EXEC_STARTED_MARKER}_[0-9a-f]{32}$`,
+);
+
+function assertSandboxExecMarker(marker: string): void {
+  if (
+    marker === SANDBOX_EXEC_STARTED_MARKER ||
+    GENERATED_SANDBOX_EXEC_MARKER_PATTERN.test(marker)
+  ) {
+    return;
+  }
+  throw new Error("Invalid sandbox exec marker");
+}
 
 export function createSandboxExecMarker(): string {
   return `${SANDBOX_EXEC_STARTED_MARKER}_${randomBytes(16).toString("hex")}`;
@@ -14,6 +27,7 @@ export function buildSandboxExecMarkedCommand(
   command: string,
   marker = SANDBOX_EXEC_STARTED_MARKER,
 ): string {
+  assertSandboxExecMarker(marker);
   if (!command.includes("validate-hermes-env-secret-boundary.py")) {
     return `printf '%s\\n' '${marker}'; ${command}`;
   }

@@ -35,6 +35,12 @@ describe("buildSandboxExecMarkedCommand", () => {
     expect(second).not.toBe(first);
     expect(buildSandboxExecMarkedCommand("echo hi", first)).toContain(`'${first}'`);
   });
+
+  it("rejects a custom marker containing shell syntax", () => {
+    expect(() =>
+      buildSandboxExecMarkedCommand("echo hi", "x'; echo NEMOCLAW_MARKER_INJECTION; '"),
+    ).toThrow("Invalid sandbox exec marker");
+  });
 });
 
 describe("extractSandboxExecCommandStdout", () => {
