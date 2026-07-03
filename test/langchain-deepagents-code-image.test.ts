@@ -63,9 +63,7 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
 ].join("\n");
 
 function stubManagedMcpValidator(source: string): string {
-  if (!source.includes(MANAGED_MCP_VALIDATOR_INVOCATION)) {
-    throw new Error("managed MCP validator invocation is missing from the wrapper fixture");
-  }
+  expect(source).toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
   return source.replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""');
 }
 
