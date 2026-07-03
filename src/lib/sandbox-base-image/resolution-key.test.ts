@@ -73,8 +73,12 @@ describe("sandbox base-image resolution key", () => {
     const root = fixture();
     dockerMocks.infoFormat.mockReturnValue("");
 
-    createSandboxBaseImageResolutionKey(options(root));
+    const fallbackKey = createSandboxBaseImageResolutionKey(options(root));
+    dockerMocks.infoFormat.mockReturnValue(`${process.platform}/${process.arch}`);
+    const explicitHostKey = createSandboxBaseImageResolutionKey(options(root));
 
+    expect(fallbackKey).toBe(explicitHostKey);
+    expect(dockerMocks.infoFormat).toHaveBeenCalledTimes(2);
     expect(dockerMocks.infoFormat).toHaveBeenCalledWith("{{.OSType}}/{{.Architecture}}", {
       ignoreError: true,
       timeout: 2_000,

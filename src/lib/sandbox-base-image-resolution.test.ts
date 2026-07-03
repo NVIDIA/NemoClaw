@@ -17,6 +17,7 @@ const traceMocks = vi.hoisted(() => ({
   add: vi.fn(),
 }));
 const sourceMocks = vi.hoisted(() => ({
+  inputsDirty: vi.fn(),
   inputsChanged: vi.fn(),
 }));
 
@@ -35,6 +36,7 @@ vi.mock("./trace", () => ({
 
 vi.mock("./sandbox-base-image/source-identity", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./sandbox-base-image/source-identity")>()),
+  baseImageInputsDirty: sourceMocks.inputsDirty,
   baseImageInputsChangedSinceMain: sourceMocks.inputsChanged,
 }));
 
@@ -42,6 +44,7 @@ import {
   createSandboxBaseImageResolutionKey,
   OPENSHELL_SANDBOX_MIN_GLIBC,
   resolveSandboxBaseImage,
+  SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
 } from "./sandbox-base-image";
 
@@ -91,6 +94,7 @@ describe("sandbox base-image warm resolution", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
+    sourceMocks.inputsDirty.mockReturnValue(false);
     sourceMocks.inputsChanged.mockReturnValue(false);
     dockerMocks.imageInspectFormat.mockReturnValue(
       JSON.stringify({
@@ -228,6 +232,123 @@ describe("sandbox base-image warm resolution", () => {
     expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.remote_pull", {
       source: "source-sha",
     });
+  });
+
+  it("fails closed instead of trusting an existing local tag when base inputs are dirty (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when base inputs changed and the local rebuild fails (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({ status: 1, stderr: "local rebuild failed" });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+    expect(error).toHaveBeenCalledWith("local rebuild failed");
+    error.mockRestore();
+  });
+
+  it("rebuilds dirty base inputs before considering published or existing local candidates (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_INSTALL_REF: "v0.0.31",
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+    });
+
+    expect(resolved).toMatchObject({
+      ref: "nemoclaw-sandbox-base-local:test",
+      source: "local",
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalled();
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the image rebuilt from changed inputs misses the required ABI (#4680)", () => {
+    sourceMocks.inputsDirty.mockReturnValue(true);
+    dockerMocks.build.mockReturnValue({ status: 0 });
+    dockerMocks.capture.mockReturnValue("ldd (GNU libc) 2.38");
+
+    expect(() =>
+      resolveSandboxBaseImage({
+        ...resolutionOptions(),
+        env: {
+          ...resolutionOptions().env,
+          NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+        },
+        requireOpenshellSandboxAbi: true,
+      }),
+    ).toThrow(SandboxBaseImageResolutionError);
+
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses an exact cached version image before committed branch divergence (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+    dockerMocks.pull.mockImplementation(() => {
+      throw new Error("air-gapped");
+    });
+    const options = resolutionOptions();
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      env: { ...options.env, NEMOCLAW_INSTALL_REF: "v0.0.31" },
+    });
+
+    expect(resolved).toMatchObject({ source: "version-tag" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(`${IMAGE_NAME}:v0.0.31`, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("uses an exact source-SHA image before committed branch divergence (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage(resolutionOptions());
+
+    expect(resolved).toMatchObject({ source: "source-sha" });
+    expect(dockerMocks.pull).not.toHaveBeenCalled();
+    expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
   it("uses an ABI-compatible local fallback after a published override fails ABI validation (#4680)", () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -9,6 +10,7 @@ import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import {
   baseImageInputsChangedSinceMain,
+  baseImageInputsDirty,
   buildLocalBaseTag,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
@@ -24,12 +26,11 @@ fs.closeSync(emptyGitConfigFd);
 fs.mkdirSync(emptyGitHooksDir, { mode: 0o700 });
 
 function buildGitEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith("GIT_") && value !== undefined) {
-      env[key] = value;
-    }
-  }
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key, value]) => !key.startsWith("GIT_") && value !== undefined,
+    ),
+  );
   return {
     ...env,
     GIT_CONFIG_GLOBAL: emptyGitConfig,
@@ -53,9 +54,11 @@ function git(root: string, args: string[]) {
       env: gitEnv,
     },
   );
-  if (result.status !== 0) {
-    throw new Error(`git ${args.join(" ")} failed:\n${result.stderr}\n${result.stdout}`);
-  }
+  assert.equal(
+    result.status,
+    0,
+    `git ${args.join(" ")} failed:\n${result.stderr}\n${result.stdout}`,
+  );
   return result.stdout.trim();
 }
 
@@ -176,6 +179,7 @@ describe("sandbox base-image source identity", () => {
     git(root, ["add", "Dockerfile.base"]);
     git(root, ["commit", "-m", "change base"]);
 
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(false);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
   });
 
@@ -189,6 +193,68 @@ describe("sandbox base-image source identity", () => {
     expect(git(root, ["rev-parse", "--verify", "origin/main"]).length).toBeGreaterThan(0);
     git(root, ["update-ref", "-d", "refs/remotes/origin/main"]);
     expect(baseImageInputsChangedSinceMain(root, { ...gitEnv, GITHUB_ACTIONS: "true" })).toBe(true);
+  });
+
+  it("normalizes invalid CI base refs before constructing a fetch refspec", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["update-ref", "-d", "refs/remotes/origin/main"]);
+
+    expect(
+      baseImageInputsChangedSinceMain(root, {
+        ...gitEnv,
+        GITHUB_ACTIONS: "true",
+        GITHUB_BASE_REF: "main:refs/heads/injected",
+      }),
+    ).toBe(false);
+    expect(git(root, ["rev-parse", "--verify", "origin/main"]).length).toBeGreaterThan(0);
+  });
+
+  it("treats Git diff errors as changed instead of reusing a stale base", () => {
+    const root = createGitFixture();
+    const invalidIndex = path.join(root, ".git", "index-directory");
+    fs.mkdirSync(invalidIndex);
+
+    expect(
+      baseImageInputsChangedSinceMain(root, {
+        ...gitEnv,
+        GIT_INDEX_FILE: invalidIndex,
+      }),
+    ).toBe(true);
+  });
+
+  it("fails closed when a Git checkout has no usable base comparison ref", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-no-base-ref-"));
+    tmpRoots.push(root);
+    git(root, ["init", "-b", "feature"]);
+    writeFixture(root, "Dockerfile.base", "FROM node:22\n");
+    writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+    git(root, ["add", "."]);
+    git(root, ["commit", "-m", "initial"]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("uses published-image resolution outside a Git checkout", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-no-git-"));
+    tmpRoots.push(root);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+  });
+
+  it("does not inherit Git metadata from a release directory's parent", () => {
+    const parent = createGitFixture();
+    const root = path.join(parent, "packaged-release");
+    fs.mkdirSync(root);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+  });
+
+  it("fails closed when Git metadata exists but the checkout is broken", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-broken-git-"));
+    tmpRoots.push(root);
+    fs.mkdirSync(path.join(root, ".git"));
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
   });
 
   it("detects committed blueprint minimum-version changes relative to origin/main", () => {
@@ -245,6 +311,10 @@ describe("sandbox base-image source identity", () => {
     const root = createGitFixture();
     writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo dirty\n");
 
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(true);
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+
+    git(root, ["add", "Dockerfile.base"]);
+    expect(baseImageInputsDirty(root, gitEnv)).toBe(true);
   });
 });

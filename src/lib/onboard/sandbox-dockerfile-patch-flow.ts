@@ -109,9 +109,10 @@ export async function prepareSandboxDockerfilePatch({
   const shouldResolveBaseImage = !(agent && !fromDockerfile);
   const getDockerDriverGateway =
     deps.isLinuxDockerDriverGatewayEnabled ?? linuxDockerDriverGatewayEnabled;
+  const dockerDriverGateway = getDockerDriverGateway();
   const resolved = shouldResolveBaseImage
     ? (deps.pullAndResolveBaseImageDigest ?? pullAndResolveBaseImageDigest)({
-        requireOpenshellSandboxAbi: getDockerDriverGateway(),
+        requireOpenshellSandboxAbi: dockerDriverGateway,
         ...(resolutionHint ? { resolutionHint } : {}),
         ...(forceBaseImageRefresh ? { forceRefresh: true } : {}),
       })
@@ -143,7 +144,7 @@ export async function prepareSandboxDockerfilePatch({
     provider,
     sandboxGpuConfig,
     {
-      dockerDriverGateway: getDockerDriverGateway(),
+      dockerDriverGateway,
       log,
     },
   );

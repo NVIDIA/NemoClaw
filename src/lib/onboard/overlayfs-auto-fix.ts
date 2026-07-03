@@ -54,7 +54,7 @@ export function createOverlayfsAutoFix(deps: {
     }
 
     log(
-      `  Detected Docker 26+ containerd-snapshotter overlayfs (driver=${assessment.dockerStorageDriver}). ` +
+      `  Detected Docker 26+ containerd-snapshotter overlayfs (driver=${assessment.dockerStorageDriver ?? "unknown"}). ` +
         `Routing through a locally-built ${snapshotter} cluster image to bypass nested-overlay break.`,
     );
     log(

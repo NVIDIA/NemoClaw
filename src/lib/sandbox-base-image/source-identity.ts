@@ -111,6 +111,30 @@ function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv): num
   }).status;
 }
 
+function gitRootState(rootDir: string, env: NodeJS.ProcessEnv): "absent" | "ready" | "broken" {
+  try {
+    fs.lstatSync(path.join(rootDir, ".git"));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ENOTDIR" ? "absent" : "broken";
+  }
+
+  const result = spawnSync("git", ["-C", rootDir, "rev-parse", "--show-toplevel"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+    env,
+  });
+  if (result.status !== 0) return "broken";
+  try {
+    return fs.realpathSync(String(result.stdout).trim()) === fs.realpathSync(rootDir)
+      ? "ready"
+      : "broken";
+  } catch {
+    return "broken";
+  }
+}
+
 function gitRefExists(rootDir: string, ref: string, env: NodeJS.ProcessEnv): boolean {
   return gitStatus(rootDir, ["rev-parse", "--verify", `${ref}^{commit}`], env) === 0;
 }
@@ -144,6 +168,16 @@ function gitFetchRemoteBranch(
   );
 }
 
+function normalizeBaseBranch(value: string | null | undefined): string {
+  const branch = String(value || "").trim() || "main";
+  const check = spawnSync("git", ["check-ref-format", "--branch", branch], {
+    encoding: "utf-8",
+    stdio: "ignore",
+    timeout: 5_000,
+  });
+  return check.status === 0 ? branch : "main";
+}
+
 function gitHasPathDiff(
   rootDir: string,
   args: string[],
@@ -156,18 +190,44 @@ function gitHasPathDiff(
   return null;
 }
 
+function trackedBaseImageInputsDirty(
+  rootDir: string,
+  env: NodeJS.ProcessEnv,
+  inputPaths: string[],
+): boolean {
+  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env, inputPaths);
+  if (worktreeDiff !== false) return true;
+  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env, inputPaths);
+  return stagedDiff !== false;
+}
+
+export function baseImageInputsDirty(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+  paths: string[] = [],
+): boolean {
+  const rootState = gitRootState(rootDir, env);
+  if (rootState === "absent") return false;
+  if (rootState === "broken") return true;
+  return trackedBaseImageInputsDirty(rootDir, env, normalizeBaseImageInputPaths(rootDir, paths));
+}
+
 export function baseImageInputsChangedSinceMain(
   rootDir = ROOT,
   env: NodeJS.ProcessEnv = process.env,
   paths: string[] = [],
 ): boolean {
-  const inputPaths = normalizeBaseImageInputPaths(rootDir, paths);
-  if (gitHasPathDiff(rootDir, ["diff", "--quiet"], env, inputPaths) === true) return true;
-  if (gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env, inputPaths) === true) {
-    return true;
-  }
+  // Release installs may not include Git metadata. Check for metadata at this
+  // exact root so a release nested under an unrelated checkout is not treated
+  // as source. Once metadata is present, corrupt or unreadable state fails closed.
+  const rootState = gitRootState(rootDir, env);
+  if (rootState === "absent") return false;
+  if (rootState === "broken") return true;
 
-  const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
+  const inputPaths = normalizeBaseImageInputPaths(rootDir, paths);
+  if (trackedBaseImageInputsDirty(rootDir, env, inputPaths)) return true;
+
+  const baseBranch = normalizeBaseBranch(env.GITHUB_BASE_REF);
   const baseRemoteRef = `origin/${baseBranch}`;
   if (!gitRefExists(rootDir, baseRemoteRef, env)) {
     gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
@@ -177,9 +237,12 @@ export function baseImageInputsChangedSinceMain(
   for (const ref of Array.from(new Set(candidates))) {
     if (!gitRefExists(rootDir, ref, env)) continue;
     const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env, inputPaths);
-    if (diff != null) return diff;
+    return diff ?? true;
   }
-  return false;
+  // A repository with no usable comparison ref cannot prove that its base
+  // inputs match main. Force the validated local path instead of reusing
+  // potentially stale published tags.
+  return true;
 }
 
 export function buildLocalBaseTag(prefix: string, rootDir = ROOT, env = process.env): string {

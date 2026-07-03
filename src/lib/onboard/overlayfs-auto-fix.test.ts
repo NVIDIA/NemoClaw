@@ -7,11 +7,12 @@ import { createOverlayfsAutoFix } from "./overlayfs-auto-fix";
 describe("overlayfs auto-fix", () => {
   it("builds and caches the selected snapshotter image for affected hosts", () => {
     const ensurePatchedClusterImage = vi.fn(() => "nemoclaw-cluster:patched");
+    const log = vi.fn();
     const applyFix = createOverlayfsAutoFix({
-      assessHost: () => ({ hasNestedOverlayConflict: true, dockerStorageDriver: "overlayfs" }),
+      assessHost: () => ({ hasNestedOverlayConflict: true }),
       ensurePatchedClusterImage,
       env: { NEMOCLAW_OVERLAY_SNAPSHOTTER: "native" },
-      log: vi.fn(),
+      log,
     });
 
     expect(applyFix("ghcr.io/nvidia/openshell/cluster:1")).toBe("nemoclaw-cluster:patched");
@@ -21,6 +22,7 @@ describe("overlayfs auto-fix", () => {
       upstreamImage: "ghcr.io/nvidia/openshell/cluster:1",
       snapshotter: "native",
     });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("driver=unknown"));
   });
 
   it("caches each effective snapshotter choice independently", () => {
@@ -59,6 +61,10 @@ describe("overlayfs auto-fix", () => {
       hasNestedOverlayConflict: false,
       dockerStorageDriver: "overlay2",
     }));
+    const affectedHost = vi.fn(() => ({
+      hasNestedOverlayConflict: true,
+      dockerStorageDriver: "overlayfs",
+    }));
     expect(
       createOverlayfsAutoFix({ assessHost, ensurePatchedClusterImage })(
         "ghcr.io/nvidia/openshell/cluster:1",
@@ -66,11 +72,12 @@ describe("overlayfs auto-fix", () => {
     ).toBeNull();
     expect(
       createOverlayfsAutoFix({
-        assessHost,
+        assessHost: affectedHost,
         ensurePatchedClusterImage,
         env: { NEMOCLAW_DISABLE_OVERLAY_FIX: "1" },
       })("ghcr.io/nvidia/openshell/cluster:1"),
     ).toBeNull();
+    expect(affectedHost).not.toHaveBeenCalled();
     expect(ensurePatchedClusterImage).not.toHaveBeenCalled();
   });
 

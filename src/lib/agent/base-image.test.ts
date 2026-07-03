@@ -246,30 +246,35 @@ describe("agent base image provisioning", () => {
     });
   });
 
-  it("builds an agent base image when no resolved image or cached image exists on non-Linux hosts", () => {
+  it("attaches resolution metadata to non-Linux local build and cache fallbacks", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+
     withMockedDocker(
       ({
         ensureAgentBaseImage,
         dockerBuildMock,
         dockerImageInspectMock,
         resolveSandboxBaseImageMock,
+        createResolutionMetadataMock,
       }) => {
         resolveSandboxBaseImageMock.mockReturnValue(null);
-        dockerImageInspectMock.mockReturnValue({ status: 1 });
+        dockerImageInspectMock.mockReturnValueOnce({ status: 1 }).mockReturnValue({ status: 0 });
 
-        if (process.platform === "linux") {
-          expect(() => ensureAgentBaseImage(makeAgent())).toThrow(
-            "No compatible Hermes Agent sandbox base image found",
-          );
-          expect(dockerBuildMock).not.toHaveBeenCalled();
-          return;
-        }
-
-        const result = ensureAgentBaseImage(makeAgent());
-
-        expect(result.built).toBe(true);
+        expect(ensureAgentBaseImage(makeAgent())).toEqual({
+          imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+          built: true,
+          resolutionMetadata: expect.objectContaining({ source: "local" }),
+        });
+        expect(ensureAgentBaseImage(makeAgent())).toEqual({
+          imageTag: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
+          built: false,
+          resolutionMetadata: expect.objectContaining({ source: "local" }),
+        });
         expect(dockerBuildMock).toHaveBeenCalledOnce();
+        expect(createResolutionMetadataMock).toHaveBeenCalledTimes(2);
       },
     );
+
+    platform.mockRestore();
   });
 });

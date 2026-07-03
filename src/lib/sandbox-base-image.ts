@@ -16,6 +16,7 @@ import {
 } from "./sandbox-base-image/resolution-metadata";
 import {
   baseImageInputsChangedSinceMain,
+  baseImageInputsDirty,
   getSourceShortShaTags,
   getVersionedBaseImageTags,
 } from "./sandbox-base-image/source-identity";
@@ -142,16 +143,19 @@ function resolvePulledCandidate(
 
 function resolveLocalCandidate(
   options: ResolveBaseImageOptions,
+  forceBuild = false,
 ): SandboxBaseImageResolution | null {
   const imageRef = options.localTag;
-  const inspectResult = dockerImageInspect(imageRef, { ignoreError: true, suppressOutput: true });
-  if (inspectResult.status === 0) {
-    const check = options.requireOpenshellSandboxAbi
-      ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
-      : { ok: true, version: null };
-    if (check.ok) {
-      addTraceEvent("nemoclaw.sandbox_base_image.local_fallback_reuse");
-      return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
+  if (!forceBuild) {
+    const inspectResult = dockerImageInspect(imageRef, { ignoreError: true, suppressOutput: true });
+    if (inspectResult.status === 0) {
+      const check = options.requireOpenshellSandboxAbi
+        ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
+        : { ok: true, version: null };
+      if (check.ok) {
+        addTraceEvent("nemoclaw.sandbox_base_image.local_fallback_reuse");
+        return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
+      }
     }
   }
 
@@ -197,6 +201,13 @@ function resolveLocalCandidate(
   return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
 }
 
+export class SandboxBaseImageResolutionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SandboxBaseImageResolutionError";
+  }
+}
+
 export function resolveSandboxBaseImage(
   options: ResolveBaseImageOptions,
 ): SandboxBaseImageResolution | null {
@@ -216,12 +227,25 @@ export function resolveSandboxBaseImage(
 
   const finish = (resolution: SandboxBaseImageResolution): SandboxBaseImageResolution =>
     finalizeSandboxBaseImageResolution(options, resolutionKey, resolution);
+  const resolveChangedInputs = (): SandboxBaseImageResolution => {
+    const local = resolveLocalCandidate(options, true);
+    if (local) return finish(local);
+    throw new SandboxBaseImageResolutionError(
+      `${options.label || "Sandbox base image"} inputs differ from main, but no image built ` +
+        `from the current inputs could be validated. Resolve the local build failure or enable ` +
+        "NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD, then retry.",
+    );
+  };
 
   if (override) {
     const resolved = resolvePulledCandidate(options.imageName, override, "override", options);
     if (resolved) return finish(resolved);
     if (!options.requireOpenshellSandboxAbi) return null;
   } else {
+    const rootDir = options.rootDir || ROOT;
+    const inputPaths = [options.dockerfilePath];
+    if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
+
     for (const tag of getVersionedBaseImageTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;
       const resolved = resolvePulledCandidate(options.imageName, imageRef, "version-tag", options);
@@ -234,17 +258,7 @@ export function resolveSandboxBaseImage(
       if (resolved) return finish(resolved);
     }
 
-    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env, [options.dockerfilePath])) {
-      const local = resolveLocalCandidate(options);
-      if (local) return finish(local);
-      // The base Dockerfile changed, so fail closed instead of silently using stale :latest.
-      return finish({
-        ref: options.localTag,
-        digest: null,
-        source: "local",
-        glibcVersion: null,
-      });
-    }
+    if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;
     const resolved = resolvePulledCandidate(options.imageName, latestRef, "latest", options);
