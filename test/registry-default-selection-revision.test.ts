@@ -13,6 +13,12 @@ import type {
 } from "../src/lib/state/registry";
 
 const originalHome = process.env.HOME;
+const restoreOriginalHome =
+  originalHome === undefined
+    ? () => Reflect.deleteProperty(process.env, "HOME")
+    : () => {
+        process.env.HOME = originalHome;
+      };
 let home: string;
 let registryFile: string;
 let registry: typeof import("../src/lib/state/registry");
@@ -31,24 +37,18 @@ beforeEach(async () => {
 
 afterEach(() => {
   fs.rmSync(home, { recursive: true, force: true });
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
+  restoreOriginalHome();
   vi.resetModules();
 });
 
 function requireRemovalReceipt(receipt: SandboxRemovalReceipt | null): SandboxRemovalReceipt {
   expect(receipt).not.toBeNull();
-  if (!receipt) throw new Error("Expected sandbox removal receipt");
-  return receipt;
+  return receipt!;
 }
 
 function requireSandbox(entry: SandboxEntry | null): SandboxEntry {
   expect(entry).not.toBeNull();
-  if (!entry) throw new Error("Expected sandbox registry entry");
-  return entry;
+  return entry!;
 }
 
 function readPersistedRegistry(): SandboxRegistry {
