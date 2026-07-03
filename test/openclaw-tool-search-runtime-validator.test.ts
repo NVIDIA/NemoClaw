@@ -182,12 +182,14 @@ function writeFixture(options: FixtureOptions = {}) {
     path.join(root, "package.json"),
     JSON.stringify({ type: "module", version: options.version ?? EXPECTED_VERSION }),
   );
-  fs.writeFileSync(
-    path.join(distDir, "pi-tools-fixture.js"),
-    options.source ?? RUNTIME_FIXTURE_SOURCE,
-  );
-  if (options.secondSource !== undefined) {
-    fs.writeFileSync(path.join(distDir, "pi-tools-second.js"), options.secondSource);
+  const runtimeSources: ReadonlyArray<readonly [string, string]> = [
+    ["pi-tools-fixture.js", options.source ?? RUNTIME_FIXTURE_SOURCE],
+    ...(options.secondSource === undefined
+      ? []
+      : [["pi-tools-second.js", options.secondSource] as const]),
+  ];
+  for (const [name, source] of runtimeSources) {
+    fs.writeFileSync(path.join(distDir, name), source);
   }
   fs.writeFileSync(configPath, JSON.stringify(options.config ?? PROGRESSIVE_CONFIG));
   return { distDir, configPath };
