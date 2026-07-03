@@ -60,6 +60,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
         "e2e-artifacts/live/${{ matrix.id }}/logs/",
         "e2e-artifacts/live/${{ matrix.id }}/shell/",

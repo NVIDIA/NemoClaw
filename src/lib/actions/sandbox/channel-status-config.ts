@@ -24,7 +24,11 @@ import type {
 } from "../../messaging/manifest";
 import type { DiagnosticSignal } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
-import { configInputDetail, configValuesEqual } from "./channel-status-config-values";
+import {
+  booleanConfigValue,
+  configInputDetail,
+  configValuesEqual,
+} from "./channel-status-config-values";
 
 const CONFIG_STATUS_TIMEOUT_MS = 5_000;
 const CONFIG_STATUS_MAX_SOURCE_BYTES = 64 * 1024;
@@ -107,7 +111,7 @@ function configInputSignal(
   }
 
   const comparisons = sources.map((source) =>
-    compareConfigSource(expected, source, sourceReads.sourceValues),
+    compareConfigSource(input, expected, source, sourceReads.sourceValues),
   );
   const checkedComparisons = comparisons.filter((comparison) => comparison.checked);
   const hasMismatch = checkedComparisons.some((comparison) => !comparison.matches);
@@ -159,7 +163,7 @@ function expectedConfigValue(
   if (planInputHasValue(planInput)) {
     return {
       value: planInput.value,
-      detail: configInputDetail(planInput.value),
+      detail: configInputDisplayDetail(input, planInput.value),
       hasValue: true,
     };
   }
@@ -168,16 +172,27 @@ function expectedConfigValue(
   if (defaultValue) {
     return {
       value: defaultValue,
-      detail: `${configInputDetail(defaultValue)} (default)`,
+      detail: `${configInputDisplayDetail(input, defaultValue)} (default)`,
       hasValue: true,
     };
   }
 
   return {
     value: undefined,
-    detail: configInputDetail(undefined),
+    detail: configInputDisplayDetail(input, undefined),
     hasValue: false,
   };
+}
+
+function configInputDisplayDetail(
+  input: ChannelConfigInputSpec,
+  value: MessagingSerializableValue | undefined,
+): string {
+  if (input.id === "requireMention" && input.envKey === "TELEGRAM_REQUIRE_MENTION") {
+    const booleanValue = value === undefined || value === null ? null : booleanConfigValue(value);
+    if (booleanValue !== null) return booleanValue ? "yes" : "no";
+  }
+  return configInputDetail(value);
 }
 
 interface ConfigRenderSource extends RenderedConfigVisibilityKey {
@@ -372,6 +387,7 @@ function parseRenderedConfigSource(
 }
 
 function compareConfigSource(
+  input: ChannelConfigInputSpec,
   expected: ExpectedConfigValue,
   source: ConfigRenderSource,
   sourceValues: ReadonlyMap<string, ConfigSourceRead>,
@@ -397,7 +413,7 @@ function compareConfigSource(
     matches,
     detail: matches
       ? expected.detail
-      : `expected ${expected.detail}; rendered ${configInputDetail(actual.value)}`,
+      : `expected ${expected.detail}; rendered ${configInputDisplayDetail(input, actual.value)}`,
   };
 }
 

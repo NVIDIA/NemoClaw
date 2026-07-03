@@ -1132,8 +1132,7 @@ $$nemoclaw my-assistant policy-add pypi --yes
 The positional form is required in scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
-Messaging channel presets such as `telegram`, `discord`, `slack`, `wechat`, and `whatsapp` apply only to agents that support those channels.
-On a terminal-runtime agent such as DeepAgents, which has no inbound messaging gateway, `policy-add` rejects the preset with a clear error before any endpoint disclosure or prompt, matching `channels add`.
+Built-in preset choices are scoped to the sandbox's active agent. Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
 Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
@@ -1173,6 +1172,7 @@ Custom presets bypass the built-in preset review process and can widen sandbox e
 ### `$$nemoclaw <name> policy-list`
 
 List available policy presets and show which ones are applied to the sandbox.
+The available built-in rows are scoped to the sandbox's active agent, so unsupported messaging channel policies are not listed for agents without matching channel policy files.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 Preset summaries come only from the YAML `preset.description` field.
@@ -1721,13 +1721,14 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-$$nemoclaw update [--check] [--yes|-y]
+$$nemoclaw update [--check] [--fresh] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
-| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything. |
+| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state. |
+| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow. |
 
 `$$nemoclaw update` updates the host-side NemoClaw installation.
 The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
@@ -1948,6 +1949,17 @@ NemoClaw passes the token to `cloudflared` through the `TUNNEL_TOKEN` environmen
 export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $$nemoclaw tunnel start
 ```
+
+<AgentOnly variant="openclaw">
+
+When the tunnel comes up, NemoClaw adds the tunnel's public origin to `gateway.controlUi.allowedOrigins` in the in-sandbox OpenClaw config and restarts the gateway so the Web UI works through the tunnel without further configuration.
+For a quick tunnel this is the generated `https://<subdomain>.trycloudflare.com` origin, and for a named tunnel it is the configured hostname.
+NemoClaw prunes stale `*.trycloudflare.com` origins from earlier quick tunnels on each start and preserves other origins such as loopback, `NEMOCLAW_CORS_ORIGIN`, and custom domains.
+The gateway restarts only when the origin list changes, and that restart briefly interrupts any running agent task.
+Registration is best-effort.
+If it fails, `$$nemoclaw tunnel start` still succeeds and prints a warning that suggests setting `NEMOCLAW_CORS_ORIGIN` or opening the Web UI from the gateway host.
+
+</AgentOnly>
 
 `$$nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
 

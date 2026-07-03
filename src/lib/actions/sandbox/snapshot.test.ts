@@ -153,7 +153,7 @@ vi.mock("../../credentials/store", () => ({
 }));
 
 vi.mock("../../domain/sandbox/destroy", () => ({
-  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false })),
+  getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false, gatewayUnreachable: false })),
 }));
 
 vi.mock("../../inference/nim", () => ({
