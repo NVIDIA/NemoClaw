@@ -6,13 +6,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 // The contract stays intentionally local to this live test: build an older
@@ -25,6 +25,7 @@ import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.t
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const OLD_OPENCLAW_VERSION = "2026.3.11";
+const LEGACY_NEMOCLAW_VERSION = "0.0.71";
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
@@ -241,6 +242,9 @@ function seedRegistryAndSession(): void {
     policyTier: null,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
+    // This synthetic entry models a NemoClaw-managed image, not a custom
+    // Dockerfile whose deleted source path would make rebuild unreproducible.
+    nemoclawVersion: LEGACY_NEMOCLAW_VERSION,
   };
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);

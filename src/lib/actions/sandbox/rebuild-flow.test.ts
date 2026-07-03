@@ -1258,7 +1258,9 @@ describe("rebuildSandbox flow", () => {
     });
     harness.captureOpenshellSpy.mockImplementation((args: string[]) =>
       args.slice(0, 2).join(" ") === "sandbox list"
-        ? process.exit(1)
+        ? (() => {
+            throw new Error("sandbox list spawn failed");
+          })()
         : ({ status: 0, output: "" } as never),
     );
 
