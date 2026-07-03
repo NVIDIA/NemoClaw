@@ -187,7 +187,7 @@ describe("printSessionsPassthroughHelp", () => {
   });
 
   function capturedHelpText(): string {
-    return logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    return logSpy.mock.calls.map((call: unknown[]) => String(call[0] ?? "")).join("\n");
   }
 
   it("does not promise OpenClaw-only passthrough for the generic sessions command (#6247)", () => {
