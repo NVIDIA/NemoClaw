@@ -4,202 +4,163 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  buildKitBuildCommand,
   dockerBuildSubprocessEnv,
   prebuildSandboxImageIfEligible,
   resolveSandboxPrebuildEnabled,
-  rewriteCreateArgsWithImage,
   sandboxLocalImageRef,
 } from "./sandbox-prebuild";
 
-const CTX = "/tmp/nemoclaw-build-abc";
-const DF = `${CTX}/Dockerfile`;
+const BUILD_CONTEXT = "/tmp/nemoclaw-build-abc";
+const BUILD_ID = "1234567890";
+const DOCKERFILE = `${BUILD_CONTEXT}/Dockerfile`;
+const CREATE_ARGS = ["--from", DOCKERFILE, "--name", "alpha"];
 
-function baseCreateArgs(): string[] {
-  return ["--from", DF, "--name", "alpha", "--policy", "/p.yaml"];
-}
-
-describe("dockerBuildSubprocessEnv", () => {
+describe("sandbox BuildKit prebuild", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("keeps only the Docker-build boundary env and drops broader host/control-plane vars", () => {
-    // Docker-build boundary: system, Docker daemon (+ XDG the docker CLI reads),
-    // proxy, locale, temp, TLS CA.
+  it("keeps Docker runtime settings while dropping secrets and control-plane state", () => {
     vi.stubEnv("PATH", "/usr/bin");
-    vi.stubEnv("HOME", "/home/u");
+    vi.stubEnv("HOME", "/home/user");
     vi.stubEnv("DOCKER_HOST", "unix:///var/run/docker.sock");
-    vi.stubEnv("XDG_CONFIG_HOME", "/home/u/.config");
+    vi.stubEnv("DOCKER_CONFIG", "/home/user/.docker-ci");
+    vi.stubEnv("DOCKER_CONTEXT", "remote-builder");
+    vi.stubEnv("XDG_CONFIG_HOME", "/home/user/.config");
     vi.stubEnv("HTTPS_PROXY", "http://proxy:8080");
-    vi.stubEnv("LANG", "en_US.UTF-8");
-    vi.stubEnv("TMPDIR", "/tmp");
-    vi.stubEnv("NODE_EXTRA_CA_CERTS", "/etc/ca.pem");
-    // Host secrets — already default-denied by the shared allowlist (#1874).
     vi.stubEnv("NVIDIA_INFERENCE_API_KEY", "secret");
-    vi.stubEnv("GITHUB_TOKEN", "ghs_secret");
-    // Broader-than-needed env a `docker build` must not inherit.
-    vi.stubEnv("KUBECONFIG", "/home/u/.kube/config");
-    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock");
+    vi.stubEnv("GITHUB_TOKEN", "secret");
+    vi.stubEnv("KUBECONFIG", "/home/user/.kube/config");
+    vi.stubEnv("SSH_AUTH_SOCK", "/tmp/agent.sock");
     vi.stubEnv("OPENSHELL_GATEWAY", "nemoclaw");
     vi.stubEnv("GRPC_VERBOSITY", "debug");
-    vi.stubEnv("RUST_LOG", "trace");
 
     const env = dockerBuildSubprocessEnv();
 
-    expect(env.PATH).toBe("/usr/bin");
-    expect(env.HOME).toBe("/home/u");
-    expect(env.DOCKER_HOST).toBe("unix:///var/run/docker.sock");
-    expect(env.XDG_CONFIG_HOME).toBe("/home/u/.config");
-    expect(env.HTTPS_PROXY).toBe("http://proxy:8080");
-    expect(env.LANG).toBe("en_US.UTF-8");
-    expect(env.TMPDIR).toBe("/tmp");
-    expect(env.NODE_EXTRA_CA_CERTS).toBe("/etc/ca.pem");
-
-    expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    expect(env.GITHUB_TOKEN).toBeUndefined();
-    expect(env.KUBECONFIG).toBeUndefined();
-    expect(env.SSH_AUTH_SOCK).toBeUndefined();
-    expect(env.OPENSHELL_GATEWAY).toBeUndefined();
-    expect(env.GRPC_VERBOSITY).toBeUndefined();
-    expect(env.RUST_LOG).toBeUndefined();
-  });
-});
-
-describe("resolveSandboxPrebuildEnabled", () => {
-  it("defaults on for the managed docker-driver path", () => {
-    expect(resolveSandboxPrebuildEnabled({}, true)).toBe(true);
+    expect(env).toMatchObject({
+      PATH: "/usr/bin",
+      HOME: "/home/user",
+      DOCKER_HOST: "unix:///var/run/docker.sock",
+      DOCKER_CONFIG: "/home/user/.docker-ci",
+      DOCKER_CONTEXT: "remote-builder",
+      XDG_CONFIG_HOME: "/home/user/.config",
+      HTTPS_PROXY: "http://proxy:8080",
+    });
+    for (const key of [
+      "NVIDIA_INFERENCE_API_KEY",
+      "GITHUB_TOKEN",
+      "KUBECONFIG",
+      "SSH_AUTH_SOCK",
+      "OPENSHELL_GATEWAY",
+      "GRPC_VERBOSITY",
+    ]) {
+      expect(env[key], key).toBeUndefined();
+    }
   });
 
-  it("defaults off when not docker-driver (image not visible to a remote gateway)", () => {
+  it("never enables a local-image handoff for a remote gateway", () => {
     expect(resolveSandboxPrebuildEnabled({}, false)).toBe(false);
+    expect(resolveSandboxPrebuildEnabled({ NEMOCLAW_SANDBOX_PREBUILD: "1" }, false)).toBe(false);
   });
 
-  it("honours explicit overrides", () => {
+  it("defaults on locally, honors opt-out, and requires opt-in under tests", () => {
+    expect(resolveSandboxPrebuildEnabled({}, true)).toBe(true);
     expect(resolveSandboxPrebuildEnabled({ NEMOCLAW_SANDBOX_PREBUILD: "0" }, true)).toBe(false);
-    expect(resolveSandboxPrebuildEnabled({ NEMOCLAW_SANDBOX_PREBUILD: "1" }, false)).toBe(true);
-  });
-
-  it("is inert under the Vitest runner unless explicitly forced", () => {
     expect(resolveSandboxPrebuildEnabled({ VITEST: "true" }, true)).toBe(false);
-    expect(resolveSandboxPrebuildEnabled({ NODE_ENV: "test" }, true)).toBe(false);
-    // Explicit opt-in still wins under the test runner.
     expect(
       resolveSandboxPrebuildEnabled({ VITEST: "true", NEMOCLAW_SANDBOX_PREBUILD: "1" }, true),
     ).toBe(true);
   });
-});
 
-describe("sandboxLocalImageRef", () => {
-  it("derives a stable, docker-valid tag from the sandbox name", () => {
-    expect(sandboxLocalImageRef("alpha")).toBe("nemoclaw-sandbox-local:alpha");
+  it("derives a build-unique local image tag", () => {
+    const imageRef = sandboxLocalImageRef("My Bot/2!", BUILD_ID);
+    expect(imageRef).toBe("nemoclaw-sandbox-local:my-bot-2--1234567890");
+    expect(sandboxLocalImageRef("My Bot/2!", "next-build")).not.toBe(imageRef);
+    expect(sandboxLocalImageRef("a".repeat(128), "next-build")).not.toBe(
+      sandboxLocalImageRef("a".repeat(128), "other-build"),
+    );
   });
 
-  it("sanitises invalid tag characters", () => {
-    expect(sandboxLocalImageRef("My Bot/2!")).toBe("nemoclaw-sandbox-local:my-bot-2-");
-    expect(sandboxLocalImageRef("")).toBe("nemoclaw-sandbox-local:sandbox");
-  });
-});
-
-describe("buildKitBuildCommand", () => {
-  it("enables BuildKit inline and targets the staged Dockerfile", () => {
-    const cmd = buildKitBuildCommand(CTX, "nemoclaw-sandbox-local:alpha");
-    expect(cmd).toContain("DOCKER_BUILDKIT=1");
-    expect(cmd).toContain("docker build");
-    expect(cmd).toContain("'nemoclaw-sandbox-local:alpha'");
-    expect(cmd).toContain(`'${DF}'`);
-    expect(cmd).toContain(`'${CTX}'`);
-  });
-});
-
-describe("rewriteCreateArgsWithImage", () => {
-  it("replaces the --from Dockerfile path with the image ref", () => {
-    const out = rewriteCreateArgsWithImage(baseCreateArgs(), CTX, "nemoclaw-sandbox-local:alpha");
-    expect(out).toEqual([
-      "--from",
-      "nemoclaw-sandbox-local:alpha",
-      "--name",
-      "alpha",
-      "--policy",
-      "/p.yaml",
-    ]);
+  it("skips the build when create arguments do not use the staged Dockerfile", async () => {
+    const buildImage = vi.fn(async () => 0);
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx: BUILD_CONTEXT,
+        buildId: BUILD_ID,
+        createArgs: ["--from", "/other/Dockerfile"],
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+      }),
+    ).resolves.toEqual({ createArgs: ["--from", "/other/Dockerfile"], imageRef: null });
+    expect(buildImage).not.toHaveBeenCalled();
   });
 
-  it("leaves args untouched when --from does not point at the staged Dockerfile", () => {
-    const args = ["--from", "/other/Dockerfile", "--name", "alpha"];
-    expect(rewriteCreateArgsWithImage(args, CTX, "img:tag")).toEqual(args);
-  });
-});
-
-describe("prebuildSandboxImageIfEligible", () => {
-  it("builds with BuildKit and rewrites --from on success", async () => {
-    const streamBuild = vi.fn(async (_command: string) => ({ status: 0, output: "" }));
+  it("uses the argv-based Docker helper and returns the local image on success", async () => {
+    const buildImage = vi.fn(async () => 0);
     const result = await prebuildSandboxImageIfEligible({
-      buildCtx: CTX,
-      createArgs: baseCreateArgs(),
+      buildCtx: BUILD_CONTEXT,
+      buildId: BUILD_ID,
+      createArgs: CREATE_ARGS,
       sandboxName: "alpha",
       dockerDriverGateway: true,
       env: {},
-      streamBuild,
+      buildImage,
       log: () => {},
     });
 
-    expect(streamBuild).toHaveBeenCalledOnce();
-    expect(streamBuild.mock.calls[0][0]).toContain("DOCKER_BUILDKIT=1");
-    expect(result.imageRef).toBe("nemoclaw-sandbox-local:alpha");
-    expect(result.createArgs.slice(0, 2)).toEqual(["--from", "nemoclaw-sandbox-local:alpha"]);
+    expect(buildImage).toHaveBeenCalledWith(
+      [
+        "build",
+        "--progress=plain",
+        "-t",
+        "nemoclaw-sandbox-local:alpha-1234567890",
+        "-f",
+        DOCKERFILE,
+        BUILD_CONTEXT,
+      ],
+      expect.objectContaining({
+        env: expect.objectContaining({ DOCKER_BUILDKIT: "1" }),
+        stdio: "inherit",
+      }),
+    );
+    expect(result).toEqual({
+      createArgs: ["--from", "nemoclaw-sandbox-local:alpha-1234567890", "--name", "alpha"],
+      imageRef: "nemoclaw-sandbox-local:alpha-1234567890",
+    });
   });
 
-  it("skips the build and keeps the Dockerfile --from when ineligible", async () => {
-    const streamBuild = vi.fn(async (_command: string) => ({ status: 0, output: "" }));
+  it.each([
+    ["nonzero result", async () => 1],
+    ["missing exit status", async () => null],
+  ])("falls back to OpenShell after a %s", async (_label, buildImage) => {
     const result = await prebuildSandboxImageIfEligible({
-      buildCtx: CTX,
-      createArgs: baseCreateArgs(),
-      sandboxName: "alpha",
-      dockerDriverGateway: false, // remote gateway → ineligible
-      env: {},
-      streamBuild,
-      log: () => {},
-    });
-
-    expect(streamBuild).not.toHaveBeenCalled();
-    expect(result.imageRef).toBeNull();
-    expect(result.createArgs).toEqual(baseCreateArgs());
-  });
-
-  it("falls back to the openshell build when the local build fails (non-zero exit)", async () => {
-    const streamBuild = vi.fn(async () => ({ status: 1, output: "boom" }));
-    const result = await prebuildSandboxImageIfEligible({
-      buildCtx: CTX,
-      createArgs: baseCreateArgs(),
-      sandboxName: "alpha",
-      dockerDriverGateway: true,
-      env: {},
-      streamBuild,
-      log: () => {},
-    });
-
-    expect(streamBuild).toHaveBeenCalledOnce();
-    expect(result.imageRef).toBeNull();
-    // Original Dockerfile --from preserved so onboarding still builds via openshell.
-    expect(result.createArgs).toEqual(baseCreateArgs());
-  });
-
-  it("falls back when the build command throws before producing a result", async () => {
-    const streamBuild = vi.fn(async () => {
-      throw new Error("spawn failed");
-    });
-    const result = await prebuildSandboxImageIfEligible({
-      buildCtx: CTX,
-      createArgs: baseCreateArgs(),
+      buildCtx: BUILD_CONTEXT,
+      buildId: BUILD_ID,
+      createArgs: CREATE_ARGS,
       sandboxName: "alpha",
       dockerDriverGateway: true,
       env: {},
-      streamBuild,
+      buildImage,
       log: () => {},
     });
+    expect(result).toEqual({ createArgs: CREATE_ARGS, imageRef: null });
+  });
 
-    expect(result.imageRef).toBeNull();
-    expect(result.createArgs).toEqual(baseCreateArgs());
+  it("falls back to OpenShell when the Docker helper throws", async () => {
+    const result = await prebuildSandboxImageIfEligible({
+      buildCtx: BUILD_CONTEXT,
+      buildId: BUILD_ID,
+      createArgs: CREATE_ARGS,
+      sandboxName: "alpha",
+      dockerDriverGateway: true,
+      env: {},
+      buildImage: async () => {
+        throw new Error("unavailable");
+      },
+      log: () => {},
+    });
+    expect(result).toEqual({ createArgs: CREATE_ARGS, imageRef: null });
   });
 });

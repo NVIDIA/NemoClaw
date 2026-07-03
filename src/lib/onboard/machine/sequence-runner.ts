@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getDefaultPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
+import { createPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
 import type { OnboardMachineRunnerOptions, OnboardStateHandlerResult } from "./runner";
 import {
   type OnboardMachineRunnerRuntime,
@@ -30,9 +30,8 @@ export interface OnboardSequenceRunnerOptions<Context> {
   sequenceOwnership?: OnboardMachineRunnerOptions<Context>["sequenceOwnership"];
   stopStates?: OnboardMachineRunnerOptions<Context>["stopStates"];
   /**
-   * Phase-level progress/timing reporter. Defaults to a reporter built from the
-   * environment (heartbeats + per-phase timing in real runs, inert under the
-   * Vitest runner). Injectable for tests.
+   * Phase-level progress reporter. Defaults to bounded heartbeats and is
+   * injectable for focused tests.
    */
   phaseProgress?: PhaseProgressReporter;
 }
@@ -50,7 +49,7 @@ export class DuplicateOnboardSequencePhaseError extends Error {
 export function buildOnboardSequenceHandlers<Context>(
   phases: readonly OnboardSequencePhase<Context>[],
   setPendingContext: (context: Context) => void,
-  phaseProgress: PhaseProgressReporter = getDefaultPhaseProgressReporter(),
+  phaseProgress: PhaseProgressReporter = createPhaseProgressReporter(),
 ): OnboardStateHandlers<Context> {
   const handlers: OnboardStateHandlers<Context> = {};
   for (const rawPhase of phases) {

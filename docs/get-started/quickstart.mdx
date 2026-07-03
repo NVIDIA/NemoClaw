@@ -199,8 +199,26 @@ Non-interactive runs (`NEMOCLAW_NON_INTERACTIVE=1`) print the summary for log cl
 ### Configure Web Search and Messaging
 
 After you confirm the summary, NemoClaw registers the selected provider with the OpenShell gateway and sets the `inference.local` route.
-The wizard then asks whether to enable Brave Web Search.
-If you enable it, enter a Brave Search API key when prompted.
+The wizard then asks whether to enable web search and offers Brave Search or Tavily Search.
+Enter `BRAVE_API_KEY` for Brave Search or `TAVILY_API_KEY` for Tavily Search when prompted.
+NemoClaw validates the selected key before it builds the sandbox, registers a sandbox-scoped OpenShell provider, and writes only an OpenShell resolver placeholder into the OpenClaw configuration.
+OpenShell replaces the placeholder with the real key at egress.
+
+For non-interactive onboarding, select the provider explicitly and export its key.
+
+```bash
+export NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
+export TAVILY_API_KEY=<your-tavily-key>
+nemoclaw onboard --non-interactive
+```
+
+Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
+When you leave the selector unset, OpenClaw chooses Brave Search when `BRAVE_API_KEY` is available, then Tavily Search when only `TAVILY_API_KEY` is available.
+Brave Search wins when both keys are available so existing non-interactive setups keep their previous behavior.
+
+The web search provider is part of the sandbox image and agent configuration.
+If you change or disable it later, rerun onboarding with the new selection and accept the sandbox recreation, or pass `--recreate-sandbox`.
+NemoClaw backs up the supported workspace state before recreation and restores it into the replacement sandbox.
 
 The wizard also offers messaging channels such as Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
@@ -214,7 +232,8 @@ Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabl
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
 Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
-The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search. Apply the `weather` preset explicitly if your agent needs read-only weather lookups.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, and Homebrew, plus the `brave` or `tavily` preset when you selected that web search provider.
+Apply the `weather` preset explicitly if your agent needs read-only weather lookups.
 OpenClaw sandboxes also receive the `openclaw-pricing` preset automatically so session-cost records can populate without manual configuration.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
@@ -223,6 +242,8 @@ Press `r` to toggle a selected preset between read-only and read-write when the 
 
 When the install completes, a summary confirms the running environment.
 Before printing the summary, NemoClaw verifies that the sandbox gateway and dashboard port forward are reachable.
+When web search is enabled, NemoClaw also checks the selected OpenClaw provider configuration and sends a real search request through the sandbox egress path.
+This check reports a warning instead of aborting onboarding when the provider or egress path needs attention.
 NemoClaw reports inference route and messaging bridge checks as warnings when they need more time or additional configuration.
 The `Model` and provider line reflects the inference option you picked during onboarding.
 The example below shows the result if you picked an OpenAI-compatible endpoint during onboarding.

@@ -51,8 +51,9 @@ ARG NEMOCLAW_PROXY_PORT=3128
 RUN install -d -m 0755 /usr/local/share/nemoclaw \
     && printf '%s\n' "$NEMOCLAW_PROXY_HOST" > /usr/local/share/nemoclaw/dcode-proxy-host \
     && printf '%s\n' "$NEMOCLAW_PROXY_PORT" > /usr/local/share/nemoclaw/dcode-proxy-port \
-    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port \
-    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port \
+    && printf '%s\n' "$NEMOCLAW_INFERENCE_BASE_URL" > /usr/local/share/nemoclaw/dcode-inference-base-url \
+    && chown root:root /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
+    && chmod 0444 /usr/local/share/nemoclaw/dcode-proxy-host /usr/local/share/nemoclaw/dcode-proxy-port /usr/local/share/nemoclaw/dcode-inference-base-url \
     && /usr/local/bin/dcode --version \
     && /usr/local/bin/dcode.real --version \
     && /usr/local/bin/deepagents-code --version
@@ -67,7 +68,19 @@ ENV HOME=/sandbox \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \
+    LANGGRAPH_NO_VERSION_CHECK=true \
+    OTEL_ENABLED=false \
     DEEPAGENTS_CODE_AUTO_UPDATE=0 \
+    DEEPAGENTS_CODE_LANGSMITH_TRACING=false \
+    DEEPAGENTS_CODE_LANGSMITH_TRACING_V2=false \
+    DEEPAGENTS_CODE_LANGCHAIN_TRACING=false \
+    DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2=false \
+    LANGSMITH_TRACING=false \
+    LANGSMITH_TRACING_V2=false \
+    LANGCHAIN_TRACING=false \
+    LANGCHAIN_TRACING_V2=false \
+    DEEPAGENTS_CODE_OFFLINE=1 \
+    DEEPAGENTS_CODE_RIPGREP_INSTALLER=system \
     DEEPAGENTS_CODE_OPENAI_API_KEY=nemoclaw-managed-inference \
     OPENAI_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL}
 

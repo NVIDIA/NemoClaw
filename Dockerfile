@@ -666,11 +666,10 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret flag: set to "1" when the user configured Brave Search during
-# onboard. Controls whether the web search block is written to openclaw.json.
-# The actual API key is injected at runtime via openshell:resolve:env, never
-# baked into the image.
+# Non-secret web-search selection from onboard. The actual API key is injected
+# at runtime via openshell:resolve:env, never baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 ARG NEMOCLAW_OPENCLAW_OTEL=0
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
@@ -700,6 +699,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
@@ -746,8 +746,20 @@ RUN set -eu; \
         openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
-        openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
-        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+        case "$NEMOCLAW_WEB_SEARCH_PROVIDER" in \
+            brave) \
+                openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
+                BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            tavily) \
+                openclaw plugins inspect tavily --json > /dev/null; \
+                TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            *) \
+                echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \
+                exit 1 \
+                ;; \
+        esac; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
     fi

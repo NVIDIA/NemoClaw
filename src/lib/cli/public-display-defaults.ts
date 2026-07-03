@@ -543,7 +543,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --yes|-y)",
+      flags: "(--check, --fresh, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [

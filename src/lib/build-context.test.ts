@@ -198,7 +198,7 @@ describe("printSandboxCreateRecoveryHints", () => {
         arch: "x64",
         createArgs: [
           "--from",
-          "nemoclaw/sandbox-local:my-assistant",
+          "nemoclaw-sandbox-local:my-assistant-1234567890",
           "--name",
           "my-assistant",
           "--policy",
@@ -213,7 +213,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     // never a Dockerfile path (the prebuild removed it) and never the stale
     // prebuilt local ref left as the --from value.
     expect(out).not.toContain("Dockerfile");
-    expect(out).not.toContain("--from nemoclaw/sandbox-local:my-assistant");
+    expect(out).not.toContain("--from nemoclaw-sandbox-local:my-assistant-1234567890");
     expect(out).toContain("--name my-assistant");
   });
 

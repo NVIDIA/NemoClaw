@@ -20,6 +20,7 @@ const CANONICAL_ENVKEYS_FIXTURE = new Set([
   "SLACK_APP_TOKEN",
   "WECHAT_BOT_TOKEN",
   "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
 ]);
 
 describe("parseExtraPlaceholderKeys", () => {
@@ -139,7 +140,7 @@ describe("extraPlaceholderProviderSlug", () => {
 });
 
 describe("canonicalPlaceholderKeys", () => {
-  it("returns the canonical channel envKeys plus BRAVE_API_KEY", () => {
+  it("returns the canonical channel envKeys plus web-search API keys", () => {
     const canonical = canonicalPlaceholderKeys();
     for (const expected of [
       "TELEGRAM_BOT_TOKEN",
@@ -148,6 +149,7 @@ describe("canonicalPlaceholderKeys", () => {
       "SLACK_APP_TOKEN",
       "WECHAT_BOT_TOKEN",
       "BRAVE_API_KEY",
+      "TAVILY_API_KEY",
     ]) {
       expect(canonical.has(expected)).toBe(true);
     }

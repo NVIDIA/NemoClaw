@@ -102,6 +102,7 @@ describe("runLiveOnboardFlowSlice", () => {
     const applyCompatibleResult = vi.fn(async (result: OnboardStateResult) =>
       liveRuntime.applyResult(result),
     );
+    const wrappedStates: string[] = [];
 
     const result = await runLiveOnboardFlowSlice({
       context: { value: 1 },
@@ -118,6 +119,12 @@ describe("runLiveOnboardFlowSlice", () => {
       ],
       runWhenState: ["preflight"],
       compatibilityWhenState: ["provider_selection"],
+      phaseProgress: {
+        wrap: (candidate) => {
+          wrappedStates.push(candidate.state);
+          return candidate;
+        },
+      },
       runSlice,
       applyCompatibleResult,
     });
@@ -125,6 +132,7 @@ describe("runLiveOnboardFlowSlice", () => {
     expect(result.context).toEqual({ value: 3 });
     expect(result.session.machine.state).toBe("inference");
     expect(runSlice).not.toHaveBeenCalled();
+    expect(wrappedStates).toEqual(["preflight", "gateway"]);
     expect(applyCompatibleResult.mock.calls.map(([result]) => result)).toEqual(results);
   });
 

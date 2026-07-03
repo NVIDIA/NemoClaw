@@ -91,7 +91,11 @@ function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
       path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
       "utf8",
     )
-    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`);
+    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`)
+    .replace(
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `exec env PYTHONPATH=${JSON.stringify(path.join(tmpDir, "python"))} python3 -m deepagents_code`,
+    );
   fs.writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
 }
@@ -113,7 +117,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
       'match = re.search(r\'^default = "openai:([^"]+)"\', text, re.MULTILINE)',
       "if not match:",
       '    raise SystemExit("missing default model")',
-      'print(f"App: v0.1.12 | Agent: agent (default) | Model: {match.group(1)}")',
+      'print(f"App: v0.1.30 | Agent: agent (default) | Model: {match.group(1)}")',
       'print("ARGS:" + " ".join(sys.argv[1:]))',
     ].join("\n"),
     "utf8",
@@ -336,7 +340,7 @@ const { setupNim } = require(${onboardPath});
       const dcodeOutput = `${dcodeResult.stdout}\n${dcodeResult.stderr}`;
       assert.equal(dcodeResult.status, 0, dcodeOutput);
       expect(dcodeOutput).toContain(
-        "App: v0.1.12 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
+        "App: v0.1.30 | Agent: agent (default) | Model: nvidia/nvidia/nemotron-3-ultra",
       );
       expect(dcodeOutput).toContain("ARGS:--sandbox none --no-mcp -n ping");
       expect(dcodeOutput).not.toContain("nvidia/nvidia/nvidia/");

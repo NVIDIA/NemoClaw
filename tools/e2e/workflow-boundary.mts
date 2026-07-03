@@ -52,12 +52,7 @@ const COMMON_SECRET_ENV_NAMES = [
   "DOCKERHUB_TOKEN",
   "GITHUB_TOKEN",
 ];
-const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
-  "full-e2e",
-  "hermes-e2e",
-  "hermes-root-entrypoint-smoke",
-  "openclaw-tui-chat-correlation",
-]);
+const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set(["hermes-e2e"]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
   "model-router-provider-routed-inference",
@@ -74,6 +69,8 @@ const DOCKER_HUB_AUTH_STEP = "Authenticate to Docker Hub";
 const DOCKER_HUB_CLEANUP_STEP = "Clean up Docker auth";
 const DOCKER_HUB_CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
 const DOCKER_HUB_CLEANUP_KEYS = ["if", "name", "run", "shell"];
+// The general E2E workflow runs on schedule/manual dispatch. Its event set is
+// intentionally distinct from the reusable image workflow's push/manual boundary.
 const TRUSTED_DOCKER_HUB_PREDICATE =
   "github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')";
 const GUARDED_DOCKER_HUB_AUTH_REQUIRED = `\${{ ${TRUSTED_DOCKER_HUB_PREDICATE} && '1' || '0' }}`;
@@ -372,6 +369,24 @@ function requireRunContains(
   }
 }
 
+function requireRunFragmentBefore(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex === -1 || afterIndex === -1) return;
+  if (beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must include ${before} before ${after}`,
+    );
+  }
+}
+
 function requireRunDoesNotContain(
   errors: string[],
   step: WorkflowStep | undefined,
@@ -380,6 +395,22 @@ function requireRunDoesNotContain(
   if (!step) return;
   if (stringValue(step.run).includes(forbidden)) {
     errors.push(`step '${step.name ?? "<unnamed>"}' run script must not include ${forbidden}`);
+  }
+}
+
+function requireUploadPathContains(errors: string[], uploadPath: string, expected: string): void {
+  if (!uploadPath.includes(expected)) {
+    errors.push(`artifact upload path must include ${expected}`);
+  }
+}
+
+function requireUploadPathDoesNotContain(
+  errors: string[],
+  uploadPath: string,
+  forbidden: string,
+): void {
+  if (uploadPath.includes(forbidden)) {
+    errors.push(`artifact upload path must not include ${forbidden}`);
   }
 }
 
@@ -517,39 +548,6 @@ function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord)
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
-  }
-}
-
-function validateSerializedHostedAgentProofs(errors: string[], jobs: WorkflowRecord): void {
-  const specs = [
-    {
-      jobName: "full-e2e",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start"],
-    },
-    {
-      jobName: "openclaw-tui-chat-correlation",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start", "full-e2e"],
-    },
-  ] as const;
-
-  for (const { dependencies, jobName } of specs) {
-    const job = asRecord(jobs[jobName]);
-    const needs = Array.isArray(job.needs) ? job.needs : [];
-    if (
-      needs.length !== dependencies.length ||
-      dependencies.some((dependency) => !needs.includes(dependency))
-    ) {
-      errors.push(`${jobName} job must wait for ${dependencies.join(", ")}`);
-    }
-    const condition = stringValue(job.if);
-    if (!condition.includes("always()")) {
-      errors.push(`${jobName} job must remain runnable after skipped dependencies`);
-    }
-    for (const selector of ["inputs.jobs", "inputs.targets", `,${jobName},`]) {
-      if (!condition.includes(selector)) {
-        errors.push(`${jobName} job selector must include ${selector}`);
-      }
-    }
   }
 }
 
@@ -2160,62 +2158,6 @@ function validateDoubleOnboardJob(errors: string[], jobs: WorkflowRecord): void 
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/double-onboard.test.ts");
 }
-function validateRuntimeOverridesJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "runtime-overrides";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing runtime-overrides job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("runtime-overrides job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "runtime-overrides");
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("runtime-overrides job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/runtime-overrides") {
-    errors.push(
-      "runtime-overrides job must write artifacts under e2e-artifacts/live/runtime-overrides",
-    );
-  }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "runtime-overrides job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(errors, "runtime-overrides job", jobEnv, "DOCKERHUB_USERNAME");
-  requireEnvDoesNotExposeSecret(errors, "runtime-overrides job", jobEnv, "DOCKERHUB_TOKEN");
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `runtime-overrides step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    if (step.name !== DOCKER_HUB_AUTH_STEP) {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("runtime-overrides job missing checkout step");
-  requireFullShaAction(errors, checkout, "runtime-overrides checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("runtime-overrides checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run runtime overrides live test");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/runtime-overrides.test.ts");
-}
-
 function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   const jobName = "hermes-e2e";
   const job = asRecord(jobs[jobName]);
@@ -2285,178 +2227,6 @@ function validateHermesE2EJob(errors: string[], jobs: WorkflowRecord): void {
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/hermes-e2e.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-}
-
-function validateHermesRootEntrypointSmokeJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "hermes-root-entrypoint-smoke";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing hermes-root-entrypoint-smoke job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-root-entrypoint-smoke job must run on ubuntu-latest");
-  }
-  if (job.needs !== "generate-matrix") {
-    errors.push("hermes-root-entrypoint-smoke job must depend on generate-matrix");
-  }
-  const expectedIf =
-    "${{ needs.generate-matrix.result == 'success' && ((github.event_name != 'workflow_dispatch' || (inputs.jobs == '' && inputs.targets == '')) || contains(format(',{0},', inputs.jobs), ',hermes-root-entrypoint-smoke,') || contains(format(',{0},', inputs.targets), ',hermes-root-entrypoint-smoke,')) }}";
-  if (job.if !== expectedIf) {
-    errors.push(
-      "hermes-root-entrypoint-smoke job must gate on generate-matrix and the shared selector condition",
-    );
-  }
-  if (job["timeout-minutes"] !== 45) {
-    errors.push("hermes-root-entrypoint-smoke job must keep the 45 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("hermes-root-entrypoint-smoke job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke"
-  ) {
-    errors.push(
-      "hermes-root-entrypoint-smoke job must write artifacts under e2e-artifacts/live/hermes-root-entrypoint-smoke",
-    );
-  }
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "NVIDIA_INFERENCE_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "DOCKERHUB_USERNAME",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "hermes-root-entrypoint-smoke job",
-    jobEnv,
-    "DOCKERHUB_TOKEN",
-  );
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = step.name ?? step.uses ?? "<unnamed>";
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(
-      errors,
-      `hermes-root-entrypoint-smoke step '${stepName}'`,
-      stepEnv,
-      "NVIDIA_INFERENCE_API_KEY",
-    );
-    if (step.name !== DOCKER_HUB_AUTH_STEP) {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `hermes-root-entrypoint-smoke step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_USERNAME",
-      );
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `hermes-root-entrypoint-smoke step '${stepName}'`,
-        stepEnv,
-        "DOCKERHUB_TOKEN",
-      );
-      requireNoDockerHubAuthInRun(
-        errors,
-        `hermes-root-entrypoint-smoke step '${stepName}'`,
-        stringValue(step.run),
-      );
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("hermes-root-entrypoint-smoke job missing checkout step");
-  requireFullShaAction(errors, checkout, "hermes-root-entrypoint-smoke checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("hermes-root-entrypoint-smoke checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run Hermes root entrypoint smoke live test",
-  );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/hermes-root-entrypoint-smoke.test.ts");
-  requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
-}
-
-function validateHermesSandboxSecretBoundaryJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "hermes-sandbox-secret-boundary";
-  const targetName = "hermes-sandbox-secret-boundary";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing hermes-sandbox-secret-boundary job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("hermes-sandbox-secret-boundary job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("hermes-sandbox-secret-boundary job must keep the 60 minute timeout");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("hermes-sandbox-secret-boundary job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary"
-  ) {
-    errors.push(
-      "hermes-sandbox-secret-boundary job must write artifacts under e2e-artifacts/live/hermes-sandbox-secret-boundary",
-    );
-  }
-  for (const secret of ["NVIDIA_INFERENCE_API_KEY", "DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"]) {
-    requireEnvDoesNotExposeSecret(errors, "hermes-sandbox-secret-boundary job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `hermes-sandbox-secret-boundary step '${
-      step.name ?? step.uses ?? "<unnamed>"
-    }'`;
-    const stepEnv = asRecord(step.env);
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    if (step.name !== DOCKER_HUB_AUTH_STEP) {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("hermes-sandbox-secret-boundary job missing checkout step");
-  requireFullShaAction(errors, checkout, "hermes-sandbox-secret-boundary checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("hermes-sandbox-secret-boundary checkout step must set persist-credentials=false");
-  }
-
-  const runVitest = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Run Hermes sandbox secret-boundary live test",
-  );
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/hermes-sandbox-secret-boundary.test.ts");
   requireRunDoesNotContain(errors, runVitest, "${{ inputs.");
 }
 
@@ -3808,6 +3578,23 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors.push("checkout step must set persist-credentials=false");
   }
 
+  const configureTrace = requireStep(errors, steps, "Configure live E2E trace directory");
+  const configureTraceEnv = asRecord(configureTrace?.env);
+  if (configureTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace setup step must pass matrix.id through TARGET_ID env");
+  }
+  if (configureTrace?.["if"] !== undefined) {
+    errors.push("live trace setup step must run before live E2E tests without an if condition");
+  }
+  if (stringValue(jobEnv.NEMOCLAW_TRACE_DIR).length > 0) {
+    errors.push("live job must not set NEMOCLAW_TRACE_DIR at job scope");
+  }
+  requireRunContains(errors, configureTrace, "NEMOCLAW_TRACE_DIR=%s");
+  requireRunContains(errors, configureTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, configureTrace, '>> "${GITHUB_ENV}"');
+
+  const prepareWorkspace = requireStep(errors, steps, "Prepare E2E workspace");
+
   const runVitest = requireStep(errors, steps, "Run live E2E tests");
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.TARGET_ID !== "${{ matrix.id }}") {
@@ -3819,6 +3606,71 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
   requireRunContains(errors, runVitest, "test/e2e/live/registry-targets.test.ts");
   requireRunContains(errors, runVitest, '"^${TARGET_ID}$"');
+
+  const sanitizeTrace = requireStep(errors, steps, "Build trusted live E2E timing summary");
+  const sanitizeTraceEnv = asRecord(sanitizeTrace?.env);
+  if (sanitizeTrace?.["if"] !== "always()") {
+    errors.push("live trace sanitizer must always run");
+  }
+  if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+  );
+  requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunFragmentBefore(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+    "python3 scripts/e2e/sanitize-trace-timing.py",
+  );
+  requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
+  requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
+
+  const deleteTrace = requireStep(errors, steps, "Delete raw live E2E traces");
+  const deleteTraceEnv = asRecord(deleteTrace?.env);
+  if (deleteTrace?.["if"] !== "always()") {
+    errors.push("live raw trace cleanup must always run");
+  }
+  if (deleteTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
+    errors.push("live raw trace cleanup must pass matrix.id through TARGET_ID env");
+  }
+  requireRunContains(errors, deleteTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(errors, deleteTrace, '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
+  requireRunContains(errors, deleteTrace, 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"');
+
+  const configureTraceIndex = steps.indexOf(configureTrace as WorkflowStep);
+  const runVitestIndex = steps.indexOf(runVitest as WorkflowStep);
+  const sanitizeTraceIndex = steps.indexOf(sanitizeTrace as WorkflowStep);
+  const deleteTraceIndex = steps.indexOf(deleteTrace as WorkflowStep);
+  const prepareWorkspaceIndex = steps.indexOf(prepareWorkspace as WorkflowStep);
+  if (
+    configureTraceIndex === -1 ||
+    prepareWorkspaceIndex === -1 ||
+    runVitestIndex === -1 ||
+    sanitizeTraceIndex === -1 ||
+    deleteTraceIndex === -1 ||
+    !(
+      configureTraceIndex < prepareWorkspaceIndex &&
+      prepareWorkspaceIndex < runVitestIndex &&
+      runVitestIndex < sanitizeTraceIndex &&
+      sanitizeTraceIndex < deleteTraceIndex
+    )
+  ) {
+    errors.push(
+      "live trace setup, workspace preparation, Vitest run, sanitizer, and cleanup steps must stay in order",
+    );
+  }
 
   const summary = requireStep(errors, steps, "Summarize artifacts");
   const summaryEnv = asRecord(summary?.env);
@@ -3837,6 +3689,54 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   requireRunContains(errors, summary, "| Target | Manifest | Expected state | Suites | Phases |");
   requireRunContains(errors, summary, "TARGET_ID");
 
+  const upload = requireStep(errors, steps, "Upload E2E artifacts");
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== "e2e-${{ matrix.id }}") {
+    errors.push("artifact upload name must include matrix.id");
+  }
+  const uploadPath = stringValue(uploadWith.path);
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/run-plan.json",
+  );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/target.json");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/target-result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+  );
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
+  );
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/actions/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/logs/");
+  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/${{ matrix.id }}/shell/");
+  requireUploadPathDoesNotContain(errors, uploadPath, "nemoclaw-e2e-traces");
+  requireUploadPathDoesNotContain(errors, uploadPath, "NEMOCLAW_TRACE_DIR");
+  for (const line of uploadPath.split("\n")) {
+    if (line.trim() === "e2e-artifacts/live/${{ matrix.id }}/") {
+      errors.push("artifact upload path must not list the whole matrix artifact directory");
+    }
+  }
+
   validateOpenShellVersionPinJob(errors, jobs);
   validateOnboardNegativePathsJob(errors, jobs);
   validateSkillAgentJob(errors, jobs);
@@ -3844,12 +3744,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateFreeStandingJobSelector(errors, jobs, "sessions-agents-cli", "sessions-agents-cli");
   validateFreeStandingJobSelector(errors, jobs, "inference-routing", "inference-routing");
   validateCloudInferenceJob(errors, jobs);
-  validateRuntimeOverridesJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
-  validateHermesRootEntrypointSmokeJob(errors, jobs);
-  validateHermesSandboxSecretBoundaryJob(errors, jobs);
   validateNetworkPolicyJob(errors, jobs);
   validateCommonEgressAgentJob(errors, jobs);
   validateShieldsConfigJob(errors, jobs);
@@ -3861,7 +3758,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateUpgradeStaleSandboxJob(errors, jobs);
   validateTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
-  validateSerializedHostedAgentProofs(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
   validateGatewayGuardRecoveryJob(errors, jobs);
   validateFreeStandingJobSelector(

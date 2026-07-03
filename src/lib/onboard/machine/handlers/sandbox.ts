@@ -1,6 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  parseExplicitWebSearchProvider,
+  type WebSearchConfig as SharedWebSearchConfig,
+  WEB_SEARCH_PROVIDER_ENV,
+  webSearchConfigsEqual,
+  webSearchLabelFor,
+  webSearchProviderForConfig,
+} from "../../../inference/web-search";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withSandboxPhaseTrace } from "../../tracing";
@@ -38,10 +46,17 @@ export interface SandboxStateOptions<
   hermesToolGateways: string[];
   controlUiPort: number | null;
   rootDir: string;
+  env: NodeJS.ProcessEnv;
   deps: {
     resolvePath(value: string): string;
     agentSupportsWebSearch(
       agent: Agent,
+      dockerfilePathOverride: string | null,
+      rootDir: string,
+    ): boolean;
+    agentSupportsWebSearchProvider?(
+      agent: Agent,
+      provider: "brave" | "tavily",
       dockerfilePathOverride: string | null,
       rootDir: string,
     ): boolean;
@@ -65,7 +80,7 @@ export interface SandboxStateOptions<
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): void;
     repairRecordedSandbox(sandboxName: string | null): void;
-    ensureValidatedBraveSearchCredential(): Promise<unknown>;
+    ensureValidatedWebSearchCredential(config: WebSearchConfig): Promise<unknown>;
     isBackToSelection(value: unknown): boolean;
     configureWebSearch(
       existingConfig: WebSearchConfig | null,
@@ -137,6 +152,8 @@ export interface SandboxStateOptions<
 export interface SandboxStateResult<WebSearchConfig> {
   sandboxName: string;
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged: boolean;
+  hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
   session: Session | null;
@@ -147,10 +164,41 @@ interface SandboxStepState<WebSearchConfig> {
   readonly session: Session | null;
   readonly sandboxName: string | null;
   readonly webSearchConfig: WebSearchConfig | null;
+  readonly webSearchConfigChanged: boolean;
   readonly selectedMessagingChannels: string[];
   readonly webSearchSupported: boolean;
   readonly webSearchSupportDropped: boolean;
   readonly webSearchSupportProbePath: string | null;
+}
+
+function resolveRequestedWebSearchConfig<WebSearchConfig>(
+  current: WebSearchConfig | null,
+  env: NodeJS.ProcessEnv,
+): WebSearchConfig | null {
+  const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
+  if (!explicit.specified) return current;
+  if (!explicit.provider) return null;
+  return { fetchEnabled: true, provider: explicit.provider } as WebSearchConfig;
+}
+
+function knownAgentSupportsWebSearchProvider(
+  agent: { name?: string } | null,
+  provider: "brave" | "tavily",
+): boolean {
+  return agent?.name?.trim().toLowerCase() !== "hermes" || provider === "tavily";
+}
+
+function effectiveHermesToolGatewaysForWebSearch(
+  agent: { name?: string } | null,
+  webSearchConfig: SharedWebSearchConfig | null,
+  gateways: string[],
+): string[] {
+  const isHermes = agent?.name?.trim().toLowerCase() === "hermes";
+  const tavilySelected =
+    webSearchConfig !== null && webSearchProviderForConfig(webSearchConfig) === "tavily";
+  return isHermes && tavilySelected
+    ? gateways.filter((gateway) => gateway !== "nous-web")
+    : [...gateways];
 }
 
 type SandboxCreationDecision = Exclude<SandboxResumeDecision, { readonly kind: "reuse" }>;
@@ -194,12 +242,36 @@ class SandboxStateFlow<
       probePath,
       this.options.rootDir,
     );
-    const dropped = Boolean(this.options.webSearchConfig) && !supported;
+    const requestedWebSearchConfig = resolveRequestedWebSearchConfig(
+      this.options.webSearchConfig,
+      this.options.env,
+    );
+    const webSearchConfigChanged = !webSearchConfigsEqual(
+      this.options.session?.webSearchConfig,
+      requestedWebSearchConfig as unknown as SharedWebSearchConfig | null,
+    );
+    const provider = requestedWebSearchConfig
+      ? webSearchProviderForConfig(requestedWebSearchConfig as unknown as SharedWebSearchConfig)
+      : null;
+    const providerSupported = provider
+      ? (this.deps.agentSupportsWebSearchProvider?.(
+          this.options.agent,
+          provider,
+          probePath,
+          this.options.rootDir,
+        ) ??
+        knownAgentSupportsWebSearchProvider(
+          this.options.agent as { name?: string } | null,
+          provider,
+        ))
+      : true;
+    const dropped = Boolean(requestedWebSearchConfig) && (!supported || !providerSupported);
     if (!dropped) {
       return {
         session: this.options.session,
         sandboxName: this.options.sandboxName,
-        webSearchConfig: this.options.webSearchConfig,
+        webSearchConfig: requestedWebSearchConfig,
+        webSearchConfigChanged,
         selectedMessagingChannels: this.options.selectedMessagingChannels,
         webSearchSupported: supported,
         webSearchSupportDropped: false,
@@ -208,7 +280,7 @@ class SandboxStateFlow<
     }
 
     this.deps.note(
-      `  Web search is not yet supported by ${(this.options.agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
+      `  ${provider ? webSearchLabelFor(provider) : "Web search"} is not yet supported by ${(this.options.agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
     );
     if (this.options.session) this.options.session.webSearchConfig = null;
     const session = this.deps.updateSession((current) => {
@@ -219,6 +291,7 @@ class SandboxStateFlow<
       session,
       sandboxName: this.options.sandboxName,
       webSearchConfig: null,
+      webSearchConfigChanged,
       selectedMessagingChannels: this.options.selectedMessagingChannels,
       webSearchSupported: supported,
       webSearchSupportDropped: true,
@@ -237,14 +310,17 @@ class SandboxStateFlow<
           this.deps.getSandboxHermesToolGateways(state.sandboxName),
         )
       : [];
+    const effectiveToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
     return decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState: this.deps.getSandboxReuseState(state.sandboxName),
-      webSearchConfigChanged:
-        state.webSearchSupportDropped ||
-        Boolean(state.session?.webSearchConfig) !== Boolean(state.webSearchConfig),
+      webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
         : false,
@@ -254,7 +330,7 @@ class SandboxStateFlow<
       ),
       hermesToolGatewayConfigChanged: !this.deps.stringSetsEqual(
         recordedToolGateways,
-        this.options.hermesToolGateways,
+        effectiveToolGateways,
       ),
     });
   }
@@ -263,8 +339,11 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     if (state.webSearchConfig) {
+      const provider = webSearchProviderForConfig(
+        state.webSearchConfig as unknown as SharedWebSearchConfig,
+      );
       this.deps.note(
-        "  [resume] Reusing Brave Search configuration already baked into the sandbox.",
+        `  [resume] Reusing ${webSearchLabelFor(provider)} configuration already baked into the sandbox.`,
       );
     }
     const messaging = reconcileReusedSandboxMessaging(
@@ -300,10 +379,14 @@ class SandboxStateFlow<
         state.webSearchSupportProbePath,
       );
     }
-    this.deps.note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
-    const credential = await this.deps.ensureValidatedBraveSearchCredential();
+    const provider = webSearchProviderForConfig(
+      state.webSearchConfig as unknown as SharedWebSearchConfig,
+    );
+    const label = webSearchLabelFor(provider);
+    this.deps.note(`  [resume] Revalidating ${label} configuration for sandbox recreation.`);
+    const credential = await this.deps.ensureValidatedWebSearchCredential(state.webSearchConfig);
     if (this.deps.isBackToSelection(credential) || !credential) return null;
-    this.deps.note("  [resume] Reusing Brave Search configuration.");
+    this.deps.note(`  [resume] Reusing ${label} configuration.`);
     return state.webSearchConfig;
   }
 
@@ -312,6 +395,11 @@ class SandboxStateFlow<
     requestedSandboxName: string,
     messagingPlan: SandboxMessagingPlan | null,
   ): Promise<SandboxStepState<WebSearchConfig>> {
+    const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
     const resourceProfile = await this.deps.selectResourceProfileForSandbox();
     if (this.options.fresh) {
       this.deps.stopStaleDashboardListenersForSandbox(
@@ -338,7 +426,7 @@ class SandboxStateFlow<
           this.options.controlUiPort,
           this.options.sandboxGpuConfig,
           resourceProfile,
-          this.options.hermesToolGateways,
+          effectiveHermesToolGateways,
         ),
     );
     // createSandbox() owns the build fingerprint. In particular, reusing an
@@ -363,7 +451,7 @@ class SandboxStateFlow<
         nimContainer: this.options.nimContainer,
         webSearchConfig: state.webSearchConfig,
         messagingPlan,
-        hermesToolGateways: this.options.hermesToolGateways,
+        hermesToolGateways: effectiveHermesToolGateways,
       }),
     );
     return { ...state, sandboxName, session: completedSession };
@@ -373,8 +461,17 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
-    await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
     const webSearchConfig = await this.resolveWebSearchForCreation(state);
+    const webSearchConfigChanged =
+      state.webSearchConfigChanged ||
+      !webSearchConfigsEqual(
+        state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+        webSearchConfig as unknown as SharedWebSearchConfig | null,
+      );
+    // Validate the replacement provider before any resume cleanup removes the
+    // still-live sandbox from the registry. A bad or missing credential must
+    // leave the existing sandbox recoverable.
+    await applySandboxResumeDecision(decision, state.sandboxName, this.deps);
     await this.deps.startRecordedStep("sandbox", {
       provider: this.options.provider,
       model: this.options.model,
@@ -398,6 +495,7 @@ class SandboxStateFlow<
         session,
         sandboxName: requestedSandboxName,
         webSearchConfig,
+        webSearchConfigChanged,
         selectedMessagingChannels: messaging.selectedChannels,
       },
       requestedSandboxName,
@@ -410,9 +508,24 @@ class SandboxStateFlow<
       this.deps.error("  Onboarding state is incomplete after sandbox setup.");
       return this.deps.exitProcess(1);
     }
+    const hermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
+      this.options.agent as { name?: string } | null,
+      state.webSearchConfig as unknown as SharedWebSearchConfig | null,
+      this.options.hermesToolGateways,
+    );
+    if (
+      this.options.hermesToolGateways.includes("nous-web") &&
+      !hermesToolGateways.includes("nous-web")
+    ) {
+      this.deps.note(
+        "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
+      );
+    }
     return {
       sandboxName: state.sandboxName,
       webSearchConfig: state.webSearchConfig,
+      webSearchConfigChanged: state.webSearchConfigChanged,
+      hermesToolGateways,
       selectedMessagingChannels: state.selectedMessagingChannels,
       webSearchSupported: state.webSearchSupported,
       session: state.session,

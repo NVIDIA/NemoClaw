@@ -20,7 +20,7 @@ const headlessCheckPath = path.join(
 );
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
-const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
 const DEFAULT_MANAGED_PROXY = { host: "10.200.0.1", port: "3128" } as const;
 const TEST_OWNER_UID = process.getuid?.() ?? 0;
 
@@ -65,8 +65,8 @@ function makeLauncherProxyProbeFixture(
   const launcherPath = path.join(tempDir, "dcode-launcher.sh");
   const probePath = path.join(tempDir, "managed-dcode-probe.sh");
   const probe = [
-    "#!/usr/bin/env bash",
-    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
+    "#!/bin/bash -p",
+    "for name in HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy OPENAI_PROXY NEMOCLAW_PROXY_HOST NEMOCLAW_PROXY_PORT; do",
     '  printf \'LAUNCHER_%s=%s\\n\' "$name" "${!name-__unset__}"',
     "done",
     "",
@@ -123,6 +123,41 @@ function shellValidatorAccepts(source: string, name: string, value: string): boo
 }
 
 describe("Deep Agents Code direct-exec proxy launcher", () => {
+  it("ignores hostile PATH and BASH_ENV before launcher and entrypoint normalization", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-shell-entry-"));
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
+    const { scriptPath } = makeStartProxyProbeFixture(tempDir);
+    const fakeBin = path.join(tempDir, "fake-bin");
+    const fakeBashMarker = path.join(tempDir, "fake-bash-ran");
+    const bashEnvMarker = path.join(tempDir, "bash-env-ran");
+    const bashEnv = path.join(tempDir, "hostile-bash-env.sh");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "bash"),
+      `#!/bin/sh\ntouch ${JSON.stringify(fakeBashMarker)}\nexit 91\n`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(bashEnv, `touch ${JSON.stringify(bashEnvMarker)}\nexit 92\n`, "utf8");
+    const hostileEnv = {
+      PATH: `${fakeBin}:${process.env.PATH ?? "/usr/bin:/bin"}`,
+      BASH_ENV: bashEnv,
+    };
+
+    const launcherResult = spawnSync(launcherPath, ["-n", "PONG"], {
+      env: hostileEnv,
+      encoding: "utf8",
+    });
+    const startResult = spawnSync(scriptPath, ["/bin/true"], {
+      env: hostileEnv,
+      encoding: "utf8",
+    });
+
+    expect(launcherResult.status, launcherResult.stderr).toBe(0);
+    expect(startResult.status, startResult.stderr).toBe(0);
+    expect(fs.existsSync(fakeBashMarker)).toBe(false);
+    expect(fs.existsSync(bashEnvMarker)).toBe(false);
+  });
+
   it("normalizes proxy state for direct dcode launcher execution (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-direct-proxy-"));
     const launcherPath = makeLauncherProxyProbeFixture(tempDir, {
@@ -138,6 +173,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       no_proxy: "corp.internal,inference.local",
       ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
       all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
+      OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
     });
 
     expect(result.status, result.stderr).toBe(0);
@@ -182,7 +218,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     );
     expect(launcher).toContain('export HTTPS_PROXY="$_PROXY_URL"');
     expect(launcher).toContain('export no_proxy="$_NO_PROXY_VAL"');
-    expect(launcher).toContain("unset ALL_PROXY all_proxy");
+    expect(launcher).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
   });
 
   it("does not let runtime config override the image-baked dcode proxy (#6191)", () => {
@@ -195,6 +231,7 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
       NO_PROXY: "corp.internal,inference.local",
       ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
       all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
+      OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
       NEMOCLAW_PROXY_HOST: "attacker-proxy.internal",
       NEMOCLAW_PROXY_PORT: "4444",
     };
@@ -226,8 +263,8 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(envFileText).toContain(
       "export NO_PROXY=localhost\\,127.0.0.1\\,::1\\,trusted-proxy.internal",
     );
-    expect(envFileText).toContain("unset ALL_PROXY all_proxy");
-    expect(envFileText).not.toMatch(/^export (?:ALL_PROXY|all_proxy)=/m);
+    expect(envFileText).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
+    expect(envFileText).not.toMatch(/^export (?:ALL_PROXY|all_proxy|OPENAI_PROXY)=/m);
     // The two standalone shell boundaries construct the same exclusion list.
     // TypeScript does not reconstruct NO_PROXY; its connect probe deliberately
     // sources this persisted value from /tmp/nemoclaw-proxy-env.sh.

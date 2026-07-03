@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getDefaultPhaseProgressReporter } from "./phase-progress";
+import { createPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
 import type {
   OnboardMachineRunnerResult,
@@ -17,6 +17,7 @@ export interface LiveOnboardFlowSliceOptions<Context> {
   phases: readonly OnboardSequencePhase<Context>[];
   runWhenState: readonly OnboardMachineState[];
   compatibilityWhenState?: readonly OnboardMachineState[];
+  phaseProgress?: PhaseProgressReporter;
   runSlice(options: {
     context: Context;
     runtime: OnboardMachineRunnerRuntime;
@@ -79,6 +80,7 @@ export async function runLiveOnboardFlowSlice<Context>({
   phases,
   runWhenState,
   compatibilityWhenState = [],
+  phaseProgress = createPhaseProgressReporter(),
   runSlice,
   applyCompatibleResult,
 }: LiveOnboardFlowSliceOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
@@ -98,14 +100,10 @@ export async function runLiveOnboardFlowSlice<Context>({
   }
 
   assertUniquePhases(phases);
-  // Wrap the resume-repair compatibility phases with the same shared reporter as
-  // the strict path, so heartbeats + per-phase timing cover resume too (not just
-  // fresh onboarding). The reporter is inert under the Vitest runner and shares
-  // the per-process timing registry (#6002 review).
-  const reporter = getDefaultPhaseProgressReporter();
   let nextContext = context;
-  for (const phase of phases) {
-    const phaseResult = await reporter.wrap(phase).run(nextContext);
+  for (const rawPhase of phases) {
+    const phase = phaseProgress.wrap(rawPhase);
+    const phaseResult = await phase.run(nextContext);
     for (const result of asResultArray(phaseResult.result, phase.state)) {
       await applyCompatibleResult(result);
     }
