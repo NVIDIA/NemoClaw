@@ -119,9 +119,9 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     expect(lsof.calls).toBe(0);
   });
 
-  it("warns and falls back to pid-file cleanup when lsof exits with a real failure", () => {
+  it("warns and refuses unsafe pid-file cleanup when lsof exits with a real failure", () => {
     // lsof status > 1 is a genuine error (not "no listeners"); surface it and
-    // skip the lsof sweep, but still delegate to the pid-file stopper.
+    // do not treat unverified PID-file contents as signal-safe candidates.
     const stop = stopSpy(emptyStopResult());
     const warn = vi.fn();
     const run: NonNullable<HostGatewayProcessDeps["run"]> = (command) =>
@@ -144,6 +144,7 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     // lets stopAll surface its unconfirmed-release warning.
     expect(result.released).toBe(false);
     expect(stop.lastOptions()?.pids).toEqual([]);
+    expect(stop.lastOptions()?.usePidFile).toBe(false);
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain("lsof failed while scanning");
   });
 
@@ -167,7 +168,7 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     expect(result.released).toBe(false);
   });
 
-  it("skips the lsof sweep but still delegates to the pid-file stopper when lsof is absent", () => {
+  it("skips unsafe pid-file cleanup and relies on the bind proof when lsof is absent", () => {
     const stop = stopSpy(emptyStopResult());
     const run = vi.fn(() => ok());
     const probePortFree = vi.fn(() => true);
@@ -187,6 +188,7 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     expect(result.scanned).toBe(false);
     expect(result.released).toBe(true);
     expect(stop.lastOptions()?.pids).toEqual([]);
+    expect(stop.lastOptions()?.usePidFile).toBe(false);
     expect(run).not.toHaveBeenCalled();
     expect(probePortFree).toHaveBeenCalledWith(DEFAULT_GATEWAY_PORT);
   });
@@ -213,5 +215,46 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     expect(log).not.toHaveBeenCalledWith(
       expect.stringContaining(`Released NemoClaw gateway port ${DEFAULT_GATEWAY_PORT}`),
     );
+  });
+
+  it("does not trust empty lsof output when a hidden listener prevents rebinding", () => {
+    const stop = stopSpy(emptyStopResult());
+    const probePortFree = vi.fn(() => false);
+    const lsof = lsofResponder({ status: 1, stdout: "", stderr: "" });
+
+    const result = releaseManagedGatewayPort(
+      { confirmTimeoutMs: 10 },
+      {
+        ...baseDeps(),
+        probePortFree,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.scanned).toBe(true);
+    expect(result.released).toBe(false);
+    expect(probePortFree).toHaveBeenCalledWith(DEFAULT_GATEWAY_PORT);
+  });
+
+  it("never reports release when a matched gateway could not be stopped", () => {
+    const stop = stopSpy(emptyStopResult({ failed: [777] }));
+    const probePortFree = vi.fn(() => true);
+
+    const result = releaseManagedGatewayPort(
+      {},
+      {
+        ...baseDeps(),
+        probePortFree,
+        run: lsofResponder({ status: 1, stdout: "", stderr: "" }).run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.released).toBe(false);
+    expect(result.remaining).toEqual([777]);
+    expect(probePortFree).not.toHaveBeenCalled();
   });
 });

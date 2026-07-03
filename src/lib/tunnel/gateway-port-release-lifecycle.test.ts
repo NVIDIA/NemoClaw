@@ -16,7 +16,7 @@ import {
 } from "./gateway-port-release-test-helpers";
 
 describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
-  it("stops the recorded gateway and lsof-discovered duplicate, then reports the port released", () => {
+  it("stops lsof-discovered gateways, then reports the port released", () => {
     const lsof = lsofResponder(ok("111\n222\n"), ok(""));
     const stop = stopSpy(emptyStopResult({ stopped: [111, 222] }));
 
@@ -40,15 +40,9 @@ describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
     const stopOptions = stop.lastOptions();
     expect(stopOptions?.pids).toEqual([111, 222]);
     expect(stopOptions?.usePgrepFallback).toBe(false);
-    expect(stopOptions?.pidFile).toBe(
-      path.join(
-        "/home/tester",
-        ".local",
-        "state",
-        "nemoclaw",
-        "openshell-docker-gateway",
-        "openshell-gateway.pid",
-      ),
+    expect(stopOptions?.usePidFile).toBe(false);
+    expect(stopOptions?.stateDir).toBe(
+      path.join("/home/tester", ".local", "state", "nemoclaw", "openshell-docker-gateway"),
     );
     expect(log.mock.calls.map((c) => c[0]).join("\n")).toContain(
       `Released NemoClaw gateway port ${DEFAULT_GATEWAY_PORT}`,
@@ -124,6 +118,24 @@ describe("releaseManagedGatewayPort lifecycle (#5968)", () => {
     expect(result.released).toBe(true);
     expect(log).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not trust a per-port pid file as proof that its process owns the port", () => {
+    const lsof = lsofResponder(ok("222\n"), ok(""));
+    const stop = stopSpy(emptyStopResult({ stopped: [222] }));
+
+    releaseManagedGatewayPort(
+      { sandboxName: "alpha" },
+      {
+        ...baseDeps(),
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => ({ gatewayPort: 8090 }),
+      },
+    );
+
+    expect(stop.lastOptions()?.pids).toEqual([222]);
+    expect(stop.lastOptions()?.usePidFile).toBe(false);
   });
 
   it("warns with sudo remediation when the port stays bound after stop", () => {

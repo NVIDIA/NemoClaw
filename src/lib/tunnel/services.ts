@@ -40,6 +40,8 @@ export interface ServiceOptions {
   pidDir?: string;
   /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
   cloudflareTunnelToken?: string;
+  /** Also release the managed host gateway port (legacy full-stop only). */
+  releaseGatewayPort?: boolean;
 }
 
 export interface ServiceStatus {
@@ -622,7 +624,9 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // Stop host-side services.
   stopService(pidDir, "cloudflared");
 
-  gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+  if (opts.releaseGatewayPort) {
+    gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
+  }
 
   info("All services stopped.");
 }

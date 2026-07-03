@@ -93,6 +93,7 @@ export function baseDeps(): ReleaseGatewayPortDeps {
     kill: () => true,
     now: clock(),
     sleep: () => {},
+    probePortFree: () => true,
     log: () => {},
     warn: () => {},
   };

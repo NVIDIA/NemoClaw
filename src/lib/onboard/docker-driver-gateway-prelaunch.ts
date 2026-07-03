@@ -90,8 +90,10 @@ export function reapHostGatewayBeforeLaunch(
       pidFile: options.pidFile ?? path.join(options.stateDir, "openshell-gateway.pid"),
       stateDir: options.stateDir,
       gatewayBin: options.gatewayBin,
-      // Scope strictly to this port's recorded pid + the passed listener PID.
-      // A host-wide pgrep sweep could reap a different worktree's gateway.
+      // PID-file state is bookkeeping, not proof that the process owns this
+      // port. Signal only the port-observed candidates supplied by the caller;
+      // a stale/recycled PID must never reap another worktree's gateway.
+      usePidFile: false,
       usePgrepFallback: false,
     },
   );

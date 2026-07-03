@@ -188,7 +188,7 @@ describe("stopAll gateway-stop wiring", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      stopAll({ pidDir, sandboxName: "alpha" });
+      stopAll({ pidDir, sandboxName: "alpha", releaseGatewayPort: true });
     } finally {
       rmSync(pidDir, { recursive: true, force: true });
     }
@@ -201,5 +201,21 @@ describe("stopAll gateway-stop wiring", () => {
     expect(logSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n")).toContain(
       "All services stopped",
     );
+  });
+
+  it("preserves the shared gateway for canonical tunnel-only stop", () => {
+    const pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-tunnel-stop-wiring-"));
+    vi.stubEnv("PATH", "");
+    const releaseForStop = vi
+      .spyOn(gatewayStop, "releaseGatewayPortForStop")
+      .mockImplementation(() => {});
+
+    try {
+      stopAll({ pidDir, sandboxName: "alpha" });
+    } finally {
+      rmSync(pidDir, { recursive: true, force: true });
+    }
+
+    expect(releaseForStop).not.toHaveBeenCalled();
   });
 });

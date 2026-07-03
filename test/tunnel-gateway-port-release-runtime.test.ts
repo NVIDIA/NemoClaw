@@ -15,7 +15,7 @@
 // (synchronous, event-loop-blocked) test process — otherwise a killed child
 // would linger as an unreaped zombie that `ps` still reports as alive.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -30,6 +30,7 @@ import { releaseManagedGatewayPort } from "../src/lib/tunnel/gateway-port-releas
 // cmdline gate reads /proc or `ps -o args=`. Windows has no equivalent and is
 // not a NemoClaw host target for the gateway.
 const posix = process.platform !== "win32";
+const hasLsof = posix && !spawnSync("lsof", ["-v"], { stdio: "ignore" }).error;
 
 let gatewayPid = 0;
 let tmpHome: string | null = null;
@@ -95,17 +96,15 @@ function waitFor<T>(check: () => T, timeoutMs: number): Promise<T> {
 }
 
 describe("releaseManagedGatewayPort runtime validation (#5968)", () => {
-  it.skipIf(!posix)(
+  it.skipIf(!posix || !hasLsof)(
     "stops a real openshell-gateway process and frees the port for immediate rebind",
     async () => {
       const port = await reserveFreePort();
       tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-rt-"));
       const argv0Path = path.join(tmpHome, "openshell-gateway");
 
-      // Persist the gateway pid file where the stopper looks for it (the
-      // per-port state dir derived from the resolved gateway port), so the
-      // real release path reaps the recorded process without depending on lsof
-      // being installed on the runner.
+      // Persist realistic per-port bookkeeping, then rely on real lsof to prove
+      // this PID owns the selected port before the stopper may signal it.
       const stateDir = path.join(
         tmpHome,
         ".local",

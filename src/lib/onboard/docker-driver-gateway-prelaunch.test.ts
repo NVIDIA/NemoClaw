@@ -56,6 +56,7 @@ describe("reapHostGatewayBeforeLaunch (#5968)", () => {
     expect(result.stopped).toEqual([4242]);
     const options = stop.lastOptions();
     expect(options?.pids).toEqual([4242]);
+    expect(options?.usePidFile).toBe(false);
     expect(options?.usePgrepFallback).toBe(false);
     expect(options?.pidFile).toBe("/state/openshell-docker-gateway-8090/openshell-gateway.pid");
     expect(options?.stateDir).toBe("/state/openshell-docker-gateway-8090");
