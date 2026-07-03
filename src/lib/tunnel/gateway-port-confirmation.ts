@@ -15,7 +15,9 @@ const finish = (code) => {
   done = true;
   server.close(() => process.exit(code));
 };
+// Bind errors are asynchronous in Node, so exit nonzero from the error event.
 server.once("error", () => process.exit(1));
+// The listening callback is the proof that this child acquired the port.
 server.listen(port, "127.0.0.1", () => finish(0));
 `;
 

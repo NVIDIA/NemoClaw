@@ -2141,8 +2141,9 @@ async function startGatewayWithOptions(
 
 /**
  * Reconcile or create the host Docker-driver gateway. The public onboard()
- * entrypoint holds acquireOnboardLock()'s atomic process-wide lock across this
- * whole call, so concurrent `nemoclaw onboard` processes cannot race creation.
+ * entrypoint holds acquireOnboardLock()'s atomic cross-process filesystem lock
+ * (created with openSync("wx")) across this whole call, so separate concurrent
+ * `nemoclaw onboard` CLI processes cannot race creation.
  * The strict post-reap bind check below remains a second boundary against
  * recovery commands or external processes that do not participate in that
  * lock; the OS then permits only one child to bind the port.

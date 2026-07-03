@@ -124,10 +124,11 @@ export function releaseManagedGatewayPort(
     usePgrepFallback: false,
   });
 
-  // During confirmation, listeningGatewayPids() returns null on a real lsof
-  // error. confirmGatewayPortReleased treats that as non-release and keeps
-  // polling within its fixed deadline/attempt bound; exhaustion returns
-  // released=false. It never coerces a failed observation to an empty set.
+  // Stage 1: scanFailed=true selects the fallback result below, so an initial
+  // lsof error never falls through to bind-only confirmation. Stage 2: after a
+  // successful initial scan, listeningGatewayPids() returning null makes each
+  // confirmation attempt false; exhaustion returns released=false. Neither
+  // failure is ever coerced to an empty listener set.
   const confirmation =
     !scanFailed && stopResult.failed.length === 0
       ? confirmGatewayPortReleased({
