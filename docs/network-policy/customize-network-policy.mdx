@@ -147,6 +147,57 @@ Provider-composed `_provider_*` entries are excluded because OpenShell reserves 
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
+### Custom Recipe: URL-Based MCP Server
+
+Adding a Streamable HTTP MCP server URL to OpenClaw (for example `https://mcp.example.com/mcp`) can result in the sandbox proxy denying the CONNECT tunnel with `HTTP 403 Forbidden` because the target host is not in the default allowlist.
+The symptom in `~/.openclaw/logs` or in the MCP tool output is:
+
+```text
+CONNECT tunnel failed, response 403
+```
+
+Add a preset with the MCP host, the HTTP methods that Streamable HTTP MCP uses (`GET` and `POST`), and the binaries that talk to the MCP server:
+
+```yaml
+preset:
+  name: my-mcp
+  description: "Custom URL-based MCP server"
+network_policies:
+  my_mcp:
+    name: my_mcp
+    endpoints:
+      - host: mcp.example.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/local/bin/openclaw }
+```
+
+Save it under `nemoclaw-blueprint/policies/presets/my-mcp.yaml` and apply it to the running sandbox:
+
+```bash
+$$nemoclaw my-assistant policy-add --from-file nemoclaw-blueprint/policies/presets/my-mcp.yaml
+```
+
+NemoClaw prompts for confirmation because the preset targets a custom host that is not part of the vetted allowlist, then reports `Widening sandbox egress — adding: mcp.example.com`.
+Re-invoke the MCP tool and the CONNECT tunnel to `mcp.example.com:443` succeeds.
+
+<Note>
+The `binaries` list must include every process that opens the connection.
+OpenClaw and its Node runtime execute as `/usr/local/bin/node` and `/usr/local/bin/openclaw`, and MCP client tools invoked from a shell (for example `curl`) need `/usr/bin/curl`.
+A preset that lists only the endpoint but no matching binary widens the allowlist but no process is authorized to use it, so requests still fail.
+</Note>
+
+<Warning>
+`preset.name` must be a lowercase RFC 1123 label (letters, digits, and hyphens; no underscores).
+The `network_policies` key can use underscores because that field feeds the policy schema rather than the preset filename.
+</Warning>
+
 ### Option 2: Snapshot, Edit, and Set with OpenShell
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
