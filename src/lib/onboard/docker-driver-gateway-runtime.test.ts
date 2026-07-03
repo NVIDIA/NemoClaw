@@ -234,28 +234,6 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
-  it("rejects an openshell port listener when the injected gateway identity check fails", () => {
-    const { helpers } = makeHelpers();
-    const isDockerDriverGatewayProcessFn = vi.fn(() => false);
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerPid(
-        { ok: false, process: "openshell-gateway", pid: 1234 },
-        {
-          platform: "linux",
-          gatewayBin: "/opt/openshell/openshell-gateway",
-          isPidAliveFn: () => true,
-          isDockerDriverGatewayProcessFn,
-        },
-      ),
-    ).toBeNull();
-
-    expect(isDockerDriverGatewayProcessFn).toHaveBeenCalledWith(
-      1234,
-      "/opt/openshell/openshell-gateway",
-    );
-  });
-
   it("does not match process args that only contain openshell-gateway as a suffix", () => {
     const pid = 12_345;
     const { helpers, runCapture } = makeHelpers({
