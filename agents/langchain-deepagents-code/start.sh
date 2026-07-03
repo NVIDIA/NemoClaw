@@ -140,6 +140,7 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_TRACING
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
+    write_export_if_set NEMOCLAW_SANDBOX_NAME
   } >"$tmp"
   # Dcode intentionally runs as the non-root sandbox user, unlike the
   # root-supervised OpenClaw/Hermes startup path. This atomic, sandbox-user-owned
