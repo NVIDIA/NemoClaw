@@ -80,7 +80,8 @@ export function printMcpRebuildRetryCommand(
     );
     return;
   }
-  console.error(`    2. Run: ${CLI_NAME} onboard --resume`);
+  const disclosureArg = toolDisclosure ? ` --tool-disclosure ${toolDisclosure}` : "";
+  console.error(`    2. Run: ${CLI_NAME} onboard --resume${disclosureArg}`);
   console.error(`       This will recreate sandbox '${sandboxName}'.`);
 }
 
