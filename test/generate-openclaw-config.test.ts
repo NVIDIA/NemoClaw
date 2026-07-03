@@ -490,7 +490,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: true } });
   });
 
-  it("renders an explicit all-messages override when requireMention is false (#5691)", () => {
+  it("keeps groupPolicy open with no groups stanza when requireMention is false (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const telegramConfig = Buffer.from(JSON.stringify({ requireMention: false })).toString(
       "base64",
@@ -500,7 +500,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
       NEMOCLAW_TELEGRAM_CONFIG_B64: telegramConfig,
     });
     expect(config.channels.telegram.accounts.default.groupPolicy).toBe("open");
-    expect(config.channels.telegram.groups).toEqual({ "*": { requireMention: false } });
+    expect(config.channels.telegram.groups).toBeUndefined();
   });
 
   it("defaults Telegram group replies to require mentions when telegramConfig is empty (#3022)", () => {

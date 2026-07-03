@@ -372,14 +372,7 @@ describe("built-in channel manifests", () => {
     expect(botToken.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(allowedIds.envKey).toBe("TELEGRAM_ALLOWED_IDS");
     expect(requireMention.envKey).toBe("TELEGRAM_REQUIRE_MENTION");
-    expect(requireMention).toMatchObject({
-      kind: "config",
-      defaultValue: "1",
-      diagnostics: {
-        doctor: true,
-        valueLabels: { "0": "all-messages", "1": "mention-only" },
-      },
-    });
+    expect(requireMention).toMatchObject({ kind: "config", defaultValue: "1" });
     expect(groupPolicy).toMatchObject({
       kind: "config",
       envKey: "TELEGRAM_GROUP_POLICY",

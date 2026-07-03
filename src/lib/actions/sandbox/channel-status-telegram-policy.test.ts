@@ -48,20 +48,17 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       ),
     ).toMatchObject({
       severity: "ok",
-      detail: "mention-only (1, default)",
+      detail: "1 (default)",
     });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram User ID \(for DM access\) \(TELEGRAM_ALLOWED_IDS\):\s+not set/);
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open \(default\)/);
     expect(dump).toMatch(
-      /Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+mention-only \(1, default\)/,
+      /Telegram group mention mode \(TELEGRAM_REQUIRE_MENTION\):\s+1 \(default\)/,
     );
   });
 
-  it.each([
-    "allowlist",
-    "disabled",
-  ] as const)("accepts Telegram %s group policy without reporting one global mention mode (#5691)", async (groupPolicy) => {
+  it("accepts Telegram disabled group policy from rendered config", async () => {
     const { deps } = makeDeps({
       exec: () => ({
         status: 0,
@@ -70,7 +67,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
             telegram: {
               accounts: {
                 default: {
-                  groupPolicy,
+                  groupPolicy: "disabled",
                 },
               },
             },
@@ -87,7 +84,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
             required: false,
             sourceEnv: "TELEGRAM_GROUP_POLICY",
             statePath: "telegramConfig.groupPolicy",
-            value: groupPolicy,
+            value: "disabled",
           },
         ],
       }),
@@ -103,12 +100,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
       severity: "ok",
-      detail: groupPolicy,
+      detail: "disabled",
     });
-    expect(
-      signals.find(
-        (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
-      ),
-    ).toBeUndefined();
   });
 });

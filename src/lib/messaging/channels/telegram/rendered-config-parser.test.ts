@@ -42,7 +42,7 @@ describe("telegram rendered config parser", () => {
     ).toBe(true);
   });
 
-  it("uses OpenClaw's mention-only default when group overrides are absent (#5691)", () => {
+  it("treats missing OpenClaw groups as all-message mode when group policy is open (#5691)", () => {
     const requireMentionKey = telegramRenderedConfigParser
       .listConfigVisibilityKeys(openClawContext)
       .find((key) => key.key === "openclawGroupRequireMention");
@@ -57,35 +57,6 @@ describe("telegram rendered config parser", () => {
               accounts: {
                 default: {
                   groupPolicy: "open",
-                },
-              },
-            },
-          },
-        },
-      }),
-    ).toBe(true);
-  });
-
-  it("extracts an explicit OpenClaw all-messages override (#5691)", () => {
-    const requireMentionKey = telegramRenderedConfigParser
-      .listConfigVisibilityKeys(openClawContext)
-      .find((key) => key.key === "openclawGroupRequireMention");
-
-    expect(requireMentionKey).toBeDefined();
-    expect(
-      telegramRenderedConfigParser.getValue(requireMentionKey!, {
-        kind: "structured",
-        value: {
-          channels: {
-            telegram: {
-              accounts: {
-                default: {
-                  groupPolicy: "open",
-                },
-              },
-              groups: {
-                "*": {
-                  requireMention: false,
                 },
               },
             },
@@ -93,34 +64,6 @@ describe("telegram rendered config parser", () => {
         },
       }),
     ).toBe(false);
-  });
-
-  it("reports mixed OpenClaw group overrides as sorted unique values (#5691)", () => {
-    const requireMentionKey = telegramRenderedConfigParser
-      .listConfigVisibilityKeys(openClawContext)
-      .find((key) => key.key === "openclawGroupRequireMention");
-
-    expect(requireMentionKey).toBeDefined();
-    expect(
-      telegramRenderedConfigParser.getValue(requireMentionKey!, {
-        kind: "structured",
-        value: {
-          channels: {
-            telegram: {
-              accounts: {
-                default: {
-                  groupPolicy: "open",
-                },
-              },
-              groups: {
-                "-1001": { requireMention: true },
-                "-1002": { requireMention: false },
-              },
-            },
-          },
-        },
-      }),
-    ).toEqual([false, true]);
   });
 
   it("treats missing OpenClaw group policy as unknown mention mode (#5691)", () => {

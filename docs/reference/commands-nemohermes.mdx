@@ -716,8 +716,6 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 
 Run a focused health check for one sandbox and the host services it depends on.
 The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, provider reachability, messaging channel conflicts, Ollama reachability, and the cloudflared tunnel state.
-When the sandbox is reachable and Telegram has one global mention mode, the Messaging section compares the stored setting with the rendered agent configuration.
-The check reports `mention-only (1)` or `all-messages (0)` and warns when the expected and rendered modes differ.
 
 Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
@@ -1108,8 +1106,6 @@ For registered non-WhatsApp channel details and the compact summary, the status 
 Secret inputs, including tokens, are not printed.
 If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
 Optional unset inputs remain informational.
-For Telegram configurations with one global mention mode, the output reports `Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)` as `mention-only (1)` or `all-messages (0)`.
-If the stored setting differs from the rendered mode, the comparison warns and displays both values.
 
 ```bash
 nemohermes my-assistant channels status

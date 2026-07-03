@@ -6,17 +6,16 @@ import {
   getEnvConfigValue,
   getStructuredConfigValue,
   getStructuredPath,
-  type RenderedChannelConfigParser,
   type RenderedChannelConfigParserContext,
   type RenderedConfigSource,
   type RenderedConfigVisibilityKey,
+  type RenderedChannelConfigParser,
   structuredConfigKey,
 } from "../rendered-config-parser-utils";
 
 const OPENCLAW_ACCOUNT_PATH = ["channels", "telegram", "accounts", "default"] as const;
 const OPENCLAW_GROUPS_PATH = ["channels", "telegram", "groups"] as const;
 const DEFAULT_OPENCLAW_GROUP_POLICY = "open";
-const OPENCLAW_GROUP_POLICIES = new Set(["open", "allowlist", "disabled"]);
 
 export const telegramRenderedConfigParser: RenderedChannelConfigParser = {
   listConfigVisibilityKeys(context) {
@@ -73,19 +72,13 @@ export const telegramRenderedConfigParser: RenderedChannelConfigParser = {
 
 function openClawGroupPolicyFromInputs(context: RenderedChannelConfigParserContext): string {
   const inputValue = context.inputs.find((input) => input.inputId === "groupPolicy")?.value;
-  const normalizedInput = typeof inputValue === "string" ? inputValue.trim() : "";
-  if (OPENCLAW_GROUP_POLICIES.has(normalizedInput)) return normalizedInput;
+  if (typeof inputValue === "string" && inputValue.trim()) return inputValue.trim();
   const defaultValue = context.manifest.inputs.find((input) => input.id === "groupPolicy");
   return defaultValue?.kind === "config" && defaultValue.defaultValue
     ? defaultValue.defaultValue
     : DEFAULT_OPENCLAW_GROUP_POLICY;
 }
 
-/**
- * Returns one effective boolean for uniform group configuration (including the
- * runtime's mention-only default), `[false, true]` for mixed group overrides,
- * or `undefined` when the rendered configuration cannot establish a mode.
- */
 function getOpenClawGroupRequireMention(
   key: RenderedConfigVisibilityKey,
   source: RenderedConfigSource,
@@ -99,22 +92,15 @@ function getOpenClawGroupRequireMention(
   }
 
   const groups = getStructuredConfigValue(source, key.path);
-  // OpenClaw requires mentions by default. Missing or empty group overrides
-  // therefore mean mention-only, not all-messages.
-  if (!groups || typeof groups !== "object" || Array.isArray(groups)) return true;
+  if (!groups || typeof groups !== "object" || Array.isArray(groups)) return false;
 
-  const values: boolean[] = [];
-  for (const group of Object.values(groups)) {
-    if (!group || typeof group !== "object" || Array.isArray(group)) return undefined;
-    const value = getStructuredPath(group, ["requireMention"]);
-    if (value === undefined || value === null) {
-      values.push(true);
-      continue;
-    }
-    if (typeof value !== "boolean") return undefined;
-    values.push(value);
-  }
-  if (values.length === 0) return true;
-  const uniqueValues = [...new Set(values)].sort((a, b) => Number(a) - Number(b));
-  return uniqueValues.length === 1 ? uniqueValues[0] : uniqueValues;
+  const values = Object.values(groups)
+    .map((group) =>
+      group && typeof group === "object" && !Array.isArray(group)
+        ? getStructuredPath(group, ["requireMention"])
+        : undefined,
+    )
+    .filter((value): value is boolean => typeof value === "boolean");
+  if (values.length === 0) return false;
+  return [...new Set(values)].sort().length === 1 ? values[0] : [...new Set(values)].sort();
 }

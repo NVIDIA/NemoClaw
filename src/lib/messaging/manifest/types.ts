@@ -75,14 +75,6 @@ export interface ChannelInputPromptSpec {
   readonly emptyValueMessage?: string;
 }
 
-/** Optional presentation metadata for non-secret config diagnostics. */
-export interface ChannelConfigInputDiagnosticSpec {
-  /** Include this input as a dedicated check in `nemoclaw <name> doctor`. */
-  readonly doctor?: boolean;
-  /** Human-readable labels for persisted/rendered scalar values. */
-  readonly valueLabels?: Readonly<Record<string, string>>;
-}
-
 /** Shared fields for secret and non-secret manifest inputs. */
 interface ChannelInputBaseSpec {
   readonly id: string;
@@ -106,7 +98,6 @@ export interface ChannelConfigInputSpec extends ChannelInputBaseSpec {
   readonly defaultValue?: string;
   readonly statePath?: MessagingStatePath;
   readonly promptWhenInput?: string;
-  readonly diagnostics?: ChannelConfigInputDiagnosticSpec;
 }
 
 /** Manifest input declaration, split so secrets cannot declare defaults or state paths. */

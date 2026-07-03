@@ -16,17 +16,15 @@ import {
   getBuiltInRenderedConfigParser,
   tryGetMessagingAgentId,
 } from "../../messaging";
-import type { ChannelConfigInputSpec, MessagingAgentId } from "../../messaging/manifest";
+import type {
+  ChannelConfigInputSpec,
+  MessagingAgentId,
+  MessagingSerializableValue,
+  SandboxMessagingInputReference,
+} from "../../messaging/manifest";
+import type { DiagnosticSignal } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
-import {
-  type ChannelStatusConfigSignal,
-  type ConfigRenderSource,
-  type ConfigSourceRead,
-  configInputSignal,
-  configSourceKey,
-} from "./channel-status-config-comparison";
-
-export type { ChannelStatusConfigSignal } from "./channel-status-config-comparison";
+import { configInputDetail, configValuesEqual } from "./channel-status-config-values";
 
 const CONFIG_STATUS_TIMEOUT_MS = 5_000;
 const CONFIG_STATUS_MAX_SOURCE_BYTES = 64 * 1024;
@@ -46,18 +44,13 @@ export type ChannelStatusConfigDeps = {
   execSandbox: ExecRunner;
 };
 
-export type ChannelStatusConfigOptions = {
-  inputIds?: readonly string[];
-};
-
 export function buildConfigStatusSignals(
   sandboxName: string,
   channelName: string,
   entry: ReturnType<typeof registry.getSandbox>,
   agent: AgentDefinition,
   deps: ChannelStatusConfigDeps,
-  options: ChannelStatusConfigOptions = {},
-): ChannelStatusConfigSignal[] {
+): DiagnosticSignal[] {
   const plan = registry.getMessagingPlanFromEntry(entry);
   const channelPlan = plan?.channels.find((channel) => channel.channelId === channelName);
   if (!channelPlan?.configured) return [];
@@ -68,10 +61,8 @@ export function buildConfigStatusSignals(
     channelManifestRegistry.list(),
   );
   const parser = manifest ? getBuiltInRenderedConfigParser(manifest.id) : null;
-  const requestedInputIds = options.inputIds ? new Set(options.inputIds) : null;
   const manifestConfigInputs = (manifest?.inputs ?? []).filter(
-    (input): input is ChannelConfigInputSpec =>
-      input.kind === "config" && (!requestedInputIds || requestedInputIds.has(input.id)),
+    (input): input is ChannelConfigInputSpec => input.kind === "config",
   );
   const manifestConfigInputIds = new Set(manifestConfigInputs.map((input) => input.id));
   const renderSources =
@@ -92,20 +83,116 @@ export function buildConfigStatusSignals(
       .filter((input) => input.kind === "config")
       .map((input) => [input.inputId, input] as const),
   );
-  const signals: ChannelStatusConfigSignal[] = configSourceReadSignals(sandboxName, sourceReads);
+  const signals: DiagnosticSignal[] = configSourceReadSignals(sandboxName, sourceReads);
 
   for (const input of manifestConfigInputs) {
-    const signal = configInputSignal(
-      input,
-      configInputs.get(input.id),
-      renderSources,
-      sourceReads.sourceValues,
-    );
+    const signal = configInputSignal(input, configInputs.get(input.id), renderSources, sourceReads);
     if (signal) signals.push(signal);
   }
 
   return signals;
 }
+
+function configInputSignal(
+  input: ChannelConfigInputSpec,
+  planInput: SandboxMessagingInputReference | undefined,
+  renderSources: readonly ConfigRenderSource[],
+  sourceReads: ConfigSourceReads,
+): DiagnosticSignal | null {
+  const label = configInputLabel(input, planInput);
+  const expected = expectedConfigValue(input, planInput);
+  const sources = renderSources.filter((source) => source.inputId === input.id);
+  if (sources.length === 0) {
+    return null;
+  }
+
+  const comparisons = sources.map((source) =>
+    compareConfigSource(expected, source, sourceReads.sourceValues),
+  );
+  const checkedComparisons = comparisons.filter((comparison) => comparison.checked);
+  const hasMismatch = checkedComparisons.some((comparison) => !comparison.matches);
+  const allSourcesChecked =
+    checkedComparisons.length === comparisons.length && checkedComparisons.length > 0;
+  const hasUncheckedExpectedValue = expected.hasValue && !allSourcesChecked;
+  return {
+    label,
+    severity:
+      hasMismatch || hasUncheckedExpectedValue
+        ? "warn"
+        : expected.hasValue && allSourcesChecked
+          ? "ok"
+          : "info",
+    detail: Array.from(new Set(comparisons.map((comparison) => comparison.detail))).join("; "),
+  };
+}
+
+type SandboxMessagingInputWithValue = SandboxMessagingInputReference & {
+  readonly value: Exclude<MessagingSerializableValue, null | undefined>;
+};
+
+function planInputHasValue(
+  input: SandboxMessagingInputReference | undefined,
+): input is SandboxMessagingInputWithValue {
+  return input?.value !== undefined && input.value !== null;
+}
+
+function configInputLabel(
+  input: ChannelConfigInputSpec,
+  planInput: SandboxMessagingInputReference | undefined,
+): string {
+  const label = input.prompt?.label ?? input.envKey ?? input.id;
+  const envKey = input.envKey ?? planInput?.sourceEnv;
+  if (!envKey || label === envKey) return label;
+  return `${label} (${envKey})`;
+}
+
+type ExpectedConfigValue = {
+  readonly value: MessagingSerializableValue | undefined;
+  readonly detail: string;
+  readonly hasValue: boolean;
+};
+
+function expectedConfigValue(
+  input: ChannelConfigInputSpec,
+  planInput: SandboxMessagingInputReference | undefined,
+): ExpectedConfigValue {
+  if (planInputHasValue(planInput)) {
+    return {
+      value: planInput.value,
+      detail: configInputDetail(planInput.value),
+      hasValue: true,
+    };
+  }
+
+  const defaultValue = input.defaultValue?.trim();
+  if (defaultValue) {
+    return {
+      value: defaultValue,
+      detail: `${configInputDetail(defaultValue)} (default)`,
+      hasValue: true,
+    };
+  }
+
+  return {
+    value: undefined,
+    detail: configInputDetail(undefined),
+    hasValue: false,
+  };
+}
+
+interface ConfigRenderSource extends RenderedConfigVisibilityKey {
+  readonly resolvedTarget: string;
+}
+
+type ConfigSourceRead =
+  | {
+      readonly ok: true;
+      readonly value: MessagingSerializableValue | undefined;
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+    };
 
 type ConfigTargetRead =
   | {
@@ -136,12 +223,11 @@ type ParsedConfigSourceRead =
 function configSourceReadSignals(
   sandboxName: string,
   sourceReads: ConfigSourceReads,
-): ChannelStatusConfigSignal[] {
-  const signals: ChannelStatusConfigSignal[] = [];
+): DiagnosticSignal[] {
+  const signals: DiagnosticSignal[] = [];
   for (const [target, read] of sourceReads.targetReads.entries()) {
     if (read.ok) continue;
     signals.push({
-      kind: "rendered-config-source",
       label: "Rendered config source",
       severity: "warn",
       detail: `${read.error}; config comparisons not checked`,
@@ -150,7 +236,6 @@ function configSourceReadSignals(
   }
   for (const [target, error] of sourceReads.targetParseErrors.entries()) {
     signals.push({
-      kind: "rendered-config-source",
       label: "Rendered config source",
       severity: "warn",
       detail: `${error}; config comparisons not checked`,
@@ -284,4 +369,38 @@ function parseRenderedConfigSource(
   } catch {
     return { ok: false, error: `could not parse ${target}` };
   }
+}
+
+function compareConfigSource(
+  expected: ExpectedConfigValue,
+  source: ConfigRenderSource,
+  sourceValues: ReadonlyMap<string, ConfigSourceRead>,
+): { readonly checked: boolean; readonly matches: boolean; readonly detail: string } {
+  const actual = sourceValues.get(configSourceKey(source));
+  if (!actual) {
+    return {
+      checked: false,
+      matches: false,
+      detail: `${expected.detail} (not checked)`,
+    };
+  }
+  if (!actual.ok) {
+    return {
+      checked: false,
+      matches: false,
+      detail: `${expected.detail} (not checked)`,
+    };
+  }
+  const matches = configValuesEqual(expected.value, actual.value);
+  return {
+    checked: true,
+    matches,
+    detail: matches
+      ? expected.detail
+      : `expected ${expected.detail}; rendered ${configInputDetail(actual.value)}`,
+  };
+}
+
+function configSourceKey(source: ConfigRenderSource): string {
+  return `${source.resolvedTarget}:${source.kind}:${source.key}`;
 }
