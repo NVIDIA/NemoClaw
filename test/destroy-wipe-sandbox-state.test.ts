@@ -409,7 +409,7 @@ describe("wipeSandboxState (#5449)", () => {
       agent: "langchain-deepagents-code",
       configDir: "/sandbox/.deepagents",
       stateDirs: [".state", "skills", "agent/skills"],
-      stateFiles: [{ path: "config.toml" }, { path: "hooks.json" }],
+      stateFiles: [{ path: "config.toml" }],
       label: "langchain-deepagents-code",
     },
   ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)", ({

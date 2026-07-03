@@ -75,7 +75,7 @@ processes="$(ps -eo pid=,args= 2>/dev/null)" || {
   emit_dcode_probe_state no-runtime
 }
 printf '%s\n' "$processes" | awk '
-/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
+/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+(-I[[:space:]]+)?-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
   found = 1
 }
 /^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?[d]code([[:space:]]|$)/ {

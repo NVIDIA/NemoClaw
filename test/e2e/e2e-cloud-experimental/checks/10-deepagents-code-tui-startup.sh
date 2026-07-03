@@ -25,7 +25,7 @@ CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
 # New dcode homes enter a first-run modal before the coding prompt. Match only
 # the pinned upstream name screen so Expect can take its documented skip path.
-# deepagents-code 0.1.12 has no non-interactive first-run switch for its name screen.
+# deepagents-code 0.1.30 has no non-interactive first-run switch for its name screen.
 # Remove this compatibility path once the pinned TUI exposes a stable skip or ready contract.
 TUI_ONBOARDING_PATTERN='(your name \(optional\)|what should deep agents call you)'
 SENSITIVE_CAPTURE_FILES=()

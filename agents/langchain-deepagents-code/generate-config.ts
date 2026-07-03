@@ -117,6 +117,7 @@ function buildConfig(settings: Settings): string {
     "use_responses_api = false",
     "",
     "[update]",
+    "check = false",
     "auto_update = false",
     "",
   ].join("\n");
