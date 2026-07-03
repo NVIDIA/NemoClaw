@@ -7,16 +7,12 @@
 // without pulling in connect.ts's heavy transitive requires (#4504).
 
 export const CONNECT_AUTO_PAIR_MAX_APPROVALS = 1;
-// `openclaw devices list` budget (seconds), interpolated into the in-sandbox
-// script so the invariant below is asserted on real values, not source text.
+// Historical list budget retained for compatibility with the approval-pass
+// options object. The state-only approval pass does not invoke `openclaw`.
 export const CONNECT_AUTO_PAIR_LIST_TIMEOUT_S = 2;
-// `openclaw devices approve` budget (seconds); matches the in-sandbox watcher's
-// RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh).
+// Historical approve budget retained for compatibility with the approval-pass
+// options object. The state-only approval pass does not invoke `openclaw`.
 export const CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S = 10;
-// Outer spawnSync cap (ms). Must exceed the internal worst case
-// (CONNECT_AUTO_PAIR_LIST_TIMEOUT_S + CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S ×
-// CONNECT_AUTO_PAIR_MAX_APPROVALS) PLUS shell/python startup, since the outer
-// timer starts at `sh` spawn before the proxy env is sourced and python3
-// launches; the ~3s slack means a legitimate slow approve is never SIGKILLed
-// mid-loop, which would strand the allowlisted request.
+// Outer spawnSync cap (ms). The state-only pass is quick, but this still bounds
+// sandbox exec, shell startup, proxy env sourcing, and python3 launch.
 export const CONNECT_AUTO_PAIR_TIMEOUT_MS = 15_000;

@@ -27,7 +27,11 @@ function findApprovalExec(sandboxExecCalls: string[][]): string[] | undefined {
   return sandboxExecCalls.find((call) => {
     if (!call.includes("--")) return false;
     const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
-    return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
+    return (
+      inner.includes("local_pairing_list") &&
+      inner.includes("approve_allowlisted_request") &&
+      inner.includes("prune_cli_pairing_only_devices")
+    );
   });
 }
 
@@ -50,7 +54,7 @@ function findGatewayControlExec(dockerCalls: string[][]): string[] | undefined {
 
 describe("sandbox connect auto-pair approval pass (#4263)", () => {
   it(
-    "runs a bounded openclaw devices approval pass before opening SSH",
+    "runs a bounded local-state approval pass before opening SSH",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -68,29 +72,27 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const result = runConnect(tmpDir, sandboxName);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
+      expect(approvalExec).toBeDefined();
+
       const script = extractApprovalPassScript(stateFile, sandboxName);
-      // Hardened script content: source the proxy env, require local tools,
+      // Hardened script content: source the proxy env, require python3,
       // and execute the trusted helper payload in memory instead of importing
       // authorization code from predictable shared temp storage.
       expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
-      expect(script).toContain("command -v openclaw");
       expect(script).toContain("command -v python3");
-      expect(script).toContain("devices");
-      expect(script).toContain("list");
-      expect(script).toContain("approve");
       expect(script).toContain("NEMOCLAW_APPROVAL_POLICY_B64=");
       expect(script).toContain("base64.b64decode");
       expect(script).toContain("exec(compile(policy_source");
-      expect(script).toContain("decision = approval_request_decision(device)");
+      expect(script).toContain("local_pairing_list(STATE_DIR)");
+      expect(script).toContain("decision = approval_request_decision(device, paired)");
       expect(script).toContain("if not decision['allowed']:");
-      expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
-      expect(script).toContain("env=approve_env");
-      expect(script).toContain("if approve_proc.returncode == 0");
+      expect(script).toContain("approve_allowlisted_request(request_id, STATE_DIR, device)");
+      expect(script).toContain("prune_cli_pairing_only_devices(STATE_DIR)");
       expect(script).not.toContain("/tmp/openclaw_device_approval_policy.py");
       expect(script).not.toContain("sys.path.insert(0, '/tmp')");
-      expect(script.indexOf("[OPENCLAW, 'devices', 'list', '--json']")).toBeLessThan(
-        script.indexOf("approve_env = gateway_approval_env(os.environ)"),
-      );
+      expect(script).not.toContain("[OPENCLAW, 'devices'");
     },
   );
 
@@ -113,50 +115,83 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const result = runConnect(tmpDir, sandboxName);
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       const script = extractApprovalPassScript(stateFile, sandboxName);
-      // Disallowed/malformed/unknown requests are skipped by the policy before
-      // an approve is even attempted (they `continue` before the attempt
+      // Disallowed/malformed/unknown/first-time CLI requests are skipped by
+      // the policy before an approve is attempted (they `continue` before the
       // counter increments), so they do not consume the MAX_APPROVALS=1 budget
       // (#4504). They are ordered first here to prove the rejection path runs;
       // the single allowed request (`ok-cli`) is then approved and exhausts the
       // one-attempt budget, so the trailing duplicate `ok-cli` is never reached.
-      const run = runApprovalPassScript(script, [
-        {
-          requestId: "admin-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          scopes: ["operator.admin"],
-        },
-        {
-          requestId: "malformed-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          requestedScopes: "operator.write",
-        },
-        {
-          requestId: "unknown-client",
-          clientId: "evil-client",
-          clientMode: "unknown",
-          scopes: ["operator.read"],
-        },
-        {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          scopes: ["operator.read", "operator.write"],
-        },
-        {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          scopes: ["operator.read", "operator.write"],
-        },
-      ]);
+      const run = runApprovalPassScript(
+        script,
+        [
+          {
+            requestId: "admin-cli",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            scopes: ["operator.admin"],
+          },
+          {
+            requestId: "malformed-cli",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            requestedScopes: "operator.write",
+          },
+          {
+            requestId: "unknown-client",
+            clientId: "evil-client",
+            clientMode: "unknown",
+            scopes: ["operator.read"],
+          },
+          {
+            requestId: "first-cli",
+            deviceId: "first-cli",
+            publicKey: "first-cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            scopes: ["operator.write"],
+          },
+          {
+            requestId: "ok-cli",
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+          },
+          {
+            requestId: "ok-cli",
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+          },
+        ],
+        {},
+        [
+          {
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            approvedScopes: ["operator.pairing"],
+            tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+          },
+        ],
+      );
 
       expect(run.result.status).toBe(0);
       // Only the first allowed request is approved — MAX_APPROVALS is 1 (#4504),
       // the realistic single pending CLI/webchat scope upgrade.
       expect(run.approvals).toEqual(["ok-cli"]);
-      expect(run.approvalEnv).toEqual(["unset:unset:unset"]);
+      expect(run.approvalEnv).toEqual([]);
+      expect(run.pendingAfter).toHaveProperty("first-cli");
     },
   );
 
@@ -176,8 +211,14 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       "def approval_request_decision(_device):",
       "    return {'allowed': True, 'reason': 'allowlisted', 'client_id': 'evil', 'client_mode': 'cli', 'scopes': set()}",
       "",
-      "def gateway_approval_env(source_env=None):",
-      "    return dict(source_env or {})",
+      "def local_pairing_list(_state_dir=None):",
+      "    return {'pending': [], 'paired': []}",
+      "",
+      "def approve_allowlisted_request(_request_id, _state_dir=None, _original_request=None):",
+      "    raise RuntimeError('malicious helper used')",
+      "",
+      "def prune_cli_pairing_only_devices(_state_dir=None):",
+      "    return []",
       "",
     ].join("\n");
     const maliciousPythonPath = path.join(tmpDir, "malicious-pythonpath");
@@ -235,12 +276,7 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       // Approval-pass exec was attempted (and the fake openshell exited
       // non-zero for it, per the hook above).
-      const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
-        if (!call.includes("--")) return false;
-        // The payload is base64-wrapped for OpenShell exec; decode to identify it.
-        const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
-        return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
-      });
+      const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
       expect(approvalExec).toBeDefined();
       // Despite the approval-pass failure, SSH handoff still happens.
       expect(state.sandboxConnectCalls).toContainEqual(["sandbox", "connect", sandboxName]);
@@ -249,13 +285,10 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
 });
 
 // The #4504 fix also wires the approval pass into the `nemoclaw recover` /
-// `connect --probe-only` path (defect A) — the gateway-up branches only, never
-// the gateway-down failure exit — and re-uses the shared policy's
-// gateway_approval_env so a scope-upgrade approve drops the full gateway env
-// triplet (#4462) on the watcher's 10s budget while staying within the outer
-// spawnSync cap (defect B). The interactive-connect cases above cover the
+// `connect --probe-only` path — the gateway-up branches only, never the
+// gateway-down failure exit. The interactive-connect cases above cover the
 // allowlist and best-effort semantics; these add the probe-path wiring,
-// gateway-down negative, and the budget invariant on the real constants.
+// gateway-down negative, and the state-only timeout invariant.
 describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () => {
   it(
     "runs the approval pass on the --probe-only (recover) path",
@@ -370,14 +403,13 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
   );
 
   it(
-    "approve child strips the full gateway env triplet on the probe path (#4462)",
+    "probe path approves local state without invoking OpenClaw as the CLI device (#5324)",
     testTimeoutOptions(20_000),
     () => {
-      // The probe-path approve must drop OPENCLAW_GATEWAY_URL/_PORT/_TOKEN via
-      // the shared policy's gateway_approval_env so the local pairing fallback
-      // cannot re-pin to the gateway and hit the #4462 self-defeat. Render the
-      // probe-path script, then actually run it and assert the approve child
-      // saw none of the triplet.
+      // Render the probe-path script, then run it against local state. The
+      // approved request proves the recovery path no longer needs an
+      // `openclaw devices approve` CLI subprocess that would pair the shared
+      // CLI identity with pairing-only scope.
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
           name: "probe-env-strip-sandbox",
@@ -395,26 +427,51 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
       const script = extractApprovalPassScript(stateFile, sandboxName);
-      expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
-      expect(script).toContain("env=approve_env");
+      expect(script).toContain("local_pairing_list(STATE_DIR)");
+      expect(script).toContain("approve_allowlisted_request(request_id, STATE_DIR, device)");
+      expect(script).not.toContain("'devices', 'approve'");
 
-      const run = runApprovalPassScript(script, [
-        {
-          requestId: "probe-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          scopes: ["operator.read", "operator.write"],
-        },
-      ]);
+      const run = runApprovalPassScript(
+        script,
+        [
+          {
+            requestId: "probe-cli",
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+          },
+        ],
+        {},
+        [
+          {
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            approvedScopes: ["operator.pairing"],
+            tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+          },
+        ],
+      );
       expect(run.result.status).toBe(0);
       expect(run.approvals).toEqual(["probe-cli"]);
-      // The approve child saw none of the gateway env triplet (#4462).
-      expect(run.approvalEnv).toEqual(["unset:unset:unset"]);
+      expect(run.approvalEnv).toEqual([]);
+      expect(run.pairedAfter["cli-1"].approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
     },
   );
 
   it(
-    "approve timeout matches the watcher (10s), list keeps 2s, and stays within the outer cap",
+    "state-only approval keeps historical budgets inert and stays within the outer cap",
     testTimeoutOptions(20_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
@@ -434,29 +491,20 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(result.status).toBe(0);
 
       const script = extractApprovalPassScript(stateFile, sandboxName);
-      // The rendered script interpolates the exported budget constants, tying
-      // runtime behaviour to the values the invariant below asserts on (no
-      // source-text scraping — numbers come from the imported constants).
-      expect(script).toContain("[OPENCLAW, 'devices', 'list', '--json']");
-      expect(script).toContain(`timeout=${CONNECT_AUTO_PAIR_LIST_TIMEOUT_S},`);
-      expect(script).toContain(`timeout=${CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S},`);
+      // Historical list/approve budgets remain on the options object for
+      // compatibility, but the rendered script no longer uses them for
+      // OpenClaw subprocesses.
+      expect(script).not.toContain("[OPENCLAW, 'devices', 'list', '--json']");
+      expect(script).not.toContain(`timeout=${CONNECT_AUTO_PAIR_LIST_TIMEOUT_S},`);
+      expect(script).not.toContain(`timeout=${CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S},`);
       expect(script).toContain(`MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}`);
 
-      // Approve budget matches the in-sandbox watcher RUN_TIMEOUT_SECS = 10;
-      // list budget is 2s.
+      // The historical constants are preserved for API compatibility.
       expect(CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S).toBe(10);
       expect(CONNECT_AUTO_PAIR_LIST_TIMEOUT_S).toBe(2);
 
-      // Budget invariant: the inner worst case (list + approve × MAX_APPROVALS)
-      // must stay STRICTLY below the outer spawnSync cap. The outer timer starts
-      // when `sh` is spawned — before shell startup, sourcing the proxy env, the
-      // python3 launch, and `devices list` even begin — so the cap must leave
-      // slack above the inner budget, or a legitimate slow 10s approve is killed
-      // mid-loop and the allowlisted request is stranded (#4504).
-      const innerBudgetSeconds =
-        CONNECT_AUTO_PAIR_LIST_TIMEOUT_S +
-        CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S * CONNECT_AUTO_PAIR_MAX_APPROVALS;
-      expect(innerBudgetSeconds).toBeLessThan(CONNECT_AUTO_PAIR_TIMEOUT_MS / 1000);
+      // The only active wall-clock cap is the outer sandbox-exec timeout.
+      expect(CONNECT_AUTO_PAIR_TIMEOUT_MS).toBeGreaterThan(0);
     },
   );
 });

@@ -632,6 +632,7 @@ PY_CLASSIFY_MUTABLE_CONFIG
 # 2770/660 after every command outcome; do not replace that upstream source fix
 # with a NemoClaw timeout or permission escape flag.
 run_oneshot_command() {
+  local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
   local _nemoclaw_oneshot_child_pid=""
   local _nemoclaw_oneshot_signal=""
   local _nemoclaw_oneshot_wait_rc=0
@@ -643,6 +644,8 @@ run_oneshot_command() {
   # direct child rather than adding a forwarding process.
   (
     trap - TERM INT
+    # shellcheck source=/dev/null
+    [ -r "$_nemoclaw_runtime_env_file" ] && . "$_nemoclaw_runtime_env_file"
     exec "$@"
   ) <&0 &
   _nemoclaw_oneshot_child_pid=$!
@@ -2241,38 +2244,6 @@ needs_gateway_token_for_current_command() {
   esac
 }
 
-_nemoclaw_agent_args_include_message() {
-  local _nemoclaw_agent_arg
-  for _nemoclaw_agent_arg in "$@"; do
-    case "$_nemoclaw_agent_arg" in
-      -m | --message | --message=* | -m?*) return 0 ;;
-    esac
-  done
-  return 1
-}
-
-prepare_oneshot_openclaw_agent_guard() {
-  local _nemoclaw_runtime_env_file
-  [ ${#NEMOCLAW_CMD[@]} -ge 2 ] || return 0
-  case "${NEMOCLAW_CMD[0]##*/}" in
-    openclaw) ;;
-    *) return 0 ;;
-  esac
-  [ "${NEMOCLAW_CMD[1]}" = "agent" ] || return 0
-  _nemoclaw_agent_args_include_message "${NEMOCLAW_CMD[@]:2}" || return 0
-
-  _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
-  # shellcheck disable=SC2016  # Expanded by the child bash after argv is set.
-  NEMOCLAW_CMD=(
-    bash
-    -c
-    '[ -f "$1" ] && . "$1"; shift; openclaw "$@"'
-    bash
-    "$_nemoclaw_runtime_env_file"
-    "${NEMOCLAW_CMD[@]:1}"
-  )
-}
-
 prepare_gateway_token_for_current_command() {
   if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
     ensure_gateway_token
@@ -2396,7 +2367,7 @@ start_persistent_gateway_log_mirror() {
 }
 
 start_auto_pair() {
-  # Run auto-pair as sandbox user (it talks to the gateway via CLI)
+  # Run auto-pair as sandbox user (it reads local OpenClaw pairing state)
   # SECURITY: Pass resolved openclaw path to prevent PATH hijacking
   # When running as non-root, skip privilege step-down (we're already
   # the sandbox user). When root, step down via STEP_DOWN_PREFIX_SANDBOX
@@ -2406,12 +2377,10 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
-import json
+  nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import importlib.util
 import os
 import stat
-import subprocess
 import time
 
 print('[auto-pair] watcher started', flush=True)
@@ -2433,14 +2402,14 @@ def load_approval_policy(path):
     spec.loader.exec_module(module)
     return (
         module.approval_request_decision,
-        module.gateway_approval_env,
-        getattr(module, 'recover_failed_scope_approval', None),
+        module.local_pairing_list,
+        module.approve_allowlisted_request,
+        module.prune_cli_pairing_only_devices,
     )
 
 
-approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
-
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+approval_request_decision, local_pairing_list, approve_allowlisted_request, prune_cli_pairing_only_devices = load_approval_policy(APPROVAL_POLICY_FILE)
+STATE_DIR = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 
 
 def _env_seconds(name, default):
@@ -2492,11 +2461,9 @@ SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
 #     inside a 30s window and waits up to one full SLOW_INTERVAL before
 #     the watcher polls. Two sibling sandboxes onboarded back-to-back
 #     each hit this window and both fall back to embedded mode (#5343).
-#   * Source-fix constraint: the 5s default is a bounded 6x increase in
-#     steady-state `openclaw devices list --json` calls per sandbox — at
-#     most one extra call per 5s vs. per 30s, which the gateway connect
-#     handler tolerates easily; the bounded fast-reentry counter above
-#     keeps cascading upgrades from exceeding this cadence.
+#   * Source-fix constraint: the 5s default is now a local state-file poll,
+#     not a gateway CLI call, so it cannot create a pairing-only CLI device
+#     or load the gateway connect handler.
 #   * Migration: operators who relied on the old cadence (load-sensitive
 #     gateways, large multi-sandbox deployments) can restore it by
 #     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
@@ -2520,38 +2487,6 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
 # timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
-
-RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
-
-# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
-# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection and return the same pending-scope error it is trying
-# to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
-# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
-# pairing fallback. Remove this when OpenClaw approve can complete scope
-# upgrades through the gateway using only operator.pairing.
-def run(*args, strip_gateway_env=False):
-    # Bound every openclaw CLI invocation so a wedged child cannot pin
-    # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
-    # no timeout would hold a hung `openclaw devices list/approve` past
-    # the fast→slow transition and the 8h deadline check.
-    env = None
-    if strip_gateway_env:
-        env = gateway_approval_env(os.environ)
-    try:
-        proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
-        )
-        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
-    except subprocess.TimeoutExpired as exc:
-        # 124 matches GNU `timeout` exit status so log scrapers can spot it.
-        out = (exc.stdout or '') if isinstance(exc.stdout, str) else ''
-        err = (exc.stderr or '') if isinstance(exc.stderr, str) else ''
-        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
-        return 124, out.strip(), err.strip()
-
 
 def sleep_for_next_poll(default_seconds, productive=True):
     # Apply the bounded fast-reentry override before the caller's default
@@ -2577,18 +2512,27 @@ def sleep_for_next_poll(default_seconds, productive=True):
 
 
 while time.time() < DEADLINE:
-    rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
-    if rc != 0 or not out:
-        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
-        continue
     try:
-        data = json.loads(out)
+        data = local_pairing_list(STATE_DIR)
     except Exception:
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
 
     pending = data.get('pending') or []
     paired = data.get('paired') or []
+    try:
+        removed_cli_pairing_only = prune_cli_pairing_only_devices(STATE_DIR)
+    except Exception:
+        removed_cli_pairing_only = []
+    if removed_cli_pairing_only:
+        print(f'[auto-pair] removed stale cli pairing-only devices={len(removed_cli_pairing_only)}')
+        try:
+            data = local_pairing_list(STATE_DIR)
+            pending = data.get('pending') or []
+            paired = data.get('paired') or []
+        except Exception:
+            pending = []
+            paired = []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
 
     # Fast-deadline transition is checked here, BEFORE the pending-branch
@@ -2614,7 +2558,7 @@ while time.time() < DEADLINE:
             pending_request_ids.add(request_id)
             if request_id in HANDLED:
                 continue
-            decision = approval_request_decision(device)
+            decision = approval_request_decision(device, paired)
             client_id = decision['client_id']
             client_mode = decision['client_mode']
             if decision['reason'] == 'unknown-client':
@@ -2630,36 +2574,30 @@ while time.time() < DEADLINE:
                 scopes = decision['scopes']
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
-            attempted_request_ids.add(request_id)
-            arc, aout, aerr = run(
-                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
-            )
-            # rc=124 is the timeout sentinel from run() — do NOT add the
-            # request to HANDLED on a transient timeout, so the next poll
-            # can retry (CodeRabbit #4292). Other approve failures stay
-            # retryable too; only intentionally rejected unknown clients
-            # and confirmed successful approvals are marked handled.
-            if arc == 124:
+            if decision['reason'] == 'cli-first-pairing':
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected first-time cli pairing client={client_id} mode={client_mode}')
                 continue
-            if arc == 0:
+            if decision['reason'] == 'cli-missing-pairing-baseline':
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected cli missing pairing baseline client={client_id} mode={client_mode}')
+                continue
+            if decision['reason'] == 'cli-pairing-only':
+                HANDLED.add(request_id)
+                print(f'[auto-pair] rejected cli pairing-only request client={client_id} mode={client_mode}')
+                continue
+            attempted_request_ids.add(request_id)
+            try:
+                approved = approve_allowlisted_request(request_id, STATE_DIR, device)
+            except Exception as exc:
+                print(f'[auto-pair] approve failed request={request_id}: {str(exc)[:400]}')
+                continue
+            if approved:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif callable(recover_failed_scope_approval):
-                recovered = recover_failed_scope_approval(
-                    request_id,
-                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                    aerr or aout or '',
-                    device,
-                )
-                if recovered:
-                    HANDLED.add(request_id)
-                    APPROVED += 1
-                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
-                elif aout or aerr:
-                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-            elif aout or aerr:
-                print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
+            else:
+                print(f'[auto-pair] approve skipped request={request_id} client={client_id} mode={client_mode}')
         # Drop previously-bumped requestIds that the gateway no longer reports
         # as pending so a future re-appearance of the same id (very unlikely,
         # but kept robust) can bump again. The set is otherwise small and
@@ -2689,10 +2627,9 @@ while time.time() < DEADLINE:
     QUIET_POLLS += 1
     # Convergence conditions, checked in order of strength:
     #   1. Browser device paired — original control-UI workflow
-    #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
-    #      where the gateway auto-pairs CLI clients directly without the
-    #      watcher running `openclaw devices approve` (so APPROVED stays
-    #      0 forever in those configurations)
+    #   2. Any paired device — covers setups where the gateway itself
+    #      auto-pairs local clients directly (so APPROVED stays 0 forever
+    #      in those configurations)
     #   3. We approved at least one device explicitly
     # On convergence the watcher used to exit. That left late CLI scope
     # upgrades pending forever (NemoClaw#4263). Now we transition to a slow
@@ -2948,42 +2885,20 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      # Keep ordinary connect-shell OpenClaw CLI calls on OpenClaw's implicit
-      # local-loopback path; exporting OPENCLAW_GATEWAY_URL turns that into an
-      # explicit override and disables OpenClaw's local pairing fallback (#5324).
-      #
-      # SOURCE_OF_TRUTH_REVIEW (connect-shell gateway URL preservation):
-      #   * Invalid state: ordinary `openclaw agent -m ...` calls from a
-      #     NemoClaw connect shell inherit OPENCLAW_GATEWAY_URL, pin to the
-      #     gateway, and skip OpenClaw's local CLI pairing fallback.
-      #   * Source boundary: OpenClaw owns gateway/device pairing semantics;
-      #     NemoClaw owns the connect-shell and one-shot command environment,
-      #     plus the few wrapper commands that intentionally need the sandbox
-      #     gateway URL.
-      #   * Source-fix constraint: this PR must adapt the shell environment
-      #     locally so current OpenClaw releases keep working in NemoClaw
-      #     sandboxes while upstream pairing behavior remains unchanged.
-      #   * Regression tests: test/nemoclaw-start.test.ts,
-      #     test/nemoclaw-start-gateway-ws-host.test.ts, and
-      #     test/nemoclaw-start-agent-pairing.test.ts lock the env-file
-      #     contract, WhatsApp reinjection path, and agent recovery path.
-      #   * Removal condition: remove this split after OpenClaw supports the
-      #     CLI agent path through the gateway without disabling the local
-      #     pairing fallback, and wrapper-managed commands no longer need a
-      #     NemoClaw-private gateway URL alias.
+      # Keep the dial-back URL available to NemoClaw-owned wrappers without
+      # forcing ordinary OpenClaw CLI commands onto the explicit gateway-client
+      # path. OpenClaw's own CLI should choose the right path for `agent -m`.
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
-      printf '%s\n' "if [ \"\${OPENCLAW_GATEWAY_URL:-}\" = \"\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}\" ]; then unset OPENCLAW_GATEWAY_URL; fi"
     fi
+    printf '%s\n' "unset OPENCLAW_GATEWAY_URL"
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Preserved for wrapper-managed commands that intentionally use the
-      # private sandbox gateway URL; ordinary OpenClaw CLI calls do not need it.
       printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
-      printf '%s\n' "if [ \"\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}\" = \"1\" ] && [ \"\${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}\" = \"1\" ]; then unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS; fi"
     fi
+    printf '%s\n' "unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 # #4538: a raw in-sandbox `openclaw doctor --fix` (run directly from a connect
@@ -3041,170 +2956,13 @@ _nemoclaw_messaging_connect_node_options() {
   done < "/tmp/nemoclaw-messaging-connect-preloads.list"
   printf '%s' "$_nemoclaw_options"
 }
-# SOURCE_OF_TRUTH_REVIEW (agent CLI pairing recovery):
-#   * Invalid state: `openclaw agent -m ...` can create or encounter a pending
-#     CLI scope-upgrade request that OpenClaw's ordinary local fallback can
-#     approve, but NemoClaw's connect-shell and one-shot wrappers must keep the
-#     user command on the managed gateway path after approval.
-#   * Source boundary: OpenClaw owns pending pairing request creation,
-#     `devices list`, and `devices approve`; NemoClaw owns the shell wrappers
-#     that retry a failed agent turn after a safe CLI approval.
-#   * Source-fix constraint: current OpenClaw releases do not expose a narrower
-#     agent-turn recovery API, so NemoClaw must use OpenClaw's CLI approval
-#     command while validating the pending request shape before invoking it.
-#   * Regression tests: test/nemoclaw-start-agent-pairing.test.ts covers
-#     pre-approval, retry, non-message agent commands, rejected webchat/control
-#     UI requests, admin scopes, empty/missing scopes, malformed request IDs,
-#     and paired-device identity mismatches.
-#   * Removal condition: remove this helper after OpenClaw can complete CLI
-#     agent scope upgrades through the normal gateway path without a wrapper
-#     retry or local approval fallback.
-_nemoclaw_safe_pending_pairing_ids() {
-  command -v python3 >/dev/null 2>&1 || return 0
-  NEMOCLAW_PAIRING_LIST_JSON="$1" python3 - <<'PYPAIRINGIDS' || return 0
-import json
-import os
-import re
-import sys
-
-ALLOWED_CLI_CLIENTS = {"cli", "openclaw-cli"}
-ALLOWED_SCOPES = {"operator.pairing", "operator.read", "operator.write"}
-REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
-
-
-def debug(message):
-    if os.environ.get("NEMOCLAW_DEBUG") == "1":
-        print(f"[nemoclaw] pairing filter: {message}", file=sys.stderr)
-
-
-def norm(value):
-    return str(value or "").strip()
-
-
-def role_set(item):
-    roles = set()
-    role = norm(item.get("role"))
-    if role:
-        roles.add(role)
-    raw_roles = item.get("roles")
-    if isinstance(raw_roles, list):
-        roles.update(norm(role) for role in raw_roles if norm(role))
-    return roles
-
-
-def scope_set(item):
-    scopes_value = item.get("scopes") if "scopes" in item else item.get("requestedScopes")
-    if not isinstance(scopes_value, list):
-        return None
-    return {norm(scope) for scope in scopes_value if norm(scope)}
-
-
-def is_cli_operator_shape(item):
-    client_mode = norm(item.get("clientMode")).lower()
-    if client_mode and client_mode != "cli":
-        return False
-    client_id = norm(item.get("clientId"))
-    if client_id and client_id not in ALLOWED_CLI_CLIENTS:
-        return False
-    roles = role_set(item)
-    return not roles or roles == {"operator"}
-
-
-def paired_entries_for(data, device_id):
-    paired = data.get("paired") if isinstance(data, dict) else []
-    if not isinstance(paired, list):
-        return []
-    return [
-        item for item in paired
-        if isinstance(item, dict) and device_id and norm(item.get("deviceId")) == device_id
-    ]
-
-
-def request_is_safe(data, item):
-    if not isinstance(item, dict):
-        return None
-    request_id = item.get("requestId")
-    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
-        return None
-    if norm(item.get("clientMode")).lower() != "cli":
-        return None
-    if not is_cli_operator_shape(item):
-        return None
-    scopes = scope_set(item)
-    if not scopes or not scopes.issubset(ALLOWED_SCOPES):
-        return None
-    if "operator.admin" in scopes:
-        return None
-
-    device_id = norm(item.get("deviceId"))
-    public_key = norm(item.get("publicKey"))
-    for paired in paired_entries_for(data, device_id):
-        if not is_cli_operator_shape(paired):
-            return None
-        paired_public_key = norm(paired.get("publicKey"))
-        if public_key and paired_public_key and public_key != paired_public_key:
-            return None
-    return request_id
-
-
-try:
-    data = json.loads(os.environ.get("NEMOCLAW_PAIRING_LIST_JSON") or "{}")
-except json.JSONDecodeError as exc:
-    debug(f"invalid devices JSON: {exc}")
-    raise SystemExit(0)
-pending = data.get("pending") if isinstance(data, dict) else []
-if not isinstance(pending, list):
-    raise SystemExit(0)
-for item in pending:
-    request_id = request_is_safe(data, item)
-    if not request_id:
-        continue
-    print(request_id)
-PYPAIRINGIDS
-}
-_nemoclaw_auto_approve_cli_pairing_once() {
-  [ -n "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ] || return 0
-  command -v python3 >/dev/null 2>&1 || return 0
-  local _nemoclaw_pairing_errexit=0 _nemoclaw_pairing_json _nemoclaw_pairing_rc
-  local _nemoclaw_pairing_ids _nemoclaw_pairing_id
-  case $- in *e*) _nemoclaw_pairing_errexit=1 ;; esac
-  set +e
-  _nemoclaw_pairing_json="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN OPENCLAW_ALLOW_INSECURE_PRIVATE_WS; command openclaw devices list --json 2>/dev/null)"
-  _nemoclaw_pairing_rc=$?
-  if [ "$_nemoclaw_pairing_errexit" = "1" ]; then set -e; else set +e; fi
-  [ "$_nemoclaw_pairing_rc" -eq 0 ] || return 0
-  _nemoclaw_pairing_ids="$(_nemoclaw_safe_pending_pairing_ids "$_nemoclaw_pairing_json")"
-  [ -n "$_nemoclaw_pairing_ids" ] || return 0
-  for _nemoclaw_pairing_id in $_nemoclaw_pairing_ids; do
-    [ -n "$_nemoclaw_pairing_id" ] || continue
-    # Use the wrapper's devices-approve branch so the OpenClaw gateway env is
-    # stripped consistently and the existing scope-upgrade compatibility guard
-    # remains the single approval path.
-    if openclaw devices approve "$_nemoclaw_pairing_id" --json >/dev/null 2>&1; then
-      _NEMOCLAW_PAIRING_APPROVED=1
-    fi
-  done
-}
-_nemoclaw_output_needs_pairing_approval() {
-  grep -qi 'device pairing required\|pairing required' "$@" 2>/dev/null
-}
-_nemoclaw_agent_command_can_retry_pairing() {
-  local _nemoclaw_agent_arg
-  for _nemoclaw_agent_arg in "$@"; do
-    case "$_nemoclaw_agent_arg" in
-      -m|--message|--message=*|-m?*) return 0 ;;
-    esac
-  done
-  return 1
-}
 openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
   # upgrades through the gateway without requesting the upgraded scopes for
   # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands use the connect-shell environment, which
-  # intentionally leaves OPENCLAW_GATEWAY_URL unset so OpenClaw can use its
-  # local pairing fallback (#5324).
+  # URL/port/token. Ordinary commands inherit the connect-shell environment,
+  # where the gateway URL is kept under NemoClaw's private alias.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
     _nemoclaw_approve_request_id="${3:-}"
     _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
@@ -3225,7 +2983,11 @@ if not isinstance(pending, dict):
     pending = {}
 request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
 if request:
-    print(json.dumps(request, sort_keys=True))
+    print(json.dumps({
+        "requestId": request_id,
+        "deviceId": request.get("deviceId"),
+        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
+    }, sort_keys=True))
 PYAPPROVEBEFORE
 )"
     fi
@@ -3241,13 +3003,9 @@ PYAPPROVEBEFORE
     fi
     if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
       if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 - <<'PYAPPROVEAFTER'; then
-import os
-import base64
-import hashlib
 import json
+import os
 import re
-import secrets
-import time
 from pathlib import Path
 
 request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
@@ -3280,37 +3038,6 @@ def norm(value):
 def scope_set(entry, key="scopes"):
     return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
 
-def role_set(entry):
-    roles = {norm(role) for role in (entry.get("roles") or []) if norm(role)}
-    role = norm(entry.get("role"))
-    if role:
-        roles.add(role)
-    return roles
-
-def identity_public_key(identity):
-    direct = norm(identity.get("publicKey"))
-    if direct:
-        return direct
-    pem = norm(identity.get("publicKeyPem"))
-    if not pem:
-        return ""
-    body = "".join(line.strip() for line in pem.splitlines() if not line.startswith("-----"))
-    try:
-        der = base64.b64decode(body, validate=True)
-    except Exception:
-        return ""
-    prefix = bytes.fromhex("302a300506032b6570032100")
-    if len(der) != len(prefix) + 32 or not der.startswith(prefix):
-        return ""
-    return base64.urlsafe_b64encode(der[len(prefix):]).decode("ascii").rstrip("=")
-
-def identity_key_matches_device_id(public_key, device_id):
-    try:
-        raw = base64.urlsafe_b64decode(public_key + "=" * (-len(public_key) % 4))
-    except Exception:
-        return False
-    return len(raw) == 32 and hashlib.sha256(raw).hexdigest() == device_id
-
 def output_mentions_request_id(value):
     request = norm(value)
     return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
@@ -3320,45 +3047,6 @@ def is_scope_upgrade_approval_compat_failure(output):
     return "scope upgrade pending approval" in text and (
         "gatewayclientrequesterror" in text or "gateway" in text
     )
-
-def is_pairing_required_approval_compat_failure(output):
-    text = norm(output).lower()
-    return ("device pairing required" in text or "pairing required" in text) and (
-        "gatewayclientrequesterror" in text
-        or "gateway requires device pairing" in text
-        or "gateway connect failed" in text
-    )
-
-def compatible_cli_pairing_request(item, device_id, public_key, allowed):
-    if not isinstance(item, dict):
-        return False
-    scopes = scope_set(item) or scope_set(item, "requestedScopes")
-    client_id = norm(item.get("clientId"))
-    return bool(
-        norm(item.get("requestId"))
-        and norm(item.get("deviceId")) == device_id
-        and norm(item.get("publicKey")) == public_key
-        and norm(item.get("clientMode")).lower() == "cli"
-        and (not client_id or client_id in {"cli", "openclaw-cli"})
-        and role_set(item) == {"operator"}
-        and scopes
-        and "operator.pairing" in scopes
-        and scopes.issubset(allowed)
-    )
-
-def save_path(path, value, mode=0o600):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.tmp")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    fd = os.open(tmp, flags, mode)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-        os.fchmod(handle.fileno(), mode)
-    os.replace(tmp, path)
 
 requested = scope_set(before)
 device_id = norm(before.get("deviceId"))
@@ -3378,93 +3066,15 @@ if request_id and requested and not still_pending and isinstance(paired_entry, d
     print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": sorted(requested), "compatibility": "openclaw-approve-applied-after-nonzero"}, sort_keys=True))
     raise SystemExit(0)
 
-# Compatibility boundary: repair only local OpenClaw device state after a
-# failed approve leaves behind a safe first-time CLI pairing request or exactly
-# one same-device admin-shaped scope-upgrade replacement request. Some OpenClaw
-# failures only surface opaque gateway text, so the state files are the source
-# of truth; stderr is only used as an exact disambiguator when it carries a
-# replacement request ID. Remove this once OpenClaw approves CLI requests
-# through the gateway or exposes a supported approval repair API.
+# Compatibility boundary: repair only the local OpenClaw device state after a
+# failed approve leaves behind exactly one same-device admin-shaped replacement
+# request. Some OpenClaw failures only surface opaque gateway text, so the state
+# files are the source of truth; stderr is only used as an exact disambiguator
+# when it carries a replacement request ID. Remove this once OpenClaw stops
+# replacing operator.write approvals with admin-shaped pending requests or
+# exposes a supported approval repair API.
 allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed):
-    raise SystemExit(1)
-
-public_key = norm(before.get("publicKey"))
-client_id = norm(before.get("clientId"))
-same_device_pending = [
-    (key, item) for key, item in pending.items()
-    if isinstance(item, dict) and norm(item.get("deviceId")) == device_id
-]
-if (
-    not isinstance(paired_entry, dict)
-    and public_key
-    and "operator.pairing" in requested
-    and norm(before.get("clientMode")).lower() == "cli"
-    and (not client_id or client_id in {"cli", "openclaw-cli"})
-    and role_set(before) == {"operator"}
-    and same_device_pending
-    and all(compatible_cli_pairing_request(item, device_id, public_key, allowed) for _, item in same_device_pending)
-    and is_pairing_required_approval_compat_failure(approve_output)
-):
-    identity_path = root.parent / "identity" / "device.json"
-    auth_path = root.parent / "identity" / "device-auth.json"
-    try:
-        identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    except Exception:
-        raise SystemExit(1)
-    identity_key = identity_public_key(identity if isinstance(identity, dict) else {})
-    if (
-        norm(identity.get("deviceId") if isinstance(identity, dict) else "") != device_id
-        or identity_key != public_key
-        or not identity_key_matches_device_id(public_key, device_id)
-    ):
-        raise SystemExit(1)
-    approved = set(requested)
-    if "operator.write" in approved:
-        approved.add("operator.read")
-    if {"operator.read", "operator.write"} & approved:
-        approved.add("operator.pairing")
-    if not approved.issubset(allowed):
-        raise SystemExit(1)
-    approved_list = [scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved]
-    token = secrets.token_urlsafe(32)
-    if not token or token == norm(os.environ.get("OPENCLAW_GATEWAY_TOKEN")):
-        raise SystemExit(1)
-    now = int(time.time() * 1000)
-    operator_token = {"token": token, "role": "operator", "scopes": approved_list, "createdAtMs": now}
-    paired_entry = {
-        "deviceId": device_id,
-        "publicKey": public_key,
-        "displayName": before.get("displayName"),
-        "platform": before.get("platform"),
-        "deviceFamily": before.get("deviceFamily"),
-        "clientId": before.get("clientId"),
-        "clientMode": before.get("clientMode"),
-        "role": "operator",
-        "roles": ["operator"],
-        "scopes": approved_list,
-        "approvedScopes": approved_list,
-        "remoteIp": before.get("remoteIp"),
-        "tokens": {"operator": operator_token},
-        "createdAtMs": now,
-        "approvedAtMs": now,
-    }
-    paired_entry = {key: value for key, value in paired_entry.items() if value is not None}
-    for key, _ in same_device_pending:
-        pending.pop(key, None)
-    paired[device_id] = paired_entry
-    auth = {
-        "version": 1,
-        "deviceId": device_id,
-        "tokens": {"operator": {"token": token, "role": "operator", "scopes": approved_list, "updatedAtMs": now}},
-    }
-    save("pending.json", pending)
-    save("paired.json", paired)
-    save_path(auth_path, auth)
-    print(json.dumps({"requestId": request_id, "deviceId": device_id, "approvedScopes": approved_list, "compatibility": "openclaw-approve-recovered-initial-cli"}, sort_keys=True))
-    raise SystemExit(0)
-
-if "operator.pairing" not in paired_scopes or not isinstance(paired_entry, dict):
+if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
     raise SystemExit(1)
 replacement_allowed = allowed | {"operator.admin"}
 candidates = []
@@ -3597,7 +3207,6 @@ PYAPPROVEAFTER
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
           if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
-            local _nemoclaw_whatsapp_gateway_url _nemoclaw_whatsapp_insecure_ws
             _nemoclaw_whatsapp_gateway_url="${OPENCLAW_GATEWAY_URL:-${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}}"
             _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}}"
             if [ -z "$_nemoclaw_whatsapp_gateway_url" ]; then
@@ -3609,14 +3218,14 @@ PYAPPROVEAFTER
               echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
               return 1
             fi
-            # The OpenClaw gateway is a WebSocket endpoint. Reject a malformed
-            # scheme up front so a typo'd/clobbered URL is reported as a
-            # gateway/env problem rather than failing inside the login as an
-            # ambiguous close.
+            # The OpenClaw gateway is a WebSocket endpoint (set to
+            # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
+            # so a typo'd/clobbered URL is reported as a gateway/env problem
+            # rather than failing inside the login as an ambiguous close.
             case "$_nemoclaw_whatsapp_gateway_url" in
               ws://*|wss://*) ;;
               *)
-                echo "Error: WhatsApp pairing cannot start — gateway URL='$_nemoclaw_whatsapp_gateway_url' is not a ws:// gateway URL." >&2
+                echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
                 echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
                 echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
                 echo "" >&2
@@ -3625,7 +3234,7 @@ PYAPPROVEAFTER
                 return 1
                 ;;
             esac
-            echo "[whatsapp] Pairing via gateway $_nemoclaw_whatsapp_gateway_url." >&2
+            echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
             # Defense-in-depth: connect-session NODE_OPTIONS already wires
             # manifest-declared connect preloads for every openclaw invocation;
@@ -3686,39 +3295,6 @@ PYAPPROVEAFTER
           return 1
         fi
       done
-      _NEMOCLAW_PAIRING_APPROVED=0
-      if _nemoclaw_agent_command_can_retry_pairing "$@"; then
-        _nemoclaw_auto_approve_cli_pairing_once
-        local _nemoclaw_agent_out _nemoclaw_agent_err _nemoclaw_agent_rc _nemoclaw_agent_errexit=0
-        _nemoclaw_agent_out="$(mktemp /tmp/nemoclaw-agent-out.XXXXXX 2>/dev/null || true)"
-        _nemoclaw_agent_err="$(mktemp /tmp/nemoclaw-agent-err.XXXXXX 2>/dev/null || true)"
-        if [ -n "$_nemoclaw_agent_out" ] && [ -n "$_nemoclaw_agent_err" ]; then
-          case $- in *e*) _nemoclaw_agent_errexit=1 ;; esac
-          set +e
-          command openclaw "$@" >"$_nemoclaw_agent_out" 2>"$_nemoclaw_agent_err"
-          _nemoclaw_agent_rc=$?
-          if [ "$_nemoclaw_agent_errexit" = "1" ]; then set -e; else set +e; fi
-          if _nemoclaw_output_needs_pairing_approval "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"; then
-            _NEMOCLAW_PAIRING_APPROVED=0
-            _nemoclaw_auto_approve_cli_pairing_once
-            if [ "${_NEMOCLAW_PAIRING_APPROVED:-0}" = "1" ]; then
-              rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"
-              set +e
-              command openclaw "$@"
-              _nemoclaw_agent_rc=$?
-              if [ "$_nemoclaw_agent_errexit" = "1" ]; then set -e; else set +e; fi
-              _nemoclaw_restore_mutable_config_perms
-              return "$_nemoclaw_agent_rc"
-            fi
-          fi
-          [ ! -s "$_nemoclaw_agent_out" ] || cat "$_nemoclaw_agent_out"
-          [ ! -s "$_nemoclaw_agent_err" ] || cat "$_nemoclaw_agent_err" >&2
-          rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err"
-          _nemoclaw_restore_mutable_config_perms
-          return "$_nemoclaw_agent_rc"
-        fi
-        rm -f -- "$_nemoclaw_agent_out" "$_nemoclaw_agent_err" 2>/dev/null || true
-      fi
       ;;
   esac
   # #4538: re-assert the mutable config perm contract after any openclaw run
@@ -5217,7 +4793,6 @@ if [ "$(id -u)" -ne 0 ]; then
     install_messaging_runtime_preloads
     verify_messaging_runtime_secret_scans
     _nemoclaw_cmd_rc=0
-    prepare_oneshot_openclaw_agent_guard
     run_oneshot_command "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
     exit "$_nemoclaw_cmd_rc"
   fi
@@ -5390,7 +4965,6 @@ setup_auth_profile_as_sandbox
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   _nemoclaw_cmd_rc=0
-  prepare_oneshot_openclaw_agent_guard
   run_oneshot_command "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}" || _nemoclaw_cmd_rc=$?
   exit "$_nemoclaw_cmd_rc"
 fi

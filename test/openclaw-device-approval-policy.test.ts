@@ -17,12 +17,6 @@ const POLICY_PATH = path.join(
 
 const COMPAT_APPROVE_OUTPUT =
   "GatewayClientRequestError: scope upgrade pending approval for requestId request-1";
-const INITIAL_PAIRING_APPROVE_OUTPUT =
-  "GatewayClientRequestError: device pairing required (requestId: request-1)";
-const CLI_DEVICE_ID = "45ca1f45e4a98f7f43cf36bb6bfb3542992eb98a9a5f2a527af767f62192b4b8";
-const CLI_PUBLIC_KEY = "GBEmagaIvyPrVvist7yrKlIMpdTDxbwXaUPFJtp-AwQ";
-const CLI_PUBLIC_KEY_PEM =
-  "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAGBEmagaIvyPrVvist7yrKlIMpdTDxbwXaUPFJtp+AwQ=\n-----END PUBLIC KEY-----\n";
 
 function runRecovery(
   stateDir: string,
@@ -76,91 +70,169 @@ function writeOriginalPendingState(stateDir: string) {
   );
 }
 
-function writeInitialCliPairingState(stateDir: string) {
-  const devicesDir = path.join(stateDir, "devices");
-  const identityDir = path.join(stateDir, "identity");
-  fs.mkdirSync(devicesDir, { recursive: true });
-  fs.mkdirSync(identityDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(devicesDir, "pending.json"),
-    JSON.stringify({
-      "request-1": {
-        requestId: "request-1",
-        deviceId: CLI_DEVICE_ID,
-        publicKey: CLI_PUBLIC_KEY,
-        platform: "linux",
-        clientId: "cli",
-        clientMode: "cli",
-        role: "operator",
-        roles: ["operator"],
-        scopes: ["operator.pairing", "operator.write"],
-      },
-    }),
-  );
-  fs.writeFileSync(path.join(devicesDir, "paired.json"), "{}");
-  fs.writeFileSync(
-    path.join(identityDir, "device.json"),
-    JSON.stringify({
-      version: 1,
-      deviceId: CLI_DEVICE_ID,
-      publicKeyPem: CLI_PUBLIC_KEY_PEM,
-    }),
-  );
+function runPolicySnippet(script: string, args: string[] = []) {
+  return spawnSync("python3", ["-", POLICY_PATH, ...args], {
+    encoding: "utf-8",
+    input: `
+import importlib.util
+import json
+import sys
+
+policy_path = sys.argv[1]
+spec = importlib.util.spec_from_file_location("openclaw_device_approval_policy", policy_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+${script}
+`,
+    timeout: 10_000,
+  });
 }
 
 describe("openclaw device approval policy (#4462)", () => {
-  it("recovers initial CLI pairing when the failed approve leaves a safe same-device request", () => {
+  it("denies first-time CLI approval but allows existing CLI write upgrades (#5324)", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       return;
     }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+
+    const result = runPolicySnippet(`
+first = module.approval_request_decision({
+  "requestId": "first-cli",
+  "deviceId": "cli-1",
+  "publicKey": "cli-key",
+  "clientId": "cli",
+  "clientMode": "cli",
+  "scopes": ["operator.write"],
+}, [])
+upgrade = module.approval_request_decision({
+  "requestId": "upgrade-cli",
+  "deviceId": "cli-1",
+  "publicKey": "cli-key",
+  "clientId": "cli",
+  "clientMode": "cli",
+  "scopes": ["operator.write"],
+}, [{
+  "deviceId": "cli-1",
+  "publicKey": "cli-key",
+  "clientId": "cli",
+  "clientMode": "cli",
+  "approvedScopes": ["operator.pairing"],
+  "tokens": {"operator": {"role": "operator", "scopes": ["operator.pairing"]}},
+}])
+pairing_only = module.approval_request_decision({
+  "requestId": "pairing-only",
+  "deviceId": "cli-1",
+  "publicKey": "cli-key",
+  "clientId": "cli",
+  "clientMode": "cli",
+  "scopes": ["operator.pairing"],
+}, [{
+  "deviceId": "cli-1",
+  "publicKey": "cli-key",
+  "clientId": "cli",
+  "clientMode": "cli",
+  "approvedScopes": ["operator.pairing"],
+  "tokens": {"operator": {"role": "operator", "scopes": ["operator.pairing"]}},
+}])
+print(json.dumps({
+  "first": first["reason"],
+  "upgrade": upgrade["allowed"],
+  "pairing_only": pairing_only["reason"],
+}, sort_keys=True))
+`);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      first: "cli-first-pairing",
+      pairing_only: "cli-pairing-only",
+      upgrade: true,
+    });
+  });
+
+  it("approves allowlisted requests directly in local pairing state (#5324)", () => {
+    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
+      return;
+    }
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-state-"));
     try {
       const stateDir = path.join(tmpDir, "state");
-      writeInitialCliPairingState(stateDir);
+      writeOriginalPendingState(stateDir);
       const devicesDir = path.join(stateDir, "devices");
-      const pendingFile = path.join(devicesDir, "pending.json");
-      const pairedFile = path.join(devicesDir, "paired.json");
-      const authFile = path.join(stateDir, "identity", "device-auth.json");
 
-      const result = runRecovery(stateDir, "request-1", INITIAL_PAIRING_APPROVE_OUTPUT);
+      const result = runPolicySnippet(
+        `
+state_dir, request_id = sys.argv[2:4]
+print(json.dumps(module.approve_allowlisted_request(request_id, state_dir), sort_keys=True))
+`,
+        [stateDir, "request-1"],
+      );
 
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout).compatibility).toBe(
-        "openclaw-approve-recovered-initial-cli",
+      expect(JSON.parse(result.stdout).compatibility).toBe("nemoclaw-local-state-approve");
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"))).toEqual(
+        {},
       );
-      expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toEqual({});
-      const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
-      const expectedScopes = ["operator.pairing", "operator.read", "operator.write"];
-      expect(paired[CLI_DEVICE_ID].publicKey).toBe(CLI_PUBLIC_KEY);
-      expect(paired[CLI_DEVICE_ID].clientId).toBe("cli");
-      expect(paired[CLI_DEVICE_ID].approvedScopes).toEqual(expectedScopes);
-      expect(paired[CLI_DEVICE_ID].tokens.operator.scopes).toEqual(expectedScopes);
-      expect(paired[CLI_DEVICE_ID].tokens.operator.token).toBeTruthy();
-      const auth = JSON.parse(fs.readFileSync(authFile, "utf-8"));
-      expect(auth.deviceId).toBe(CLI_DEVICE_ID);
-      expect(auth.tokens.operator.scopes).toEqual(expectedScopes);
-      expect(auth.tokens.operator.token).toBe(paired[CLI_DEVICE_ID].tokens.operator.token);
-      expect(JSON.stringify(paired)).not.toContain("operator.admin");
+      const paired = JSON.parse(fs.readFileSync(path.join(devicesDir, "paired.json"), "utf-8"));
+      expect(paired["device-1"].approvedScopes).toEqual(["operator.pairing", "operator.write"]);
+      expect(paired["device-1"].tokens.operator.scopes).toEqual([
+        "operator.pairing",
+        "operator.write",
+      ]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("does not recover initial CLI pairing when the identity key does not match", () => {
+  it("prunes stale CLI pairing-only devices and clears matching local device auth (#5324)", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       return;
     }
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-prune-"));
     try {
       const stateDir = path.join(tmpDir, "state");
-      writeInitialCliPairingState(stateDir);
-      const identityFile = path.join(stateDir, "identity", "device.json");
-      fs.writeFileSync(identityFile, JSON.stringify({ version: 1, deviceId: "wrong" }));
+      const devicesDir = path.join(stateDir, "devices");
+      const identityDir = path.join(stateDir, "identity");
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.mkdirSync(identityDir, { recursive: true });
+      fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify({}));
+      fs.writeFileSync(
+        path.join(devicesDir, "paired.json"),
+        JSON.stringify({
+          "cli-1": {
+            deviceId: "cli-1",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            approvedScopes: ["operator.pairing"],
+            tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(identityDir, "device-auth.json"),
+        JSON.stringify({
+          version: 1,
+          deviceId: "cli-1",
+          tokens: { operator: { token: "old", role: "operator", scopes: ["operator.pairing"] } },
+        }),
+      );
 
-      const result = runRecovery(stateDir, "request-1", INITIAL_PAIRING_APPROVE_OUTPUT);
+      const result = runPolicySnippet(
+        `
+state_dir = sys.argv[2]
+print(json.dumps(module.prune_cli_pairing_only_devices(state_dir), sort_keys=True))
+`,
+        [stateDir],
+      );
 
       expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout)).toBeNull();
+      expect(JSON.parse(result.stdout)).toEqual(["cli-1"]);
+      expect(JSON.parse(fs.readFileSync(path.join(devicesDir, "paired.json"), "utf-8"))).toEqual(
+        {},
+      );
+      expect(
+        JSON.parse(fs.readFileSync(path.join(identityDir, "device-auth.json"), "utf-8")).tokens,
+      ).toEqual({});
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

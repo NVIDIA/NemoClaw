@@ -34,7 +34,7 @@ export function printSessionsPassthroughHelp(verb?: SessionsPassthroughVerb): vo
   console.log(
     `  Pass-through to \`openclaw sessions${usageSuffix} ...\` inside the sandbox via \`openshell sandbox exec\`.`,
   );
-  console.log("  Internal NemoClaw onboard warm-up sessions are hidden from default list output.");
+  console.log("  Legacy internal NemoClaw warm-up sessions are hidden from default list output.");
   console.log("  All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim.");
   console.log("");
 }
@@ -171,13 +171,11 @@ function warmupIdInTextRow(line: string): boolean {
 }
 
 // Text output is a compatibility wrapper around OpenClaw's non-TTY table.
-// OpenClaw owns the table format and currently stores NemoClaw's onboarding
-// scope-upgrade warm-up as a normal session, so we hide rows whose session-id
-// field uses the internal warm-up prefix. The accepted source boundary is only
-// session-id shaped cells (`id:`, `sessionId:`, `sid:`, or a bare id column), not
-// arbitrary notes that merely mention the prefix. Prefer the JSON path for
-// stable structure; remove this text filter when OpenClaw can mark/prevent the
-// internal warm-up session or NemoClaw renders list output from stable JSON.
+// OpenClaw owns the table format. Older NemoClaw builds stored an internal
+// warm-up as a normal session, so we hide rows whose session-id field uses the
+// legacy internal prefix. The accepted source boundary is only session-id shaped
+// cells (`id:`, `sessionId:`, `sid:`, or a bare id column), not arbitrary notes
+// that merely mention the prefix. Prefer the JSON path for stable structure.
 export function filterWarmupSessionsListText(output: string): string {
   const lines = output.split(/\r?\n/);
   let removed = 0;

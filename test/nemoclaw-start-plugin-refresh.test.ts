@@ -56,7 +56,7 @@ function extractRefreshBlock(): string {
 // step-down prefix. Returns the temp dir so the caller can inspect the
 // stub log and the refresh status sentinel.
 function runRefreshBlock(
-  opts: { gatewayReadyAfter: number; rootMode?: boolean } = {
+  opts: { gatewayReadyAfter: number; rootMode?: boolean; pluginRefreshSleepS?: number } = {
     gatewayReadyAfter: 1,
     rootMode: true,
   },
@@ -109,7 +109,7 @@ function runRefreshBlock(
       `  if [ "$count" -ge ${opts.gatewayReadyAfter} ]; then exit 0; else exit 1; fi`,
       "fi",
       `if [ "$1" = "plugins" ] && [ "$2" = "registry" ] && [ "$3" = "--refresh" ]; then`,
-      "  command sleep 0.2",
+      `  command sleep ${opts.pluginRefreshSleepS ?? 0.2}`,
       `  printf 'CALL=plugins registry --refresh HOME=%s STEP_DOWN_USER=%s USER=%s\\n' "$HOME" "\${STEP_DOWN_USER:-}" "$(id -un)" >> ${JSON.stringify(envLog)}`,
       `  cp ${JSON.stringify(registryState)} ${JSON.stringify(preRefreshState)}`,
       `  cat > ${JSON.stringify(registryState)} <<'REGISTRY_STATE'`,
@@ -163,6 +163,8 @@ function runRefreshBlock(
     "GATEWAY_WATCHDOG_PID_START_IDENTITY=",
     'gateway_control_pid_is_live() { case "$1" in ""|0|1|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }',
     block,
+    "command sleep 0.05",
+    "refresh_openclaw_supervised_child_pids",
     "# Surface PLUGIN_REFRESH_PID + tracked SANDBOX_CHILD_PIDS for the test",
     'printf "PLUGIN_REFRESH_PID=%s\\n" "$PLUGIN_REFRESH_PID"',
     'printf "SANDBOX_CHILD_PIDS=%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
@@ -359,8 +361,10 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
       expect(fs.existsSync(refreshLog)).toBe(false);
       const calls = fs.readFileSync(callLog, "utf-8");
       const probeCount = calls.split("\n").filter((l) => l === "gateway status").length;
+      // The plugin refresh waits up to 10 probes before skipping.
       expect(probeCount).toBe(10);
       expect(calls).not.toMatch(/^plugins registry --refresh$/m);
+      expect(calls).not.toMatch(/^gateway call sessions.abort/m);
       expect(result.stderr).toContain("gateway did not become ready");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -370,7 +374,7 @@ describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)
   it("captures PLUGIN_REFRESH_PID and appends it to SANDBOX_CHILD_PIDS", () => {
     // SIGTERM cleanup walks SANDBOX_CHILD_PIDS; the refresh subshell must
     // be reaped or it can outlive the sandbox container by ~10s.
-    const { result, tmpDir } = runRefreshBlock();
+    const { result, tmpDir } = runRefreshBlock({ gatewayReadyAfter: 1, pluginRefreshSleepS: 1 });
     try {
       expect(result.status).toBe(0);
       const stdout =

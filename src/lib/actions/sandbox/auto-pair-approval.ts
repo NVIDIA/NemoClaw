@@ -21,15 +21,13 @@
  * clients plus `webchat`/`cli` modes, restricted to operator.pairing/read/write
  * scopes. Unknown clients are ignored, never approved.
  *
- * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
- * semantics. In OpenClaw 2026.5.x, a gateway-pinned `devices approve` for a
- * scope-upgrade can request the upgraded scopes for its own connection and
- * return the pending-scope failure it is trying to resolve. The approval call
- * therefore strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env to use
- * OpenClaw's local pairing fallback; the list call stays gateway-pinned so it
- * inspects the live gateway. Remove this local fallback path when OpenClaw
- * approve can complete scope upgrades through the gateway using only
- * operator.pairing.
+ * Root cause boundary (NemoClaw#5324): `openclaw devices list/approve` are
+ * normal CLI gateway clients. Running them from NemoClaw's background approval
+ * path can silently pair the shared CLI device with only operator.pairing,
+ * turning the user's later `openclaw agent -m` into an explicit scope-upgrade
+ * prompt. This pass therefore reads and updates OpenClaw's local device-pairing
+ * state directly through the shared policy helper instead of invoking the
+ * OpenClaw CLI.
  */
 
 import { spawnSync } from "node:child_process";
@@ -39,13 +37,12 @@ import path from "node:path";
 import { shellQuote } from "../../core/shell-quote";
 import { ROOT } from "../../state/paths";
 
-// Bound the in-sandbox work: 2s list + 1s × MAX_APPROVALS attempts plus
-// shell/python startup slack fits inside the outer spawnSync cap, so a wedged
-// sandbox can never block the caller. These are the defaults for the doctor
-// recovery surface (#4616), which batch-clears any backlog of pending upgrades.
+// Bound the in-sandbox work. The state-only pass does no gateway I/O, but the
+// outer cap still protects callers from a wedged sandbox exec or Python start.
 export const AUTO_PAIR_MAX_APPROVALS = 8;
 export const AUTO_PAIR_APPROVAL_TIMEOUT_MS = 12_000;
-// Default per-call budgets (seconds) for the in-sandbox openclaw subcommands.
+// Historical budget fields remain for callers/tests; the state-only pass uses
+// maxApprovals and the outer timeout.
 const AUTO_PAIR_LIST_TIMEOUT_S = 2;
 const AUTO_PAIR_APPROVE_TIMEOUT_S = 1;
 
@@ -125,18 +122,15 @@ export function buildAutoPairApprovalScript(
     ? "print(f'__NEMOCLAW_AUTO_PAIR_APPROVED__={approved_count}')\n"
     : "";
   const maxApprovals = options.budget?.maxApprovals ?? AUTO_PAIR_MAX_APPROVALS;
-  const listTimeoutS = options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S;
-  const approveTimeoutS = options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S;
+  void (options.budget?.listTimeoutS ?? AUTO_PAIR_LIST_TIMEOUT_S);
+  void (options.budget?.approveTimeoutS ?? AUTO_PAIR_APPROVE_TIMEOUT_S);
   return `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
-command -v openclaw >/dev/null 2>&1 || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
-OPENCLAW_BIN="$(command -v openclaw)" NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
+NEMOCLAW_APPROVAL_POLICY_B64=${shellQuote(approvalPolicyModuleB64)} python3 - <<'PYAPPROVE'
 import base64
-import json
 import os
-import subprocess
 import sys
 
 try:
@@ -146,32 +140,25 @@ try:
     policy_globals = {}
     exec(compile(policy_source, 'openclaw_device_approval_policy.py', 'exec'), policy_globals)
     approval_request_decision = policy_globals['approval_request_decision']
-    gateway_approval_env = policy_globals['gateway_approval_env']
-    recover_failed_scope_approval = policy_globals.get('recover_failed_scope_approval')
+    approve_allowlisted_request = policy_globals['approve_allowlisted_request']
+    local_pairing_list = policy_globals['local_pairing_list']
+    prune_cli_pairing_only_devices = policy_globals['prune_cli_pairing_only_devices']
 except Exception:
     sys.exit(0)
 
-OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 MAX_APPROVALS = ${maxApprovals}
+STATE_DIR = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
 
 try:
-    proc = subprocess.run(
-        [OPENCLAW, 'devices', 'list', '--json'],
-        capture_output=True, text=True, timeout=${listTimeoutS},
-    )
-except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-    sys.exit(0)
-if proc.returncode != 0 or not proc.stdout.strip():
-    sys.exit(0)
-try:
-    data = json.loads(proc.stdout)
-except ValueError:
+    data = local_pairing_list(STATE_DIR)
+except Exception:
     sys.exit(0)
 if not isinstance(data, dict):
     sys.exit(0)
 pending = data.get('pending')
 if not isinstance(pending, list):
     sys.exit(0)
+paired = data.get('paired') if isinstance(data.get('paired'), list) else []
 approved_count = 0
 attempted_count = 0
 seen_request_ids = set()
@@ -183,30 +170,21 @@ for device in pending:
     request_id = device.get('requestId')
     if not request_id or request_id in seen_request_ids:
         continue
-    decision = approval_request_decision(device)
+    decision = approval_request_decision(device, paired)
     if not decision['allowed']:
         continue
     seen_request_ids.add(request_id)
-    approve_env = gateway_approval_env(os.environ)
     attempted_count += 1
     try:
-        approve_proc = subprocess.run(
-            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
-            capture_output=True, text=True, timeout=${approveTimeoutS}, env=approve_env,
-        )
-        if approve_proc.returncode == 0:
+        approved = approve_allowlisted_request(request_id, STATE_DIR, device)
+        if approved:
             approved_count += 1
-        elif callable(recover_failed_scope_approval):
-            recovered = recover_failed_scope_approval(
-                request_id,
-                os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                approve_proc.stderr or approve_proc.stdout or '',
-                device,
-            )
-            if recovered:
-                approved_count += 1
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except Exception:
         continue
+try:
+    prune_cli_pairing_only_devices(STATE_DIR)
+except Exception:
+    pass
 ${summaryLine}PYAPPROVE
 exit 0
 `;
@@ -214,8 +192,8 @@ exit 0
 
 /**
  * Run the bounded approval pass inside the named sandbox via `openshell sandbox
- * exec`. Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
- * unreachable, missing policy helper) are swallowed: callers treat this as
+ * exec`. Failure modes (timeout, sandbox-exec errors, state read/write errors,
+ * missing policy helper) are swallowed: callers treat this as
  * best-effort and must never let it throw.
  *
  * When `capture` is true the script emits a summary marker and this function

@@ -85,6 +85,13 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
+const SANDBOX_RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
+const SANDBOX_RUNTIME_ENV_EXEC_SCRIPT = `[ -r "${SANDBOX_RUNTIME_ENV_FILE}" ] && . "${SANDBOX_RUNTIME_ENV_FILE}"; exec "$@"`;
+
+export function wrapExecCommandWithRuntimeEnv(command: readonly string[]): string[] {
+  return ["sh", "-c", SANDBOX_RUNTIME_ENV_EXEC_SCRIPT, "nemoclaw-exec", ...command];
+}
+
 export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {
   return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
 }
@@ -376,7 +383,30 @@ export type ExecSandboxDeps = {
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
   run?: SandboxExecRunner;
+  cleanupDeps?: SandboxExecCleanupDeps;
+  preExecApprovalPass?: (sandboxName: string) => void;
 };
+
+function defaultPreExecApprovalPass(sandboxName: string): void {
+  const { runSandboxAutoPairApprovalPass } =
+    require("./auto-pair-approval") as typeof import("./auto-pair-approval");
+  const budget = require("./connect-autopair-budget") as typeof import("./connect-autopair-budget");
+  runSandboxAutoPairApprovalPass(sandboxName, {
+    budget: {
+      maxApprovals: budget.CONNECT_AUTO_PAIR_MAX_APPROVALS,
+      listTimeoutS: budget.CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,
+      approveTimeoutS: budget.CONNECT_AUTO_PAIR_APPROVE_TIMEOUT_S,
+      timeoutMs: budget.CONNECT_AUTO_PAIR_TIMEOUT_MS,
+    },
+  });
+}
+
+function resolvePreExecApprovalPass(
+  deps: ExecSandboxDeps,
+): ((sandboxName: string) => void) | undefined {
+  if (deps.preExecApprovalPass) return deps.preExecApprovalPass;
+  return Object.keys(deps).length === 0 ? defaultPreExecApprovalPass : undefined;
+}
 
 export async function execSandbox(
   sandboxName: string,
@@ -400,13 +430,14 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
+  resolvePreExecApprovalPass(deps)?.(sandboxName);
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
-    command,
+    wrapExecCommandWithRuntimeEnv(command),
     options,
     deps.run ?? runSandboxExecChild,
-    {
+    deps.cleanupDeps ?? {
       getSandbox: (name) =>
         (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
       inspectMutableConfigPerms: (name) =>

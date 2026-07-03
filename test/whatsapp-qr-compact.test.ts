@@ -225,7 +225,13 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
 
   function runGuard(
     args: string[],
-    opts: { gatewayUrl?: string; preloadPresent?: boolean; fakeExit?: number },
+    opts: {
+      gatewayUrl?: string;
+      privateGatewayUrl?: string;
+      insecurePrivateWs?: string;
+      preloadPresent?: boolean;
+      fakeExit?: number;
+    },
   ): { status: number; stdout: string; stderr: string; preloadPath: string } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wa-guard-"));
     try {
@@ -239,6 +245,8 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
           "#!/usr/bin/env bash",
           'echo "FAKE_OPENCLAW_ARGS=$*"',
           'echo "FAKE_OPENCLAW_NODE_OPTIONS=${NODE_OPTIONS:-}"',
+          'echo "FAKE_OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-unset}"',
+          'echo "FAKE_OPENCLAW_INSECURE_WS=${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-unset}"',
           `exit ${opts.fakeExit ?? 0}`,
         ].join("\n"),
         { mode: 0o755 },
@@ -263,6 +271,20 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
         wrapperLines.push(`export OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.gatewayUrl)}`);
       } else {
         wrapperLines.push("unset OPENCLAW_GATEWAY_URL");
+      }
+      if (opts.privateGatewayUrl !== undefined) {
+        wrapperLines.push(
+          `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.privateGatewayUrl)}`,
+        );
+      } else {
+        wrapperLines.push("unset NEMOCLAW_OPENCLAW_GATEWAY_URL");
+      }
+      if (opts.insecurePrivateWs !== undefined) {
+        wrapperLines.push(
+          `export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePrivateWs)}`,
+        );
+      } else {
+        wrapperLines.push("unset NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS");
       }
       wrapperLines.push(
         guardBody,
@@ -326,6 +348,19 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       preloadPresent: true,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    expect(r.stdout).toContain(`FAKE_OPENCLAW_GATEWAY_URL=${goodUrl}`);
+    expect(r.stdout).toContain("GUARD_EXIT=0");
+  });
+
+  it("uses the NemoClaw-private gateway alias for WhatsApp login", () => {
+    const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
+      privateGatewayUrl: "ws://10.200.0.2:18790",
+      insecurePrivateWs: "1",
+      preloadPresent: true,
+    });
+    expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_GATEWAY_URL=ws://10.200.0.2:18790");
+    expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=1");
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 

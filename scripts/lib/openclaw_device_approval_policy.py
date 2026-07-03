@@ -3,12 +3,10 @@
 
 """Shared OpenClaw device approval policy for NemoClaw sandbox helpers."""
 
+import base64
 import json
 import os
 import re
-import base64
-import hashlib
-import secrets
 import time
 from pathlib import Path
 
@@ -16,6 +14,8 @@ from pathlib import Path
 ALLOWED_CLIENTS = {"openclaw-control-ui"}
 ALLOWED_MODES = {"webchat", "cli"}
 ALLOWED_SCOPES = {"operator.pairing", "operator.read", "operator.write"}
+CLI_CLIENT_IDS = {"cli", "openclaw-cli"}
+READ_WRITE_SCOPES = {"operator.read", "operator.write"}
 
 GATEWAY_APPROVAL_ENV_KEYS = (
     "OPENCLAW_GATEWAY_URL",
@@ -36,7 +36,45 @@ def requested_scopes(device):
     return {str(scope).strip() for scope in scopes if str(scope or "").strip()}
 
 
-def approval_request_decision(device):
+def _is_cli_request(device):
+    client_id = str(device.get("clientId", "")).strip().lower()
+    client_mode = str(device.get("clientMode", "")).strip().lower()
+    return client_mode == "cli" or client_id in CLI_CLIENT_IDS
+
+
+def _is_same_public_key(left, right):
+    left_key = _norm((left or {}).get("publicKey"))
+    right_key = _norm((right or {}).get("publicKey"))
+    return not left_key or not right_key or left_key == right_key
+
+
+def _iter_paired(paired):
+    if isinstance(paired, dict):
+        return [item for item in paired.values() if isinstance(item, dict)]
+    if isinstance(paired, list):
+        return [item for item in paired if isinstance(item, dict)]
+    return []
+
+
+def _paired_lookup(paired):
+    out = {}
+    for item in _iter_paired(paired):
+        device_id = _norm(item.get("deviceId"))
+        if device_id:
+            out[device_id] = item
+    return out
+
+
+def _paired_scope_set(entry):
+    if not isinstance(entry, dict):
+        return set()
+    scopes = _scope_set(entry, "approvedScopes") | _scope_set(entry)
+    operator = entry.get("tokens", {}).get("operator") if isinstance(entry.get("tokens"), dict) else None
+    scopes |= _scope_set(operator or {})
+    return scopes
+
+
+def approval_request_decision(device, paired=None):
     client_id = str(device.get("clientId", ""))
     client_mode = str(device.get("clientMode", ""))
     if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
@@ -66,6 +104,34 @@ def approval_request_decision(device):
             "scopes": scopes,
         }
 
+    if _is_cli_request(device):
+        paired_entry = _paired_lookup(paired).get(_norm(device.get("deviceId")))
+        if not isinstance(paired_entry, dict) or not _is_same_public_key(device, paired_entry):
+            return {
+                "allowed": False,
+                "reason": "cli-first-pairing",
+                "client_id": client_id,
+                "client_mode": client_mode,
+                "scopes": scopes,
+            }
+        paired_scopes = _paired_scope_set(paired_entry)
+        if "operator.pairing" not in paired_scopes:
+            return {
+                "allowed": False,
+                "reason": "cli-missing-pairing-baseline",
+                "client_id": client_id,
+                "client_mode": client_mode,
+                "scopes": scopes,
+            }
+        if not (scopes & READ_WRITE_SCOPES):
+            return {
+                "allowed": False,
+                "reason": "cli-pairing-only",
+                "client_id": client_id,
+                "client_mode": client_mode,
+                "scopes": scopes,
+            }
+
     return {
         "allowed": True,
         "reason": "allowlisted",
@@ -92,42 +158,6 @@ def _scope_set(entry, key="scopes"):
     return {_norm(scope) for scope in (entry.get(key) or []) if _norm(scope)}
 
 
-def _role_set(entry):
-    if not isinstance(entry, dict):
-        return set()
-    roles = {_norm(role) for role in (entry.get("roles") or []) if _norm(role)}
-    role = _norm(entry.get("role"))
-    if role:
-        roles.add(role)
-    return roles
-
-
-def _identity_public_key(identity):
-    direct = _norm(identity.get("publicKey"))
-    if direct:
-        return direct
-    pem = _norm(identity.get("publicKeyPem"))
-    if not pem:
-        return ""
-    body = "".join(line.strip() for line in pem.splitlines() if not line.startswith("-----"))
-    try:
-        der = base64.b64decode(body, validate=True)
-    except Exception:
-        return ""
-    prefix = bytes.fromhex("302a300506032b6570032100")
-    if len(der) != len(prefix) + 32 or not der.startswith(prefix):
-        return ""
-    return base64.urlsafe_b64encode(der[len(prefix) :]).decode("ascii").rstrip("=")
-
-
-def _identity_key_matches_device_id(public_key, device_id):
-    try:
-        raw = base64.urlsafe_b64decode(public_key + "=" * (-len(public_key) % 4))
-    except Exception:
-        return False
-    return len(raw) == 32 and hashlib.sha256(raw).hexdigest() == device_id
-
-
 def _load_device_state(devices_dir, name):
     try:
         value = json.loads((devices_dir / name).read_text(encoding="utf-8"))
@@ -137,57 +167,10 @@ def _load_device_state(devices_dir, name):
 
 
 def _save_device_state(devices_dir, name, value):
-    path = devices_dir / name
-    tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    _save_json_file(devices_dir / name, value)
 
 
-def _output_mentions_request_id(output, request_id):
-    request = _norm(request_id)
-    if not request:
-        return False
-    return bool(re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", output or ""))
-
-
-def _is_scope_upgrade_approval_compat_failure(output):
-    text = _norm(output).lower()
-    return "scope upgrade pending approval" in text and (
-        "gatewayclientrequesterror" in text or "gateway" in text
-    )
-
-
-def _is_pairing_required_approval_compat_failure(output):
-    text = _norm(output).lower()
-    return ("device pairing required" in text or "pairing required" in text) and (
-        "gatewayclientrequesterror" in text
-        or "gateway requires device pairing" in text
-        or "gateway connect failed" in text
-    )
-
-
-def _compatible_cli_pairing_request(item, device_id, public_key, allowed):
-    if not isinstance(item, dict):
-        return False
-    scopes = _scope_set(item) or _scope_set(item, "requestedScopes")
-    client_id = _norm(item.get("clientId"))
-    return bool(
-        _norm(item.get("requestId"))
-        and _norm(item.get("deviceId")) == device_id
-        and _norm(item.get("publicKey")) == public_key
-        and _norm(item.get("clientMode")).lower() == "cli"
-        and (not client_id or client_id in {"cli", "openclaw-cli"})
-        and _role_set(item) == {"operator"}
-        and scopes
-        and "operator.pairing" in scopes
-        and scopes.issubset(allowed)
-    )
-
-
-def _write_json_path(path, value, mode=0o600):
+def _save_json_file(path, value, mode=0o600):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.tmp")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -202,15 +185,235 @@ def _write_json_path(path, value, mode=0o600):
     os.replace(tmp, path)
 
 
-def recover_failed_scope_approval(request_id, state_dir=None, approve_output="", original_request=None):
-    """Repair narrow OpenClaw 2026.5.x nonzero CLI approval states.
+def _output_mentions_request_id(output, request_id):
+    request = _norm(request_id)
+    if not request:
+        return False
+    return bool(re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", output or ""))
 
-    OpenClaw can apply, replace, or leave behind allowlisted CLI operator
-    pairing/write requests while returning a gateway-connect failure to the
+
+def _state_dir_path(state_dir=None):
+    return Path(state_dir or os.environ.get("OPENCLAW_STATE_DIR") or "/sandbox/.openclaw")
+
+
+def _devices_dir_path(state_dir=None):
+    return _state_dir_path(state_dir) / "devices"
+
+
+def _pending_items(pending):
+    if not isinstance(pending, dict):
+        return []
+    return [(key, item) for key, item in pending.items() if isinstance(item, dict)]
+
+
+def _load_pairing_state(state_dir=None):
+    devices_dir = _devices_dir_path(state_dir)
+    return (
+        devices_dir,
+        _load_device_state(devices_dir, "pending.json"),
+        _load_device_state(devices_dir, "paired.json"),
+    )
+
+
+def local_pairing_list(state_dir=None):
+    """Return OpenClaw device-pairing state without opening a CLI gateway connection."""
+
+    _devices_dir, pending, paired = _load_pairing_state(state_dir)
+    return {
+        "pending": [item for _key, item in _pending_items(pending)],
+        "paired": _iter_paired(paired),
+    }
+
+
+def _role_list(entry):
+    roles = []
+    raw_roles = entry.get("roles")
+    if isinstance(raw_roles, list):
+        roles.extend(_norm(role) for role in raw_roles if _norm(role))
+    role = _norm(entry.get("role"))
+    if role:
+        roles.append(role)
+    if not roles and any(scope.startswith("operator.") for scope in requested_scopes(entry) or set()):
+        roles.append("operator")
+    out = []
+    for role in roles:
+        if role not in out:
+            out.append(role)
+    return out
+
+
+def _merge_lists(*items):
+    out = []
+    for item in items:
+        if not isinstance(item, list):
+            continue
+        for value in item:
+            normalized = _norm(value)
+            if normalized and normalized not in out:
+                out.append(normalized)
+    return out
+
+
+def _canonical_scopes(scopes):
+    order = ("operator.pairing", "operator.read", "operator.write")
+    return [scope for scope in order if scope in scopes] + sorted(scope for scope in scopes if scope not in order)
+
+
+def _new_pairing_token():
+    return base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode("ascii")
+
+
+def _token_scopes_for_role(role, approved_scopes):
+    if role == "operator":
+        return [scope for scope in approved_scopes if scope.startswith("operator.")]
+    return [scope for scope in approved_scopes if not scope.startswith("operator.")]
+
+
+def _clear_identity_device_auth_token(state_dir, device_id, role="operator"):
+    auth_path = _state_dir_path(state_dir) / "identity" / "device-auth.json"
+    store = _load_device_state(auth_path.parent, auth_path.name)
+    if store.get("version") != 1 or _norm(store.get("deviceId")) != _norm(device_id):
+        return False
+    tokens = store.get("tokens")
+    if not isinstance(tokens, dict) or role not in tokens:
+        return False
+    next_store = dict(store)
+    next_tokens = dict(tokens)
+    next_tokens.pop(role, None)
+    next_store["tokens"] = next_tokens
+    _save_json_file(auth_path, next_store)
+    return True
+
+
+def approve_allowlisted_request(request_id, state_dir=None, original_request=None):
+    """Approve one allowlisted pending device request by editing local OpenClaw state.
+
+    This deliberately avoids running `openclaw devices list/approve`: those
+    commands are ordinary CLI gateway clients, so using them from NemoClaw's
+    background approval path can silently create a pairing-only CLI device and
+    turn a later `openclaw agent -m` into a scope-upgrade prompt.
+    """
+
+    request_id = _norm(request_id)
+    if not request_id:
+        return None
+    devices_dir, pending, paired = _load_pairing_state(state_dir)
+    request_key = None
+    request = original_request if isinstance(original_request, dict) else None
+    for key, item in _pending_items(pending):
+        if _norm(item.get("requestId")) == request_id:
+            request_key = key
+            request = item
+            break
+    if not isinstance(request, dict):
+        return None
+    decision = approval_request_decision(request, paired)
+    if not decision.get("allowed"):
+        return None
+
+    requested = requested_scopes(request) or set()
+    if not requested or not requested.issubset(ALLOWED_SCOPES):
+        return None
+    device_id = _norm(request.get("deviceId"))
+    if not device_id:
+        return None
+    existing = paired.get(device_id) if isinstance(paired, dict) else None
+    existing = existing if isinstance(existing, dict) else {}
+    now = int(time.time() * 1000)
+    approved_scopes = _canonical_scopes(
+        _scope_set(existing, "approvedScopes") | _scope_set(existing) | requested
+    )
+    roles = _merge_lists(existing.get("roles"), _role_list(request))
+    role = _norm(request.get("role")) or (roles[0] if roles else None)
+    tokens = dict(existing.get("tokens") if isinstance(existing.get("tokens"), dict) else {})
+    for token_role in roles:
+        current = tokens.get(token_role) if isinstance(tokens.get(token_role), dict) else {}
+        tokens[token_role] = {
+            "token": _new_pairing_token(),
+            "role": token_role,
+            "scopes": _token_scopes_for_role(token_role, approved_scopes),
+            "createdAtMs": current.get("createdAtMs") if isinstance(current.get("createdAtMs"), int) else now,
+            **({"rotatedAtMs": now} if current else {}),
+            **({"lastUsedAtMs": current.get("lastUsedAtMs")} if isinstance(current.get("lastUsedAtMs"), int) else {}),
+        }
+
+    paired[device_id] = {
+        "deviceId": device_id,
+        "publicKey": _norm(request.get("publicKey")) or _norm(existing.get("publicKey")),
+        **({"displayName": request.get("displayName")} if _norm(request.get("displayName")) else {}),
+        **({"platform": request.get("platform")} if _norm(request.get("platform")) else {}),
+        **({"deviceFamily": request.get("deviceFamily")} if _norm(request.get("deviceFamily")) else {}),
+        **({"clientId": request.get("clientId")} if _norm(request.get("clientId")) else {}),
+        **({"clientMode": request.get("clientMode")} if _norm(request.get("clientMode")) else {}),
+        **({"role": role} if role else {}),
+        **({"roles": roles} if roles else {}),
+        "scopes": approved_scopes,
+        "approvedScopes": approved_scopes,
+        **({"remoteIp": request.get("remoteIp")} if _norm(request.get("remoteIp")) else {}),
+        "tokens": tokens,
+        "createdAtMs": existing.get("createdAtMs") if isinstance(existing.get("createdAtMs"), int) else now,
+        "approvedAtMs": now,
+        "lastSeenAtMs": now,
+        "lastSeenReason": "nemoclaw-auto-approve",
+    }
+    if request_key:
+        pending.pop(request_key, None)
+    pending.pop(request_id, None)
+    _save_device_state(devices_dir, "pending.json", pending)
+    _save_device_state(devices_dir, "paired.json", paired)
+    return {
+        "requestId": request_id,
+        "deviceId": device_id,
+        "approvedScopes": approved_scopes,
+        "compatibility": "nemoclaw-local-state-approve",
+    }
+
+
+def prune_cli_pairing_only_devices(state_dir=None):
+    """Remove stale CLI devices that NemoClaw previously paired with pairing-only scope."""
+
+    devices_dir, pending, paired = _load_pairing_state(state_dir)
+    if not isinstance(paired, dict):
+        return []
+    pending_device_ids = {_norm(item.get("deviceId")) for _key, item in _pending_items(pending)}
+    removed = []
+    for device_id, entry in list(paired.items()):
+        if not isinstance(entry, dict) or not _is_cli_request(entry):
+            continue
+        normalized_id = _norm(entry.get("deviceId")) or _norm(device_id)
+        if not normalized_id or normalized_id in pending_device_ids:
+            continue
+        roles = set(_role_list(entry))
+        if roles and roles != {"operator"}:
+            continue
+        scopes = _paired_scope_set(entry)
+        if scopes != {"operator.pairing"}:
+            continue
+        paired.pop(device_id, None)
+        _clear_identity_device_auth_token(state_dir, normalized_id, "operator")
+        removed.append(normalized_id)
+    if removed:
+        _save_device_state(devices_dir, "paired.json", paired)
+    return removed
+
+
+def _is_scope_upgrade_approval_compat_failure(output):
+    text = _norm(output).lower()
+    return "scope upgrade pending approval" in text and (
+        "gatewayclientrequesterror" in text or "gateway" in text
+    )
+
+
+def recover_failed_scope_approval(request_id, state_dir=None, approve_output="", original_request=None):
+    """Repair a narrow OpenClaw 2026.5.x nonzero scope-upgrade approval state.
+
+    OpenClaw can apply, replace, or leave behind an allowlisted CLI/webchat
+    operator.write upgrade while returning a gateway-connect failure to the
     caller. This helper only edits local OpenClaw device state when the pending
-    request matches the persisted CLI identity, the approve output matches a
-    known gateway pairing/scope-upgrade failure signature, and the requested
-    scopes are limited to NemoClaw's allowlist. It never grants operator.admin.
+    request and paired device are already present, the approve output matches
+    the known gateway scope-upgrade failure signature, the requested scopes are
+    limited to NemoClaw's allowlist, and the device already has
+    operator.pairing. It never grants operator.admin.
     """
 
     request_id = _norm(request_id)
@@ -235,7 +438,13 @@ def recover_failed_scope_approval(request_id, state_dir=None, approve_output="",
     paired_entry = paired.get(device_id) if device_id else None
     paired_scopes = _scope_set(paired_entry or {}, "approvedScopes") | _scope_set(paired_entry or {})
     allowed = {"operator.pairing", "operator.read", "operator.write"}
-    if not device_id or not requested or not requested.issubset(allowed):
+    if (
+        not device_id
+        or not requested
+        or not requested.issubset(allowed)
+        or "operator.pairing" not in paired_scopes
+        or not isinstance(paired_entry, dict)
+    ):
         return None
 
     still_pending = original_key is not None
@@ -246,107 +455,6 @@ def recover_failed_scope_approval(request_id, state_dir=None, approve_output="",
             "approvedScopes": sorted(requested),
             "compatibility": "openclaw-approve-applied-after-nonzero",
         }
-
-    public_key = _norm(original.get("publicKey"))
-    client_id = _norm(original.get("clientId"))
-    same_device_pending = [
-        (key, item)
-        for key, item in pending.items()
-        if isinstance(item, dict) and _norm(item.get("deviceId")) == device_id
-    ]
-    if (
-        not isinstance(paired_entry, dict)
-        and public_key
-        and "operator.pairing" in requested
-        and _norm(original.get("clientMode")).lower() == "cli"
-        and (not client_id or client_id in {"cli", "openclaw-cli"})
-        and _role_set(original) == {"operator"}
-        and same_device_pending
-        and all(
-            _compatible_cli_pairing_request(item, device_id, public_key, allowed)
-            for _, item in same_device_pending
-        )
-        and _is_pairing_required_approval_compat_failure(approve_output)
-    ):
-        identity_path = devices_dir.parent / "identity" / "device.json"
-        auth_path = devices_dir.parent / "identity" / "device-auth.json"
-        try:
-            identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-        identity_public_key = _identity_public_key(identity if isinstance(identity, dict) else {})
-        if (
-            _norm(identity.get("deviceId") if isinstance(identity, dict) else "") != device_id
-            or identity_public_key != public_key
-            or not _identity_key_matches_device_id(public_key, device_id)
-        ):
-            return None
-
-        approved = set(requested)
-        if "operator.write" in approved:
-            approved.add("operator.read")
-        if {"operator.read", "operator.write"} & approved:
-            approved.add("operator.pairing")
-        if not approved.issubset(allowed):
-            return None
-        approved_list = [
-            scope for scope in ("operator.pairing", "operator.read", "operator.write") if scope in approved
-        ]
-        token = secrets.token_urlsafe(32)
-        if not token or token == _norm(os.environ.get("OPENCLAW_GATEWAY_TOKEN")):
-            return None
-        now = int(time.time() * 1000)
-        operator_token = {
-            "token": token,
-            "role": "operator",
-            "scopes": approved_list,
-            "createdAtMs": now,
-        }
-        paired_entry = {
-            "deviceId": device_id,
-            "publicKey": public_key,
-            "displayName": original.get("displayName"),
-            "platform": original.get("platform"),
-            "deviceFamily": original.get("deviceFamily"),
-            "clientId": original.get("clientId"),
-            "clientMode": original.get("clientMode"),
-            "role": "operator",
-            "roles": ["operator"],
-            "scopes": approved_list,
-            "approvedScopes": approved_list,
-            "remoteIp": original.get("remoteIp"),
-            "tokens": {"operator": operator_token},
-            "createdAtMs": now,
-            "approvedAtMs": now,
-        }
-        paired_entry = {key: value for key, value in paired_entry.items() if value is not None}
-        for key, _ in same_device_pending:
-            pending.pop(key, None)
-        paired[device_id] = paired_entry
-        auth = {
-            "version": 1,
-            "deviceId": device_id,
-            "tokens": {
-                "operator": {
-                    "token": token,
-                    "role": "operator",
-                    "scopes": approved_list,
-                    "updatedAtMs": now,
-                }
-            },
-        }
-        _save_device_state(devices_dir, "pending.json", pending)
-        _save_device_state(devices_dir, "paired.json", paired)
-        _write_json_path(auth_path, auth)
-        return {
-            "requestId": request_id,
-            "deviceId": device_id,
-            "approvedScopes": approved_list,
-            "compatibility": "openclaw-approve-recovered-initial-cli",
-        }
-
-    if "operator.pairing" not in paired_scopes or not isinstance(paired_entry, dict):
-        return None
 
     replacement_allowed = allowed | {"operator.admin"}
     candidates = []

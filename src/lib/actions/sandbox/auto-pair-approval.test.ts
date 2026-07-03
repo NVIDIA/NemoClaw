@@ -20,15 +20,16 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
   it("builds the bounded allowlisted approval pass", () => {
     const script = buildAutoPairApprovalScript("UE9MSUNZ");
     expect(script).toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(script).toContain("command -v openclaw");
     expect(script).toContain("command -v python3");
-    expect(script).toContain("'devices', 'list', '--json'");
-    expect(script).toContain("'devices', 'approve'");
-    expect(script).toContain("approval_request_decision(device)");
+    expect(script).toContain("local_pairing_list(STATE_DIR)");
+    expect(script).toContain("approve_allowlisted_request(request_id, STATE_DIR, device)");
+    expect(script).toContain("prune_cli_pairing_only_devices(STATE_DIR)");
+    expect(script).toContain("approval_request_decision(device, paired)");
     expect(script).toContain("if not decision['allowed']:");
-    expect(script).toContain("approve_env = gateway_approval_env(os.environ)");
     expect(script).toContain(`MAX_APPROVALS = ${AUTO_PAIR_MAX_APPROVALS}`);
     expect(script).toContain("'UE9MSUNZ'");
+    expect(script).not.toContain("'devices', 'list'");
+    expect(script).not.toContain("'devices', 'approve'");
   });
 
   it("omits the summary marker by default and appends it when requested", () => {
@@ -46,8 +47,9 @@ describe("buildAutoPairApprovalScript (#4263/#4616)", () => {
     const module = readAutoPairApprovalPolicyModule();
     expect(module).toBeTruthy();
     expect(module).toContain("def approval_request_decision");
-    expect(module).toContain("def gateway_approval_env");
-    expect(module).toContain("def recover_failed_scope_approval");
+    expect(module).toContain("def local_pairing_list");
+    expect(module).toContain("def approve_allowlisted_request");
+    expect(module).toContain("def prune_cli_pairing_only_devices");
   });
 });
 
@@ -70,7 +72,7 @@ describe("wrapSandboxShellScript (#4616)", () => {
 });
 
 describe("auto-pair approval pass behaviour (#4616)", () => {
-  it("approves allowlisted upgrades, skips unknown clients, and reports the count", () => {
+  it("approves allowlisted local-state requests, skips unknown clients, and reports the count", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       // No python3 — the in-sandbox script can't run; skip the behavioural check.
       return;
@@ -82,163 +84,83 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     try {
-      const approvalsFile = path.join(tmpDir, "approvals.log");
-      const approveEnvFile = path.join(tmpDir, "approve-env.log");
-      const pending = [
-        {
-          requestId: "ok-webchat",
-          clientId: "openclaw-control-ui",
-          clientMode: "webchat",
-          scopes: ["operator.read", "operator.write"],
-        },
-        {
-          requestId: "ok-cli",
-          clientId: "openclaw-cli",
-          clientMode: "cli",
-          requestedScopes: ["operator.pairing"],
-        },
-        {
-          requestId: "deny-unknown",
-          clientId: "evil",
-          clientMode: "unknown",
-          scopes: ["operator.read"],
-        },
-        {
-          requestId: "deny-admin",
-          clientId: "openclaw-control-ui",
-          clientMode: "webchat",
-          scopes: ["operator.admin"],
-        },
-      ];
-      const listResponse = JSON.stringify({ pending, paired: [] });
-      fs.writeFileSync(
-        path.join(tmpDir, "openclaw"),
-        `#!${process.execPath}
-const fs = require("fs");
-const args = process.argv.slice(2);
-if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
-  process.exit(0);
-}
-if (args[0] === "devices" && args[1] === "approve") {
-  fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
-  fs.appendFileSync(
-    ${JSON.stringify(approveEnvFile)},
-    [
-      process.env.OPENCLAW_GATEWAY_URL || "unset",
-      process.env.OPENCLAW_GATEWAY_PORT || "unset",
-      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
-    ].join(":") + "\\n",
-  );
-  process.stdout.write("{}\\n");
-  process.exit(0);
-}
-process.exit(2);
-`,
-        { mode: 0o755 },
-      );
-
-      const result = spawnSync("sh", ["-c", script], {
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          PATH: `${tmpDir}:/usr/bin:/bin`,
-          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
-          OPENCLAW_GATEWAY_PORT: "18789",
-          OPENCLAW_GATEWAY_TOKEN: "secret-token",
-        },
-        timeout: 10_000,
-      });
-
-      const approvals = fs.existsSync(approvalsFile)
-        ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
-        : [];
-      const approveEnv = fs.existsSync(approveEnvFile)
-        ? fs.readFileSync(approveEnvFile, "utf-8").trim().split("\n").filter(Boolean)
-        : [];
-
-      expect(approvals).toEqual(["ok-webchat", "ok-cli"]);
-      // Gateway env stripped on the approve subprocess (#4462 workaround).
-      expect(approveEnv).toEqual(["unset:unset:unset", "unset:unset:unset"]);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=2`);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("recovers an allowlisted approval failure left pending in device state", () => {
-    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
-      return;
-    }
-    const policy = readAutoPairApprovalPolicyModule();
-    expect(policy).toBeTruthy();
-    const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
-    const script = buildAutoPairApprovalScript(policyB64, { emitSummary: true });
-
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-recover-"));
-    try {
       const stateDir = path.join(tmpDir, "openclaw-state");
       const devicesDir = path.join(stateDir, "devices");
-      const pendingFile = path.join(devicesDir, "pending.json");
-      const pairedFile = path.join(devicesDir, "paired.json");
       fs.mkdirSync(devicesDir, { recursive: true });
       fs.writeFileSync(
-        pendingFile,
+        path.join(devicesDir, "pending.json"),
         JSON.stringify({
-          original: {
-            requestId: "upgrade-1",
-            deviceId: "device-1",
-            clientId: "openclaw-cli",
+          "ok-webchat": {
+            requestId: "ok-webchat",
+            deviceId: "web-1",
+            publicKey: "web-key",
+            clientId: "openclaw-control-ui",
+            clientMode: "webchat",
+            role: "operator",
+            scopes: ["operator.read", "operator.write"],
+          },
+          "ok-cli": {
+            requestId: "ok-cli",
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
             clientMode: "cli",
+            role: "operator",
+            scopes: ["operator.write"],
+          },
+          "deny-unknown": {
+            requestId: "deny-unknown",
+            deviceId: "evil-1",
+            publicKey: "evil-key",
+            clientId: "evil",
+            clientMode: "unknown",
+            role: "operator",
+            scopes: ["operator.read"],
+          },
+          "deny-admin": {
+            requestId: "deny-admin",
+            deviceId: "admin-1",
+            publicKey: "admin-key",
+            clientId: "openclaw-control-ui",
+            clientMode: "webchat",
+            role: "operator",
+            scopes: ["operator.admin"],
+          },
+          "deny-cli-first": {
+            requestId: "deny-cli-first",
+            deviceId: "cli-new",
+            publicKey: "cli-new-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
             scopes: ["operator.write"],
           },
         }),
       );
       fs.writeFileSync(
-        pairedFile,
+        path.join(devicesDir, "paired.json"),
         JSON.stringify({
-          "device-1": {
-            deviceId: "device-1",
+          "cli-1": {
+            deviceId: "cli-1",
+            publicKey: "cli-key",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.pairing"],
             approvedScopes: ["operator.pairing"],
             tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+            createdAtMs: 1,
+            approvedAtMs: 1,
           },
         }),
-      );
-      const listResponse = JSON.stringify({
-        pending: [
-          {
-            requestId: "upgrade-1",
-            deviceId: "device-1",
-            clientId: "openclaw-cli",
-            clientMode: "cli",
-            scopes: ["operator.write"],
-          },
-        ],
-        paired: [],
-      });
-      fs.writeFileSync(
-        path.join(tmpDir, "openclaw"),
-        `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
-  process.exit(0);
-}
-if (args[0] === "devices" && args[1] === "approve") {
-  process.stderr.write("GatewayClientRequestError: scope upgrade pending approval for requestId upgrade-1\\n");
-  process.exit(1);
-}
-process.exit(2);
-`,
-        { mode: 0o755 },
       );
 
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {
           ...process.env,
-          PATH: `${tmpDir}:/usr/bin:/bin`,
+          PATH: `/usr/bin:/bin`,
           OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
           OPENCLAW_GATEWAY_PORT: "18789",
           OPENCLAW_GATEWAY_TOKEN: "secret-token",
@@ -247,19 +169,19 @@ process.exit(2);
         timeout: 10_000,
       });
 
-      const pending = JSON.parse(fs.readFileSync(pendingFile, "utf-8"));
-      const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
-      expect(result.status).toBe(0);
-      expect(result.stdout).toContain(`${SUMMARY_MARKER}=1`);
-      expect(pending).toEqual({});
-      expect(paired["device-1"].approvedScopes).toEqual([
-        "operator.pairing",
-        "operator.read",
-        "operator.write",
+      const pending = JSON.parse(fs.readFileSync(path.join(devicesDir, "pending.json"), "utf-8"));
+      const paired = JSON.parse(fs.readFileSync(path.join(devicesDir, "paired.json"), "utf-8"));
+
+      expect(result.stdout).toContain(`${SUMMARY_MARKER}=2`);
+      expect([...Object.keys(pending)].sort()).toEqual([
+        "deny-admin",
+        "deny-cli-first",
+        "deny-unknown",
       ]);
-      expect(paired["device-1"].tokens.operator.scopes).toEqual([
+      expect(paired["web-1"].approvedScopes).toEqual(["operator.read", "operator.write"]);
+      expect(paired["cli-1"].approvedScopes).toEqual(["operator.pairing", "operator.write"]);
+      expect(paired["cli-1"].tokens.operator.scopes).toEqual([
         "operator.pairing",
-        "operator.read",
         "operator.write",
       ]);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
@@ -268,7 +190,7 @@ process.exit(2);
     }
   });
 
-  it("does not recover approval failures without the compatibility signature (#4462)", () => {
+  it("removes stale CLI pairing-only devices so user agent commands can first-pair with write", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       return;
     }
@@ -277,7 +199,75 @@ process.exit(2);
     const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
     const script = buildAutoPairApprovalScript(policyB64, { emitSummary: true });
 
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-denied-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-prune-"));
+    try {
+      const stateDir = path.join(tmpDir, "openclaw-state");
+      const devicesDir = path.join(stateDir, "devices");
+      const identityDir = path.join(stateDir, "identity");
+      const pendingFile = path.join(devicesDir, "pending.json");
+      const pairedFile = path.join(devicesDir, "paired.json");
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.mkdirSync(identityDir, { recursive: true });
+      fs.writeFileSync(pendingFile, JSON.stringify({}));
+      fs.writeFileSync(
+        pairedFile,
+        JSON.stringify({
+          "cli-1": {
+            deviceId: "cli-1",
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            approvedScopes: ["operator.pairing"],
+            tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+          },
+        }),
+      );
+      fs.writeFileSync(
+        path.join(identityDir, "device-auth.json"),
+        JSON.stringify({
+          version: 1,
+          deviceId: "cli-1",
+          tokens: { operator: { token: "old", role: "operator", scopes: ["operator.pairing"] } },
+        }),
+      );
+
+      const result = spawnSync("sh", ["-c", script], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          PATH: `/usr/bin:/bin`,
+          OPENCLAW_STATE_DIR: stateDir,
+        },
+        timeout: 10_000,
+      });
+
+      const pending = JSON.parse(fs.readFileSync(pendingFile, "utf-8"));
+      const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
+      const identity = JSON.parse(
+        fs.readFileSync(path.join(identityDir, "device-auth.json"), "utf-8"),
+      );
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`${SUMMARY_MARKER}=0`);
+      expect(pending).toEqual({});
+      expect(paired).toEqual({});
+      expect(identity.tokens).toEqual({});
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not approve first-time CLI requests from NemoClaw's background pass", () => {
+    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
+      return;
+    }
+    const policy = readAutoPairApprovalPolicyModule();
+    expect(policy).toBeTruthy();
+    const policyB64 = Buffer.from(policy as string, "utf-8").toString("base64");
+    const script = buildAutoPairApprovalScript(policyB64, { emitSummary: true });
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-cli-first-"));
     try {
       const stateDir = path.join(tmpDir, "openclaw-state");
       const devicesDir = path.join(stateDir, "devices");
@@ -288,47 +278,22 @@ process.exit(2);
         original: {
           requestId: "upgrade-1",
           deviceId: "device-1",
-          clientId: "openclaw-cli",
+          publicKey: "cli-key",
+          clientId: "cli",
           clientMode: "cli",
+          role: "operator",
           scopes: ["operator.write"],
         },
       };
-      const pairedState = {
-        "device-1": {
-          deviceId: "device-1",
-          scopes: ["operator.pairing"],
-          approvedScopes: ["operator.pairing"],
-          tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
-        },
-      };
+      const pairedState = {};
       fs.writeFileSync(pendingFile, JSON.stringify(pendingState));
       fs.writeFileSync(pairedFile, JSON.stringify(pairedState));
-      const listResponse = JSON.stringify({ pending: [pendingState.original], paired: [] });
-      fs.writeFileSync(
-        path.join(tmpDir, "openclaw"),
-        `#!${process.execPath}
-const args = process.argv.slice(2);
-if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(${JSON.stringify(`${listResponse}\n`)});
-  process.exit(0);
-}
-if (args[0] === "devices" && args[1] === "approve") {
-  process.stderr.write("authorization denied\\n");
-  process.exit(1);
-}
-process.exit(2);
-`,
-        { mode: 0o755 },
-      );
 
       const result = spawnSync("sh", ["-c", script], {
         encoding: "utf-8",
         env: {
           ...process.env,
-          PATH: `${tmpDir}:/usr/bin:/bin`,
-          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
-          OPENCLAW_GATEWAY_PORT: "18789",
-          OPENCLAW_GATEWAY_TOKEN: "secret-token",
+          PATH: `/usr/bin:/bin`,
           OPENCLAW_STATE_DIR: stateDir,
         },
         timeout: 10_000,

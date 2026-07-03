@@ -231,7 +231,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     // approval pass is specifically targeted, simulate the failure
     // path the production code must tolerate. The approval-pass script is
     // base64-wrapped for OpenShell exec, so decode the payload first; it is
-    // identifiable by its embedded \`openclaw devices approve\` call.
+    // identifiable by the state-only approval helper calls.
     let approvalCmd = command;
     const wrapMatch = command.match(/printf %s '([A-Za-z0-9+/=]+)' \\| base64 -d/);
     if (wrapMatch) {
@@ -243,9 +243,8 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     }
     if (
       process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
-      approvalCmd.includes("openclaw") &&
-      approvalCmd.includes("devices") &&
-      approvalCmd.includes("approve")
+      approvalCmd.includes("local_pairing_list") &&
+      approvalCmd.includes("approve_allowlisted_request")
     ) {
       process.stderr.write("simulated sandbox exec failure\\n");
       process.exit(7);
@@ -581,7 +580,11 @@ export function extractApprovalPassScript(stateFile: string, sandboxName: string
   const approvalExec = (state.sandboxExecCalls as string[][]).find((call) => {
     if (!call.includes("--")) return false;
     const inner = decodeWrappedSandboxScript(call[call.length - 1] || "");
-    return inner.includes("openclaw") && inner.includes("devices") && inner.includes("approve");
+    return (
+      inner.includes("local_pairing_list") &&
+      inner.includes("approve_allowlisted_request") &&
+      inner.includes("prune_cli_pairing_only_devices")
+    );
   });
   expect(approvalExec).toBeDefined();
   expect(approvalExec).toContain("sandbox");
@@ -609,61 +612,50 @@ export function runApprovalPassScript(
   script: string,
   pending: unknown[],
   extraEnv: NodeJS.ProcessEnv = {},
+  paired: unknown[] = [],
 ) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-pass-"));
-  const openclawPath = path.join(tmpDir, "openclaw");
-  const approvalsFile = path.join(tmpDir, "approvals.log");
-  const approvalEnvFile = path.join(tmpDir, "approval-env.log");
-  const pendingResponse = JSON.stringify({ pending, paired: [] });
+  const stateDir = path.join(tmpDir, "openclaw-state");
+  const devicesDir = path.join(stateDir, "devices");
+  const pendingFile = path.join(devicesDir, "pending.json");
+  const pairedFile = path.join(devicesDir, "paired.json");
+  const pendingState = Object.fromEntries(
+    pending
+      .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+      .map((item, index) => [String(item.requestId || `pending-${index}`), item]),
+  );
+  const pairedState = Object.fromEntries(
+    paired
+      .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+      .map((item, index) => [String(item.deviceId || `paired-${index}`), item]),
+  );
 
   try {
-    fs.writeFileSync(
-      openclawPath,
-      `#!${process.execPath}
-const fs = require("fs");
-const args = process.argv.slice(2);
-if (args[0] === "devices" && args[1] === "list") {
-  process.stdout.write(${JSON.stringify(`${pendingResponse}\n`)});
-  process.exit(0);
-}
-if (args[0] === "devices" && args[1] === "approve") {
-  fs.appendFileSync(${JSON.stringify(approvalsFile)}, args[2] + "\\n");
-  fs.appendFileSync(
-    ${JSON.stringify(approvalEnvFile)},
-    [
-      process.env.OPENCLAW_GATEWAY_URL || "unset",
-      process.env.OPENCLAW_GATEWAY_PORT || "unset",
-      process.env.OPENCLAW_GATEWAY_TOKEN || "unset",
-    ].join(":") + "\\n",
-  );
-  process.stdout.write("{}\\n");
-  process.exit(0);
-}
-process.stderr.write("unexpected openclaw args: " + args.join(" ") + "\\n");
-process.exit(2);
-`,
-      { mode: 0o755 },
-    );
+    fs.mkdirSync(devicesDir, { recursive: true });
+    fs.writeFileSync(pendingFile, JSON.stringify(pendingState));
+    fs.writeFileSync(pairedFile, JSON.stringify(pairedState));
 
     const result = spawnSync("sh", ["-c", script], {
       encoding: "utf-8",
       env: {
         ...process.env,
-        PATH: `${tmpDir}:/usr/bin:/bin`,
+        PATH: `/usr/bin:/bin`,
         OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
         OPENCLAW_GATEWAY_PORT: "18789",
         OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
+        OPENCLAW_STATE_DIR: stateDir,
         ...extraEnv,
       },
       timeout: 10_000,
     });
-    const approvals = fs.existsSync(approvalsFile)
-      ? fs.readFileSync(approvalsFile, "utf-8").trim().split("\n").filter(Boolean)
-      : [];
-    const approvalEnv = fs.existsSync(approvalEnvFile)
-      ? fs.readFileSync(approvalEnvFile, "utf-8").trim().split("\n").filter(Boolean)
-      : [];
-    return { result, approvals, approvalEnv };
+    const pendingAfter = fs.existsSync(pendingFile)
+      ? JSON.parse(fs.readFileSync(pendingFile, "utf-8"))
+      : {};
+    const pairedAfter = fs.existsSync(pairedFile)
+      ? JSON.parse(fs.readFileSync(pairedFile, "utf-8"))
+      : {};
+    const approvals = Object.keys(pendingState).filter((requestId) => !pendingAfter[requestId]);
+    return { result, approvals, approvalEnv: [], pendingAfter, pairedAfter, stateDir };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
