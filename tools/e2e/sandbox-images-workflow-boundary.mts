@@ -320,6 +320,14 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
 function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
   const jobName = "build-hermes-sandbox-image";
   const job = workflow.jobs[jobName] ?? {};
+  if (job["timeout-minutes"] !== 150) {
+    errors.push("Hermes image job timeout must cover both inherited probe budgets");
+  }
+  for (const stepName of ["Set up Node", "Install root dependencies"]) {
+    if (steps(job).filter((step) => step.name === stepName).length !== 1) {
+      errors.push(`${jobName} must run '${stepName}' exactly once`);
+    }
+  }
   const build = requireStep(errors, jobName, job, "Build Hermes production image");
   const secretBoundary = requireStep(
     errors,

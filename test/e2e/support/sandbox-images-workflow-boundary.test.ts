@@ -82,9 +82,14 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
-  it("rejects rebuilding or failing to reuse the Hermes production image", () => {
+  it("rejects duplicate setup, rebuilding, or failing to reuse the Hermes image", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
-    const rootEntrypoint = imageWorkflow.jobs["build-hermes-sandbox-image"].steps!.find(
+    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    hermes["timeout-minutes"] = 30;
+    for (const stepName of ["Set up Node", "Install root dependencies"]) {
+      hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
+    }
+    const rootEntrypoint = hermes.steps!.find(
       (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
     )!;
     rootEntrypoint.env!.NEMOCLAW_HERMES_TEST_IMAGE = "nemoclaw-hermes-rebuilt";
@@ -92,6 +97,9 @@ describe("sandbox image workflow boundary", () => {
 
     expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
       expect.arrayContaining([
+        "Hermes image job timeout must cover both inherited probe budgets",
+        "build-hermes-sandbox-image must run 'Set up Node' exactly once",
+        "build-hermes-sandbox-image must run 'Install root dependencies' exactly once",
         "Hermes production image must have exactly one source build",
         "Hermes root entrypoint must consume the prebuilt Hermes production image",
         "Hermes root entrypoint step must not rebuild the prebuilt image",
