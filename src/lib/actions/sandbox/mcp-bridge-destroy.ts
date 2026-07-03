@@ -130,9 +130,15 @@ export async function prepareMcpBridgesForDestroy(
       const adapter = isAgentMcpAdapter(entry.adapter)
         ? entry.adapter
         : getBridgeAdapter(getSandboxAgent(sandbox));
-      unregisterAgentAdapter(sandboxName, adapter, entry, {
+      const adapterRemoval = unregisterAgentAdapter(sandboxName, adapter, entry, {
         envValues: {},
+        teardown: true,
       });
+      if (adapterRemoval === "unowned") {
+        throw new McpBridgeError(
+          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'.`,
+        );
+      }
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
@@ -190,6 +196,7 @@ export async function prepareMcpBridgesForDestroy(
           {},
           {
             replaceExisting: true,
+            teardownRollback: true,
           },
         );
       } catch (rollbackError) {

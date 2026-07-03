@@ -132,7 +132,15 @@ export async function prepareMcpBridgesForRebuild(
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
-      unregisterAgentAdapter(sandboxName, adapter, entry, { envValues: {} });
+      const adapterRemoval = unregisterAgentAdapter(sandboxName, adapter, entry, {
+        envValues: {},
+        teardown: true,
+      });
+      if (adapterRemoval === "unowned") {
+        throw new McpBridgeError(
+          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'.`,
+        );
+      }
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
@@ -178,6 +186,7 @@ export async function prepareMcpBridgesForRebuild(
           {},
           {
             replaceExisting: true,
+            teardownRollback: true,
           },
         );
       } catch (rollbackError) {
@@ -238,6 +247,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
         {},
         {
           replaceExisting: true,
+          teardownRollback: true,
         },
       );
     } catch (error) {

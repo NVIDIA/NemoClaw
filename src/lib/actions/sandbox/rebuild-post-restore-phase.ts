@@ -26,6 +26,7 @@ import { reapplyMessagingManifestAfterOpenClawDoctor } from "./rebuild-messaging
 export interface RebuildPostRestorePhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
+  preservedCustomPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
   messagingPlan: SandboxMessagingPlan | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
@@ -42,6 +43,19 @@ export interface RebuildPostRestorePhaseInput {
   bail: RebuildBail;
 }
 
+export function resolveRestoredPolicyRegistryState(
+  sandboxEntry: Pick<RebuildSandboxEntry, "customPolicies" | "policyPresetsFinalized">,
+  restoredPresets: readonly string[],
+  failedPresets: readonly string[],
+): { policies: string[]; policyPresetsFinalized: true | undefined } {
+  const customPolicyNames = new Set((sandboxEntry.customPolicies ?? []).map((entry) => entry.name));
+  return {
+    policies: restoredPresets.filter((name) => !customPolicyNames.has(name)),
+    policyPresetsFinalized:
+      sandboxEntry.policyPresetsFinalized === true && failedPresets.length === 0 ? true : undefined,
+  };
+}
+
 /**
  * Repair agent state, restore MCP/forwarding, reconcile the registry, and report
  * the final transaction result. Boundary coverage: rebuild-flow.test.ts and
@@ -53,6 +67,7 @@ export async function runRebuildPostRestorePhase(
   const {
     sandboxName,
     sandboxEntry: sb,
+    preservedCustomPolicies,
     messagingPlan,
     backupManifest,
     mcpEntries,
@@ -128,20 +143,23 @@ export async function runRebuildPostRestorePhase(
   }
 
   const mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, mcpEntries));
-  const policyPresetsFinalized =
-    sb.policyPresetsFinalized === true &&
-    failedPresets.length === 0 &&
-    (sb.customPolicies?.length ?? 0) === 0
-      ? true
-      : undefined;
+  const { policies: restoredBuiltinPresets, policyPresetsFinalized } =
+    resolveRestoredPolicyRegistryState(
+      {
+        customPolicies: backupManifest?.customPolicies ?? preservedCustomPolicies,
+        policyPresetsFinalized: sb.policyPresetsFinalized,
+      },
+      restoredPresets,
+      failedPresets,
+    );
   registry.updateSandbox(sandboxName, {
     agentVersion: agentDef.expectedVersion || null,
-    policies: restoredPresets,
+    policies: restoredBuiltinPresets,
     policyTier: sb.policyTier ?? null,
     policyPresetsFinalized,
   });
   log(
-    `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
+    `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredBuiltinPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
   );
 
   if (!relockShieldsIfNeeded(true)) {

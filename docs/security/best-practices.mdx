@@ -183,9 +183,9 @@ The `protocol` field on an endpoint controls whether the proxy also inspects ind
 | Aspect | Detail |
 |---|---|
 | Default | Endpoints without a `protocol` field use L4-only enforcement: the proxy checks host, port, and binary identity, then relays the TCP stream without inspecting payloads. Setting `protocol: rest` enables L7 inspection: the proxy auto-detects and terminates TLS, then evaluates each HTTP request's method and path against the endpoint's `rules` or `access` preset. |
-| What you can change | Add `protocol: rest` to an endpoint to enable per-request HTTP inspection. Use the `access` preset (`full`, `read-only`, `read-write`) or explicit `rules` to control allowed methods and paths. |
+| What you can change | Set `protocol` to `rest`, `websocket`, `json-rpc`, or `mcp` and use rules that match that protocol. REST and WebSocket rules match methods and paths, JSON-RPC rules match RPC methods, and MCP rules can additionally match tools or parameter names. |
 | Risk if relaxed | L4-only endpoints (no `protocol` field) allow the agent to send any data through the tunnel after the initial connection is permitted. The proxy cannot see or filter the HTTP method, path, or body. The `access: full` preset with `protocol: rest` enables inspection but allows all methods and paths, so it does not restrict what the agent can do at the HTTP level. |
-| Recommendation | Use `protocol: rest` with specific `rules` for REST APIs where you want method and path control. Use `protocol: rest` with `access: read-only` for read-only endpoints. Omit `protocol` only for non-HTTP protocols (WebSocket, gRPC streaming), endpoints that do not need HTTP inspection, or documented compatibility exceptions that require a client-managed CONNECT tunnel. |
+| Recommendation | Select the matching L7 protocol and use the narrowest supported rules. Omit `protocol` only for protocols without an inspectable mode, endpoints that do not need request inspection, or documented compatibility exceptions that require a client-managed CONNECT tunnel. |
 
 ### Operator Approval Flow
 

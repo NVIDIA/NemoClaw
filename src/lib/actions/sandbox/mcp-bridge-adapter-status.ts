@@ -3,10 +3,10 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 
-// The pinned Deep Agents Code release auto-discovers this as the user-level MCP config.
-// `/sandbox/.mcp.json` is project-level and is intentionally rejected by
-// headless `dcode -n` unless project MCP has been separately trusted.
-export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
+// NemoClaw owns this dedicated projection. Deep Agents Code's user/project
+// `.mcp.json` discovery is disabled in the managed image so user-authored MCP
+// state can never be layered over the validated registry projection.
+export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
 

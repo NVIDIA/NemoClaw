@@ -5,13 +5,16 @@ import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
 import * as policies from "../../policy";
 import * as sandboxState from "../../state/sandbox";
+import { MCP_BRIDGE_POLICY_SOURCE } from "./mcp-bridge-contracts";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildLog } from "./rebuild-credential-preflight";
+import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 
 export interface RebuildRestorePhaseInput {
   sandboxName: string;
   backupManifest: RebuildBackupManifest;
   policyPresets: string[];
+  customPolicies: NonNullable<RebuildSandboxEntry["customPolicies"]>;
   log: RebuildLog;
 }
 
@@ -27,7 +30,7 @@ export interface RebuildRestorePhaseResult {
  * stale recovery, successful presets, and incomplete preset recovery reporting.
  */
 export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): RebuildRestorePhaseResult {
-  const { sandboxName, backupManifest, policyPresets, log } = input;
+  const { sandboxName, backupManifest, policyPresets, customPolicies, log } = input;
   let restoreSucceeded = true;
   if (backupManifest) {
     console.log("");
@@ -54,11 +57,16 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
 
   const restoredPresets: string[] = [];
   const failedPresets: string[] = [];
-  if (policyPresets.length > 0) {
+  const customPolicyNames = new Set(customPolicies.map((entry) => entry.name));
+  const replayableCustomPolicies = customPolicies.filter(
+    (entry) => entry.sourcePath !== MCP_BRIDGE_POLICY_SOURCE,
+  );
+  const builtinPolicyPresets = policyPresets.filter((name) => !customPolicyNames.has(name));
+  if (builtinPolicyPresets.length > 0 || replayableCustomPolicies.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");
-    log(`Policy presets to restore: [${policyPresets.join(",")}]`);
-    for (const presetName of policyPresets) {
+    log(`Policy presets to restore: [${builtinPolicyPresets.join(",")}]`);
+    for (const presetName of builtinPolicyPresets) {
       try {
         log(`Applying preset: ${presetName}`);
         const applied = policies.applyPreset(sandboxName, presetName);
@@ -68,6 +76,20 @@ export function runRebuildRestorePhase(input: RebuildRestorePhaseInput): Rebuild
         const message = error instanceof Error ? error.message : String(error);
         log(`Failed to apply preset '${presetName}': ${message}`);
         failedPresets.push(presetName);
+      }
+    }
+    for (const entry of replayableCustomPolicies) {
+      try {
+        log(`Applying custom preset: ${entry.name}`);
+        const applied = policies.applyPresetContent(sandboxName, entry.name, entry.content, {
+          custom: { sourcePath: entry.sourcePath },
+        });
+        if (applied) restoredPresets.push(entry.name);
+        else failedPresets.push(entry.name);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log(`Failed to apply custom preset '${entry.name}': ${message}`);
+        failedPresets.push(entry.name);
       }
     }
     if (restoredPresets.length > 0) {

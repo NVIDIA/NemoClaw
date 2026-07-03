@@ -63,8 +63,8 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
 ].join("\n");
 
 function stubManagedMcpValidator(source: string): string {
-  expect(source).toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
-  return source.replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""');
+  expect(source).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
+  return source;
 }
 
 function makeWrapperFixture(
@@ -310,10 +310,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("unset PYTHONHOME PYTHONPATH");
     expect(wrapper).toContain('/opt/venv/bin/python3 -I - "$auth_file"');
     expect(wrapper).toContain("exec /opt/venv/bin/python3 -I -m deepagents_code");
-    expect(wrapper).toContain("extra_args=(--sandbox none)");
-    expect(wrapper).toContain('extra_args+=(--mcp-config "$managed_mcp_config")');
+    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
+    expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
-    expect(wrapper).toContain("extra_args+=(--no-mcp)");
     expect(wrapper).toContain("assert_no_auth_store_credentials");
     expect(wrapper).toContain("assert_no_codex_auth_credentials");
     for (const s of [
@@ -352,33 +351,42 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("exposes an exact managed MCP capability marker without starting dcode", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mcp-capability-"));
     try {
-      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {});
+      const { wrapperPath, ranMarker, authFile, codexAuthFile } = makeWrapperFixture(tempDir);
+      fs.writeFileSync(authFile, '{"api_key":"forbidden"}\n', "utf8");
+      fs.writeFileSync(codexAuthFile, '{"access_token":"forbidden"}\n', "utf8");
+      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {
+        OPENAI_API_KEY: "forbidden",
+        NEMOCLAW_DEEPAGENTS_CODE_AUTH_MODE: "invalid",
+      });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n");
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n");
       expect(fs.existsSync(ranMarker)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("uses the pinned Deep Agents Code user-level MCP discovery path", () => {
+  it("keeps NemoClaw MCP state separate from user discovery", () => {
     const requirements = readAgentFile("requirements.lock");
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const manifest = readAgentFile("manifest.yaml");
-    const userLevelPath = "/sandbox/.deepagents/.mcp.json";
+    const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 
-    // The pinned Deep Agents Code release discovers ~/.deepagents/.mcp.json as user-level
-    // config. /sandbox/.mcp.json is project-level and headless `dcode -n`
-    // rejects it unless the project trust gate has been satisfied.
+    // The pinned release's user/project .mcp.json files remain user-authored.
+    // Managed images suppress discovery and pass only a sealed snapshot of
+    // NemoClaw's dedicated projection.
     expect(requirements).toContain("deepagents-code==0.1.30");
-    expect(wrapper).toContain("managed_mcp_config_path");
-    expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${userLevelPath}")`);
+    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
+    expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
+    expect(patcher).toContain("def discover_mcp_configs(");
+    expect(patcher).toContain("return []");
     expect(manifest).toContain("- .deepagents/.mcp.json");
+    expect(manifest).toContain(".deepagents/.nemoclaw-mcp.json projection");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
+    expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
   });
 

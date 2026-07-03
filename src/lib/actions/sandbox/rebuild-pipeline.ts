@@ -94,6 +94,9 @@ async function rebuildSandboxUnlocked(
     fromDockerfile,
   } = targetConfig;
   const { staleRecovery } = liveState;
+  const preservedCustomPolicies = (sandboxEntry.customPolicies ?? []).map((entry) => ({
+    ...entry,
+  }));
   let recoveryManifest = validatedRecoveryManifest;
   const preparedBackupRecovery = recoveryManifest !== null;
   const recoveryRecreate = staleRecovery || preparedBackupRecovery;
@@ -160,6 +163,12 @@ async function rebuildSandboxUnlocked(
         log,
         bail,
         relockShieldsIfNeeded,
+        validateAfterMcpPreparation: () =>
+          dcodePreflight.checkAtDeleteEdge(
+            resumeConfig,
+            recoveryRecreate,
+            recreateOptions.targetGatewayPort,
+          ),
         onDeleted: () => {
           sandboxStillExists = false;
         },
@@ -207,11 +216,15 @@ async function rebuildSandboxUnlocked(
         sandboxName,
         backupManifest: backup.backupManifest,
         policyPresets: backup.policyPresets,
+        customPolicies:
+          backup.backupManifest?.customPolicies?.map((entry) => ({ ...entry })) ??
+          preservedCustomPolicies,
         log,
       });
       await runRebuildPostRestorePhase({
         sandboxName,
         sandboxEntry,
+        preservedCustomPolicies,
         messagingPlan,
         backupManifest: backup.backupManifest,
         mcpEntries: mcpPreparation.entries,

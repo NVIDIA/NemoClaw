@@ -31,6 +31,8 @@ function dcodeInput(
     model: "nvidia/nemotron-3-super-120b-a12b",
     provider: "compatible-endpoint",
     preferredInferenceApi: "openai-completions",
+    compatibleEndpointReasoning: "false",
+    webSearchConfig: null,
     sandboxGpuConfig: {
       mode: "0",
       hostGpuDetected: false,
@@ -44,6 +46,95 @@ function dcodeInput(
 }
 
 describe("managed DCode rebuild image preflight", () => {
+  it("pins recorded reasoning and web search while restoring ambient state (#6195)", async () => {
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-fidelity-"));
+    const stagedDockerfile = path.join(testRoot, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const previousReasoning = process.env.NEMOCLAW_REASONING;
+    process.env.NEMOCLAW_REASONING = "false";
+    let reasoningDuringPatch: string | undefined;
+    const prepareDockerfilePatch = vi.fn(async () => {
+      reasoningDuringPatch = process.env.NEMOCLAW_REASONING;
+      return { buildId: "dcode-fidelity", resolvedBaseImage: null };
+    });
+
+    try {
+      const result = await prepareManagedDcodeRebuildImage(
+        dcodeInput({
+          compatibleEndpointReasoning: "true",
+          webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        }),
+        {
+          stageBuildContext: () => ({
+            buildCtx: testRoot,
+            stagedDockerfile,
+            cleanupBuildCtx: () => {
+              fs.rmSync(testRoot, { recursive: true, force: true });
+              return true;
+            },
+          }),
+          prepareDockerfilePatch,
+          buildImage: () => ({ status: 0 }) as never,
+          removeImage: () => ({ status: 0 }) as never,
+        },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(reasoningDuringPatch).toBe("true");
+      expect(prepareDockerfilePatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+        }),
+      );
+      expect(process.env.NEMOCLAW_REASONING).toBe("false");
+      disposePreparedDcodeRebuildImage(expectPreparedImage(result));
+    } finally {
+      fs.rmSync(testRoot, { recursive: true, force: true });
+      if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
+      else process.env.NEMOCLAW_REASONING = previousReasoning;
+    }
+  });
+
+  it("defaults missing compatible-endpoint reasoning without borrowing ambient state (#6195)", async () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-reasoning-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const previousReasoning = process.env.NEMOCLAW_REASONING;
+    process.env.NEMOCLAW_REASONING = "true";
+    let reasoningDuringPatch: string | undefined;
+
+    try {
+      const result = await prepareManagedDcodeRebuildImage(
+        dcodeInput({ compatibleEndpointReasoning: null }),
+        {
+          stageBuildContext: () => ({
+            buildCtx,
+            stagedDockerfile,
+            cleanupBuildCtx: () => {
+              fs.rmSync(buildCtx, { recursive: true, force: true });
+              return true;
+            },
+          }),
+          prepareDockerfilePatch: async () => {
+            reasoningDuringPatch = process.env.NEMOCLAW_REASONING;
+            return { buildId: "dcode-reasoning-default", resolvedBaseImage: null };
+          },
+          buildImage: () => ({ status: 0 }) as never,
+          removeImage: () => ({ status: 0 }) as never,
+        },
+      );
+
+      expect(result.ok).toBe(true);
+      expect(reasoningDuringPatch).toBe("false");
+      expect(process.env.NEMOCLAW_REASONING).toBe("true");
+      disposePreparedDcodeRebuildImage(expectPreparedImage(result));
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+      if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
+      else process.env.NEMOCLAW_REASONING = previousReasoning;
+    }
+  });
+
   it("prebuilds the recorded DCode replacement and transfers one disposable context (#6195)", async () => {
     const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-context-"));
     const buildCtx = path.join(testRoot, "context");

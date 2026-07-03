@@ -343,10 +343,74 @@ def list_subagents(*args, **kwargs):
 from __future__ import annotations
 
 import os
+import subprocess
 
 
 def _build_server_env():
     return dict(os.environ)
+
+
+class ServerProcess:
+    def __init__(self, cmd, work_dir, env):
+        self.cmd = cmd
+        self.work_dir = work_dir
+        self.env = env
+        self.outputs = []
+        self._process = None
+
+    async def start(self):
+        cmd = self.cmd
+        work_dir = self.work_dir
+        env = self.env
+        self._log_file = subprocess.PIPE
+        self._process = subprocess.Popen(  # noqa: S603, ASYNC220
+            cmd,
+            cwd=str(work_dir),
+            env=env,
+            stdout=self._log_file,
+            stderr=subprocess.STDOUT,
+        )
+        output, _ = self._process.communicate(timeout=10)
+        if self._process.returncode != 0:
+            raise RuntimeError(output.decode())
+        self.outputs.append(output.decode())
+
+    async def restart(self):
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+            self._process.wait(timeout=10)
+        await self.start()
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "_server_config.py",
+    `
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def _normalize_path(raw_path, project_context, label):
+    if not raw_path:
+        return None
+    if project_context is not None:
+        return str(project_context.resolve_user_path(raw_path))
+    return str(Path(raw_path).expanduser().resolve())
+`,
+  );
+  writeFixtureFile(
+    packageDir,
+    "mcp_tools.py",
+    `
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def discover_mcp_configs(*, project_context=None):
+    del project_context
+    return [Path.home() / ".deepagents" / ".mcp.json"]
 `,
   );
   writeFixtureFile(
@@ -667,6 +731,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "widgets/model_selector.py",
       "widgets/approval.py",
       "server.py",
+      "_server_config.py",
+      "mcp_tools.py",
       "subagents.py",
       "hooks.py",
       "non_interactive.py",
@@ -838,7 +904,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
             "from pathlib import Path",
             "from deepagents_code import _nemoclaw_managed as managed",
             "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
-            "print(managed.managed_mcp_config_path() or 'absent')",
+            "sealed = managed.managed_mcp_config_path()",
+            "print(Path(sealed).read_text(encoding='utf-8') if sealed else 'absent', end='')",
           ].join("; "),
           configPath,
         ],
@@ -858,7 +925,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
 
     const valid = validate({ mcpServers: { github: validServer } });
     expect(valid.status, valid.stderr).toBe(0);
-    expect(valid.stdout.trim()).toBe(configPath);
+    expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
 
     for (const config of [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
@@ -878,6 +945,48 @@ describe("LangChain Deep Agents Code managed package patch", () => {
           github: { ...validServer, url: "https://127.0.0.1/mcp/" },
         },
       },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://2130706433/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://0177.0.0.1/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com:443/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com/a/../mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com/mcp path/" },
+        },
+      },
+      ...[
+        "mcp_bad.example.test",
+        "-mcp.example.test",
+        "mcp-.example.test",
+        "mcp..example.test",
+        `${"a".repeat(64)}.example.test`,
+        `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}`,
+      ].map((hostname) => ({
+        mcpServers: {
+          github: { ...validServer, url: `https://${hostname}/mcp/` },
+        },
+      })),
+      {
+        mcpServers: Object.fromEntries(
+          Array.from({ length: 65 }, (_, index) => [`server${index}`, validServer]),
+        ),
+      },
     ]) {
       const result = validate(config);
       expect(result.status, JSON.stringify(config)).not.toBe(0);
@@ -886,6 +995,171 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     const badMode = validate({ mcpServers: { github: validServer } }, 0o644);
     expect(badMode.status).not.toBe(0);
     expect(badMode.stderr).toContain("unsafe ownership or mode");
+  });
+
+  it("rejects duplicate keys and configs beyond the 256 KiB cap", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const configPath = path.join(tempDir, ".mcp.json");
+    const run = () =>
+      spawnSync(
+        "python3",
+        [
+          "-c",
+          [
+            "import sys",
+            "from pathlib import Path",
+            "from deepagents_code import _nemoclaw_managed as managed",
+            "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
+            "managed.managed_mcp_config_path()",
+          ].join("; "),
+          configPath,
+        ],
+        {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+          encoding: "utf8",
+        },
+      );
+
+    fs.writeFileSync(
+      configPath,
+      '{"mcpServers":{"github":{"type":"http","type":"http","url":"https://api.githubcopilot.com/mcp/","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_MCP_TOKEN"}}}}\n',
+      { mode: 0o600 },
+    );
+    const duplicate = run();
+    expect(duplicate.status).not.toBe(0);
+    expect(duplicate.stderr).toContain("duplicate JSON key");
+
+    fs.writeFileSync(configPath, " ".repeat(262_145), { mode: 0o600 });
+    const oversized = run();
+    expect(oversized.status).not.toBe(0);
+    expect(oversized.stderr).toContain("invalid size");
+
+    const targetPath = path.join(tempDir, "symlink-target.json");
+    fs.writeFileSync(targetPath, '{"mcpServers":{}}\n', { mode: 0o600 });
+    fs.rmSync(configPath);
+    fs.symlinkSync(targetPath, configPath);
+    const symlinked = run();
+    expect(symlinked.status).not.toBe(0);
+  });
+
+  it("passes one sealed managed MCP snapshot through ServerProcess.start and restart", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+    const managedConfig = {
+      mcpServers: {
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN",
+          },
+        },
+      },
+    };
+    fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        `
+import asyncio
+import fcntl
+import json
+import os
+import sys
+from pathlib import Path
+
+from deepagents_code import _nemoclaw_managed as managed
+from deepagents_code import _server_config, mcp_tools
+from deepagents_code.server import ServerProcess
+
+managed._MCP_CONFIG_FILE = Path(sys.argv[1])
+sealed_path = managed.managed_mcp_config_path()
+assert sealed_path is not None
+descriptor = int(sealed_path.removeprefix("/proc/self/fd/"))
+required_seals = (
+    fcntl.F_SEAL_WRITE
+    | fcntl.F_SEAL_GROW
+    | fcntl.F_SEAL_SHRINK
+    | fcntl.F_SEAL_SEAL
+)
+assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) == required_seals
+assert _server_config._normalize_path(sealed_path, None, "MCP config") == sealed_path
+assert mcp_tools.discover_mcp_configs() == []
+
+child = (
+    "import os; from pathlib import Path; "
+    "print(Path(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']).read_text(), end='')"
+)
+env = os.environ.copy()
+env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = sealed_path
+server = ServerProcess([sys.executable, "-c", child], os.getcwd(), env)
+unsealed_descriptor = os.memfd_create(
+    "unsealed-dcode-mcp",
+    flags=os.MFD_ALLOW_SEALING,
+)
+os.write(unsealed_descriptor, b"{}")
+unsealed_env = os.environ.copy()
+unsealed_env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = (
+    f"/proc/self/fd/{unsealed_descriptor}"
+)
+unsealed_server = ServerProcess(
+    [sys.executable, "-c", child],
+    os.getcwd(),
+    unsealed_env,
+)
+
+async def exercise():
+    await server.start()
+    Path(sys.argv[1]).write_text(
+        json.dumps({
+            "mcpServers": {
+                "attacker": {
+                    "type": "http",
+                    "url": "https://attacker.example/mcp/",
+                    "headers": {
+                        "Authorization": "Bearer openshell:resolve:env:ATTACKER_TOKEN"
+                    },
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    await server.restart()
+    try:
+        await unsealed_server.start()
+    except RuntimeError as exc:
+        assert "not valid and sealed" in str(exc)
+    else:
+        raise AssertionError("unsealed MCP descriptor was inherited")
+
+asyncio.run(exercise())
+os.close(unsealed_descriptor)
+print(json.dumps({
+    "path": sealed_path,
+    "outputs": [json.loads(output) for output in server.outputs],
+}))
+`,
+        configPath,
+      ],
+      {
+        cwd: tempDir,
+        env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    const proof = JSON.parse(result.stdout) as {
+      path: string;
+      outputs: unknown[];
+    };
+    expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
+    expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+    expect(result.stdout).not.toContain("attacker");
   });
 
   it("blocks TUI commands, credential screens, dotenv, OAuth, and install backends", () => {
@@ -1093,8 +1367,12 @@ async def validate():
     assert headless_kwargs["rubric_model"] is None
     assert non_interactive.settings.shell_allow_list is None
     _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    _nemoclaw_managed._MANAGED_MCP_FD = None
+    _nemoclaw_managed._MANAGED_MCP_READY = False
     managed_args = dcode_main.parse_args()
-    assert managed_args.mcp_config == ${JSON.stringify(managedMcpPath)}
+    sealed_mcp_path = managed_args.mcp_config
+    assert sealed_mcp_path.startswith("/proc/self/fd/")
+    assert Path(sealed_mcp_path).is_file()
     assert managed_args.no_mcp is False
     assert managed_args.trust_project_mcp is False
     managed_headless_kwargs = await non_interactive.run_non_interactive(
@@ -1104,7 +1382,7 @@ async def validate():
         no_mcp=True,
         trust_project_mcp=True,
     )
-    assert managed_headless_kwargs["mcp_config_path"] == ${JSON.stringify(managedMcpPath)}
+    assert managed_headless_kwargs["mcp_config_path"] == sealed_mcp_path
     assert managed_headless_kwargs["no_mcp"] is False
     assert managed_headless_kwargs["trust_project_mcp"] is False
     assert model_config.ModelConfig().get_class_path("openai") is None

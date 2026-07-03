@@ -18,6 +18,16 @@ const MCP_PATH_CREDENTIAL_PATTERNS = TOKEN_PREFIX_PATTERNS.map(
   // final Telegram/Discord token character but is not a RegExp "word" byte.
   (pattern) => new RegExp(pattern.source.replaceAll("\\b", ""), pattern.flags.replace("g", "")),
 );
+const MCP_DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+function validateCanonicalMcpDnsHostname(hostname: string): void {
+  if (hostname.length > 253 || hostname.split(".").some((label) => !MCP_DNS_LABEL_RE.test(label))) {
+    throw new McpBridgeError(
+      "MCP server URL hostnames must use canonical DNS labels: lowercase letters, digits, and internal hyphens only, with no empty or overlong labels.",
+      2,
+    );
+  }
+}
 
 /** Reject self-identifying credentials in persisted endpoint path segments. */
 function hasSecretShapedMcpPathSegment(pathname: string): boolean {
@@ -139,6 +149,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
       2,
     );
   }
+  validateCanonicalMcpDnsHostname(parsed.hostname);
   if (!parsed.pathname) parsed.pathname = "/";
   const normalized = parsed.toString();
   if (normalized.length > MCP_SERVER_URL_MAX_LENGTH) {

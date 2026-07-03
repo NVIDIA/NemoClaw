@@ -176,6 +176,42 @@ describe("rebuildSandbox DCode flow", () => {
     expectNoDcodeMutation(harness);
   });
 
+  it("rejects a registry-owned DCode custom Dockerfile before image preparation (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        fromDockerfile: "/tmp/registry-owned-custom.Dockerfile",
+      },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Managed DCode rebuild cannot use a recorded custom Dockerfile");
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+    expectNoDcodeMutation(harness);
+  });
+
+  it("lets explicit registry-managed DCode state override stale session Dockerfile metadata (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: { ...makeDcodeSandboxEntry(), fromDockerfile: null },
+    });
+    configureDcodeSession(harness);
+    harness.session.metadata = { fromDockerfile: "/tmp/stale-session.Dockerfile" };
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.onboardSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ fromDockerfile: null }),
+    );
+  });
+
   it("rejects registry drift during the final DCode preflight before shields and backup (#6195)", async () => {
     const originalEntry = makeDcodeSandboxEntry();
     const driftedEntry = { ...originalEntry, model: "nvidia/changed-during-preflight" };
@@ -388,10 +424,16 @@ describe("rebuildSandbox DCode flow", () => {
   });
 
   it("finishes DCode preparation and recheck before backup, delete, and recreate (#6195)", async () => {
+    const mcpEntry = { server: "search", providerName: "mcp-search" };
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: makeDcodeSandboxEntry(),
-      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [],
+        scrubbedAdapterEntries: [],
+      },
     });
     configureDcodeSession(harness);
 
@@ -399,8 +441,14 @@ describe("rebuildSandbox DCode flow", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
+    expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(4);
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledOnce();
+    expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compatibleEndpointReasoning: null,
+        webSearchConfig: null,
+      }),
+    );
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agent: "langchain-deepagents-code",
@@ -411,11 +459,14 @@ describe("rebuildSandbox DCode flow", () => {
       }),
     );
 
-    const [firstRouteOrder, preBackupRouteOrder, deleteEdgeRouteOrder] =
+    const [firstRouteOrder, preBackupRouteOrder, preMcpRouteOrder, deleteEdgeRouteOrder] =
       harness.preflightDcodeRouteSpy.mock.invocationCallOrder;
     const imageOrder = harness.prepareManagedDcodeRebuildImageSpy.mock.invocationCallOrder[0];
     const shieldsOrder = harness.openShieldsSpy.mock.invocationCallOrder[0];
     const backupOrder = harness.backupSandboxStateSpy.mock.invocationCallOrder[0];
+    const mcpPreparationOrder = harness.prepareMcpBridgesForRebuildSpy.mock.invocationCallOrder[0];
+    const warningProbeOrder =
+      harness.warnUnpreservedUserManagedFilesSpy.mock.invocationCallOrder[0];
     const deleteCall = harness.runOpenshellSpy.mock.calls.findIndex(
       ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
     );
@@ -426,12 +477,50 @@ describe("rebuildSandbox DCode flow", () => {
     expect(imageOrder).toBeLessThan(preBackupRouteOrder);
     expect(preBackupRouteOrder).toBeLessThan(shieldsOrder);
     expect(shieldsOrder).toBeLessThan(backupOrder);
-    expect(backupOrder).toBeLessThan(deleteEdgeRouteOrder);
+    expect(backupOrder).toBeLessThan(preMcpRouteOrder);
+    expect(preMcpRouteOrder).toBeLessThan(mcpPreparationOrder);
+    expect(mcpPreparationOrder).toBeLessThan(warningProbeOrder);
+    expect(warningProbeOrder).toBeLessThan(deleteEdgeRouteOrder);
     expect(deleteEdgeRouteOrder).toBeLessThan(deleteOrder);
     expect(deleteOrder).toBeLessThan(onboardOrder);
     expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       harness.preparedDcodeBuildContext,
     );
+    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+  });
+
+  it("rolls back managed MCP mutation when DCode inputs drift during MCP preparation (#6195)", async () => {
+    const detached = { server: "search", providerName: "mcp-search" };
+    const scrubbed = { server: "filesystem", adapter: "deepagents-config" };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }, { ok: true }],
+      dcodeImageVerificationResults: [true, true, false],
+      mcpPreparation: {
+        entries: [detached],
+        detachedProviderEntries: [detached],
+        scrubbedAdapterEntries: [scrubbed],
+      },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
+
+    expect(harness.prepareMcpBridgesForRebuildSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).toHaveBeenCalledWith(
+      "alpha",
+      [detached],
+      [scrubbed],
+    );
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
   });
 
   it("recreates non-Ready DCode from a validated backup without requiring a live route (#6195)", async () => {
@@ -467,6 +556,42 @@ describe("rebuildSandbox DCode flow", () => {
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
       "alpha",
       recoveryManifest.backupPath,
+    );
+  });
+
+  it("replays captured custom policies during stale DCode recovery without a backup (#6195)", async () => {
+    const customPolicy = {
+      name: "custom-egress",
+      content: "network_policies:\n  custom-egress: {}\n",
+      sourcePath: "/tmp/custom-egress.yaml",
+    };
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: {
+        ...makeDcodeSandboxEntry(),
+        customPolicies: [customPolicy],
+        policyPresetsFinalized: true,
+      },
+      sandboxListOutput: "",
+      reconciledSandboxGatewayState: { state: "missing", output: "" },
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+    expect(harness.applyPresetSpy).not.toHaveBeenCalled();
+    expect(harness.applyPresetContentSpy).toHaveBeenCalledWith(
+      "alpha",
+      customPolicy.name,
+      customPolicy.content,
+      { custom: { sourcePath: customPolicy.sourcePath } },
+    );
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({ policies: [], policyPresetsFinalized: true }),
     );
   });
 });

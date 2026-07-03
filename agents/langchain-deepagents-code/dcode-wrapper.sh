@@ -5,6 +5,12 @@
 # Managed Deep Agents Code launcher for NemoClaw/OpenShell sandboxes.
 
 set -euo pipefail
+
+if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2'
+  exit 0
+fi
+
 unset BASH_ENV ENV OPENAI_PROXY
 
 export HOME=/sandbox
@@ -503,11 +509,6 @@ assert_no_secret_env_file
 assert_no_auth_store_credentials
 assert_no_codex_auth_credentials
 
-if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1'
-  exit 0
-fi
-
 # SECURITY: managed identity/status display boundary.
 # - Invalid state: config.toml and runtime environment values are mutable inside
 #   the sandbox and can contain terminal controls, credentials, unsafe endpoint
@@ -830,17 +831,12 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
   arg_index=$((arg_index + 1))
 done
 
-extra_args=(--sandbox none)
-# The root-owned package helper validates the complete sandbox-user-owned file
-# as strict HTTPS-only NemoClaw config before any upstream parser sees it.
-managed_mcp_config="$(
-  /opt/venv/bin/python3 -I -c \
-    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or "")'
-)"
-if [ -n "$managed_mcp_config" ]; then
-  extra_args+=(--mcp-config "$managed_mcp_config")
-else
-  extra_args+=(--no-mcp)
-fi
+extra_args=(--sandbox none --no-mcp)
+# The patched Python entrypoint opens, validates, canonicalizes, and seals the
+# dedicated NemoClaw MCP projection inside this long-lived process. A shell
+# command substitution cannot own that descriptor: its subprocess would close
+# the memfd before Deep Agents Code or its LangGraph child could consume it.
+# `--no-mcp` also keeps upstream auto-discovery fail-closed until the managed
+# entrypoint replaces it with the sealed /proc/self/fd path.
 
 run_dcode "${extra_args[@]}" "$@"
