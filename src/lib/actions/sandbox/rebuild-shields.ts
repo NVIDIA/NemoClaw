@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { G, R, RD as _RD, YW } from "../../cli/terminal-style";
+import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import * as shields from "../../shields";
 
 export interface RebuildShieldsWindow {
@@ -24,15 +24,32 @@ export function openRebuildShieldsWindow(
   try {
     shields.shieldsDown(sandboxName, {
       reason: "auto-unlock for rebuild",
-      skipTimer: true,
+      // Rebuild owns the normal close path, while the bounded timer remains
+      // recovery authority if the host process is killed mid-backup/recreate.
+      timeout: "30m",
       throwOnError: true,
+      // The timer's deadline remains authoritative if rebuild dies, but it
+      // must not lock a replacement halfway through an active recreate. The
+      // exact rebuild PID/start identity acts as a renewable liveness lease;
+      // after owner death the timer retries until restoration can complete.
+      deferAutoRestoreWhileOwnerAlive: true,
+      // Existing Hermes sandboxes may predate the sealed root-guard protocol.
+      // This narrowly scoped rebuild path may use the descriptor-safe legacy
+      // transition so the old image can be backed up and replaced. Interactive
+      // shields commands remain fail-closed and require the rebuild.
+      allowLegacyHermesProtocol: true,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(`  ${_RD}Failed to auto-unlock shields:${R} ${message}`);
     console.error("  Sandbox is untouched — no data was lost.");
-    console.error(`  Run \`${cliName} ${sandboxName} shields down\` manually, then retry rebuild.`);
+    console.error(
+      `  Correct the reported issue, then retry \`${cliName} ${sandboxName} rebuild\`.`,
+    );
+    console.error(
+      "  If the trusted config posture cannot be recovered, restore a trusted backup and recreate the sandbox.",
+    );
     return null;
   }
   return window;
@@ -67,14 +84,19 @@ export function relockRebuildShieldsWindow(
   console.log("");
   console.log("  Re-applying shields lockdown...");
   try {
-    shields.shieldsUp(sandboxName, { throwOnError: true });
+    shields.shieldsUp(sandboxName, {
+      throwOnError: true,
+      allowLegacyHermesProtocol: true,
+    });
     console.log(`  ${G}✓${R} Shields restored to UP`);
     window.relocked = true;
     return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to re-apply shields lockdown: ${message}`);
-    console.error(`  Run \`${cliName} ${sandboxName} shields up\` manually to restore lockdown.`);
+    console.error(
+      `  Retry \`${cliName} ${sandboxName} rebuild\` after correcting the reported issue. If lockdown cannot be restored, recover from a trusted backup and recreate the sandbox.`,
+    );
     return false;
   }
 }

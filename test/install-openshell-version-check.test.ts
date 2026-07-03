@@ -1,13 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
+  cliLinuxArm64: "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
+  cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
+  gatewayDarwinArm64: "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
+  gatewayLinuxArm64: "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
+  gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxArm64: "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
+  sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+};
+const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
 
 function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
@@ -124,29 +135,29 @@ exit 0`,
 }
 
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
-  it("exits cleanly when openshell 0.0.44 and driver binaries are already installed", () => {
-    const result = runWithInstalledVersion("0.0.44");
+  it("exits cleanly when openshell 0.0.72 and driver binaries are already installed", () => {
+    const result = runWithInstalledVersion("0.0.72");
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
   });
 
-  it("triggers reinstall when openshell 0.0.44 is missing Docker-driver binaries", () => {
-    const result = runWithInstalledVersion("0.0.44", {}, { driverBins: false, os: "Linux" });
+  it("triggers reinstall when openshell 0.0.72 is missing Docker-driver binaries", () => {
+    const result = runWithInstalledVersion("0.0.72", {}, { driverBins: false, os: "Linux" });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
   });
 
-  it("fails closed when openshell 0.0.44 lacks required messaging rewrite support", () => {
-    const result = runWithInstalledVersion("0.0.44", {}, { capability: false });
+  it("fails closed when openshell 0.0.72 lacks required messaging rewrite support", () => {
+    const result = runWithInstalledVersion("0.0.72", {}, { capability: false });
     expect(result.status).toBe(1);
     // `fail()` writes to stderr as of #3446; previously stdout.
     expect(result.stderr).toMatch(/missing request-body-credential-rewrite support/);
   });
 
-  it("accepts macOS openshell 0.0.44 when the gateway binary is installed", () => {
+  it("accepts macOS openshell 0.0.72 when the gateway binary is installed", () => {
     const result = runWithInstalledVersion(
-      "0.0.44",
+      "0.0.72",
       {},
       {
         driverBins: "gateway",
@@ -155,7 +166,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       },
     );
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
   });
 
   it("does not require the macOS VM driver entitlement for Docker-driver onboarding", () => {
@@ -164,7 +175,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       const state = path.join(tmp, "codesign-state");
       const log = path.join(tmp, "codesign.log");
       const result = runWithInstalledVersion(
-        "0.0.44",
+        "0.0.72",
         {
           NEMOCLAW_FAKE_CODESIGN_HAS_ENTITLEMENT: "0",
           NEMOCLAW_FAKE_CODESIGN_STATE: state,
@@ -178,7 +189,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
       );
 
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-      expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
+      expect(result.stdout).toMatch(/already installed.*0\.0\.72/);
       expect(result.stdout).not.toMatch(/missing the macOS Hypervisor entitlement/);
       expect(result.stdout).not.toMatch(/Signing openshell-driver-vm/);
       expect(result.stdout).not.toMatch(/Installing OpenShell from release/);
@@ -188,9 +199,9 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     }
   });
 
-  it("triggers reinstall on macOS when openshell 0.0.44 is missing required gateway binaries", () => {
+  it("triggers reinstall on macOS when openshell 0.0.72 is missing required gateway binaries", () => {
     const result = runWithInstalledVersion(
-      "0.0.44",
+      "0.0.72",
       {},
       {
         driverBins: false,
@@ -200,7 +211,7 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     );
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
   });
 
   it("downloads the macOS arm64 gateway asset during reinstall", () => {
@@ -242,11 +253,11 @@ if [ -n "$out" ]; then
   case "$(basename "$out")" in
   openshell-checksums-sha256.txt)
     printf '%s\n' \
-      'ignored  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+      '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
     ;;
   openshell-gateway-checksums-sha256.txt)
     printf '%s\n' \
-      'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+      '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
     ;;
   *)
     : > "$out"
@@ -274,7 +285,7 @@ dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
 cat > "$dest" <<'EOF'
 #!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.44"; exit 0; fi
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.72"; exit 0; fi
 # request-body-credential-rewrite websocket-credential-rewrite
 exit 0
 EOF
@@ -299,6 +310,116 @@ exit 0`,
       expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
       expect(downloads).not.toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
       expect(downloads).toContain("openshell-gateway-checksums-sha256.txt");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads and verifies every Linux arm64 release asset during reinstall", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const downloadLog = path.join(tmp, "downloads.log");
+      const checksumLog = path.join(tmp, "checksums.log");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "aarch64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+      writeExecutable(path.join(fakeBin, "gh"), "#!/usr/bin/env bash\nexit 1\n");
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+echo "$@" >> ${JSON.stringify(downloadLog)}
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; out="$1"; fi
+  shift || true
+done
+case "$(basename "$out")" in
+openshell-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
+openshell-gateway-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+openshell-sandbox-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+*) : > "$out" ;;
+esac
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+[ "$#" -eq 2 ] && [ "$1" = "-c" ] && [ "$2" = "-" ] || exit 9
+line="$(cat)"
+case "$line" in
+'${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz') ;;
+*) exit 10 ;;
+esac
+printf '%s\n' "$line" >> ${JSON.stringify(checksumLog)}
+printf '%s\n' 'checksum OK'`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then outdir="$arg"; break; fi
+  prev="$arg"
+done
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+mkdir -p "$(dirname "$dest")"
+case "$(basename "$dest")" in
+openshell)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell 0.0.72"; else exit 0; fi\n# request-body-credential-rewrite websocket-credential-rewrite\n' > "$dest" ;;
+*) printf '#!/usr/bin/env bash\nexit 0\n' > "$dest" ;;
+esac
+chmod 755 "$dest"`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const downloads = fs.readFileSync(downloadLog, "utf8");
+      expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
+      expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
+      expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
+      expect(fs.readFileSync(checksumLog, "utf8").trim().split("\n")).toEqual([
+        `${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz`,
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -344,13 +465,13 @@ done
 if [ -n "$out" ]; then
   case "$(basename "$out")" in
   openshell-checksums-sha256.txt)
-    printf '%s\n' 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' > "$out"
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' > "$out"
     ;;
   openshell-gateway-checksums-sha256.txt)
-    printf '%s\n' 'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
     ;;
   openshell-sandbox-checksums-sha256.txt)
-    printf '%s\n' 'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
     ;;
   *)
     : > "$out"
@@ -396,7 +517,7 @@ printf '%s\\n' "$dest" >> ${JSON.stringify(installLog)}
 mkdir -p "$(dirname "$dest")"
 case "$(basename "$dest")" in
 openshell)
-  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell 0.0.44"; else exit 0; fi\\n# request-body-credential-rewrite websocket-credential-rewrite\\n' > "$dest"
+  printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell 0.0.72"; else exit 0; fi\\n# request-body-credential-rewrite websocket-credential-rewrite\\n' > "$dest"
   ;;
 *)
   printf '#!/usr/bin/env bash\\nexit 0\\n' > "$dest"
@@ -422,6 +543,101 @@ exit 0`,
       expect(installedTargets).toContain(path.join(activeBin, "openshell-gateway"));
       expect(installedTargets).toContain(path.join(activeBin, "openshell-sandbox"));
       expect(installedTargets).not.toContain("/usr/local/bin/openshell");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects release checksum files that disagree with NemoClaw-pinned OpenShell digests", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-pinned-digest-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const tarLog = path.join(tmp, "tar.log");
+      const installLog = path.join(tmp, "install.log");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "gh"),
+        `#!/usr/bin/env bash
+exit 1`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+if [ -n "$out" ]; then
+  case "$(basename "$out")" in
+  openshell-checksums-sha256.txt)
+    printf '%s\n' '${ZERO_SHA256}  openshell-x86_64-unknown-linux-musl.tar.gz' > "$out"
+    ;;
+  openshell-gateway-checksums-sha256.txt)
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  openshell-sandbox-checksums-sha256.txt)
+    printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' > "$out"
+    ;;
+  *)
+    : > "$out"
+    ;;
+  esac
+fi
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+cat >/dev/null
+echo "checksum OK"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+printf '%s\n' "$*" >> ${JSON.stringify(tarLog)}
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+printf '%s\n' "$*" >> ${JSON.stringify(installLog)}
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toContain(
+        "OpenShell release checksum for openshell-x86_64-unknown-linux-musl.tar.gz does not match NemoClaw-pinned v0.0.72 digest",
+      );
+      expect(fs.existsSync(tarLog) ? fs.readFileSync(tarLog, "utf-8") : "").toBe("");
+      expect(fs.existsSync(installLog) ? fs.readFileSync(installLog, "utf-8") : "").toBe("");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -453,32 +669,45 @@ exit 0`,
   });
 
   it("reinstalls the pinned release when openshell is above MAX_VERSION", () => {
-    const result = runWithInstalledVersion("0.0.45");
+    const result = runWithInstalledVersion("0.0.73");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.44/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);
+    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.72/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
     expect(result.stderr).not.toMatch(/Upgrade NemoClaw first/);
   });
 
   it("reinstalls the pinned release when openshell is at a much newer version", () => {
     const result = runWithInstalledVersion("0.1.0");
     expect(result.status).not.toBe(0);
-    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.44/);
-    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);
+    expect(result.stdout).toMatch(/above the maximum.*reinstalling pinned OpenShell 0\.0\.72/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.72'/);
     expect(result.stderr).not.toMatch(/Upgrade NemoClaw first/);
   });
 
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
-    const result = runWithInstalledVersion("0.0.44.dev84+g6b2180425", {
+    const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
+    expect(result.stdout).toMatch(/Dev channel install skips SHA-256 verification/);
+  });
+
+  it("fails closed for dev-channel installs without explicit risk acceptance", () => {
+    const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      "Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install.",
+    );
   });
 
   it("upgrades stable OpenShell when the dev channel is requested", () => {
     const result = runWithInstalledVersion("0.0.36", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);

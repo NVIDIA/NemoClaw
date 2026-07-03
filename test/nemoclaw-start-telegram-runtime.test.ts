@@ -229,4 +229,69 @@ describe("Telegram runtime preload installation", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("fails closed when a mandatory preload or connect-list write fails", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-telegram-write-failure-"));
+    const sourcePrefix = path.join(tmpDir, "preloads") + path.sep;
+    const sourcePath = path.join(sourcePrefix, "telegram-diagnostics.js");
+    const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
+    const planPath = path.join(tmpDir, "runtime-plan.json");
+    const connectPreloadsPath = path.join(tmpDir, "connect-preloads.list");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const preload = {
+      source: sourcePath,
+      target: preloadPath,
+      injectInto: ["boot", "connect"],
+      optional: false,
+    };
+    const cases = [
+      { failTarget: preloadPath, nodePreloads: [preload], expectPreload: false },
+      { failTarget: connectPreloadsPath, nodePreloads: [preload], expectPreload: true },
+      { failTarget: connectPreloadsPath, nodePreloads: [], expectPreload: false },
+    ];
+    fs.mkdirSync(sourcePrefix, { recursive: true });
+    fs.copyFileSync(TELEGRAM_RUNTIME_PRELOAD, sourcePath);
+
+    try {
+      for (const testCase of cases) {
+        fs.rmSync(preloadPath, { force: true });
+        fs.rmSync(connectPreloadsPath, { force: true });
+        fs.writeFileSync(planPath, JSON.stringify({ nodePreloads: testCase.nodePreloads }));
+        fs.writeFileSync(
+          scriptPath,
+          [
+            "#!/usr/bin/env bash",
+            "set -uo pipefail",
+            `FAIL_TARGET=${JSON.stringify(testCase.failTarget)}`,
+            "emit_sandbox_sourced_file() {",
+            '  local target="$1"',
+            '  [ "$target" != "$FAIL_TARGET" ] || { cat >/dev/null; return 1; }',
+            '  cat >"$target"',
+            '  chmod 444 "$target"',
+            "}",
+            "NODE_OPTIONS=''",
+            messagingRuntimeSetupSection(src, {
+              planPath,
+              connectPreloadsPath,
+              sourcePrefix,
+              targetPrefix: tmpDir + path.sep,
+            }),
+            "rc=0",
+            "install_messaging_runtime_preloads || rc=$?",
+            'printf "rc=%s\\n" "$rc"',
+            'exit "$rc"',
+          ].join("\n"),
+          { mode: 0o700 },
+        );
+
+        const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+        expect(result.status, result.stderr).toBe(1);
+        expect(result.stdout).toContain("rc=1");
+        expect(fs.existsSync(preloadPath)).toBe(testCase.expectPreload);
+        expect(fs.existsSync(connectPreloadsPath)).toBe(false);
+      }
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });

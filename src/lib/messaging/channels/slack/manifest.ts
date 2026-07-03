@@ -213,22 +213,6 @@ export const slackManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedUsers"],
-      slackConfig: ["allowedChannels"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.slack",
-        env: "SLACK_ALLOWED_USERS",
-      },
-      {
-        statePath: "slackConfig.allowedChannels",
-        env: "SLACK_ALLOWED_CHANNELS",
-      },
-    ],
-  },
   hooks: [
     {
       id: "slack-socket-mode-gateway-conflict",

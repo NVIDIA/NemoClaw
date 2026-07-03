@@ -592,7 +592,7 @@ startGateway(null).catch(() => {});
       agent: "hermes",
       provider: "hermes-provider",
       model: "moonshotai/kimi-k2.6",
-      endpointUrl: "https://inference-api.nousresearch.com/v1",
+      endpointUrl: "https://8.8.8.8/v1",
       credentialEnv: "NOUS_API_KEY",
       hermesAuthMethod: "oauth",
       hermesToolGateways: ["nous-web"],
@@ -828,7 +828,7 @@ process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 const { setupInference } = require(${onboardPath});
 
 (async () => {
-  await setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider", "https://inference-api.nousresearch.com/v1", "OPENAI_API_KEY", "oauth");
+  await setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider", "https://8.8.8.8/v1", "OPENAI_API_KEY", "oauth");
   console.log(JSON.stringify(commands));
 })().catch((error) => {
   console.error(error);
@@ -1119,7 +1119,7 @@ onboardSession.saveSession(
     sandboxName: null,
     provider: "hermes-provider",
     model: "moonshotai/kimi-k2.6",
-    endpointUrl: "https://inference-api.nousresearch.com/v1",
+    endpointUrl: "https://8.8.8.8/v1",
     credentialEnv: "NOUS_API_KEY",
     hermesAuthMethod: "api_key",
     hermesToolGateways: [],
@@ -1273,7 +1273,7 @@ const { setupInference } = require(${onboardPath});
     "test-box",
     "moonshotai/kimi-k2.6",
     "hermes-provider",
-    "https://inference-api.nousresearch.com/v1",
+    "https://8.8.8.8/v1",
     "NOUS_API_KEY",
     "api_key",
   );
@@ -2444,7 +2444,7 @@ const { EventEmitter } = require("node:events");
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
-const defaultCalls = [];
+const defaultCalls = []; registry.addExtraProvider("tavily-search");
 runner.run = (command, opts = {}) => {
   commands.push({ command: _n(command), env: opts.env || null });
   return { status: 0 };
@@ -2547,7 +2547,7 @@ const { createSandbox } = require(${onboardPath});
       entry.command.includes("sandbox create"),
     );
     assert.ok(createCommand, "expected sandbox create command");
-    assert.match(createCommand.command, /nemoclaw-start/);
+    assert.match(createCommand.command, /(?=.*nemoclaw-start)(?=.*--provider tavily-search)/);
     assert.doesNotMatch(createCommand.command, /--upload/);
     assert.doesNotMatch(createCommand.command, /OPENCLAW_CONFIG_PATH/);
     assert.doesNotMatch(createCommand.command, /NVIDIA_INFERENCE_API_KEY=/);

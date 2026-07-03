@@ -8,6 +8,14 @@ export type SandboxVersionCheck = {
   sandboxVersion?: string | null;
   expectedVersion?: string | null;
   detectionMethod?: string | null;
+  /**
+   * True whenever staleness could not be confirmed — probe failure, no
+   * expected version, opt-out probing, or a scheme mismatch between the
+   * runtime and manifest versions. `classifyUpgradeableSandboxes` treats
+   * these as `unknown` candidates so the operator can decide whether to
+   * rebuild rather than silently letting them fall through as "current".
+   */
+  verificationFailed?: boolean;
 };
 
 /**
@@ -101,7 +109,11 @@ export function classifyUpgradeableSandboxes(
             }
           : {}),
       });
-    } else if (versionCheck.detectionMethod === "unavailable") {
+    } else if (
+      versionCheck.detectionMethod === "unavailable" ||
+      versionCheck.detectionMethod === "unknown" ||
+      versionCheck.verificationFailed
+    ) {
       unknown.push({
         name: sandbox.name,
         expected: versionCheck.expectedVersion,

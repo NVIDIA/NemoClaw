@@ -125,6 +125,10 @@ Refer to [Tool-Calling Reliability](tool-calling-reliability).
 
 On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
 The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
+When non-interactive Linux onboarding finds an existing systemd Ollama service but cannot use passwordless sudo, it checks the service state and active TCP listeners before continuing.
+It continues without rewriting the systemd drop-in only when the service is active, `ss` reports at least one listener on port `11434`, and every reported address is loopback-only.
+Wildcard and non-loopback addresses, as well as missing or unreadable service or listener evidence, are treated as unverified.
+In those cases, onboarding exits before configuring the proxy and asks you to rerun from a terminal with `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` or configure passwordless sudo.
 Containers and other hosts on the local network reach Ollama only through the proxy, which validates a Bearer token before forwarding requests.
 On that native path, NemoClaw never exposes Ollama without authentication.
 
@@ -144,7 +148,8 @@ On native Linux hosts, a firewall can allow the host proxy health check while st
 When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
 
 ```bash
-sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+SUBNET=$(docker network inspect openshell-docker --format '{{(index .IPAM.Config 0).Subnet}}')
+sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
@@ -171,8 +176,13 @@ This does not delete downloaded model files.
 ```bash
 NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen3.5:9b \
-  $$nemoclaw onboard --non-interactive --yes
+  $$nemoclaw onboard --non-interactive --yes --yes-i-accept-third-party-software
 ```
+
+Non-interactive runs cannot prompt for the third-party software notice, so include `--yes-i-accept-third-party-software` (or set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`) whenever the path may install or start Ollama.
+For interactive local inference, choose the provider menu option that matches the local server you already started; use the Ollama option only when NemoClaw should manage Ollama for you.
+For vLLM, NIM, or another OpenAI-compatible endpoint, choose the compatible endpoint or custom provider path and enter the host URL from the server setup above.
+When later commands use `<name>`, replace it with the sandbox name you chose during onboarding, for example `my-assistant`.
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
 If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
@@ -201,6 +211,38 @@ Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt th
 Use **Other OpenAI-compatible endpoint** for vLLM, TensorRT-LLM, llama.cpp, LocalAI, NIM, SGLang, or another server that implements `/v1/chat/completions`.
 For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default because some local backends accept `/v1/responses` but drop system prompts or tool definitions.
 Set `NEMOCLAW_PREFERRED_API=openai-responses` only after you have verified that the backend streams the events OpenClaw requires.
+
+Use this path when you already have a local server for a raw model file, such as a GGUF model served by `llama-server`.
+The Ollama picker accepts Ollama model tags, not a filesystem path to a `.gguf` file.
+To use a downloaded GGUF file directly, start an OpenAI-compatible server first, then point NemoClaw at that server.
+
+For example, start llama.cpp on the host:
+
+```bash
+llama-server \
+  -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  --host 0.0.0.0 \
+  --port 8000 \
+  -c 16384 \
+  -ngl 999 \
+  --parallel 1 \
+  --chat-template chatml
+```
+
+Then select **Other OpenAI-compatible endpoint** during onboarding and enter the server base URL, for example `http://localhost:8000/v1` on the default Docker-driver topology.
+For non-interactive setup:
+
+```bash
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  COMPATIBLE_API_KEY=dummy \
+  $$nemoclaw onboard --non-interactive
+```
+
+Use the model id reported by the server's `/v1/models` response.
+If your setup uses the legacy containerized OpenShell gateway path instead of the default host-process gateway, the reachable host-service URL can differ; `http://host.openshell.internal:8000/v1` is the usual legacy host-gateway route and port `8000` is included in NemoClaw's `local-inference` policy preset.
+After onboarding, run `$$nemoclaw <name> status` and check the `Inference` row before starting long agent work.
 
 For the full compatible-endpoint prompt flow, non-interactive variables, API-path controls, managed vLLM profiles, NIM setup, and timeout settings, refer to [Inference Options](inference-options#setup-details-for-local-and-compatible-providers).
 

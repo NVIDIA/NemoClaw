@@ -360,9 +360,11 @@ Use `--no-gpu` to opt out when you want host-side inference providers only and d
 Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu --sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`; device selectors require explicit sandbox GPU enablement.
-On Linux Docker-driver gateways, NemoClaw can create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU access when that compatibility path is needed.
-When this compatibility path recreates the Docker container, NemoClaw uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
-On Jetson/Tegra hosts, it also adds the host group IDs that own `/dev/nvmap` and `/dev/nvhost-*` so the sandbox user can initialize CUDA.
+On ordinary native Linux Docker-driver hosts with usable CDI, NemoClaw uses OpenShell native GPU injection by default.
+On Docker Desktop WSL and Jetson/Tegra, NemoClaw creates the sandbox first and then recreates the OpenShell-managed Docker container with NVIDIA GPU access by default.
+When you force this compatibility path on ordinary native Linux, NemoClaw uses an available NVIDIA CDI spec before falling back to Docker `--gpus all` or the NVIDIA runtime.
+On Docker Desktop WSL, the compatibility path skips CDI and tries Docker `--gpus all` before the NVIDIA runtime.
+On Jetson/Tegra hosts, the compatibility path uses the NVIDIA runtime and adds the host group IDs that own `/dev/nvmap` and `/dev/nvhost-*` so the sandbox user can initialize CUDA.
 If the patch fails, onboarding keeps diagnostics and prints a manual cleanup command rather than deleting the failed sandbox automatically.
 
 Prerequisites:
@@ -376,7 +378,12 @@ When GPU passthrough is enabled and a gateway already exists without it, onboard
 If no other registered sandbox depends on that gateway, or if `--recreate-sandbox` is recreating the only registered sandbox with the same name, onboarding cleans up the stale gateway and continues.
 If other sandboxes depend on the gateway or Docker state is unclear, onboarding exits without cleanup and prints targeted destroy or gateway-removal guidance.
 To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
-Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass the Linux Docker-driver compatibility patch during troubleshooting.
+Leave `NEMOCLAW_DOCKER_GPU_PATCH` unset or set it to `auto` to use the platform default.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to force the legacy Docker container-swap path on ordinary native Linux.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=0` to select native OpenShell GPU injection on ordinary native Linux or Jetson/Tegra.
+Use `NEMOCLAW_DOCKER_GPU_PATCH=0` on Jetson/Tegra only for troubleshooting because it bypasses Tegra device-group propagation and CUDA may not initialize.
+Docker Desktop WSL ignores `NEMOCLAW_DOCKER_GPU_PATCH=0` because GPU passthrough on that runtime requires the compatibility patch.
+Use `--no-sandbox-gpu`, `--no-gpu`, or `NEMOCLAW_SANDBOX_GPU=0` when you want to disable sandbox GPU passthrough on Docker Desktop WSL.
 
 ### `nemohermes list`
 
@@ -467,7 +474,14 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+
 The exit code is the remote command's exit code.
+
+The OpenShell exec endpoint rejects any command argument (the values after `--`) that contains a newline or carriage return, so multi-line commands such as a `bash` heredoc cannot be passed through `exec`.
+NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` instead of surfacing the lower-level OpenShell `InvalidArgument` error.
+Join the statements with semicolons (`nemohermes <name> exec -- bash -lc "cmd1; cmd2"`).
+Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | nemohermes <name> exec -- bash`).
+Or write the script to a file in the sandbox and run it (`nemohermes <name> exec -- bash <script-path>`).
 
 | Flag | Description |
 |------|-------------|
@@ -527,27 +541,91 @@ nemohermes my-assistant shields down --timeout 5m --reason "maintenance"
 | `shields up` | Lock the sandbox config and restore the saved restrictive policy |
 | `shields down` | Temporarily unlock the sandbox config. Supports `--timeout`, `--reason`, and `--policy` |
 
+If `shields up` reports that the config remains unlocked or drifted, confirm that the sandbox is running and ready, then retry `nemohermes <name> shields up`.
+If the retry still fails, rebuild a known-good baseline with `nemohermes <name> rebuild --yes`.
+
+Host-side config and inference writes, snapshot mutation, sandbox destruction, and shields transitions serialize per sandbox.
+When a timed shields-down window reaches its deadline, auto-restore can interrupt the exact process tree holding that transition and restore lockdown.
+Retry an interrupted command in a new shields-down window.
+
 ### `nemohermes <name> recover`
 
-Restart the in-sandbox gateway and re-establish the host-side dashboard port-forward without opening an SSH session.
-Use this after a sandbox pod restart, a sandbox crash, or whenever `nemohermes <name> status` reports the gateway is not running but the sandbox is alive.
+Repair a stopped in-sandbox gateway and re-establish host-side forwards without opening an SSH session.
+Use this after a direct sandbox container restart, a sandbox crash, or whenever `nemohermes <name> status` reports the gateway is not running but the sandbox is alive.
 
-`recover` runs the same recovery the `connect` command performs as a side effect, but without dropping into a shell, so it is safe to call from scripts and automation.
+For built-in OpenClaw and Hermes sandboxes, `recover` sends an authenticated lifecycle request through registry-scoped privileged direct-container control.
+The host selects the controller from the live container topology.
+In a direct root-entrypoint container, the request reaches the root PID 1 supervisor.
+In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
+It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaunch as a fallback.
 It is idempotent.
-If the gateway is already running, the command exits zero with a probe message and makes no changes.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
+Other controller failures stop immediately.
+If the gateway is already running, the command exits zero without force-restarting it; it can still re-evaluate supported safety checks and check or recover host-side forwards.
+Use [`nemohermes <name> gateway restart`](#nemohermes-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 
 ```bash
 nemohermes my-assistant recover
 ```
 
-`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` on every run, including when the gateway is already healthy.
-If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command stops the running gateway, exits non-zero, and prints the offending key.
+`recover` re-evaluates the documented Hermes secret boundary against `/sandbox/.hermes/.env` and the supervisor runtime environment on every run, including when the gateway is already healthy.
+If the file contains raw secret-shaped values (for example a pasted Telegram, Discord, or Slack bot token in place of the expected `openshell:resolve:env:<name>` placeholder), the command exits non-zero and prints the offending key.
+The direct root-entrypoint supervisor stops a running gateway after this refusal, while the managed controller refuses before signaling the observed child.
 Replace each flagged value with the `openshell:resolve:env:<name>` placeholder and re-run.
-Older Hermes sandbox images that predate the standalone validator are detected and left untouched: `recover` prints a `[boundary]` warning naming the sandbox and noting that `/sandbox/.hermes/.env` was not re-evaluated, then proceeds with the rest of the recovery path rather than blocking the gateway. Re-image the sandbox to a current Hermes build to enable the per-run boundary re-evaluation described above.
+The direct root-entrypoint supervisor verifies the strict root-owned config hash.
+The managed controller verifies that strict hash when both Hermes config inputs are root-owned and locked.
+Mutable config under the managed topology has no durable root-owned hash anchor and retains the same trust and time-of-check/time-of-use limits as managed cold start.
+If the boundary validator or supervisor helper is missing, recovery fails closed, names the sandbox, explains that `/sandbox/.hermes/.env` could not be re-evaluated, and leaves an otherwise healthy gateway untouched.
+Rebuild an older sandbox image with `nemohermes <name> rebuild --yes` before retrying.
+
+The privileged control path requires a running direct sandbox container that belongs to the named registry entry.
+Supported built-in images use either a direct root entrypoint or the OpenShell-managed process shape with OpenShell as PID 1 and exactly one nonroot `nemoclaw-start` supervisor.
+An arbitrary nonroot entrypoint that does not match the supported OpenShell-managed process shape fails with the `privileged control unavailable` failure layer.
+Kubernetes and other deployments without a matching direct container also fail with that layer.
+
+### `nemohermes <name> gateway restart`
+
+Force-restart the supported in-sandbox gateway process through the controller for the live container topology.
+Use this after runtime configuration or plugin changes that the agent reads only at gateway startup, such as Hermes Langfuse plugin settings.
+Unlike `recover`, this command restarts a healthy gateway instead of exiting after the health probe.
+
+```bash
+nemohermes my-assistant gateway restart [--quiet|-q]
+```
+
+On success, the command reports that the gateway was restarted, health passed, and forwards were checked or recovered.
+It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
+`--quiet` suppresses progress lines but still prints refusal diagnostics.
+In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
+In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
+That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
+For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five unexpected exits or failed replacement candidates within 60 seconds until sandbox recreation.
+That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live; it records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology.
+The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
+
+For Hermes, both controllers validate `/sandbox/.hermes/.env` against the secret-boundary guard and validate the supervisor runtime environment before restart.
+The direct root-entrypoint supervisor verifies `/sandbox/.hermes/config.yaml` and `.env` against the root-owned strict hash and relaunches the process as the `gateway` user.
+The managed controller verifies the strict hash when both config inputs are root-owned and locked, but mutable managed config retains cold-start-equivalent trust and time-of-check/time-of-use limits.
+Neither controller recomputes a trusted strict hash to adopt direct in-sandbox edits.
+Use supported host commands such as `nemohermes <name> config set` and `nemohermes inference set` for intended runtime configuration changes because those commands update the managed config metadata together.
+When a strict hash is available and does not match, the command reports the `config hash mismatch` failure layer.
+Hermes host config writes, shields transitions, and lifecycle seals share one root-only mutation lock.
+Config writes are bound to the digest of the matching read and atomically refresh the strict and compatibility hashes before the prior ownership and mode posture is restored.
+The shields transition keeps that lock through recursive filesystem updates, verification, and content-seal capture, and replaces sensitive inodes before lockdown.
+If a concurrent lifecycle request reports `SUPERVISOR_BUSY`, or a config or shields command reports `Hermes config mutation is already in progress`, wait for the active operation to finish and retry.
+Run `nemohermes <name> shields down` before a Hermes config or inference change; these commands refuse to mutate a shields-up sandbox.
+
+The command can fail at these layers: unsupported agent, privileged control unavailable, secret-boundary refusal, unsafe config path, config hash mismatch when a strict hash is available, launch failure, health timeout, or forward recovery failure.
+An older direct-container image without the matching supervisor or managed controller helper reports `privileged control unavailable` and requires `nemohermes <name> rebuild --yes`.
+Ordinary OpenShell exec and manual in-sandbox relaunch are not fallback paths.
+Terminal agents do not have a gateway runtime and fail as unsupported.
 
 ### `nemohermes <name> status`
 
-Show sandbox status, health, and inference configuration.
+Show sandbox-scoped status, health, and inference configuration for one registered sandbox.
+Use this form when you care about a specific sandbox's live OpenShell state, agent runtime, inference health, GPU proof, permissions, and recovery hints.
+Do not pass a sandbox name to `nemohermes status`; that command is the global all-sandbox/service overview.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
 The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
@@ -654,8 +732,10 @@ nemohermes my-assistant doctor [--json]
 ### `nemohermes <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
+The command runs as the sandbox user with `HOME=/sandbox`.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
+
+The command exits with the remote command's exit code.
 
 ```bash
 nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
@@ -717,6 +797,11 @@ If you want to upgrade the sandbox while preserving state, use `nemohermes <name
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
+It restores and verifies lockdown and revokes the active timer before deletion.
+It clears the remaining local shields state only after deletion succeeds.
+If hardening fails, the command refuses deletion and leaves the timer authority available to retry lockdown.
+If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, `destroy` preserves the shared NemoClaw gateway.
 Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
 
@@ -743,6 +828,7 @@ nemohermes my-assistant policy-add pypi --yes
 The positional form is required in scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
+Built-in preset choices are scoped to the sandbox's active agent. Messaging channel presets appear only when NemoClaw has a matching channel policy for that agent; unavailable channel presets use the standard unknown-preset error before endpoint preview or confirmation.
 Custom preset files are tracked with the sandbox that applied them.
 `policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
 Before `policy-add` writes a merged policy, it reads and parses the current live policy from OpenShell.
@@ -782,10 +868,20 @@ Custom presets bypass the built-in preset review process and can widen sandbox e
 ### `nemohermes <name> policy-list`
 
 List available policy presets and show which ones are applied to the sandbox.
+The available built-in rows are scoped to the sandbox's active agent, so unsupported messaging channel policies are not listed for agents without matching channel policy files.
 The command cross-references the local registry against the live gateway state (via `openshell policy get`), so it flags presets that are applied in one place but not the other.
 This catches desync caused by external edits to the gateway policy or stale registry entries after a manual rollback.
 Preset summaries come only from the YAML `preset.description` field.
 NemoClaw does not render network-policy rule bodies as prose in `policy-list` output.
+
+Each active preset is annotated with its provenance so you can tell why it is applied:
+
+- `[from <tier> tier]` — the preset name matches an entry in the sandbox's current tier definition (see [Policy Tiers](../reference/network-policies#policy-tiers)).
+- `[from openclaw agent]` or `[from hermes agent]` — the preset name matches a NemoClaw-managed agent preset and the active agent matches that label (for example `openclaw-pricing` on an OpenClaw sandbox, or Nous-hosted gateway presets on a Hermes sandbox).
+- `[user-added]` — anything else: presets applied later through `policy-add`, presets that match no tier or agent default, or presets that match the opposite agent's reserved names on a sandbox running the other agent.
+- `[source unverified]` — the row is active but the local registry and live gateway state disagree. When the gateway cannot be queried, this renders as `[source unverified (gateway unreachable)]`. The provenance check is suppressed in these trust-degraded states because the source cannot be confirmed against both halves of the sandbox policy view.
+
+Provenance tags are inferred from the sandbox's current tier and agent metadata at display time and are not persisted per preset. A preset whose name appears in the sandbox's current tier YAML is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding, and OpenClaw-only or Hermes-only preset names are only labelled `[from <agent> agent]` when the active agent matches that label.
 
 ```bash
 nemohermes my-assistant policy-list
@@ -985,6 +1081,8 @@ Use `channels stop` instead of `channels remove` when you want to pause a bridge
 ### `nemohermes <name> channels start <channel>`
 
 Re-enable a channel previously paused with `channels stop`. The channel is removed from the disabled list, the sandbox is rebuilt, and the bridge registers with the gateway again using the stored credentials.
+Before the rebuild, NemoClaw reapplies the matching built-in network policy preset so the restored bridge has egress to its upstream API.
+If policy restoration fails, NemoClaw rolls the channel back to disabled and exits without rebuilding into a partially active state.
 
 ```bash
 nemohermes my-assistant channels start telegram
@@ -996,16 +1094,28 @@ nemohermes my-assistant channels start telegram
 
 ### `nemohermes <name> channels status`
 
-Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+Run messaging channel status checks.
+Without `--channel`, the command prints a compact summary for every configured channel, including registration, policy coverage, and non-secret rendered config comparisons.
+With `--channel`, it prints the detailed status for that channel.
+
+For WhatsApp, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
+A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
+
+For registered non-WhatsApp channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
+Secret inputs, including tokens, are not printed.
+If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
+Optional unset inputs remain informational.
 
 ```bash
+nemohermes my-assistant channels status
 nemohermes my-assistant channels status --channel whatsapp
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--channel <channel>` | Channel to inspect; defaults to `whatsapp` when registered |
-| `--json` | Emit the diagnostic report as JSON (exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--channel <channel>` | Channel to inspect in detail |
+| `--json` | Emit the status report as JSON (for the detailed WhatsApp probe, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
 The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
 
@@ -1038,7 +1148,7 @@ For new installs, the agent session index is refreshed so the agent discovers th
 Remove an installed skill from a running sandbox by skill name.
 The command validates the skill name, removes the sandbox upload directory, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
 
-For Hermes, restart the Hermes gateway if prompted so the removal takes effect.
+Run `nemohermes <name> gateway restart` if prompted so the removal takes effect.
 
 ```bash
 nemohermes my-assistant skill remove my-skill
@@ -1224,8 +1334,13 @@ Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 The sandbox must be running for the backup step to succeed.
 If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
 If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
+When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
+A detached auto-lock timer remains active until NemoClaw commits a successful shields-up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
 
 After restore, the command restores Hermes manifest-defined state and starts the rebuilt Hermes gateway with the regenerated `/sandbox/.hermes` config.
+For an older Hermes image that predates sealed shields transitions, rebuild is the only workflow authorized to use the descriptor-safe compatibility transition.
+The compatibility path verifies the strict root-owned hash and the in-tree hash, publishes fresh config inodes to revoke retained write descriptors, and restores the trusted lock posture if the transition cannot finish.
+Ordinary `shields up` and `shields down` commands refuse the older protocol and direct you to rebuild.
 
 ### `nemohermes update`
 
@@ -1237,13 +1352,14 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-nemohermes update [--check] [--yes|-y]
+nemohermes update [--check] [--fresh] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
-| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
+| `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything. |
+| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state. |
+| `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow. |
 
 `nemohermes update` updates the host-side NemoClaw installation.
 The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
@@ -1284,10 +1400,18 @@ nemohermes backup-all
 
 The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
 
+A running sandbox whose in-sandbox SSH endpoint does not answer fails its backup and aborts the run.
+Set `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` (exactly — other values like `true`, `yes`, or `0` are not accepted) to skip such sandboxes and continue the upgrade.
+When the installer invokes `backup-all` before an OpenShell upgrade, skipped sandboxes are automatically restored from their latest validated backup during post-upgrade onboarding.
+Standalone `nemohermes backup-all` invocations only skip the failure — they do not schedule a subsequent restore.
+Any uncommitted state since the last successful backup will be lost.
+
 ### `nemohermes <name> snapshot create`
 
 Create a timestamped snapshot of sandbox state.
 Snapshots are stored in `~/.nemoclaw/rebuild-backups/<name>/`.
+The command requires shields to be down and keeps the shields check and backup under one per-sandbox transition.
+An expired auto-restore timer can interrupt a long-running backup and restore lockdown.
 
 ```bash
 nemohermes my-assistant snapshot create
@@ -1318,6 +1442,8 @@ Restore sandbox state from a snapshot.
 The sandbox must be running before you restore.
 If no selector is provided, the latest snapshot is used.
 Restore performs a clean replacement of each state directory, removing files that were added after the snapshot was taken.
+The state replacement, mutable-config permission repair, and policy reconciliation run under the same per-sandbox transition.
+An expired auto-restore timer can interrupt that work and restore lockdown.
 
 The selector accepts any of:
 
@@ -1330,6 +1456,8 @@ When `dst` does not exist, it is auto-created by reusing the source sandbox's co
 No re-onboarding is needed.
 When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
 To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
+If the existing destination has an active shields timer, the force path restores and verifies lockdown, revokes the timer, and then deletes the destination.
+It clears the remaining local shields state only after deletion succeeds.
 The `--force` path prompts interactively to confirm the destination name before deleting.
 Pass `--yes` (or set `NEMOCLAW_NON_INTERACTIVE=1`) to skip the prompt.
 The snapshot selector and source pod image are both validated before any deletion, so a bad selector or unresolvable image cannot destroy `dst` and only fail afterwards.
@@ -1497,7 +1625,9 @@ This command remains as a compatibility alias to `nemohermes tunnel stop`.
 
 ### `nemohermes status`
 
-Show the sandbox list and the status of host auxiliary services (for example cloudflared).
+Show the global sandbox list and the status of host auxiliary services (for example cloudflared).
+This command is host-wide. It summarizes registered sandboxes, the default sandbox's live inference route, messaging overlap warnings, gateway health, and host services.
+Use `nemohermes <name> status` when you need one sandbox's live health and recovery guidance.
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
 For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 Host-service PID lookup honors `NEMOCLAW_SANDBOX_NAME`, then `NEMOCLAW_SANDBOX`, then `SANDBOX_NAME`, then the registry default.
@@ -1519,25 +1649,42 @@ If cloudflared is installed but not running, the host-service section reports wh
 
 Show the active live inference provider and model from the NemoClaw-managed OpenShell gateway.
 Use this command when you want the direct runtime route without the rest of the sandbox status output.
+It is also available in sandbox-first form as `nemohermes <name> inference get`.
 
 ```bash
 nemohermes inference get
 nemohermes inference get --json
 ```
 
+The sandbox-first grammar `nemohermes <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `nemohermes <name> inference set`.
+
+```bash
+nemohermes my-assistant inference get
+```
+
 ### `nemohermes inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
 The command updates the OpenShell gateway route, patches the selected running agent config so it matches the route, recomputes the config hash, and updates the NemoClaw registry.
+It is also available in sandbox-first form as `nemohermes <name> inference set --provider <provider> --model <model>`.
 
 For Hermes, the patch updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) and does not rebuild or restart the gateway.
 Keeping the placeholder preserves dashboard and API authentication after provider switches.
 Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly one exists; otherwise pass `--sandbox <name>` to target one explicitly.
 
 By default, the command syncs the default registered sandbox.
+The command refuses before changing the OpenShell route when the selected sandbox has shields up.
+Run `nemohermes <name> shields down`, apply the inference change, then run `nemohermes <name> shields up` again.
 
 ```bash
 nemohermes inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+```
+
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
+`nemohermes <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `nemohermes inference set --provider <provider> --model <model> --sandbox <name>`.
+
+```bash
+nemohermes my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
@@ -1548,7 +1695,12 @@ If the in-sandbox config sync fails, NemoClaw keeps the gateway and registry ali
 
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
-When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL so NemoClaw can persist durable rebuild metadata. `--credential-env` and `--inference-api` may also be supplied for the compatible provider metadata; supported API values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
+When switching to `compatible-endpoint` or `compatible-anthropic-endpoint` from a different provider family, pass `--endpoint-url` with the trusted custom provider URL so NemoClaw can persist durable rebuild metadata.
+NemoClaw rejects loopback, link-local, private, and internal endpoint addresses, including public hostnames that resolve to a private address.
+For public HTTP URLs, NemoClaw stores the validated IP address to prevent DNS rebinding.
+DNS-backed HTTPS URLs are rejected because NemoClaw cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary; HTTPS IP-literal URLs remain supported.
+NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
+`--credential-env` and `--inference-api` may also be supplied for the compatible provider metadata; supported API values are `openai-completions`, `anthropic-messages`, and `openai-responses`.
 
 ### `nemohermes setup`
 
@@ -1610,6 +1762,27 @@ Values are not printed.
 nemohermes credentials list
 ```
 
+### `nemohermes credentials add <PROVIDER>`
+
+Register a provider credential with the OpenShell gateway by name and type.
+Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv.
+Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them.
+After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+
+Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes).
+If you want a provider available to only some sandboxes, scope it with `nemohermes credentials reset <PROVIDER>` once those sandboxes finish using it.
+
+```bash
+nemohermes credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
+| `--config <K=V>` | Provider configuration pair. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state |
+
 ### `nemohermes credentials reset <PROVIDER>`
 
 Remove a provider credential from the OpenShell gateway by provider name.
@@ -1659,10 +1832,11 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 | `--yes` | Skip the confirmation prompt |
 | `--keep-openshell` | Leave OpenShell binaries installed |
 | `--delete-models` | Also remove NemoClaw-pulled Ollama models |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`) |
 | `--gateway <name>` | Override the gateway name to remove (default: `nemohermes`) |
 
 ```bash
-nemohermes uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
+nemohermes uninstall [--yes] [--keep-openshell] [--delete-models] [--destroy-user-data] [--gateway <name>]
 ```
 
 ##### User-data preservation under `~/.nemoclaw/`
@@ -1677,6 +1851,11 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
 
+`--yes` deliberately remains non-destructive for user data.
+It only acknowledges the global `Proceed?` confirmation prompt and still preserves the listed entries.
+Removing the preserved entries always requires an explicit opt-in flag (`--destroy-user-data`) or the matching env var (`NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`).
+Existing automation using `--yes` therefore retains its safe behaviour and never loses host-side state by accident.
+
 Decision matrix:
 
 | Context | Behaviour |
@@ -1684,7 +1863,8 @@ Decision matrix:
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
 | Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/` (the previous full-removal behaviour). |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
-| Any context with `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the prompt and removes everything under `~/.nemoclaw/`. |
+| `--destroy-user-data` | Skips the secondary user-data prompt and removes the preserved entries under `~/.nemoclaw/`. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
+| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the secondary user-data prompt and removes the preserved entries. The global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `nemohermes <name> snapshot restore` can use them.
@@ -1746,7 +1926,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
-| `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | OpenShell gateway bind address (`127.0.0.1` or `0.0.0.0`) |
+| `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | The OpenShell gateway uses this bind address; Docker-driver gateways on OpenShell 0.0.72 keep it on loopback while gateway JWT auth is active. |
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard or API forward |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
@@ -1760,8 +1940,8 @@ When you run multiple NemoClaw gateways with different `NEMOCLAW_GATEWAY_PORT` v
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
-`NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`.
-Binding the OpenShell gateway to `0.0.0.0` may make it reachable from other hosts on the network.
+`NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`, but Docker-driver gateways on OpenShell 0.0.72 reject `0.0.0.0` while gateway JWT auth is active.
+Keep the OpenShell gateway on loopback and use `NEMOCLAW_DASHBOARD_BIND` when you need remote browser/API access.
 
 `NEMOCLAW_DASHBOARD_BIND` controls the dashboard or API port forward bind address.
 By default the forward stays on `127.0.0.1` (loopback only).
@@ -1771,10 +1951,6 @@ Only `0.0.0.0` enables the remote bind; other values are ignored.
 ```bash
 export NEMOCLAW_DASHBOARD_PORT=19000
 nemohermes onboard
-```
-
-```bash
-NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemohermes onboard
 ```
 
 These overrides apply to onboarding, status checks, health probes, and the uninstaller.
@@ -1893,7 +2069,8 @@ Set them before running `nemohermes onboard`.
 | `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
-| `NEMOCLAW_DOCKER_GPU_PATCH` | `0` to disable, anything else to keep the default | Controls the Linux Docker-driver GPU sandbox compatibility patch. Set to `0` only as an escape hatch when the patch fails and you need onboarding to continue without patching the GPU sandbox container. |
+| `NEMOCLAW_DOCKER_GPU_PATCH` | unset, `auto`, `1`, or `0` | Selects Linux Docker-driver GPU routing. Unset or `auto` uses native OpenShell GPU injection on ordinary native Linux and the compatibility patch on Docker Desktop WSL and Jetson/Tegra. `1` forces the compatibility patch. `0` selects native injection on ordinary native Linux and Jetson/Tegra, but Docker Desktop WSL ignores it. On Jetson/Tegra, use `0` only for troubleshooting because it bypasses the device-group propagation needed for CUDA. |
+| `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH` | `1` to enable; disabled by default | This setting explicitly opts into the Linux gateway compatibility container for an older host ABI or a diagnostic run; use it only on a trusted local host because it uses host networking and mounts the Docker socket read-only even though the socket still exposes the privileged Docker API; prefer OpenShell 0.0.72's directly supported glibc 2.28+ path; see the [OpenShell 0.0.72 compatibility review](../security/openshell-0.0.72-compatibility-review#source-of-truth-boundaries) for details. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary used by the Linux Docker-driver standalone fallback. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway SQLite state directory and standalone-fallback PID file. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
@@ -1958,6 +2135,7 @@ Set them before running `nemohermes onboard` if a slow connection or large model
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
 | `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
 | `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
+| `NEMOCLAW_SANDBOX_READY_ERROR_DEBOUNCE` | `30` | Consecutive `Error`-phase polls (2s apart, so ~60s by default) the post-create readiness wait tolerates before treating `Error` as terminal. The gateway can briefly report a just-created sandbox in `Error` while it re-registers the sandbox (seen on DGX Spark); the debounce lets that transient recover to `Ready`. `Failed` and `CrashLoopBackOff` always fail immediately. Set to `1` to restore fast-fail on the first `Error` poll. |
 
 ```bash
 export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
@@ -1979,6 +2157,8 @@ The following flags change defaults for commands that manage existing sandboxes.
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemohermes <name> connect` and `nemohermes <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
 | `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
 | `NEMOCLAW_SHIELDS_SETTLE_MS` | milliseconds (default `750`, clamped to `0` to `10000`) | Settle window NemoClaw waits after re-applying a config lockdown (during shields auto-restore and `nemohermes <name> shields up` drift remediation) before re-confirming the lock still holds. Detects when an in-sandbox reconciler changes config file permissions after lockdown and re-applies the lock; if NemoClaw cannot re-confirm the lock within the retry budget, shields stay down. This narrows the window in which a reconciler can revert permissions rather than eliminating it. The best-effort `chattr +i` immutable bit remains the only fully durable lock. Raise it on hosts where the gateway settles slowly. |
+| `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP` | Exactly `1` to opt in (`true`, `yes`, `0` are not accepted) | Applies to the installer's automatic pre-upgrade `nemohermes backup-all` and to manual `nemohermes backup-all` runs. Skips running sandboxes whose in-sandbox SSH endpoint does not answer so the upgrade proceeds instead of aborting. Skipped sandboxes are restored from their latest validated backup during the installer's post-upgrade onboarding; any uncommitted state since that backup is lost. Standalone `nemohermes backup-all` invocations only skip the failure — they do not schedule a subsequent restore. |
+| `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA` | `1` to opt in | Acknowledges data loss during `nemohermes uninstall` and removes the otherwise-preserved entries (`rebuild-backups/`, `backups/`, `sandboxes.json`) under `~/.nemoclaw/`. Equivalent to passing the `--destroy-user-data` flag; the global `Proceed?` confirmation still applies unless `--yes` is also passed. |
 
 ### Legacy `nemohermes setup`
 

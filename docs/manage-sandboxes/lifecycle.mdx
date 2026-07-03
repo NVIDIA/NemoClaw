@@ -168,9 +168,38 @@ If `$$nemoclaw <name> status` reports the sandbox is alive but the Hermes gatewa
 $$nemoclaw <sandbox-name> recover
 ```
 
-The command restarts the in-sandbox gateway and re-establishes the dashboard port-forward in one step.
+The command repairs a stopped in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
+If the gateway is already healthy, `recover` exits after the probe and does not restart it.
+For built-in OpenClaw and Hermes sandboxes, recovery sends an authenticated request through registry-scoped privileged direct-container control.
+The request reaches either the root PID 1 supervisor in a direct root-entrypoint container or the installed root controller in an OpenShell-managed container.
+It does not fall back to ordinary `openshell sandbox exec` or a manual relaunch inside the sandbox.
 Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
+
+Use `gateway restart` when you intentionally need a supported OpenClaw or Hermes gateway to reload runtime configuration or plugins.
+
+```bash
+$$nemoclaw <sandbox-name> gateway restart
+```
+
+The restart command asks the topology-specific controller to stop the tracked gateway child, wait for the entrypoint to launch a replacement, and prove listener and HTTP health.
+The host then checks or recovers host-side dashboard, messaging, and agent forwards.
+For Hermes, the entrypoint supervisor owns the gateway, dashboard process, internal API relay, dashboard relay, and gateway log stream.
+The nonroot managed supervisor repairs those processes continuously, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
+The host does not start the in-sandbox processes independently.
+Refer to [`$$nemoclaw <name> gateway restart`](../reference/commands#$$nemoclaw-name-gateway-restart) for details.
+
+In the direct root-entrypoint topology, the gateway uses a separate `gateway` UID and restart receives the root-only seal.
+In the OpenShell-managed topology, OpenShell is PID 1 and nonroot `nemoclaw-start`, the gateway, and the agent use the same sandbox UID.
+The installed root controller validates the stable process shape, targets the exact observed child with a pidfd, preflights config, and proves replacement health.
+That managed proof prevents PID reuse but cannot establish provenance against a malicious same-UID process, and mutable config retains managed cold-start trust and time-of-check/time-of-use limits.
+Arbitrary nonroot entrypoints that do not match the supported OpenShell-managed process shape fail closed with `privileged control unavailable`.
+Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
+If a direct-container sandbox uses an older image without the matching supervisor or managed controller helper, rebuild it before retrying:
+
+```bash
+$$nemoclaw <sandbox-name> rebuild --yes
+```
 
 ### Reset a Stored Credential
 
@@ -199,6 +228,12 @@ $$nemoclaw <sandbox-name> rebuild
 
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
 If NemoClaw cannot archive any requested state path, it reports the backup failure and stops before deleting the original sandbox.
+When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
+A detached auto-lock timer remains the recovery authority until NemoClaw commits a successful shields-up state, including when the host rebuild process exits unexpectedly.
+<AgentOnly variant="hermes">
+For an older Hermes image that predates sealed shields transitions, only the rebuild workflow may use the descriptor-safe compatibility transition needed to archive and replace the sandbox.
+That transition verifies the strict and compatibility hashes and publishes fresh config inodes before changing their lock posture, while ordinary `shields up` and `shields down` commands continue to refuse the older protocol.
+</AgentOnly>
 Refer to [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
 ### Add a Network Preset After Onboarding
@@ -219,14 +254,22 @@ Refer to [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for 
 
 When a maintained NemoClaw release becomes available, update the host CLI and then check whether existing sandboxes need rebuilds.
 The standard installer follows the admin-promoted `lkg` release tag by default.
-If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.63 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 $$nemoclaw upgrade-sandboxes --check
 ```
 
+If a support workflow asks you to pass the maintained tag explicitly, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
+```
+
 Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.
+After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` before generic onboarding.
+If an existing sandbox is non-Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and does not continue to generic onboarding after that failure.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash
@@ -250,17 +293,23 @@ To remove NemoClaw and all resources created during setup, run the CLI's built-i
 $$nemoclaw uninstall
 ```
 
-| Flag               | Effect                                               |
-|--------------------|------------------------------------------------------|
-| `--yes`            | Skip the confirmation prompt.                        |
-| `--keep-openshell` | Leave OpenShell binaries installed.                  |
-| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+| Flag                  | Effect                                                                                |
+|-----------------------|---------------------------------------------------------------------------------------|
+| `--yes`               | Skip the confirmation prompt.                                                         |
+| `--keep-openshell`    | Leave OpenShell binaries installed.                                                   |
+| `--delete-models`     | Also remove NemoClaw-pulled Ollama models.                                            |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`).   |
+| `--gateway <name>`    | Override the gateway name to remove (default: `nemoclaw`).                            |
 
 <Note>
 The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots written by snapshot and `backup-all` commands), `~/.nemoclaw/backups/` (workspace backups written by `scripts/backup-workspace.sh`), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
-For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), pass `--destroy-user-data` (or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`) to acknowledge data loss and remove the preserved entries as well.
+`--yes` stays non-destructive by design.
+It only acknowledges the global confirmation prompt and never purges preserved user data on its own.
+Full purge always requires an explicit `--destroy-user-data` or the matching env var, so existing automation using `--yes` retains its safe behaviour.
+For a full host-side file reference, see [Host Files and State](../reference/host-files-and-state).
 Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
 
@@ -272,7 +321,7 @@ If the CLI is missing or broken, fall back to the hosted script:
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
 ```
 
-The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
+The same `--yes`, `--keep-openshell`, `--delete-models`, `--destroy-user-data`, and `--gateway` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models

@@ -61,10 +61,17 @@ The first six are always available.
 Ollama appears when you have installed or started it on the host.
 Local vLLM appears when NemoClaw detects a running vLLM server.
 The managed install/start vLLM entry appears by default on DGX Spark and DGX Station, and appears on generic Linux NVIDIA GPU hosts after opt-in.
+During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public featured model catalog once per onboarding session and reports progress before displaying the model picker.
+It excludes retired or unsafe choices and corrects known catalog lag before displaying the result.
+If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses the bundled fallback list shown below.
+Nemotron 3 Super remains the default when it is present; otherwise, the first live featured model becomes the interactive default.
+If you set `NEMOCLAW_MODEL` to a safe custom model ID that is absent from the live catalog, it does not replace the live menu default.
+Choose **Other** to use that value as the pre-filled manual entry; NemoClaw validates it against NVIDIA Endpoints before continuing.
+NemoClaw neither displays nor accepts an unsafe `NEMOCLAW_MODEL` value as the manual-entry prefill.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
-| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_INFERENCE_API_KEY`. | Nemotron 3 Super 120B, Nemotron 3 Ultra 550B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
+| NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_INFERENCE_API_KEY`. | Nemotron 3 Ultra 550B, Nemotron 3 Super 120B, Kimi K2.6, Minimax M3 |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
 | Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. The adapter is validated against OpenRouter (refer to the status table above); behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations such as LocalAI or llama.cpp may vary. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
@@ -73,6 +80,50 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 | Hermes Provider | Routes Hermes Agent through the host OpenShell provider registered by NemoClaw when onboarding Hermes Agent. | Curated Hermes Provider models such as `moonshotai/kimi-k2.6`, `openai/gpt-5.4-mini`, and `z-ai/glm-5.1`. |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
+
+### Custom Endpoint URL Validation
+
+Explicit endpoint URLs that NemoClaw saves through Hermes Provider setup, `inference set`, host-side `config set`, or a direct blueprint run must pass host-side SSRF validation.
+NemoClaw rejects loopback, link-local, private, and internal addresses, including public hostnames that resolve to a private address.
+For public HTTP URLs, NemoClaw stores the validated IP address so a downstream runtime cannot repeat DNS resolution and reach a different address.
+NemoClaw rejects DNS-backed HTTPS URLs in these paths because it cannot pin the downstream peer address while preserving TLS SNI and host validation across the OpenShell runtime boundary.
+Use an HTTPS IP-literal endpoint with a certificate valid for that address, or a public HTTP endpoint only when your deployment permits non-TLS traffic.
+Managed provider defaults that do not supply an explicit custom endpoint through these paths are unaffected.
+NemoClaw accepts `http://host.openshell.internal:<port>` only with an explicit port from `1024` through `65535`; this narrow exception supports NemoClaw's sandbox-to-host inference routes and is not a general private-endpoint bypass.
+
+<Note>
+NVIDIA Endpoints and Hermes Provider use independent model catalogs, so a model can remain available through one provider after it leaves the other's curated list.
+Curated-list updates affect new onboarding choices and do not rewrite existing sandbox configurations.
+Use [Switch Inference Providers](switch-inference-providers) to move an existing sandbox before its configured model becomes unavailable.
+</Note>
+
+## Model Task-Fit Guide
+
+Use this table as starter guidance when selecting a curated cloud model during onboarding.
+The provider catalog remains authoritative for exact context-window limits, availability, and current pricing.
+For NVIDIA Endpoints, the table covers the bundled fallback choices.
+The live featured model catalog can include additional models.
+The relative labels below are qualitative and compare models within the curated onboarding choices, not across every model a provider offers.
+
+| Model | Best-for task type | Relative latency | Tool-use quality | Context-window fit | Relative cost |
+|---|---|---|---|---|---|
+| `nvidia/nemotron-3-ultra-550b-a55b` | Quality-sensitive reasoning, careful synthesis, and complex reviews | Higher | Strong for complex tool plans | Large agent context | Higher |
+| `nvidia/nemotron-3-super-120b-a12b` | Default hosted agent work, multi-step planning, and tool-heavy shell workflows | Medium | Strong default for OpenClaw tool loops | Large agent context | Medium |
+| `moonshotai/kimi-k2.6` | Coding tasks and shell-heavy agent trajectories | Medium | Strong with NemoClaw's Kimi tool-call compatibility path | Large-context friendly | Medium |
+| `minimaxai/minimax-m3` | Long-form writing, multi-turn assistant work, and broad instruction following | Medium | Good for structured assistant turns | Large agent context | Medium |
+| `gpt-5.4` | Default OpenAI-backed agent work and general high-quality reasoning | Medium | Strong | Large agent context | Medium-to-high |
+| `gpt-5.4-mini` | Latency-sensitive routine automation and repeated helper calls | Low | Good | Medium-to-large context | Low |
+| `gpt-5.4-nano` | Very low-latency classification, routing, extraction, and small helper tasks | Very low | Basic to good for simple tool loops | Medium context | Very low |
+| `gpt-5.4-pro-2026-03-05` | Quality-first complex reasoning where latency and cost are secondary | Highest | Validate Responses API support before relying on long tool loops | Large agent context | Highest |
+| `claude-sonnet-4-6` | Balanced coding, writing, analysis, and multi-step tool work | Medium | Strong | Large agent context | Medium-to-high |
+| `claude-haiku-4-5` | Fast summarization, routing, extraction, and lightweight assistant turns | Low | Good for simple tool loops | Medium-to-large context | Low |
+| `claude-opus-4-6` | Deep analysis, careful writing, and quality-first planning | Higher | Strong | Large agent context | Higher |
+| `gemini-3.1-pro-preview` | Large-context analysis, synthesis, and preview-feature evaluation | Medium-to-high | Good; validate tool continuation for the selected provider path | Extensive context | Medium-to-high |
+| `gemini-3.1-flash-lite-preview` | Low-cost extraction, classification, and simple helper calls | Low | Basic to good for simple tool loops | Medium-to-large context | Low |
+| `gemini-3-flash-preview` | Fast general assistant tasks and preview-feature evaluation | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-pro` | Large-context analysis, long-document synthesis, and complex reasoning | Medium-to-high | Good | Extensive context | Medium-to-high |
+| `gemini-2.5-flash` | Latency-sensitive general assistant and multimodal tasks | Low | Good for simple tool loops | Large context | Low |
+| `gemini-2.5-flash-lite` | Lowest-cost helper calls, extraction, and classification | Very low | Basic to good for simple tool loops | Medium-to-large context | Very low |
 
 ## Choosing the Right Option for Nemotron
 
@@ -211,6 +262,7 @@ To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` befo
 
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
+Install vLLM first if it is not already on the host (for example, `pip install vllm`), then start it:
 
 ```bash
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
@@ -223,7 +275,11 @@ $$nemoclaw onboard
 ```
 
 When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
-Enter the base URL of your local server, for example `http://localhost:8000/v1`.
+Enter the base URL of your local server, for example `http://localhost:8000/v1` on the default Docker-driver topology.
+If you are on the legacy containerized OpenShell gateway path and the gateway cannot reach host `localhost`, use the host-gateway URL for your setup, commonly `http://host.openshell.internal:8000/v1`.
+
+For GGUF models, start a compatible server such as `llama-server` yourself and enter the model id that server reports from `/v1/models`.
+The Ollama local path selects Ollama model tags; it does not accept a raw `.gguf` file path directly.
 
 The wizard prompts for an API key.
 If your server does not require authentication, enter any non-empty string (for example, `dummy`).
@@ -236,7 +292,8 @@ Route, configuration, and authentication failures still fail immediately.
 
 ### Non-Interactive Setup
 
-Set the following environment variables for scripted or CI/CD deployments.
+Start your OpenAI-compatible server first; the endpoint in `NEMOCLAW_ENDPOINT_URL` must already be serving, or onboarding fails its validation probe.
+Then set the following environment variables for scripted or CI/CD deployments.
 Set `NEMOCLAW_REASONING=true` when the compatible endpoint serves a reasoning-only model.
 
 <Warning>

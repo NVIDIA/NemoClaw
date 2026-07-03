@@ -56,3 +56,17 @@ While NVIDIA does not currently have a public bug bounty program, we do offer ac
 
 For security bulletins, PSIRT policies, and all security-related concerns, visit the [NVIDIA Product Security](https://www.nvidia.com/en-us/security/) portal.
 Subscribe to notifications on that page to receive alerts when new bulletins are published.
+
+## Documented Risk Acceptances
+
+The following security-relevant defaults are intentional. Each item names the code path that carries the constraint and the compensating controls that make the trade-off acceptable.
+
+### Deep Agents Code proxy env file is world-readable (mode `0444`)
+
+- **Location:** [`agents/langchain-deepagents-code/start.sh`](agents/langchain-deepagents-code/start.sh) (`prepare_runtime_env`)
+- **Constraint:** `/tmp/nemoclaw-proxy-env.sh` is sandbox-user-owned convenience state, not an integrity boundary. It is created with mode `0444` so independent login and exec shells can source the same credential-free settings. The Deep Agents Code runtime deliberately runs as the non-root sandbox user, unlike the root-supervised OpenClaw and Hermes startup paths.
+- **Compensating controls:**
+  1. The file is credential-free by construction. `prepare_runtime_env` writes normalized proxy config and inherited trust-store paths. It does not persist LangSmith tracing, project, or API key variables.
+  2. A regression test in [`test/langchain-deepagents-code-image.test.ts`](test/langchain-deepagents-code-image.test.ts) injects token-shaped values through LangSmith tracing and both project variables, scans the emitted env file against canonical token shapes, and fails CI if any secret-shaped value is present.
+  3. The root-owned, image-baked proxy host/port files and direct `dcode-launcher.sh` boundary remain the routing source of truth. Focused and live login-shell checks compare the sourced convenience values with that root-owned source; file metadata checks detect accidental drift but do not claim sandbox-owner tamper resistance.
+- **When to revisit:** If a future change adds credential-shaped values to the env-file writer, or if the Deep Agents Code runtime moves back to the root-supervised startup model, revisit the mode and the compensating controls together.

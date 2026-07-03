@@ -24,10 +24,18 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       order: 40,
     },
   ],
-  "credentials:list": [
+  "credentials:add": [
     {
       group: "Credentials",
       order: 38,
+      description: "Register a provider credential with the OpenShell gateway",
+      flags: "<PROVIDER> --type <TYPE> [--credential ENV_NAME] [--config K=V] [--from-existing]",
+    },
+  ],
+  "credentials:list": [
+    {
+      group: "Credentials",
+      order: 38.5,
       description: "List stored credential keys",
     },
   ],
@@ -185,7 +193,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Messaging Channels",
       order: 25,
       usage: "nemoclaw <name> channels status",
-      description: "Channel-specific runtime diagnostics",
+      description: "Messaging channel status",
       flags: "[--channel <channel>] [--json]",
     },
   ],
@@ -280,6 +288,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quiet|-q]",
     },
   ],
+  "sandbox:gateway:restart": [
+    {
+      group: "Sandbox Management",
+      order: 14.1,
+      flags: "[--quiet|-q]",
+    },
+  ],
   "sandbox:hosts:add": [
     {
       group: "Policy Presets",
@@ -298,6 +313,23 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Policy Presets",
       order: 19.3,
       flags: "(--dry-run)",
+    },
+  ],
+  "sandbox:inference:get": [
+    {
+      group: "Services",
+      order: 36.1,
+      flags: "[--json]",
+      hidden: true,
+    },
+  ],
+  "sandbox:inference:set": [
+    {
+      group: "Services",
+      order: 37.1,
+      description: "Switch inference and sync the named agent config",
+      flags: "--provider <provider> --model <model> [--no-verify]",
+      hidden: true,
     },
   ],
   "sandbox:logs": [
@@ -434,7 +466,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Sandbox Management",
       order: 4,
-      description: "Sandbox health + NIM status",
+      description: "One sandbox's health, gateway, inference, and NIM status",
     },
   ],
   setup: [
@@ -462,6 +494,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Services",
       order: 36,
+      description: "Global sandbox and host service status",
       flags: "[--json]",
     },
   ],
@@ -510,7 +543,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Upgrade",
       order: 40,
-      flags: "(--check, --yes|-y)",
+      flags: "(--check, --fresh, --yes|-y)",
     },
   ],
   "upgrade-sandboxes": [

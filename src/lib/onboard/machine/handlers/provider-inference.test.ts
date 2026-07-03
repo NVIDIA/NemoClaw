@@ -657,6 +657,36 @@ describe("handleProviderInferenceState", () => {
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
   });
 
+  // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)
+  // throws a plain Error (e.g. "above supported ceiling", with no `oclif.exit`)
+  // out of `reconcileModelRouter`. The routed branch must catch that throw and
+  // exit non-zero via `exitProcess(1)` so onboard reports the failure to `$?`,
+  // rather than the throw being swallowed or riding the oclif runner. The error
+  // reasons themselves are locked by `model-router-python.test.ts`.
+  it("exits non-zero when model router reconciliation throws (#5974)", async () => {
+    const session = createSession({ provider: "nvidia-router", model: "router/model" });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      reconcileModelRouter: vi.fn(async () => {
+        throw new Error("version 3.14.0 above supported ceiling 3.14.0 (exclusive)");
+      }),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "router-sandbox",
+      }),
+    ).rejects.toThrow("exit 1");
+
+    expect(calls.exit).toHaveBeenCalledWith(1);
+    expect(calls.error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to reconcile model router"),
+    );
+  });
+
   // Regression: #4564. On resume the routed provider was only reconciled, never
   // re-upserted, so a stale localhost base URL recorded by an earlier run could
   // survive in the gateway and break inference.local from the sandbox.

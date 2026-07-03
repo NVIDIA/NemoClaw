@@ -77,6 +77,12 @@ function encodeSanitizedDockerJsonArg(value: unknown): string {
   return sanitizeDockerArg(encodeDockerJsonArg(value));
 }
 
+export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
+
+export interface PatchStagedDockerfileOptions {
+  buildIdPolicy?: DockerfileBuildIdPolicy;
+}
+
 export function isValidProxyHost(value: string): boolean {
   return PROXY_HOST_RE.test(value);
 }
@@ -99,6 +105,7 @@ export function patchStagedDockerfile(
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
+  options: PatchStagedDockerfileOptions = {},
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -171,10 +178,15 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_INFERENCE_COMPAT_B64=.*$/m,
     `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeSanitizedDockerJsonArg(inferenceCompat)}`,
   );
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_BUILD_ID=.*$/m,
-    `ARG NEMOCLAW_BUILD_ID=${sanitizeDockerArg(buildId)}`,
-  );
+  // Rewriting is the compatibility-safe default for custom and legacy
+  // Dockerfiles. Only callers with explicit knowledge of a managed stock
+  // Dockerfile may preserve the declaration to keep warm builds cacheable.
+  if (options.buildIdPolicy !== "preserve") {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_BUILD_ID=.*$/m,
+      `ARG NEMOCLAW_BUILD_ID=${sanitizeDockerArg(buildId)}`,
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_DARWIN_VM_COMPAT=.*$/m,
     `ARG NEMOCLAW_DARWIN_VM_COMPAT=${sanitizeDockerArg(darwinVmCompat ? "1" : "0")}`,
@@ -234,9 +246,9 @@ export function patchStagedDockerfile(
     );
   }
   // Honor NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT exported in the host
-  // shell so the sandbox-side nemoclaw-start.sh sees them via $ENV at runtime.
-  // Without this, the host export is silently dropped at image build time and
-  // the sandbox falls back to the default 10.200.0.1:3128 proxy. See #1409.
+  // shell. Agent Dockerfiles consume these validated build args; dcode pins
+  // them into root-owned image files so untrusted runtime env cannot redirect
+  // its managed inference traffic. See #1409 and #6191.
   const proxyHostEnv = process.env.NEMOCLAW_PROXY_HOST;
   if (proxyHostEnv && isValidProxyHost(proxyHostEnv)) {
     dockerfile = dockerfile.replace(

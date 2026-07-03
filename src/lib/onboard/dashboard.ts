@@ -7,12 +7,12 @@ import path from "node:path";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
-import { buildChain, buildControlUiUrls } from "../dashboard/contract";
+import { buildChain, buildControlUiUrls, buildFallbackControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
-import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
   createSandboxForwardStopper,
@@ -166,6 +166,15 @@ function findOpenclawJsonPath(dir: string): string | null {
 
 function dashboardUrlForDisplay(url: string, deps: OnboardDashboardDeps): string {
   return dashboardAccess.dashboardUrlForDisplay(url, deps.redact);
+}
+
+function printWslFallback(fallbackDashboardUrls: string[], indent: string): void {
+  if (fallbackDashboardUrls.length === 0) return;
+  console.log("");
+  console.log(`${indent}Browser (WSL fallback, if 127.0.0.1 is unreachable from Windows):`);
+  for (const fallbackUrl of fallbackDashboardUrls) {
+    console.log(`${indent}  ${fallbackUrl}`);
+  }
 }
 
 export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): OnboardDashboardHelpers {
@@ -439,12 +448,18 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chain = buildChain({
       chatUiUrl,
       isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress(),
+      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl(), runCapture: deps.runCapture }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
       dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
       deps,
+    );
+    const fallbackDashboardUrls = chain.fallbackUrls.map((fallback) =>
+      dashboardUrlForDisplay(
+        dashboardAccess.buildAuthenticatedDashboardUrl(`${fallback.replace(/\/$/, "")}/`, token),
+        deps,
+      ),
     );
 
     console.log("");
@@ -463,7 +478,12 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       deps.printAgentDashboardUi(sandboxName, token, agent, {
         note: deps.note,
         buildControlUiUrls: (tokenValue: string | null, port: number) => {
-          return buildControlUiUrls(tokenValue, port, chain.accessUrl);
+          const primary = buildControlUiUrls(tokenValue, port);
+          const alternates = buildFallbackControlUiUrls(tokenValue, port, [
+            chain.accessUrl,
+            ...chain.fallbackUrls,
+          ]);
+          return [...new Set([...primary, ...alternates])];
         },
       });
       console.log("");
@@ -474,6 +494,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
@@ -487,6 +508,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("");
       console.log("    Browser:");
       console.log(`      ${dashboardUrl}`);
+      printWslFallback(fallbackDashboardUrls, "    ");
       console.log("");
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);

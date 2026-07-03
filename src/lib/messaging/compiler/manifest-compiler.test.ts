@@ -307,6 +307,18 @@ describe("ManifestCompiler", () => {
         }),
       ]),
     );
+    expect(plan.runtimeSetup?.nodePreloads).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          channelId: "teams",
+          module: "msteams-message-hints",
+          source: "/usr/local/lib/nemoclaw/preloads/msteams-message-hints.js",
+          target: "/tmp/nemoclaw-msteams-message-hints.js",
+          injectInto: ["boot", "connect"],
+          optional: false,
+        }),
+      ]),
+    );
     expect(plan.buildSteps.every((step) => step.value !== undefined)).toBe(true);
     expect(plan.stateUpdates).toContainEqual({
       channelId: "wechat",
@@ -564,6 +576,7 @@ describe("ManifestCompiler", () => {
       }),
     );
     expect(JSON.stringify(plan.agentRender)).toContain('"port":3978');
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("groupAllowFrom");
     expect(JSON.stringify(plan.agentRender)).toContain('"requireMention":true');
@@ -595,6 +608,7 @@ describe("ManifestCompiler", () => {
       disabled: false,
     });
     expect(JSON.stringify(plan.agentRender)).toContain("channels.msteams");
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("dmPolicy");
     expect(JSON.stringify(plan.agentRender)).not.toContain("allowFrom");
@@ -1009,7 +1023,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1078,7 +1091,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-config-prompt",
@@ -1162,7 +1174,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1307,7 +1318,6 @@ describe("ManifestCompiler", () => {
       ],
       policyPresets: ["matrix"],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-enroll",

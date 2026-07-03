@@ -391,6 +391,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
     const redactsSecret = (token: string) =>
       runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
+    const langsmithPt = `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`;
+    const langsmithSk = `lsv2_sk_${"a".repeat(36)}_${"c".repeat(10)}`;
     const canonicalSamples = new Map<string, { name: string; sample: string; rawSecret?: string }>([
       [fingerprint(TOKEN_PREFIX_PATTERNS[0]), { name: "nvapi", sample: "nvapi-abcdefghijklmnop" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[1]), { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" }],
@@ -409,8 +411,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         fingerprint(TOKEN_PREFIX_PATTERNS[7]),
         { name: "xoxb", sample: secretFixture("xox", "b", "-", "1234567890") },
       ],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+        { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
+      ],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+        { name: "asia", sample: secretFixture("AS", "IA", "ABCDEFGHIJKLMNOP") },
+      ],
       [fingerprint(TOKEN_PREFIX_PATTERNS[9]), { name: "hf", sample: "hf_abcdefghijklmnopq" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[10]), { name: "glpat", sample: "glpat-abcdefghijklmn" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[11]), { name: "gsk", sample: "gsk_abcdefghijklmnop" }],
@@ -428,6 +436,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         {
           name: "discord",
           sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        },
+      ],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[16]), { name: "tvly", sample: "tvly-abcdefghijklmnop" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[17]),
+        {
+          name: "langsmith_pt",
+          sample: langsmithPt,
         },
       ],
       [
@@ -448,13 +464,17 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       ],
     ]);
     const extraSamples = [
-      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
       { name: "xoxp", sample: secretFixture("xox", "p", "-", "1234567890") },
       { name: "xoxa", sample: secretFixture("xox", "a", "-", "1234567890") },
       { name: "xoxs", sample: secretFixture("xox", "s", "-", "1234567890") },
       {
         name: "xapp",
         sample: secretFixture("x", "app", "-", "1", "-", "A1B2C3", "-", "12345", "-", "abcde"),
+      },
+      {
+        name: "langsmith_sk",
+        sample: langsmithSk,
       },
       {
         name: "token_context",
@@ -494,6 +514,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         rawSecret ?? sample,
       );
     }
+    expect(redactsSecret(langsmithPt)).toBe("[REDACTED_SECRET]");
+    expect(redactsSecret(langsmithSk)).toBe("[REDACTED_SECRET]");
     expect(detectsSecret("plain startup text")).toBe("clean");
   });
 

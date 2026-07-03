@@ -13,16 +13,26 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
-import { buildSubprocessEnv } from "../lib/subprocess-env.js";
 import { DASHBOARD_PORT } from "../lib/ports.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import * as importedOpenShellPolicyBoundary from "../shared/openshell-policy-boundary.cjs";
+import { safeEndpointUrlForDownstream, validateEndpointUrl } from "./ssrf.js";
+
+// The compiled plugin exposes named CommonJS exports. Source-mode tsx maps the
+// .cjs specifier back to .cts and exposes that same module as its default.
+const sourceOrGeneratedOpenShellPolicyBoundary =
+  importedOpenShellPolicyBoundary as typeof importedOpenShellPolicyBoundary & {
+    default?: typeof importedOpenShellPolicyBoundary;
+  };
+const { parseOpenShellPolicy, withoutProviderComposedPolicies } =
+  sourceOrGeneratedOpenShellPolicyBoundary.default ?? sourceOrGeneratedOpenShellPolicyBoundary;
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -324,32 +334,9 @@ interface RouterConfig {
 
 const DEFAULT_ROUTER_PORT = 4000;
 
-function parseCurrentPolicy(raw: string): UnknownRecord {
-  const sepIndex = raw.indexOf("---");
-  const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
-  if (!yaml) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = YAML.parse(yaml);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Current policy from openshell policy get --full is not valid YAML: ${detail}`);
-  }
-
-  if (!isObjectLike(parsed)) {
-    throw new Error("Current policy from openshell policy get --full must be a YAML mapping");
-  }
-  if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
-    throw new Error(
-      "Current policy from openshell policy get --full does not contain a policy YAML document",
-    );
-  }
-  return parsed;
-}
-
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
-  const current = parseCurrentPolicy(currentPolicyRaw);
+  // sourceOfTruth: nemoclaw/src/shared/openshell-policy-boundary.cts
+  const current = parseOpenShellPolicy(currentPolicyRaw).policy;
   if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
@@ -358,15 +345,25 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     : {};
   const output: UnknownRecord = {};
 
+  // Stable OpenShell 0.0.72 exposes composable top-level policy sections as
+  // mappings. Preserve unknown mapping sections for forward compatibility, but
+  // fail closed on a scalar or sequence until its mutation semantics are
+  // reviewed for the next supported OpenShell contract.
   for (const [key, value] of Object.entries(current)) {
     if (key !== "version" && key !== "network_policies") {
+      if (!isObjectLike(value)) {
+        throw new Error(`Current policy top-level field "${key}" must be a YAML mapping`);
+      }
       output[key] = value;
     }
   }
 
   output.version =
     typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
-  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  output.network_policies = withoutProviderComposedPolicies({
+    ...existingNetworkPolicies,
+    ...additions,
+  });
   return YAML.stringify(output);
 }
 
@@ -432,18 +429,13 @@ async function resolveRunConfig(
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
     const validated = await validateEndpointUrl(endpointUrl);
-    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
-    // keep the original hostname — TLS certificate validation prevents rebinding
-    // since the attacker cannot present a valid cert for the target.
-    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
     const validated = await validateEndpointUrl(inferenceCfg.endpoint);
-    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
-    inferenceCfg = { ...inferenceCfg, endpoint: safe };
+    inferenceCfg = { ...inferenceCfg, endpoint: safeEndpointUrlForDownstream(validated) };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
@@ -793,7 +785,7 @@ export async function actionApply(
 
   if (Object.keys(policyAdditions).length > 0) {
     progress(78, "Applying policy additions");
-    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
       reject: false,
     });
     if (currentPolicy.exitCode !== 0) {
