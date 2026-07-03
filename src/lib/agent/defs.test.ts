@@ -113,7 +113,7 @@ describe("agent definitions", () => {
     });
     expect(deepAgentsCode.binary_path).toBe("/usr/local/bin/dcode");
     expect(deepAgentsCode.versionCommand).toBe("dcode --version");
-    expect(deepAgentsCode.expectedVersion).toBe("0.1.12");
+    expect(deepAgentsCode.expectedVersion).toBe("0.1.30");
     expect(deepAgentsCode.healthProbe).toBeNull();
     expect(deepAgentsCode.forwardPort).toBe(0);
     expect(deepAgentsCode.configPaths).toEqual({
@@ -124,10 +124,7 @@ describe("agent definitions", () => {
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
     expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-    expect(deepAgentsCode.stateFiles).toEqual([
-      { path: "config.toml", strategy: "copy" },
-      { path: "hooks.json", strategy: "copy" },
-    ]);
+    expect(deepAgentsCode.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
     expect(deepAgentsCode.userManagedFiles).toEqual([".env", ".mcp.json"]);
   });

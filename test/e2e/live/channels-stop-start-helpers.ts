@@ -83,6 +83,7 @@ function phase6TokenEnv(tokens: Phase6Tokens): NodeJS.ProcessEnv {
     WECHAT_USER_ID: process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
     WECHAT_ALLOWED_IDS:
       process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+    WHATSAPP_ALLOWED_IDS: process.env.WHATSAPP_ALLOWED_IDS ?? "15551234567,15557654321",
   };
   if (tokens.telegram.includes("fake")) env.NEMOCLAW_SKIP_TELEGRAM_REACHABILITY = "1";
   if (
@@ -193,22 +194,28 @@ function expectPlanChannelState(channelId: string, expected: ChannelState): void
   ).toBe(false);
 }
 
-function expectChannelInputs(): void {
+function requireEnvValue(env: NodeJS.ProcessEnv, key: string): string {
+  const value = env[key];
+  if (!value) throw new Error(`${key} must be configured for the channels stop/start target`);
+  return value;
+}
+
+function expectChannelInputs(env: NodeJS.ProcessEnv): void {
   const expected: Record<string, Record<string, string>> = {
     telegram: {
-      allowedIds: process.env.TELEGRAM_ALLOWED_IDS ?? "123456789,987654321",
-      requireMention: process.env.TELEGRAM_REQUIRE_MENTION ?? "0",
+      allowedIds: requireEnvValue(env, "TELEGRAM_ALLOWED_IDS"),
+      requireMention: requireEnvValue(env, "TELEGRAM_REQUIRE_MENTION"),
     },
     discord: {
-      serverId: process.env.DISCORD_SERVER_ID ?? "1491590992753590594",
-      userId: process.env.DISCORD_USER_ID ?? "1005536447329222676",
-      requireMention: process.env.DISCORD_REQUIRE_MENTION ?? "0",
+      serverId: requireEnvValue(env, "DISCORD_SERVER_ID"),
+      userId: requireEnvValue(env, "DISCORD_USER_ID"),
+      requireMention: requireEnvValue(env, "DISCORD_REQUIRE_MENTION"),
     },
-    slack: { allowedUsers: process.env.SLACK_ALLOWED_USERS ?? "U0123456789,U09ABCDEFGH" },
+    slack: { allowedUsers: requireEnvValue(env, "SLACK_ALLOWED_USERS") },
     wechat: {
-      allowedIds:
-        process.env.WECHAT_ALLOWED_IDS ?? process.env.WECHAT_USER_ID ?? "wxid_e2e_operator",
+      allowedIds: requireEnvValue(env, "WECHAT_ALLOWED_IDS"),
     },
+    whatsapp: { allowedIds: requireEnvValue(env, "WHATSAPP_ALLOWED_IDS") },
   };
   for (const [channelId, inputs] of Object.entries(expected)) {
     const channel = planChannel(channelId);
@@ -381,7 +388,7 @@ async function runChannelCommand(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
-  action: "add" | "stop" | "start",
+  action: "stop" | "start",
   channel: string,
 ): Promise<void> {
   const result = await host.command(
@@ -395,10 +402,7 @@ async function runChannelCommand(
     },
   );
   expectExitZero(result, `channels ${action} ${channel}`);
-  const expectedText =
-    action === "add"
-      ? `Enabled ${channel} channel`
-      : `Marked ${channel} ${action === "stop" ? "disabled" : "enabled"}`;
+  const expectedText = `Marked ${channel} ${action === "stop" ? "disabled" : "enabled"}`;
   expect(resultText(result)).toContain(expectedText);
 }
 
@@ -482,19 +486,7 @@ export async function runChannelsStopStartTarget({
     `sandbox-list-channels-stop-start-${AGENT}`,
   );
 
-  if (!planChannel("whatsapp")) {
-    await runChannelCommand(host, env, redactions, "add", "whatsapp");
-    const rebuild = await rebuildSandbox(
-      host,
-      SANDBOX_NAME,
-      env,
-      redactions,
-      `rebuild-add-whatsapp-${AGENT}`,
-    );
-    expectExitZero(rebuild, "rebuild after adding WhatsApp");
-  }
-
-  expectChannelInputs();
+  expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   await expectAgentConfig(sandbox, "present", redactions);
   await expectProvidersExist(host, env, redactions, "baseline");
@@ -506,7 +498,7 @@ export async function runChannelsStopStartTarget({
   }
 
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "stop", channel);
-  expectChannelInputs();
+  expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
   const stopRebuild = await rebuildSandbox(
     host,
@@ -527,7 +519,7 @@ export async function runChannelsStopStartTarget({
   }
 
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
-  expectChannelInputs();
+  expectChannelInputs(env);
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   const startRebuild = await rebuildSandbox(
     host,

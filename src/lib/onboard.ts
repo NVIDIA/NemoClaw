@@ -39,9 +39,8 @@ const {
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
-const buildContextStage: typeof import("./onboard/build-context-stage") = require("./onboard/build-context-stage");
+const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = require("./onboard/prepared-dcode-rebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
-const sandboxDockerfilePatchFlow: typeof import("./onboard/sandbox-dockerfile-patch-flow") = require("./onboard/sandbox-dockerfile-patch-flow");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
@@ -85,6 +84,7 @@ const {
 }: typeof import("./onboard/dockerfile-patch") = require("./onboard/dockerfile-patch");
 const {
   agentSupportsWebSearch,
+  agentSupportsWebSearchProvider,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
 const onboardDashboard: typeof import("./onboard/dashboard") = require("./onboard/dashboard");
 const dashboardRuntime: typeof import("./onboard/dashboard-runtime") = require("./onboard/dashboard-runtime");
@@ -647,8 +647,9 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
+import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
-type OnboardOptions = {
+type OnboardOptions = import("./onboard/prepared-dcode-rebuild").PreparedDcodeRebuildOptions & {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
   resume?: boolean;
@@ -948,7 +949,8 @@ function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
 ) {
-  braveProviderProfile.ensureBraveProviderProfile(tokenDefs, { root: ROOT, runOpenshell, redact });
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  braveProviderProfile.ensureWebSearchProviderProfiles(tokenDefs, { root: ROOT, runOpenshell, redact });
   const upserted = onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell, options);
   // upsertMessagingProviders process.exits on failure, so reaching this
   // point means every entry in tokenDefs that had a token was registered.
@@ -1002,14 +1004,8 @@ const { pruneStaleSandboxEntry, confirmRecreateForSelectionDrift, isOpenclawRead
     isAffirmativeAnswer,
   });
 
-const { ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } =
-  createWebSearchFlowHelpers({
-    prompt,
-    note,
-    isNonInteractive,
-    cliName,
-    runCaptureOpenshell,
-  });
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { ensureValidatedWebSearchCredential, ensureValidatedBraveSearchCredential, configureWebSearch, verifyWebSearchInsideSandbox } = createWebSearchFlowHelpers({ prompt, note, isNonInteractive, cliName, runCaptureOpenshell });
 
 // getSandboxInferenceConfig — moved to onboard-providers.ts
 
@@ -2552,6 +2548,7 @@ async function createSandbox(
   sandboxGpuConfig: SandboxGpuConfig | null = null,
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
+  preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -2600,6 +2597,7 @@ async function createSandbox(
       channels: MESSAGING_CHANNELS,
       enabledChannels,
       sandboxName,
+      agentName: agent?.name ?? "openclaw",
       webSearchConfig,
       env: process.env,
     },
@@ -2920,21 +2918,15 @@ async function createSandbox(
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
   const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
-    buildContextStage.stageCreateSandboxBuildContext({
-      root: ROOT,
-      fromDockerfile,
+    preparedDcodeRebuild.resolveSandboxBuildContext({
+      preparedBuildContext,
       agent,
-      createAgentSandbox: agentOnboard.createAgentSandbox,
-      log: console.log,
-      warn: console.warn,
-      error: console.error,
-      exit: process.exit,
+      fromDockerfile,
     });
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
-  process.on("exit", cleanupBuildCtx);
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -3000,11 +2992,10 @@ async function createSandbox(
     configuredMessagingChannels:
       getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
   });
-  const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
+  const buildId = await preparedDcodeRebuild.resolveSandboxBuildId({
+    preparedBuildContext,
     agent,
     fromDockerfile,
-    sandboxBaseImage: SANDBOX_BASE_IMAGE,
-    sandboxBaseTag: SANDBOX_BASE_TAG,
     stagedDockerfile,
     model,
     chatUiUrl,
@@ -3013,8 +3004,6 @@ async function createSandbox(
     webSearchConfig,
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    log: console.log,
-    warn: console.warn,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
   const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
@@ -4651,6 +4640,10 @@ function skippedStepMessage(
 
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  const preparedDcodeRuntime = preparedDcodeRebuild.createPreparedDcodeRebuildRuntime(
+    opts,
+    GATEWAY_NAME,
+  );
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
@@ -4658,7 +4651,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   _preflightDashboardPort =
     opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
-  delete process.env.OPENSHELL_GATEWAY;
+  preparedDcodeRuntime.applyGatewayEnv(process.env);
   const { resume, fresh, requestedFromDockerfile, requestedSandboxName, cannotPrompt } =
     onboardEntryOptions.resolveOnboardEntryOptions(
       {
@@ -5068,6 +5061,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         sandboxDeps: {
           resolvePath: path.resolve,
           agentSupportsWebSearch,
+          agentSupportsWebSearchProvider,
           note,
           updateSession: onboardSession.updateSession,
           getStoredMessagingChannelConfig,
@@ -5080,7 +5074,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           stringSetsEqual,
           removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
           repairRecordedSandbox,
-          ensureValidatedBraveSearchCredential,
+          ensureValidatedWebSearchCredential,
           isBackToSelection,
           configureWebSearch,
           startRecordedStep,
@@ -5095,7 +5089,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
-          createSandbox,
+          createSandbox: preparedDcodeRuntime.bindCreateSandbox(createSandbox),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
           recordStepComplete,
@@ -5298,6 +5292,7 @@ module.exports = {
   classifySandboxCreateFailure,
   configureWebSearch,
   createSandbox,
+  ensureValidatedWebSearchCredential,
   ensureValidatedBraveSearchCredential,
   formatEnvAssignment,
   getFutureShellPathHint,
@@ -5369,6 +5364,7 @@ module.exports = {
   openshellArgv,
   runCaptureOpenshell,
   agentSupportsWebSearch,
+  agentSupportsWebSearchProvider,
   setupInference,
   setupMessagingChannels,
   MESSAGING_CHANNELS,

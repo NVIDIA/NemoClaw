@@ -41,7 +41,7 @@ function makeBackupResult(): ReturnType<SandboxStateModule["backupSandboxState"]
       timestamp: "2026-06-01T00-00-00-000Z",
       agentType: "langchain-deepagents-code",
       agentVersion: null,
-      expectedVersion: "0.1.12",
+      expectedVersion: "0.1.30",
       stateDirs: [".state"],
       backedUpDirs: [".state"],
       stateFiles: [{ path: "config.toml", strategy: "copy" }],

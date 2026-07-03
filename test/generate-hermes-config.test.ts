@@ -27,6 +27,8 @@ const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes
 const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
   NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+  NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+  NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
   NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({}),
   NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({}),
@@ -283,6 +285,51 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
+  it("configures Hermes' native Tavily backend with an egress-resolved credential", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+    });
+
+    expect(config.web).toEqual({ backend: "tavily" });
+    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
+  });
+
+  it("does not configure Tavily when web search is disabled", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "0",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+    });
+
+    expect(config.web).toBeUndefined();
+    expect(envFile).not.toContain("TAVILY_API_KEY=");
+  });
+
+  it("fails fast for unsupported web-search provider values", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "search.example.com",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
+    );
+  });
+
+  it("fails closed when Brave is requested for Hermes", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
+    );
+  });
+
   it("records the upstream provider and model as a self-describing annotation", () => {
     const { config } = runConfigScript({
       NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
@@ -491,6 +538,25 @@ describe("agents/hermes/generate-config.ts", () => {
       "FAL_QUEUE_GATEWAY_URL=http://host.openshell.internal:11436/fal-queue\n",
     );
     expect(envFile).toContain("MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal\n");
+  });
+
+  it("prefers selected Tavily over nous-web while preserving other managed tools", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-web", "nous-audio"]),
+    });
+
+    expect(config.web).toEqual({ backend: "tavily" });
+    expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
+    expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
+    expect(envFile).toContain("TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY\n");
+    expect(envFile).not.toContain("FIRECRAWL_GATEWAY_URL=");
+    expect(envFile).toContain(
+      "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",
+    );
+    expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
   });
 
   it("fails fast for unknown managed-tool gateway presets", () => {

@@ -19,7 +19,7 @@ function recordDeepAgentsRuntimeCall(
     return probeVersion ? `dcode ${probeVersion}` : "";
   }
   if (command.includes("dcode --version")) {
-    return `dcode ${probeVersion ?? "0.1.12"}\nNEMOCLAW_AGENT_SMOKE_EXIT:0`;
+    return `dcode ${probeVersion ?? "0.1.30"}\nNEMOCLAW_AGENT_SMOKE_EXIT:0`;
   }
   if (command.includes("/sandbox/.deepagents/config.toml")) {
     return "NEMOCLAW_DEEPAGENTS_CONFIG_OK\nNEMOCLAW_AGENT_SMOKE_EXIT:0";
@@ -28,7 +28,7 @@ function recordDeepAgentsRuntimeCall(
 }
 
 export function recordSuccessfulDeepAgentsRuntimeCall(args: string[], calls: string[]): string {
-  return recordDeepAgentsRuntimeCall(args, calls, "0.1.12");
+  return recordDeepAgentsRuntimeCall(args, calls, "0.1.30");
 }
 
 // Like recordSuccessfulDeepAgentsRuntimeCall, but the plain version-drift

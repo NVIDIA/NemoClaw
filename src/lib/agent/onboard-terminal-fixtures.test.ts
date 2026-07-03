@@ -26,7 +26,7 @@ describe("Deep Agents Code terminal onboard fixtures", () => {
       calls,
     );
 
-    expect(output).toBe("dcode 0.1.12");
+    expect(output).toBe("dcode 0.1.30");
   });
 
   it("requires the exact smoke-runner argument before appending its exit marker", () => {
@@ -40,7 +40,7 @@ describe("Deep Agents Code terminal onboard fixtures", () => {
       calls,
     );
 
-    expect(plainOutput).toBe("dcode 0.1.12");
+    expect(plainOutput).toBe("dcode 0.1.30");
     expect(smokeOutput).toContain("NEMOCLAW_AGENT_SMOKE_EXIT:0");
   });
 

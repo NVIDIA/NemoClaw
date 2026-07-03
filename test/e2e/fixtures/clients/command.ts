@@ -6,6 +6,7 @@ import type {
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../shell-probe.ts";
+
 export { shellQuote } from "../../../../src/lib/core/shell-quote.ts";
 
 export interface CommandRunner {
@@ -22,6 +23,21 @@ export function outputContainsSandbox(
 ): boolean {
   const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
+}
+
+export function outputContainsReadySandbox(
+  result: Pick<ShellProbeResult, "stdout" | "stderr">,
+  sandboxName: string,
+): boolean {
+  return resultText(result)
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .split(/\r?\n/)
+    .some((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return false;
+      const [name] = trimmed.split(/\s+/);
+      return name === sandboxName && /\bReady\b/i.test(trimmed);
+    });
 }
 
 export function assertExitZero(result: ShellProbeResult, label: string): void {

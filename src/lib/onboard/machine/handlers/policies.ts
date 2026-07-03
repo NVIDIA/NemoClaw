@@ -43,6 +43,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   credentialEnv: string | null;
   selectedMessagingChannels: string[];
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   hermesToolGateways: string[];
   agent: Agent;
@@ -73,6 +74,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         hermesToolGateways: string[];
         agent?: string | null;
         webSearchConfig: WebSearchConfig | null;
+        webSearchConfigChanged: boolean;
         webSearchSupported: boolean;
         tierName?: string | null;
       },
@@ -131,6 +133,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   credentialEnv,
   selectedMessagingChannels,
   webSearchConfig,
+  webSearchConfigChanged = false,
   webSearchSupported,
   hermesToolGateways,
   agent,
@@ -168,6 +171,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
     webSearchConfig,
+    webSearchConfigChanged,
     webSearchSupported,
     tierName: activeSandbox?.policyTier ?? null,
   });
