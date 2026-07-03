@@ -24,6 +24,7 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged?: boolean;
   webSearchSupported: boolean;
   selectedMessagingChannels: string[];
   gpu: Gpu | null;
@@ -75,6 +76,8 @@ export interface SandboxCreatedContextUpdate {
   session: Session | null;
   sandboxName: string;
   webSearchConfig: WebSearchConfig | null;
+  webSearchConfigChanged: boolean;
+  hermesToolGateways: string[];
   selectedMessagingChannels: string[];
   webSearchSupported: boolean;
 }

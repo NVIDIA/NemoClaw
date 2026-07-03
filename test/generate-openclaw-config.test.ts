@@ -796,7 +796,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.tools?.web?.search).toBeUndefined();
   });
 
-  it("enables web search when env is '1' using the current plugin schema", () => {
+  it("defaults enabled web search to Brave using the current plugin schema", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
     expect(config.tools?.toolSearch).toBe(true);
     // #5266: apiKey lives under plugins.entries.brave.config (not inline on

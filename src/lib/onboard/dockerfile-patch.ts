@@ -4,7 +4,11 @@
 import fs from "node:fs";
 
 import { getSandboxInferenceConfig } from "../inference/config";
-import type { WebSearchConfig } from "../inference/web-search";
+import {
+  isWebSearchEnabled,
+  type WebSearchConfig,
+  webSearchProviderForConfig,
+} from "../inference/web-search";
 import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 
@@ -265,7 +269,11 @@ export function patchStagedDockerfile(
   }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
-    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(webSearchConfig ? "1" : "0")}`,
+    `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(isWebSearchEnabled(webSearchConfig) ? "1" : "0")}`,
+  );
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
+    `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${sanitizeDockerArg(webSearchProviderForConfig(webSearchConfig))}`,
   );
   for (const envKey of [
     "NEMOCLAW_OPENCLAW_OTEL",
