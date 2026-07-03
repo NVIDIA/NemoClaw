@@ -29,13 +29,32 @@ import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../../name-validation";
  * exit code are left untouched: the hint is emitted by the host CLI process
  * after the child has been reaped, never by wrapping or piping the tool.
  *
- * Source boundary / removal condition: the opaque `CONNECT tunnel failed,
- * response 403` originates in the external OpenShell L7 proxy, which this repo
- * cannot change. This breadcrumb is a deliberately localized translation of the
- * denial the proxy already recorded into actionable NemoClaw guidance. Remove it
- * once OpenShell surfaces the denied endpoint and a logs pointer at the failure
- * site itself, or exposes a structured exec-denial signal NemoClaw can forward
- * directly (tracked upstream in NVIDIA/OpenShell).
+ * Source-of-truth for this breadcrumb (mirrors the multiline-exec guard block
+ * in exec.ts):
+ *   - Invalid state: a sandbox egress request is refused by policy. The
+ *     OpenShell L7 proxy answers CONNECT with HTTP 403, and generic clients
+ *     surface only the protocol text (`curl: (56) CONNECT tunnel failed,
+ *     response 403`, `fatal: unable to access ...`), hiding the JSON body and
+ *     the OCSF `NET:OPEN ... DENIED` audit line that names the denied endpoint.
+ *   - Source boundary: both the opaque 403 and the audit line originate in the
+ *     external OpenShell proxy/sandbox, not in NemoClaw. The 403 is emitted to
+ *     the tool before NemoClaw regains control, so we cannot rewrite it at the
+ *     failure site.
+ *   - Source-fix constraint: making the denial actionable at the tool's own
+ *     error site would require OpenShell to change the proxy response or emit a
+ *     structured exec-denial signal; that lives upstream (NVIDIA/OpenShell) and
+ *     cannot be fixed from this repo. This breadcrumb is therefore a deliberately
+ *     localized translation of the denial OpenShell already recorded into
+ *     NemoClaw guidance, on the NemoClaw-owned exec boundary.
+ *   - Regression coverage: `isPolicyDenialLine`, `extractDeniedEndpoint`,
+ *     `findRecentPolicyDenial`, `buildPolicyDenialExecHint`, and
+ *     `maybeEmitPolicyDenialHint` in exec-policy-hint.test.ts, plus the
+ *     `execSandbox policy-denial hint wiring (#5978)` suite in exec.test.ts
+ *     (exit-code preservation + no hint on success/unrelated failure).
+ *   - Removal condition: drop this module and its `execSandbox` call once
+ *     OpenShell surfaces the denied endpoint and a logs pointer at the
+ *     `CONNECT tunnel failed` site itself, or exposes a structured exec-denial
+ *     signal NemoClaw can forward directly (tracked upstream in NVIDIA/OpenShell).
  */
 
 /** Opt-out env var, shared with the connect-shell breadcrumb stanza. */
