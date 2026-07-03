@@ -6,6 +6,10 @@ Advisory audit revalidated: 2026-07-03
 
 Scope: NemoClaw runtime pin `openclaw@2026.6.10`, runtime helper pin `@zed-industries/codex-acp@0.11.1`, optional OpenClaw plugins, and built-in messaging OpenClaw plugins.
 
+## Issue #5591 Acceptance Mapping
+
+Issue #5591 is the dependency-update umbrella, and its proposed design has three literal clauses. "Latest stable version of Hermes" is satisfied by merged PR #5594 (`hermes-agent==2026.6.19`); "Latest version of OpenShell" is satisfied by merged PR #5596 (`openshell==0.0.71`); and "Latest stable version of OpenClaw" is the clause owned by this PR. For that OpenClaw clause, the repository pins the reviewed non-prerelease `openclaw@2026.6.10` artifact and its plugin SRIs, while `test/openclaw-integrity-pin.test.ts`, `test/openclaw-dependency-review.test.ts`, and the exact-head E2E matrix named in this review provide the acceptance evidence. This PR references rather than closes #5591 because the issue tracks the coordinated dependency set and release, not only the OpenClaw slice.
+
 ## Package Identity
 
 - npm package: `openclaw@2026.6.10`

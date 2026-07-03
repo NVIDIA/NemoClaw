@@ -114,6 +114,13 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
+    expect(review).toContain("Issue #5591 Acceptance Mapping");
+    expect(review).toContain('"Latest stable version of Hermes"');
+    expect(review).toContain('"Latest version of OpenShell"');
+    expect(review).toContain('"Latest stable version of OpenClaw"');
+    expect(review).toContain("merged PR #5594");
+    expect(review).toContain("merged PR #5596");
+    expect(review).toContain("references rather than closes #5591");
     expect(review).toContain(CODEX_ACP_TARBALL);
     expect(review).toContain("bind reviewed npm installs to verified local archives");
     expect(review).toContain("downloaded tarball integrity");
@@ -367,6 +374,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
 
   it("records the accepted SRI-only messaging plugin provenance boundary", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
+    const source = readFileSync(MESSAGING_BUILD_APPLIER, "utf-8");
 
     expect(review).toContain("Messaging Plugin Registry Provenance Boundary");
     expect(review).toContain("`registryTarballUrl` policy is explicitly `not-pinned`");
@@ -374,6 +382,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       "accepted state only while the exact package spec, registry SRI, and packed-byte SRI",
     );
     expect(review).toContain("carries exact tarball URLs for every messaging plugin");
+    expect(source).toContain("Accepted residual for this reviewed dependency bump");
+    expect(source).toContain("Remove this boundary only when #5896");
   });
 
   it("keeps the rebuild-resume compatibility shim tied to its removal tracker", () => {

@@ -125,6 +125,11 @@ type OpenClawPluginInstall = {
   readonly pin: boolean;
 };
 
+// Accepted residual for this reviewed dependency bump: exact package identity,
+// registry SRI, and packed-byte SRI reject byte drift, while registry tarball
+// origin/path drift remains permitted because channel manifests do not yet own
+// those URLs. Remove this boundary only when #5896 provides one reviewed URL
+// authority for every messaging plugin and keeps the existing byte checks.
 export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze({
   schemaVersion: 1,
   packageIdentity: "exact-npm-package-spec",
