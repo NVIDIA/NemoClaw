@@ -223,4 +223,39 @@ describe("prepareSandboxCreateLaunch", () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("forwards the validated sandbox name into the Deep Agents Code sandbox create env", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      chatUiUrl: "",
+      createArgs: ["--name", "rendered-name"],
+      sandboxName: "dcode-demo",
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => "0"),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs).toContain("NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    expect(result.envArgs).not.toContain("NEMOCLAW_SANDBOX_NAME=rendered-name");
+  });
+
+  it("does not forward the sandbox name for non-Deep-Agents-Code agents", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "openclaw", configPaths: { dir: "/sandbox/.custom-openclaw" } } as any,
+      chatUiUrl: "http://127.0.0.1:19000/",
+      createArgs: ["--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "19000",
+      hermesDashboardState: disabledHermesDashboardState,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
 });
