@@ -36,9 +36,9 @@ vi.mock("./gateway-state", () => ({
 }));
 
 import {
+  type ManagedInferenceRouteResetDeps,
   repairSandboxInferenceRouteWithDeps,
   resetManagedInferenceRouteWithDeps,
-  type ManagedInferenceRouteResetDeps,
   type SandboxInferenceRouteProbe,
   type SandboxInferenceRouteRepairDeps,
 } from "./connect";

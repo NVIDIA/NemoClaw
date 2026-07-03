@@ -236,6 +236,75 @@ describe("connectSandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
+  it("runs the dcode inference route probe through its login-shell proxy contract (#6191)", async () => {
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+    });
+    const registry = requireDist("../../src/lib/state/registry.js");
+    registry.getSandbox.mockReturnValue({
+      name: "alpha",
+      agent: "langchain-deepagents-code",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      gpuEnabled: false,
+      policies: [],
+    });
+    const responses = new Map([
+      ["sandbox list", { status: 0, output: "alpha Ready" }],
+      [
+        "inference get",
+        {
+          status: 0,
+          output:
+            "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+        },
+      ],
+      ["sandbox exec", { status: 0, output: "OK 200" }],
+    ]);
+    harness.captureOpenshellSpy.mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args : [];
+      return responses.get(`${String(argv[0])} ${String(argv[1])}`) ?? { status: 0, output: "" };
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "--name",
+        "alpha",
+        "--",
+        "env",
+        "-u",
+        "HTTP_PROXY",
+        "-u",
+        "HTTPS_PROXY",
+        "-u",
+        "http_proxy",
+        "-u",
+        "https_proxy",
+        "-u",
+        "NO_PROXY",
+        "-u",
+        "no_proxy",
+        "-u",
+        "ALL_PROXY",
+        "-u",
+        "all_proxy",
+        "HOME=/sandbox",
+        "bash",
+        "-lc",
+        expect.stringContaining("https://inference.local/v1/models"),
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
   it("stops before opening SSH when the sandbox list reports a terminal failure phase", async () => {
     const harness = createConnectHarness({ listOutput: "alpha Error" });
 
