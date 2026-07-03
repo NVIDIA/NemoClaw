@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PreparedDcodeRebuildHandoff } from "../../onboard/build-context-stage";
+import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
 export type RebuildGpuOptOutEntry = {

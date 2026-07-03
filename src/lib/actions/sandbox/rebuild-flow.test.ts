@@ -654,7 +654,12 @@ describe("rebuildSandbox flow", () => {
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: originalEntry,
-      sandboxEntryReads: [originalEntry, originalEntry, driftedEntry],
+      sandboxEntryReads: [
+        originalEntry, // Initial rebuild target.
+        originalEntry, // Messaging-conflict gateway selection (#5954).
+        originalEntry, // Prepared DCode target capture.
+        driftedEntry, // Final pre-backup target verification.
+      ],
       dcodeRouteResults: [{ ok: true }, { ok: true }],
     });
     configureDcodeSession(harness);
@@ -700,7 +705,14 @@ describe("rebuildSandbox flow", () => {
     const harness = createRebuildFlowHarness({
       agentName: "langchain-deepagents-code",
       sandboxEntry: originalEntry,
-      sandboxEntryReads: [originalEntry, originalEntry, originalEntry, originalEntry, driftedEntry],
+      sandboxEntryReads: [
+        originalEntry, // Initial rebuild target.
+        originalEntry, // Messaging-conflict gateway selection (#5954).
+        originalEntry, // Prepared DCode target capture.
+        originalEntry, // Final pre-backup target verification.
+        originalEntry, // Delete-edge target verification input.
+        driftedEntry, // Registry reread at the destructive boundary.
+      ],
       dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
     });
     configureDcodeSession(harness);

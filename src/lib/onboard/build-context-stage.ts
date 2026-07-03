@@ -39,12 +39,6 @@ export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextRe
   buildId: string;
 }
 
-/** One-process handoff from a validated DCode rebuild preflight into onboarding. */
-export interface PreparedDcodeRebuildHandoff {
-  buildContext: PreparedSandboxBuildContext;
-  gatewayName: string;
-}
-
 function createCleanupBuildContext(buildCtx: string): () => boolean {
   return () => {
     try {
