@@ -43,6 +43,15 @@ function restoreStream(
   });
 }
 
+async function withRestoredStreams<T>(callback: () => T | Promise<T>): Promise<T> {
+  try {
+    return await callback();
+  } finally {
+    restoreStream(process.stdout, ORIGINAL_STDOUT);
+    restoreStream(process.stderr, ORIGINAL_STDERR);
+  }
+}
+
 // styleText's `yellow`/`red`/`green` formats (as of Node 22.16) wrap text in
 // SGR color codes with a `39` (default-foreground) reset.
 const YELLOW = (s: string) => `\x1b[33m${s}\x1b[39m`;
@@ -51,47 +60,51 @@ describe("preflight severity lines (#6004)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.resetModules();
-    restoreStream(process.stdout, ORIGINAL_STDOUT);
-    restoreStream(process.stderr, ORIGINAL_STDERR);
   });
 
-  it("colors warn/error from stderr — their real stream — not stdout (#6004)", () => {
-    // stdout redirected to a file, terminal still on stderr: warn/error must
-    // stay colored (they land on the color-capable stderr) while stdout-bound
-    // ok lines go plain. The old helpers colored from stdout and dropped these.
-    stubStream(process.stderr, true, 24);
-    stubStream(process.stdout, false, 1);
-    expect(warnLine("disk low")).toBe(`  ${YELLOW("⚠ disk low")}`);
-    expect(failLine("docker down")).toBe(`  ${RED("✗ docker down")}`);
+  it("colors warn/error from stderr — their real stream — not stdout (#6004)", async () => {
+    await withRestoredStreams(() => {
+      // stdout redirected to a file, terminal still on stderr: warn/error must
+      // stay colored because they land on the color-capable stderr.
+      stubStream(process.stderr, true, 24);
+      stubStream(process.stdout, false, 1);
+      expect(warnLine("disk low")).toBe(`  ${YELLOW("⚠ disk low")}`);
+      expect(failLine("docker down")).toBe(`  ${RED("✗ docker down")}`);
+    });
   });
 
-  it("drops warn/error color when stderr is redirected but stdout is a TTY (#6004)", () => {
-    // The inverse leak: stderr redirected to a log, stdout still a terminal.
-    // warn/error must go plain so no raw ANSI lands in the log. The old
-    // helpers colored from stdout and leaked.
-    stubStream(process.stdout, true, 24);
-    stubStream(process.stderr, false, 1);
-    expect(warnLine("disk low")).toBe("  ⚠ disk low");
-    expect(failLine("docker down")).toBe("  ✗ docker down");
+  it("drops warn/error color when stderr is redirected but stdout is a TTY (#6004)", async () => {
+    await withRestoredStreams(() => {
+      // The inverse leak: stderr redirected to a log, stdout still a terminal.
+      // warn/error must go plain so no raw ANSI lands in the log.
+      stubStream(process.stdout, true, 24);
+      stubStream(process.stderr, false, 1);
+      expect(warnLine("disk low")).toBe("  ⚠ disk low");
+      expect(failLine("docker down")).toBe("  ✗ docker down");
+    });
   });
 
-  it("emits plain text with no ANSI when the stream reports no color (NO_COLOR / CI)", () => {
-    // A real terminal under NO_COLOR reports color depth 1; redirected pipes
-    // and CI do the same. Assert the observable #6004 guarantee: no escapes.
-    vi.stubEnv("NO_COLOR", "1");
-    stubStream(process.stdout, true, 1);
-    stubStream(process.stderr, true, 1);
-    expect(warnLine("a")).toBe("  ⚠ a");
-    expect(failLine("b")).toBe("  ✗ b");
+  it("emits plain text with no ANSI when the stream reports no color (NO_COLOR / CI)", async () => {
+    await withRestoredStreams(() => {
+      // A real terminal under NO_COLOR reports color depth 1; redirected pipes
+      // and CI do the same. Assert the observable #6004 guarantee: no escapes.
+      vi.stubEnv("NO_COLOR", "1");
+      stubStream(process.stdout, true, 1);
+      stubStream(process.stderr, true, 1);
+      expect(warnLine("a")).toBe("  ⚠ a");
+      expect(failLine("b")).toBe("  ✗ b");
+    });
   });
 
   it("selects the legacy true-color green when configured before import", async () => {
-    stubStream(process.stdout, true, 24);
-    vi.stubEnv("NO_COLOR", "");
-    vi.stubEnv("COLORTERM", "truecolor");
-    vi.resetModules();
+    await withRestoredStreams(async () => {
+      stubStream(process.stdout, true, 24);
+      vi.stubEnv("NO_COLOR", "");
+      vi.stubEnv("COLORTERM", "truecolor");
+      vi.resetModules();
 
-    const freshStyles = await import("./terminal-style");
-    expect(freshStyles.G).toBe("\x1b[38;2;118;185;0m");
+      const freshStyles = await import("./terminal-style");
+      expect(freshStyles.G).toBe("\x1b[38;2;118;185;0m");
+    });
   });
 });

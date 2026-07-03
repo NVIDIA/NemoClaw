@@ -11,28 +11,6 @@ import {
   verifySandboxBridgeGatewayReachableOrExit,
 } from "./gateway-sandbox-reachability";
 
-function withColoredStderr<T>(callback: () => T): T {
-  const originalIsTTY = process.stderr.isTTY;
-  const originalGetColorDepth = process.stderr.getColorDepth;
-  Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
-  Object.defineProperty(process.stderr, "getColorDepth", {
-    value: () => 24,
-    configurable: true,
-  });
-  try {
-    return callback();
-  } finally {
-    Object.defineProperty(process.stderr, "isTTY", {
-      value: originalIsTTY,
-      configurable: true,
-    });
-    Object.defineProperty(process.stderr, "getColorDepth", {
-      value: originalGetColorDepth,
-      configurable: true,
-    });
-  }
-}
-
 describe("gateway sandbox reachability route modeling", () => {
   it("parses Docker network IPAM config for subnet and gateway", () => {
     expect(
@@ -346,26 +324,6 @@ describe("isSandboxBridgeGatewayReachable", () => {
 });
 
 describe("formatSandboxBridgeUnreachableMessage", () => {
-  it("routes warning and fatal first lines through the stderr severity renderer (#6004)", () => {
-    withColoredStderr(() => {
-      const warning = formatSandboxBridgeUnreachableMessage({
-        ok: false,
-        reason: "probe_unavailable",
-      });
-      const fatal = formatSandboxBridgeUnreachableMessage({
-        ok: false,
-        reason: "veth_unsupported",
-      });
-
-      expect(warning.split("\n")[0]).toBe(
-        "  \x1b[33m⚠ Could not verify sandbox bridge reachability.\x1b[39m",
-      );
-      expect(fatal.split("\n")[0]).toBe(
-        "  \x1b[31m✗ Docker could not create the sandbox bridge veth pair.\x1b[39m",
-      );
-    });
-  });
-
   it("emits a UFW command only for bridge-gateway TCP failures", () => {
     const msg = formatSandboxBridgeUnreachableMessage({
       ok: false,

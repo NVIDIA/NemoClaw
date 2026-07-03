@@ -2,14 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Bridge + DNS preflight gate, extracted from `onboard.ts` so it can be
- * reused as a `--resume` backstop without growing the top-level file
- * past the `onboard-entrypoint-budget` CI ceiling.
- *
- * - `assertDockerBridgeAndContainerDnsHealthy(host)` runs the bridge
- *   container start probe (#3508 Jetson veth) and the DNS-from-inside-
- *   container probe (#3630), and exits with platform-aware remediation
- *   on the fatal reasons described in `[[isFatalContainerDnsProbeFailure]]`.
+ * Bridge + DNS preflight gate extracted from `onboard.ts` for reuse as a
+ * `--resume` backstop. It validates bridge container start (#3508 Jetson veth)
+ * and container DNS (#3630), with platform-aware remediation on fatal results.
  */
 
 import { failLine, warnLine } from "../cli/terminal-style";
@@ -31,24 +26,14 @@ interface DaemonJsonDnsPatchOpts {
 }
 
 /**
- * Print a copy-pastable shell snippet that adds a `dns` key to the
- * given daemon.json safely. The snippet:
- *  - creates the containing directory,
- *  - backs up the existing daemon.json,
- *  - requires `jq` (prints an install hint and aborts if missing — no
- *    bare-echo fallback that would clobber an existing daemon.json),
- *  - merges into an existing JSON object via `jq '. + {...}'`,
- *  - creates a new JSON object via `jq -n {...}` when daemon.json is
- *    absent,
- *  - refuses to write if the existing file is not parseable, asking
- *    the user to fix it manually first.
+ * Print a copy-pastable shell snippet that creates the config directory, backs
+ * up daemon.json, requires `jq`, merges or creates the `dns` key, and refuses
+ * to write invalid JSON.
  *
- * Source boundary: this repairs privileged, platform-owned Docker daemon
- * configuration outside NemoClaw's state. Unprivileged onboarding cannot
- * safely mutate that file or restart Docker without explicit user consent, so
- * the commands remain plain, copy-pastable output and nothing here executes
- * them. Remove this workaround only when Docker/OpenShell exposes a managed
- * daemon-DNS configuration API that preserves those ownership boundaries.
+ * Source boundary: this is privileged, platform-owned Docker configuration.
+ * Unprivileged onboarding cannot safely mutate it or restart Docker without
+ * explicit user consent, so the commands stay plain and nothing executes them.
+ * Remove this only when Docker/OpenShell exposes a managed daemon-DNS API.
  */
 function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   const { daemonJsonPath, configDir, dnsValue, sudo, installJqHint, indent } = opts;
