@@ -115,6 +115,7 @@ describe("managed DCode rebuild image preflight", () => {
     expect(cleanupBuildCtx).not.toHaveBeenCalled();
 
     const prepared = expectPreparedImage(result);
+    const mutationFd = fs.openSync(stagedDockerfile, fs.constants.O_WRONLY);
     const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
     const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
     const stableOpen = vi.spyOn(fs, "openSync");
@@ -234,11 +235,13 @@ describe("managed DCode rebuild image preflight", () => {
     } finally {
       appendAfterRead.mockRestore();
     }
-    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    fs.ftruncateSync(mutationFd, 0);
+    fs.writeSync(mutationFd, "FROM scratch\n", 0, "utf8");
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
 
-    fs.appendFileSync(stagedDockerfile, "# changed after preflight\n");
+    fs.writeSync(mutationFd, "# changed after preflight\n", 0, "utf8");
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    fs.closeSync(mutationFd);
 
     expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
     expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);

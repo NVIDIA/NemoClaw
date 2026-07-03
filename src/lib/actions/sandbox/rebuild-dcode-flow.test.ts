@@ -81,6 +81,36 @@ describe("rebuildSandbox DCode flow", () => {
     expectNoDcodeMutation(harness);
   });
 
+  it("keeps DCode intact when its recorded gateway cannot become healthy (#6195)", async () => {
+    const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
+    process.env.OPENSHELL_GATEWAY = "previous-gateway";
+
+    try {
+      const harness = createRebuildFlowHarness({
+        agentName: "langchain-deepagents-code",
+        sandboxEntry: makeDcodeSandboxEntry(),
+        gatewayRecoveryResult: {
+          recovered: false,
+          attempted: true,
+          before: { state: "named_unhealthy" },
+          after: { state: "named_unhealthy" },
+        },
+      });
+      configureDcodeSession(harness);
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Could not select healthy gateway 'nemoclaw'");
+
+      expect(process.env.OPENSHELL_GATEWAY).toBe("previous-gateway");
+      expect(harness.preflightDcodeRouteSpy).not.toHaveBeenCalled();
+      expect(harness.prepareManagedDcodeRebuildImageSpy).not.toHaveBeenCalled();
+      expectNoDcodeMutation(harness);
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("restores the prior gateway when messaging conflict preflight throws after target pin (#6195)", async () => {
     const restoreEnv = snapshotEnv(["OPENSHELL_GATEWAY"]);
     process.env.OPENSHELL_GATEWAY = "previous-gateway";
@@ -250,6 +280,33 @@ describe("rebuildSandbox DCode flow", () => {
     ).rejects.toThrow("Recorded inference route smoke check failed");
 
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(3);
+    expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
+    expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.anything(),
+    );
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
+    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.disposePreparedDcodeRebuildImageSpy).toHaveBeenCalledWith(
+      harness.preparedDcodeBuildContext,
+    );
+  });
+
+  it("preserves live DCode when retained replacement inputs drift after backup (#6195)", async () => {
+    const harness = createRebuildFlowHarness({
+      agentName: "langchain-deepagents-code",
+      sandboxEntry: makeDcodeSandboxEntry(),
+      dcodeRouteResults: [{ ok: true }, { ok: true }, { ok: true }],
+      dcodeImageVerificationResults: [true, false],
+    });
+    configureDcodeSession(harness);
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("the prepared DCode replacement inputs changed before deletion");
+
     expect(harness.openShieldsSpy).toHaveBeenCalledOnce();
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledOnce();
     expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(

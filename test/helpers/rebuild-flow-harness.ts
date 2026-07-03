@@ -66,6 +66,8 @@ export type RebuildFlowOverrides = {
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
+  gatewayRecoveryResult?: Record<string, unknown>;
+  dcodeImageVerificationResults?: boolean[];
   dcodeImageResult?:
     | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
     | { ok: false; detail: string };
@@ -262,7 +264,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const gatewayName =
         (args[0] as { gatewayName?: string } | undefined)?.gatewayName ?? "nemoclaw";
       const state = { state: "healthy_named", activeGateway: gatewayName };
-      return { recovered: true, attempted: false, before: state, after: state };
+      return (
+        overrides.gatewayRecoveryResult ?? {
+          recovered: true,
+          attempted: false,
+          before: state,
+          after: state,
+        }
+      );
     },
   );
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
@@ -351,7 +360,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation((prepared: unknown) =>
       (prepared as { cleanupBuildCtx: () => boolean }).cleanupBuildCtx(),
     );
-  vi.spyOn(rebuildManagedImage, "verifyPreparedDcodeRebuildImage").mockReturnValue(true);
+  const imageVerificationResults = [...(overrides.dcodeImageVerificationResults ?? [true])];
+  vi.spyOn(rebuildManagedImage, "verifyPreparedDcodeRebuildImage").mockImplementation(
+    () => imageVerificationResults.shift() ?? true,
+  );
   const openShieldsSpy = vi
     .spyOn(rebuildShields, "openRebuildShieldsWindow")
     .mockImplementation(overrides.openShieldsWindow ?? (() => rebuildShieldsWindow));
