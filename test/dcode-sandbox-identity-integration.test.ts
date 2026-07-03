@@ -20,25 +20,34 @@ const WRAPPER = path.join(
   "dcode-wrapper.sh",
 );
 
+function replaceOrThrow(source: string, search: string, replacement: string): string {
+  if (!source.includes(search)) {
+    throw new Error(`dcode-wrapper.sh fixture patch target not found: ${search}`);
+  }
+  return source.replace(search, replacement);
+}
+
 function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: string } {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
   const dcodeEnvFile = path.join(tempDir, "dcode.env");
   const configFile = path.join(tempDir, "config.toml");
-  const fixture = fs
-    .readFileSync(WRAPPER, "utf8")
-    .replace(
-      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
-      `readonly DEEPAGENTS_ENV_FILE="${dcodeEnvFile}"`,
-    )
-    .replace(
-      'readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"',
-      `readonly DEEPAGENTS_CONFIG_FILE="${configFile}"`,
-    )
-    .replace(
-      "exec python3 -m deepagents_code",
-      `touch "${ranMarker}"; exit 0; : python3 -m deepagents_code`,
-    );
+  let fixture = fs.readFileSync(WRAPPER, "utf8");
+  fixture = replaceOrThrow(
+    fixture,
+    'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
+    `readonly DEEPAGENTS_ENV_FILE="${dcodeEnvFile}"`,
+  );
+  fixture = replaceOrThrow(
+    fixture,
+    'readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"',
+    `readonly DEEPAGENTS_CONFIG_FILE="${configFile}"`,
+  );
+  fixture = replaceOrThrow(
+    fixture,
+    "exec python3 -m deepagents_code",
+    `touch "${ranMarker}"; exit 0; : python3 -m deepagents_code`,
+  );
 
   fs.writeFileSync(dcodeEnvFile, "", "utf8");
   fs.writeFileSync(configFile, "", "utf8");
