@@ -78,6 +78,36 @@ describe("e2e workflow boundary", () => {
     expect(validateE2eWorkflowBoundary()).toEqual([]);
   });
 
+  it("keeps channels add/remove on its authenticated local inference fixture", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        {
+          env: Record<string, unknown>;
+          steps: Array<{ env?: Record<string, unknown>; name?: string }>;
+        }
+      >;
+    };
+    const job = workflow.jobs["channels-add-remove"];
+    job.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
+    const runStep = job.steps.find((step) => step.name === "Run channels add/remove live test")!;
+    runStep.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "channels-add-remove job must leave NEMOCLAW_E2E_USE_HOSTED_INFERENCE unset for its local inference fixture",
+          "channels-add-remove step 'Run channels add/remove live test' env must not include NVIDIA_INFERENCE_API_KEY",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects free-standing E2E artifact uploads from raw temp paths", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
