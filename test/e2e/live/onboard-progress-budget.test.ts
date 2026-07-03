@@ -5,8 +5,9 @@
 // Live acceptance test for issue #6002. It measures the issue's actual
 // acceptance path — onboard step [1/8] through the FIRST agent response — and
 // asserts a real worktree-CLI onboard:
-//   1. never leaves a phase silent longer than the heartbeat interval (a
-//      heartbeat line is emitted during the long sandbox build), and
+//   1. never leaves a wait-heavy phase silent longer than the 60s guarantee
+//      (proved by the longest gap between heartbeats, each of which reports its
+//      in-phase elapsed seconds), and
 //   2. builds the sandbox image with BuildKit (the prebuild speed path), and
 //   3. prints the end-of-onboard "Phase timings" summary, and
 //   4. reaches the first agent response (a headless `openclaw agent` turn that
@@ -41,6 +42,8 @@ const HEARTBEAT_MS = Number(process.env.NEMOCLAW_E2E_ONBOARD_HEARTBEAT_MS ?? 3_0
 // ≤3-minute goal (180s); constrained / cold-cache runners can raise
 // NEMOCLAW_E2E_ONBOARD_BUDGET_SECS.
 const BUDGET_SECS = Number(process.env.NEMOCLAW_E2E_ONBOARD_BUDGET_SECS ?? 180);
+// The issue's guarantee: no onboarding phase stays silent longer than this.
+const MAX_SILENCE_SECS = Number(process.env.NEMOCLAW_E2E_MAX_SILENCE_SECS ?? 60);
 const TEST_TIMEOUT_MS = 45 * 60_000;
 // Gated at declaration (no in-body `if`): live E2E opt-in AND the built CLI is
 // present (repo CLI targets need `npm run build:cli`).
@@ -149,12 +152,29 @@ liveTest(
     const printedTimings = /Phase timings/.test(plain);
     const classicBuildSteps = (plain.match(/Step \d+\/\d+ :/g) ?? []).length;
 
+    // Max-silence proof: each heartbeat reports the seconds elapsed within its
+    // phase (reset per phase). The largest step between consecutive heartbeats —
+    // and from a phase's start to its first heartbeat — is the longest silent
+    // gap during the wait-heavy phases; it must stay under the 60s guarantee.
+    const heartbeatElapseds = [...plain.matchAll(/Still working on .+?\((\d+)s elapsed\)/g)].map(
+      (m) => Number(m[1]),
+    );
+    const silenceGaps = heartbeatElapseds.map((cur, i) =>
+      i === 0 ? cur : cur > heartbeatElapseds[i - 1] ? cur - heartbeatElapseds[i - 1] : cur,
+    );
+    const maxSilenceSecs = silenceGaps.length > 0 ? Math.max(...silenceGaps) : 0;
+
     expect(onboard.exitCode, plain).toBe(0);
     // (2) BuildKit prebuild ran (the speed fix), not the classic in-gateway builder.
     expect(usedBuildKitPrebuild, "expected the BuildKit prebuild to run").toBe(true);
     expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
-    // (1) No silent phase: a heartbeat was emitted during the long build.
+    // (1) No silent phase: heartbeats fired, and the longest silent gap during
+    // the wait-heavy phases stayed under the 60s guarantee.
     expect(heartbeatCount, "expected at least one progress heartbeat").toBeGreaterThan(0);
+    expect(
+      maxSilenceSecs,
+      `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
+    ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
     // (3) The end-of-onboard timing summary was printed.
     expect(printedTimings, "expected the 'Phase timings' summary").toBe(true);
 
@@ -184,6 +204,8 @@ liveTest(
       totalSecs,
       budgetSecs: BUDGET_SECS,
       heartbeatCount,
+      maxSilenceSecs,
+      maxSilenceBudgetSecs: MAX_SILENCE_SECS,
       usedBuildKitPrebuild,
       printedTimings,
       classicBuildSteps,
