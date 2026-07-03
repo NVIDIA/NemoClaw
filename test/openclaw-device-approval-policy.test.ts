@@ -60,6 +60,69 @@ print(json.dumps(result, sort_keys=True))
   );
 }
 
+function runConcurrentRecovery(stateDir: string) {
+  const script = `
+import importlib.util
+import json
+import pathlib
+import sys
+import threading
+
+policy_path, state_dir, approve_output, original_json = sys.argv[1:5]
+spec = importlib.util.spec_from_file_location("openclaw_device_approval_policy", policy_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+original_request = json.loads(original_json)
+devices_dir = pathlib.Path(state_dir) / "devices"
+real_open = module.os.open
+opened = threading.Barrier(2)
+
+def synchronized_open(path, flags, mode=0o777):
+    fd = real_open(path, flags, mode)
+    if str(path).endswith(".tmp"):
+        opened.wait(timeout=5)
+    return fd
+
+module.os.open = synchronized_open
+results = []
+errors = []
+
+def recover():
+    try:
+        results.append(
+            module.recover_failed_scope_approval(
+                "request-1", state_dir, approve_output, original_request
+            )
+        )
+    except BaseException as error:
+        errors.append(f"{type(error).__name__}: {error}")
+
+threads = [threading.Thread(target=recover) for _ in range(2)]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join(timeout=10)
+
+print(json.dumps({
+    "alive": [thread.name for thread in threads if thread.is_alive()],
+    "errors": errors,
+    "results": results,
+    "pending": json.loads((devices_dir / "pending.json").read_text(encoding="utf-8")),
+    "paired": json.loads((devices_dir / "paired.json").read_text(encoding="utf-8")),
+    "temps": sorted(path.name for path in devices_dir.glob(".*.tmp")),
+}, sort_keys=True))
+`;
+  return spawnSync(
+    "python3",
+    ["-", POLICY_PATH, stateDir, COMPAT_APPROVE_OUTPUT, JSON.stringify(originalRequest())],
+    {
+      encoding: "utf-8",
+      input: script,
+      timeout: 20_000,
+    },
+  );
+}
+
 function originalRequest(): Record<string, unknown> {
   return {
     requestId: "request-1",
@@ -190,6 +253,31 @@ describe("openclaw device approval policy (#4462)", () => {
       expect(pairedMode).toBe(0o600);
       expect(pendingMode & 0o007).toBe(0);
       expect(pairedMode & 0o007).toBe(0);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses isolated temporary files for concurrent recovery writers", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeOriginalPendingState(stateDir);
+
+      const result = runConcurrentRecovery(stateDir);
+
+      expect(result.status, result.stderr).toBe(0);
+      const payload = JSON.parse(result.stdout);
+      expect(payload.alive).toEqual([]);
+      expect(payload.errors).toEqual([]);
+      expect(payload.results).toHaveLength(2);
+      expect(payload.pending).toEqual({});
+      expect(payload.paired["device-1"].approvedScopes).toEqual([
+        "operator.pairing",
+        "operator.read",
+        "operator.write",
+      ]);
+      expect(payload.temps).toEqual([]);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -241,6 +241,27 @@ describe("registry", () => {
     expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
   });
 
+  it("restores a removed row after an intervening registry registration", () => {
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+
+    registry.registerSandbox({ name: "concurrent", model: "new" });
+    expect(registry.setDefault("concurrent")).toBe(true);
+
+    expect(registry.restoreSandboxEntryIfMissing(receipt!.entry)).toBe(true);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      model: "original",
+      imageTag: "old-image",
+    });
+    expect(registry.getSandbox("concurrent")).toMatchObject({
+      name: "concurrent",
+      model: "new",
+    });
+    expect(registry.getDefault()).toBe("concurrent");
+  });
+
   it("restores a rebuild entry only while its name is unclaimed", () => {
     registry.registerSandbox({ name: "alpha", model: "old", imageTag: "old-image" });
     registry.registerSandbox({ name: "beta" });

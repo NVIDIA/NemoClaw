@@ -6,6 +6,7 @@
 import json
 import os
 import re
+import secrets
 from pathlib import Path
 
 
@@ -203,13 +204,18 @@ def _load_device_state(devices_dir, name):
 
 def _save_device_state(devices_dir, name, value):
     path = devices_dir / name
-    tmp = path.with_name(f".{path.name}.tmp")
+    tmp = path.with_name(f".{path.name}.{secrets.token_hex(12)}.tmp")
     try:
         target_mode = path.stat().st_mode & 0o770
     except FileNotFoundError:
         target_mode = 0o600
 
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     fd = os.open(tmp, flags, 0o600)
     try:
         os.fchmod(fd, target_mode)
