@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import path from "node:path";
 
 import { type MockInstance, vi } from "vitest";
 
 type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(
-  new URL("../../src/lib/actions/sandbox/rebuild-flow.test.ts", import.meta.url),
+  path.join(process.cwd(), "src/lib/actions/sandbox/rebuild-flow-harness.ts"),
 );
 const rebuildModulePath = "./rebuild.js";
 
@@ -38,6 +39,7 @@ export type RebuildFlowSession = Record<string, unknown> & {
 };
 
 export type RebuildFlowOverrides = {
+  agentName?: string;
   applyPreset?: (presetName: string) => boolean;
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
@@ -53,6 +55,7 @@ export type RebuildFlowOverrides = {
   };
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
+  sandboxEntryReads?: Array<Record<string, unknown> | null>;
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   backupPolicyPresets?: string[];
@@ -63,28 +66,46 @@ export type RebuildFlowOverrides = {
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   updateSession?: () => void;
+  dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
+  gatewayRecoveryResult?: Record<string, unknown>;
+  dcodeImageVerificationResults?: boolean[];
+  dcodeBaseImageIds?: string[];
+  dcodeImageResult?:
+    | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
+    | { ok: false; detail: string };
+  openShieldsWindow?: () => { relocked: boolean; wasLocked: boolean } | null;
+  preflightMessagingConflicts?: () => Promise<void> | void;
 };
 
 export type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
   backupSandboxStateSpy: MockInstance;
+  disposePreparedDcodeRebuildImageSpy: MockInstance;
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
   markStepFailedSpy: MockInstance;
+  openShieldsSpy: MockInstance;
   onboardSpy: MockInstance;
+  preflightMessagingConflictsSpy: MockInstance;
+  preflightDcodeRouteSpy: MockInstance;
+  prepareManagedDcodeRebuildImageSpy: MockInstance;
+  removeSandboxRegistryEntrySpy: MockInstance;
   registryUpdateSpy: MockInstance;
-  restoreSandboxEntrySpy: MockInstance;
-  restoreRegistryEntryIfMissingSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
+  restoreSandboxEntrySpy: MockInstance;
+  restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
+  preparedDcodeBuildContext: Record<string, unknown> & { cleanupBuildCtx: MockInstance };
   session: RebuildFlowSession;
 };
+
+const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 
 // Snapshot the given env vars and return a restore fn that reinstates their
 // prior values exactly — vars that were unset stay unset, set ones are put back.
@@ -103,6 +124,20 @@ export function snapshotEnv(names: readonly string[]): () => void {
       ),
     );
   };
+}
+
+export function resetRebuildFlowTestEnvironment(): void {
+  delete process.env.NEMOCLAW_SANDBOX_NAME;
+}
+
+export function restoreRebuildFlowTestEnvironment(): void {
+  vi.restoreAllMocks();
+  delete require.cache[requireDist.resolve(rebuildModulePath)];
+  if (originalSandboxName === undefined) {
+    delete process.env.NEMOCLAW_SANDBOX_NAME;
+  } else {
+    process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
+  }
 }
 
 function createStep(status: string): RebuildFlowStep {
@@ -136,25 +171,6 @@ function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSe
       agent_setup: createStep("pending"),
       policies: createStep("pending"),
     },
-  };
-}
-
-export function makePreparedRecoveryManifest() {
-  return {
-    version: 1,
-    sandboxName: "alpha",
-    timestamp: "2026-07-01T06-50-42-044Z",
-    agentType: "openclaw",
-    agentVersion: "0.1.0",
-    expectedVersion: "0.2.0",
-    stateDirs: ["workspace"],
-    backedUpDirs: ["workspace"],
-    stateFiles: [],
-    dir: "/sandbox/.openclaw",
-    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
-    blueprintDigest: null,
-    policyPresets: ["npm"],
-    customPolicies: [],
   };
 }
 
@@ -193,10 +209,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
   const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const dockerImage = requireDist("../../adapters/docker/image.js");
+  const dockerInspect = requireDist("../../adapters/docker/inspect.js");
   const sandboxList = requireDist("../../openshell-sandbox-list.js");
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const agentDefs = requireDist("../../agent/defs.js");
+  const agentOnboard = requireDist("../../agent/onboard.js");
   const agentRuntime = requireDist("../../agent/runtime.js");
+  const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
   const onboardMod = requireDist("../../onboard.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
@@ -210,13 +230,18 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const processRecovery = requireDist("./process-recovery.js");
   const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
   const messaging = requireDist("../../messaging/index.js");
+  const rebuildInference = requireDist("./rebuild-inference-preflight.js");
+  const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
+  const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
   const shields = requireDist("../../shields/index.js");
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  const agentName = overrides.agentName ?? "openclaw";
   const agentDef = {
-    name: "openclaw",
+    name: agentName,
     expectedVersion: "0.2.0",
+    dockerfileBasePath: "/tmp/Dockerfile.base",
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
@@ -225,9 +250,36 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     result: { status: 0, output: overrides.sandboxListOutput ?? "alpha Ready" },
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
+  vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
+  const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
+    () => dcodeBaseImageIds.shift() ?? "sha256:dcode-base",
+  );
+  vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
-  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
-  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
+  vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
+    imageTag: `nemoclaw-${agentName}-base:test`,
+    built: true,
+  });
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: agentName });
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue(
+    agentName === "langchain-deepagents-code" ? "Deep Agents Code" : "OpenClaw",
+  );
+  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockImplementation(
+    async (...args: unknown[]) => {
+      const gatewayName =
+        (args[0] as { gatewayName?: string } | undefined)?.gatewayName ?? "nemoclaw";
+      const state = { state: "healthy_named", activeGateway: gatewayName };
+      return (
+        overrides.gatewayRecoveryResult ?? {
+          recovered: true,
+          attempted: false,
+          before: state,
+          after: state,
+        }
+      );
+    },
+  );
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
     overrides.updateSession?.();
@@ -254,7 +306,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   };
   const preDeleteDefaultSandbox =
     overrides.preDeleteDefaultSandbox === undefined ? "alpha" : overrides.preDeleteDefaultSandbox;
-  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
+  let sandboxEntryReadCount = 0;
+  vi.spyOn(registry, "getSandbox").mockImplementation(() => {
+    const configuredReads = overrides.sandboxEntryReads ?? [];
+    return (
+      sandboxEntryReadCount < configuredReads.length
+        ? configuredReads[sandboxEntryReadCount++]
+        : sandboxEntry
+    ) as never;
+  });
   let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
@@ -285,7 +345,40 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     expectedVersion: "0.2.0",
     sandboxVersion: "0.1.0",
   });
-  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
+  vi.spyOn(nim, "detectGpu").mockReturnValue(null);
+  const routeResults = [...(overrides.dcodeRouteResults ?? [{ ok: true }])];
+  const preflightDcodeRouteSpy = vi
+    .spyOn(rebuildInference, "preflightRebuildInferenceRoute")
+    .mockImplementation(() => routeResults.shift() ?? { ok: true });
+  const preparedDcodeBuildContext = {
+    buildCtx: "/tmp/dcode-rebuild-context",
+    stagedDockerfile: "/tmp/dcode-rebuild-context/Dockerfile",
+    buildId: "dcode-build",
+    contextFingerprint: "dcode-context",
+    dockerGpuPatchNetwork: null,
+    cleanupBuildCtx: vi.fn(() => true),
+  };
+  const prepareManagedDcodeRebuildImageSpy = vi
+    .spyOn(rebuildManagedImage, "prepareManagedDcodeRebuildImage")
+    .mockImplementation(
+      async () =>
+        (overrides.dcodeImageResult ?? {
+          ok: true,
+          prepared: preparedDcodeBuildContext,
+        }) as never,
+    );
+  const disposePreparedDcodeRebuildImageSpy = vi
+    .spyOn(rebuildManagedImage, "disposePreparedDcodeRebuildImage")
+    .mockImplementation((prepared: unknown) =>
+      (prepared as { cleanupBuildCtx: () => boolean }).cleanupBuildCtx(),
+    );
+  const imageVerificationResults = [...(overrides.dcodeImageVerificationResults ?? [true])];
+  vi.spyOn(rebuildManagedImage, "verifyPreparedDcodeRebuildImage").mockImplementation(
+    () => imageVerificationResults.shift() ?? true,
+  );
+  const openShieldsSpy = vi
+    .spyOn(rebuildShields, "openRebuildShieldsWindow")
+    .mockImplementation(overrides.openShieldsWindow ?? (() => rebuildShieldsWindow));
   const relockSpy = vi
     .spyOn(rebuildShields, "relockRebuildShieldsWindow")
     .mockImplementation((...args: unknown[]) => {
@@ -339,11 +432,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         }
       : { status: 0, output: "" };
   });
-  vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
-    entry: { name: "alpha", imageTag: "old-image" },
-    wasDefault: preDeleteDefaultSandbox === "alpha",
-    fallbackDefault: null,
-  });
+  const removeSandboxRegistryEntrySpy = vi
+    .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
+    .mockReturnValue({
+      entry: { name: "alpha", imageTag: "old-image" },
+      wasDefault: preDeleteDefaultSandbox === "alpha",
+      fallbackDefault: null,
+    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -370,6 +465,11 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const messagingRebuildPlanSpy = vi
     .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
     .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
+  const preflightMessagingConflictsSpy = vi
+    .spyOn(rebuildMessagingConflict, "preflightRebuildMessagingConflicts")
+    .mockImplementation(async () => {
+      await overrides.preflightMessagingConflicts?.();
+    });
   const ensureMessagingHostForwardAfterRebuildSpy = vi
     .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
     .mockReturnValue(true);
@@ -382,20 +482,46 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
     applyPresetSpy,
     backupSandboxStateSpy,
+    disposePreparedDcodeRebuildImageSpy,
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,
     markStepFailedSpy,
+    openShieldsSpy,
     onboardSpy,
+    preflightMessagingConflictsSpy,
+    preflightDcodeRouteSpy,
+    prepareManagedDcodeRebuildImageSpy,
+    removeSandboxRegistryEntrySpy,
     registryUpdateSpy,
-    restoreSandboxEntrySpy,
-    restoreRegistryEntryIfMissingSpy,
     releaseOnboardLockSpy,
     relockSpy,
+    restoreSandboxEntrySpy,
+    restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
+    preparedDcodeBuildContext,
     session,
+  };
+}
+
+export function makePreparedRecoveryManifest() {
+  return {
+    version: 1,
+    sandboxName: "alpha",
+    timestamp: "2026-07-01T06-50-42-044Z",
+    agentType: "openclaw",
+    agentVersion: "0.1.0",
+    expectedVersion: "0.2.0",
+    stateDirs: ["workspace"],
+    backedUpDirs: ["workspace"],
+    stateFiles: [],
+    dir: "/sandbox/.openclaw",
+    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
+    blueprintDigest: null,
+    policyPresets: ["npm"],
+    customPolicies: [],
   };
 }

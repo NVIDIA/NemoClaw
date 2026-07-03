@@ -90,6 +90,8 @@ NemoClaw snapshot and rebuild flows preserve the app state directory, skills, ge
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, successfully builds the replacement from a pinned base and fingerprinted context, and revalidates the target and route.
+Initial failures stop before backup. NemoClaw checks the target, route, and retained build inputs again after backup, immediately before deletion, so late failures can leave a backup but keep the existing sandbox intact.
 
 ## Optional Web Search
 

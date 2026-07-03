@@ -1,23 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
+  resetRebuildFlowTestEnvironment,
+  restoreRebuildFlowTestEnvironment,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
-
-const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "./rebuild.js";
-
-// Warm the CommonJS source graph outside the first test's timeout. Each harness
-// still reloads the entry module after installing its dependency spies.
-requireDist(rebuildModulePath);
-delete require.cache[requireDist.resolve(rebuildModulePath)];
-
-const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 
 function makeActiveTeamsMessagingPlan() {
   return {
@@ -90,19 +81,8 @@ function makeActiveTeamsMessagingPlan() {
 }
 
 describe("rebuildSandbox flow", () => {
-  beforeEach(() => {
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    delete require.cache[requireDist.resolve(rebuildModulePath)];
-    if (originalSandboxName === undefined) {
-      delete process.env.NEMOCLAW_SANDBOX_NAME;
-    } else {
-      process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
-    }
-  });
+  beforeEach(resetRebuildFlowTestEnvironment);
+  afterEach(restoreRebuildFlowTestEnvironment);
 
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
     const harness = createRebuildFlowHarness({
