@@ -72,7 +72,7 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
   });
 
   it("emits a NODE_DEBUG=nemoclaw:gateway diagnostic when the fail-closed path is taken", () => {
-    // The skip is silent by default; opting into NODE_DEBUG surfaces *why*.
+    // The default warning stays concise; NODE_DEBUG adds the underlying cause.
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const stop = stopSpy(emptyStopResult());
 
@@ -117,6 +117,9 @@ describe("releaseManagedGatewayPort fail-closed behavior (#5968)", () => {
     expect(result.released).toBe(false);
     expect(stop.lastOptions()).toBeUndefined();
     expect(lsof.calls).toBe(0);
+    expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "Registry lookup failed for sandbox",
+    );
   });
 
   it("warns and refuses unsafe pid-file cleanup when lsof exits with a real failure", () => {

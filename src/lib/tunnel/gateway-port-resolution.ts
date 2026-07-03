@@ -31,6 +31,7 @@ export function resolveStopGatewayPort(
   options: ReleaseGatewayPortOptions,
   getSandbox: (name: string) => SandboxGatewayBinding | null,
   debug: (message: string) => void = () => {},
+  warn: (message: string) => void = () => {},
 ): number | null {
   if (options.port !== undefined) return isValidPort(options.port) ? options.port : null;
   if (!options.sandboxName) return GATEWAY_PORT;
@@ -41,6 +42,10 @@ export function resolveStopGatewayPort(
   } catch (error) {
     // Source boundary: the registry write path should guarantee readable data.
     // Keep this guard until that path also validates/heals pre-existing rows.
+    warn(
+      `Registry lookup failed for sandbox ${JSON.stringify(options.sandboxName)}; ` +
+        "skipping gateway release. Run with NODE_DEBUG=nemoclaw:gateway for details.",
+    );
     debug(
       `registry lookup for sandbox ${JSON.stringify(options.sandboxName)} threw; ` +
         `skipping gateway release: ${(error as Error).message ?? String(error)}`,

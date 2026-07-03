@@ -71,6 +71,9 @@ export function confirmGatewayPortReleased(
     },
     {
       deadlineMs: options.now() + options.timeoutMs,
+      // defaultProbePortFree uses one short-lived Node child per attempt. This
+      // hard cap bounds a stop invocation to at most 20 children and roughly
+      // the configured 2-second default confirmation window.
       maxAttempts: 20,
       initialIntervalMs: options.pollIntervalMs,
       maxIntervalMs: options.pollIntervalMs,

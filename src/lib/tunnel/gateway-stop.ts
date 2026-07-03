@@ -101,6 +101,9 @@ export function releaseGatewayPortForStop(
       );
     }
   } catch (error) {
+    // A corrupt peer registry entry makes gateway ownership ambiguous. Do not
+    // block the selected sandbox's non-gateway stop work, but skip destructive
+    // release so a potentially shared gateway is never torn down by guessing.
     warn(
       `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
     );

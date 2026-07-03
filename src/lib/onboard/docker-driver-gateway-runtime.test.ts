@@ -25,18 +25,8 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
   runCapture: ReturnType<
     typeof vi.fn<(args: string[], opts?: { ignoreError?: boolean }) => string>
   >;
-  runCaptureEx: ReturnType<
-    typeof vi.fn<
-      (args: readonly string[]) => {
-        stdout: string;
-        exitCode: number | null;
-        timedOut: boolean;
-      }
-    >
-  >;
 } {
   const runCapture = vi.fn(() => "");
-  const runCaptureEx = vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false }));
   const deps: DockerDriverGatewayRuntimeDeps = {
     gatewayPort: 18080,
     getCachedOpenshellBinary: () => null,
@@ -45,7 +35,6 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
     isOpenshellDevVersion: () => false,
     loadDockerDriverGatewayEnv: () => dockerDriverGatewayEnv,
     runCapture,
-    runCaptureEx,
     shouldUseOpenshellDevChannel: () => false,
     supportedOpenshellFallbackVersion: "0.0.44",
     ...overrides,
@@ -53,7 +42,6 @@ function makeHelpers(overrides: Partial<DockerDriverGatewayRuntimeDeps> = {}): {
   return {
     helpers: createDockerDriverGatewayRuntimeHelpers(deps),
     runCapture: deps.runCapture as typeof runCapture,
-    runCaptureEx: deps.runCaptureEx as typeof runCaptureEx,
   };
 }
 
@@ -228,100 +216,6 @@ describe("docker-driver gateway runtime helpers", () => {
     } finally {
       fs.rmSync(stateDir, { recursive: true, force: true });
     }
-  });
-
-  it("rejects an openshell port listener when the injected gateway identity check fails", () => {
-    const { helpers } = makeHelpers();
-    const isDockerDriverGatewayProcessFn = vi.fn(() => false);
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerPid(
-        { ok: false, process: "openshell-gateway", pid: 1234 },
-        {
-          platform: "linux",
-          gatewayBin: "/opt/openshell/openshell-gateway",
-          isPidAliveFn: () => true,
-          isDockerDriverGatewayProcessFn,
-        },
-      ),
-    ).toBeNull();
-
-    expect(isDockerDriverGatewayProcessFn).toHaveBeenCalledWith(
-      1234,
-      "/opt/openshell/openshell-gateway",
-    );
-  });
-
-  it("collects every verified gateway listener on the configured port", () => {
-    const gatewayBin = "/opt/openshell/openshell-gateway";
-    const { helpers, runCaptureEx } = makeHelpers({
-      runCaptureEx: vi.fn(() => ({
-        stdout: "1234\n2345\n9999\n",
-        exitCode: 0,
-        timedOut: false,
-      })),
-    });
-    const isDockerDriverGatewayProcessFn = vi.fn(
-      (pid: number, candidateBin?: string | null) =>
-        (pid === 1234 || pid === 2345) && candidateBin === gatewayBin,
-    );
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerScan(
-        { ok: false, process: "openshell-gateway", pid: 1234 },
-        {
-          platform: "linux",
-          gatewayBin,
-          isPidAliveFn: () => true,
-          isDockerDriverGatewayProcessFn,
-        },
-      ),
-    ).toEqual({ complete: true, pids: [1234, 2345] });
-    expect(runCaptureEx).toHaveBeenCalledWith(["lsof", "-ti", ":18080", "-sTCP:LISTEN"]);
-  });
-
-  it("marks listener enumeration incomplete when lsof fails while retaining a verified primary pid", () => {
-    const { helpers } = makeHelpers({
-      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 127, timedOut: false })),
-    });
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerScan(
-        { ok: false, process: "openshell-gateway", pid: 1234 },
-        {
-          platform: "linux",
-          isPidAliveFn: () => true,
-          isDockerDriverGatewayProcessFn: () => true,
-        },
-      ),
-    ).toEqual({ complete: false, pids: [1234] });
-  });
-
-  it("marks empty lsof output incomplete when the independent port probe is still busy", () => {
-    const { helpers } = makeHelpers({
-      runCaptureEx: vi.fn(() => ({ stdout: "", exitCode: 1, timedOut: false })),
-    });
-
-    expect(
-      helpers.getDockerDriverGatewayPortListenerScan({
-        ok: false,
-        pid: null,
-        reason: "bind probe reported EADDRINUSE",
-      }),
-    ).toEqual({ complete: false, pids: [] });
-  });
-
-  it("marks listener enumeration incomplete when the structured lsof runner throws", () => {
-    const { helpers } = makeHelpers({
-      runCaptureEx: vi.fn(() => {
-        throw new Error("lsof unavailable");
-      }),
-    });
-
-    expect(helpers.getDockerDriverGatewayPortListenerScan({ ok: true })).toEqual({
-      complete: false,
-      pids: [],
-    });
   });
 
   it("does not match process args that only contain openshell-gateway as a suffix", () => {

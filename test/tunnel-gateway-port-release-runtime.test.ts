@@ -23,6 +23,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { waitUntil } from "../src/lib/core/wait";
 import { resolveGatewayStateDirName } from "../src/lib/onboard/gateway-binding";
 import { releaseManagedGatewayPort } from "../src/lib/tunnel/gateway-port-release";
 
@@ -82,19 +83,6 @@ function readPidQuietly(pidFile: string): number {
   }
 }
 
-// Poll `check` until it is truthy or the timeout elapses; resolves the last
-// value. Kept branch-free (no `if`) per the changed-test conditionals budget.
-function waitFor<T>(check: () => T, timeoutMs: number): Promise<T> {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    const timer = setInterval(() => {
-      const value = check();
-      const expired = Date.now() >= deadline;
-      (value || expired) && (clearInterval(timer), resolve(value));
-    }, 25);
-  });
-}
-
 describe("releaseManagedGatewayPort runtime validation (#5968)", () => {
   it.skipIf(!posix || !hasLsof)(
     "stops a real openshell-gateway process and frees the port for immediate rebind",
@@ -133,7 +121,19 @@ describe("releaseManagedGatewayPort runtime validation (#5968)", () => {
       });
 
       // Wait until the orphaned gateway has recorded its pid and bound the port.
-      gatewayPid = await waitFor(() => readPidQuietly(pidFile), 10000);
+      const pidRecorded = waitUntil(
+        () => {
+          gatewayPid = readPidQuietly(pidFile);
+          return gatewayPid > 0;
+        },
+        {
+          deadlineMs: Date.now() + 10_000,
+          initialIntervalMs: 25,
+          maxIntervalMs: 25,
+          backoffFactor: 1,
+        },
+      );
+      expect(pidRecorded).toBe(true);
       expect(gatewayPid).toBeGreaterThan(0);
       await expect(canBind(port)).resolves.toBe(false);
 

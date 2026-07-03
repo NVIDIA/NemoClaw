@@ -73,7 +73,7 @@ export function releaseManagedGatewayPort(
   const getSandbox = depsOverrides.getSandbox ?? getRegisteredSandbox;
   const probePortFree = depsOverrides.probePortFree ?? defaultProbePortFree;
 
-  const port = resolveStopGatewayPort(options, getSandbox, makeGatewayDebug(env));
+  const port = resolveStopGatewayPort(options, getSandbox, makeGatewayDebug(env), warn);
   if (port === null) {
     warn(
       `Skipping gateway port release for sandbox ${JSON.stringify(options.sandboxName)}: ` +
@@ -93,6 +93,9 @@ export function releaseManagedGatewayPort(
   const stateDir = resolveGatewayReleaseStateDir(port, env, homeDir);
   let lsofPids: number[] = [];
   let scanned = false;
+  // An initial lsof failure is distinct from lsof being unavailable: the
+  // observation tool exists but returned an error, so even a later bind probe
+  // must not mask the incomplete destructive scan.
   let scanFailed = false;
   if (commandExists("lsof")) {
     const result = listeningGatewayPids(port, run, env, warn);
@@ -119,6 +122,10 @@ export function releaseManagedGatewayPort(
     usePgrepFallback: false,
   });
 
+  // During confirmation, listeningGatewayPids() returns null on a real lsof
+  // error. confirmGatewayPortReleased treats that as non-release and keeps
+  // polling within its fixed deadline/attempt bound; it never coerces a failed
+  // observation to an empty listener set.
   const confirmation =
     !scanFailed && stopResult.failed.length === 0
       ? confirmGatewayPortReleased({
