@@ -10,6 +10,7 @@ import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
+import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -120,48 +121,6 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
   });
 }
 
-function makeStartScriptFixture(tempDir: string): {
-  envFile: string;
-  scriptPath: string;
-} {
-  const envFile = path.join(tempDir, "proxy-env.sh");
-  const scriptPath = path.join(tempDir, "start.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const original = readAgentFile("start.sh");
-  expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  const fixture = original
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
-    .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
-    .replace(
-      'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
-  expect(fixture).toContain(`local target="${envFile}"`);
-  expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
-  expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-  fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.writeFileSync(scriptPath, fixture, "utf8");
-  fs.chmodSync(scriptPath, 0o755);
-  return { envFile, scriptPath };
-}
-
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
 const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
@@ -268,6 +227,25 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(baseDockerfile.split(sourceLine)).toHaveLength(3);
     expect(baseDockerfile).toContain("> /sandbox/.bashrc");
     expect(baseDockerfile).toContain("> /sandbox/.profile");
+  });
+
+  it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
+    try {
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+
+      execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          NEMOCLAW_SANDBOX_NAME: "dcode-demo",
+        },
+        encoding: "utf8",
+      });
+
+      expect(fs.readFileSync(envFile, "utf8")).toContain("export NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
@@ -871,6 +849,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", value: "xapp-ghp_abcdefghijklmnopqr" },
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-API_KEY=opaquevalue12345" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-TOKEN:opaquevalue12345" },
       {
         name: "SLACK_BOT_TOKEN",
         value: `xoxb-lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
@@ -893,6 +873,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-nvapi-abcdefghijklmnop" },
       { name: "SLACK_APP_TOKEN", value: "xapp-pypi-abcdefghijklmnop" },
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-PASSWORD opaquevalue12345" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-CREDENTIAL=opaquevalue12345" },
       {
         name: "SLACK_APP_TOKEN",
         value: `xapp-lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
@@ -1382,6 +1364,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },
       { name: "pypi", sample: "pypi-abcdefghijklmnop" },
+      { name: "tavily", sample: "tvly-abcdefghijklmnop" },
       { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       {

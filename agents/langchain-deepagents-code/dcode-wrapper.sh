@@ -14,6 +14,8 @@ export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemocla
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
 readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
+readonly DEEPAGENTS_CONFIG_FILE="/sandbox/.deepagents/config.toml"
+readonly OPENSHELL_TLS_KEY_PATH="/etc/openshell/tls/client/tls.key"
 
 run_dcode() {
   exec python3 -m deepagents_code "$@"
@@ -61,6 +63,11 @@ run_dcode() {
 #   rejects secret-shaped runtime/.env values, or (b) all dcode invocations
 #   route through a Node entrypoint that imports the canonical patterns directly.
 
+has_context_secret_shape() {
+  local upper="${1^^}"
+  [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+}
+
 has_non_slack_secret_shape() {
   local value="$1"
   if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
@@ -69,7 +76,7 @@ has_non_slack_secret_shape() {
   if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
   if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
@@ -88,6 +95,9 @@ has_non_slack_secret_shape() {
     return 0
   fi
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+    return 0
+  fi
+  if has_context_secret_shape "$value"; then
     return 0
   fi
   if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
@@ -154,7 +164,7 @@ is_secret_shaped_value() {
   if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-|tvly-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
   if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
@@ -181,6 +191,9 @@ is_secret_shaped_value() {
   if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
     return 0
   fi
+  if has_context_secret_shape "$value"; then
+    return 0
+  fi
   if [[ "$value" =~ lsv2_(pt|sk)_[A-Za-z0-9]{10,}(_[A-Za-z0-9]+)* ]]; then
     return 0
   fi
@@ -198,6 +211,16 @@ has_credential_name_context() {
       ;;
   esac
   return 1
+}
+
+# SECURITY: OpenShell's supervisor injects this mounted TLS key path into the
+# runtime environment. Allow only the exact name/value pair after the generic
+# value scan. Never allow the name alone, and never apply this exception to the
+# mutable Deep Agents Code .env file.
+is_allowed_openshell_runtime_value() {
+  local name="$1"
+  local value="$2"
+  [ "$name" = "OPENSHELL_TLS_KEY" ] && [ "$value" = "$OPENSHELL_TLS_KEY_PATH" ]
 }
 
 is_dynamic_dotenv_value() {
@@ -238,7 +261,7 @@ assert_no_secret_runtime_env() {
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
-    if has_credential_name_context "$name" && [ ${#value} -ge 10 ]; then
+    if has_credential_name_context "$name" && [ ${#value} -ge 10 ] && ! is_allowed_openshell_runtime_value "$name" "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
   done < <(env -0)
@@ -297,8 +320,164 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
+toml_section_scalar() {
+  local section="$1"
+  local key="$2"
+  local line current_section=""
+  [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="$(trim_whitespace "$line")"
+    case "$line" in
+      \[*\])
+        current_section="${line#\[}"
+        current_section="${current_section%\]}"
+        continue
+        ;;
+    esac
+    [ "$current_section" = "$section" ] || continue
+    case "$line" in
+      "$key = \""*)
+        line="${line#"$key = \""}"
+        printf '%s' "${line%\"}"
+        return 0
+        ;;
+    esac
+  done <"$DEEPAGENTS_CONFIG_FILE"
+  return 0
+}
+
+toml_provider_metadata() {
+  local field="$1"
+  local line route provider _api
+  [ -r "$DEEPAGENTS_CONFIG_FILE" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "# NemoClaw provider route: "*)
+        line="${line#"# NemoClaw provider route: "}"
+        IFS=';' read -r route provider _api <<<"$line"
+        route="$(trim_whitespace "$route")"
+        provider="$(trim_whitespace "$provider")"
+        case "$provider" in
+          "upstream provider: "*) provider="${provider#"upstream provider: "}" ;;
+          *) provider="" ;;
+        esac
+        case "$field" in
+          route) printf '%s' "$route" ;;
+          provider) printf '%s' "$provider" ;;
+        esac
+        return 0
+        ;;
+    esac
+  done <"$DEEPAGENTS_CONFIG_FILE"
+  return 0
+}
+
+is_safe_dcode_agent_name() {
+  local value="$1"
+  local pattern='^[A-Za-z0-9_ -]+$'
+  local LC_ALL=C
+  [ -n "$value" ] || return 1
+  [ -n "$(trim_whitespace "$value")" ] || return 1
+  [[ "$value" =~ $pattern ]]
+}
+
+resolve_dcode_agent() {
+  local config_dir candidate
+  config_dir="${DEEPAGENTS_CONFIG_FILE%/*}"
+  candidate="$(toml_section_scalar agents default)"
+  if is_safe_dcode_agent_name "$candidate" && [ -d "$config_dir/$candidate" ]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  candidate="$(toml_section_scalar agents recent)"
+  if is_safe_dcode_agent_name "$candidate" && [ -d "$config_dir/$candidate" ]; then
+    printf '%s' "$candidate"
+    return 0
+  fi
+  printf '%s' 'agent (default)'
+}
+
+terminal_safe_identity_value() {
+  local value="$1"
+  local fallback="${2:-}"
+  local LC_ALL=C
+  if [ ${#value} -gt 256 ] || [[ "$value" =~ [[:cntrl:]] ]] || is_secret_shaped_value "$value"; then
+    printf '%s' "$fallback"
+  else
+    printf '%s' "$value"
+  fi
+}
+
+safe_endpoint_identity_value() {
+  local value scheme authority
+  value="$(terminal_safe_identity_value "$1")"
+  [ -n "$value" ] || return 0
+  case "$value" in
+    *\\* | *\?* | *\#*) return 0 ;;
+  esac
+  scheme="${value%%://*}"
+  [ "$scheme" != "$value" ] || return 0
+  case "${scheme,,}" in
+    http | https) ;;
+    *) return 0 ;;
+  esac
+  authority="${value#*://}"
+  authority="${authority%%/*}"
+  case "$authority" in
+    "" | *@*) return 0 ;;
+  esac
+  printf '%s' "$value"
+}
+
+print_identity() {
+  local sandbox_name agent model endpoint route provider
+  sandbox_name="$(terminal_safe_identity_value "${NEMOCLAW_SANDBOX_NAME:-unknown}" unknown)"
+  agent="$(terminal_safe_identity_value "$(resolve_dcode_agent)" 'agent (default)')"
+  model="$(terminal_safe_identity_value "$(toml_section_scalar models default)")"
+  [ -n "$model" ] || model="$(terminal_safe_identity_value "$(toml_section_scalar models recent)")"
+  endpoint="$(toml_section_scalar models.providers.openai base_url)"
+  route="$(terminal_safe_identity_value "$(toml_provider_metadata route)")"
+  provider="$(terminal_safe_identity_value "$(toml_provider_metadata provider)")"
+  [ -n "$endpoint" ] || endpoint="${OPENAI_BASE_URL:-}"
+  endpoint="$(safe_endpoint_identity_value "$endpoint")"
+  printf 'Sandbox:  %s\n' "$sandbox_name"
+  printf 'Harness:  %s\n' 'langchain-deepagents-code'
+  printf 'Agent:    %s\n' "$agent"
+  if [ -n "$route" ]; then
+    printf 'Route:    %s\n' "$route"
+  fi
+  if [ -n "$provider" ]; then
+    printf 'Provider: %s\n' "$provider"
+  fi
+  if [ -n "$model" ]; then
+    printf 'Model:    %s\n' "$model"
+  fi
+  if [ -n "$endpoint" ]; then
+    printf 'Endpoint: %s\n' "$endpoint"
+  fi
+  printf 'Runtime:  %s\n' 'Deep Agents Code (terminal)'
+}
+
+print_managed_help() {
+  cat <<'EOF'
+NemoClaw-managed commands:
+  dcode status      Show managed sandbox and dcode runtime identity
+  dcode whoami      Alias for dcode status
+  dcode identity    Alias for dcode status
+
+EOF
+}
+
 case "${1:-}" in
-  --version | -v | -V | --help | -h)
+  status | whoami | identity)
+    print_identity
+    exit 0
+    ;;
+  --help | -h | help)
+    print_managed_help
+    run_dcode "$@"
+    ;;
+  --version | -v | -V)
     run_dcode "$@"
     ;;
 esac
