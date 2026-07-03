@@ -65,6 +65,17 @@ dcode -n "Summarize this repository"
 
 The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
 
+To confirm which sandbox a session is in, run the identity command:
+
+```bash
+dcode status
+```
+
+The command prints the sandbox name, NemoClaw harness, active `dcode` agent, configured inference route, upstream provider, model, endpoint, and runtime, then exits without starting the interactive UI.
+`dcode whoami` and `dcode identity` are aliases.
+`dcode --help` lists the managed aliases before the upstream Deep Agents Code help.
+The sandbox name resolves when you run the command from a `nemoclaw <sandbox-name> connect` shell, which loads the NemoClaw runtime environment.
+
 ## Python Environment
 
 Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
