@@ -5,6 +5,7 @@ import { loadAgent } from "../../agent/defs";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
+import { isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import {
   type RebuildDurableConfig,
   resolveRebuildDockerfile,
@@ -110,6 +111,15 @@ export function prepareRebuildTargetConfig(
     model: resumeConfig.model,
   });
   if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
+  if (isDcodeRebuildAgent(rebuildAgent) && durableConfig.fromDockerfile) {
+    printRebuildPreflightFailure(
+      "the managed DCode registry entry conflicts with a recorded custom Dockerfile.",
+      "Managed DCode rebuilds must use the verified managed image path.",
+      "Managed DCode rebuild cannot use a recorded custom Dockerfile",
+      bail,
+    );
+    return null;
+  }
 
   const dockerfile = resolveRebuildDockerfile(durableConfig.fromDockerfile);
   if (!dockerfile.ok) {

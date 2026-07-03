@@ -63,6 +63,8 @@ export type OnboardOptions = {
   targetGatewayPort?: number | null;
   /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
   onboardLockAlreadyHeld?: boolean;
+  /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
+  preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;

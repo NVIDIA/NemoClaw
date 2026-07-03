@@ -60,6 +60,7 @@ export async function preflightRebuildTargetRuntime(
   recreateOptions: RebuildRecreateOnboardOpts,
   log: RebuildLog,
   bail: RebuildBail,
+  options: { skipImagePreflight?: boolean } = {},
 ): Promise<boolean> {
   if (
     target.durableConfig.webSearchConfig &&
@@ -108,27 +109,31 @@ export async function preflightRebuildTargetRuntime(
     return false;
   }
 
-  const customImage = await rebuildImagePreflight.preflightRebuildImage({
-    agent: target.agentDefinition,
-    fromDockerfile: target.fromDockerfile,
-    model: target.resumeConfig.model,
-    provider: target.resumeConfig.provider,
-    preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
-    compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
-    webSearchConfig: target.durableConfig.webSearchConfig,
-    hermesToolGateways: target.hermesToolGateways,
-    sandboxGpuConfig,
-    gatewayPort: recreateOptions.targetGatewayPort,
-    chatUiUrl: managesDashboard ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}` : "",
-  });
-  if (!customImage.ok) {
-    printRebuildPreflightFailure(
-      "the replacement sandbox image did not build.",
-      redact(customImage.detail),
-      "Replacement sandbox image preflight failed",
-      bail,
-    );
-    return false;
+  if (!options.skipImagePreflight) {
+    const customImage = await rebuildImagePreflight.preflightRebuildImage({
+      agent: target.agentDefinition,
+      fromDockerfile: target.fromDockerfile,
+      model: target.resumeConfig.model,
+      provider: target.resumeConfig.provider,
+      preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
+      compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
+      webSearchConfig: target.durableConfig.webSearchConfig,
+      hermesToolGateways: target.hermesToolGateways,
+      sandboxGpuConfig,
+      gatewayPort: recreateOptions.targetGatewayPort,
+      chatUiUrl: managesDashboard
+        ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}`
+        : "",
+    });
+    if (!customImage.ok) {
+      printRebuildPreflightFailure(
+        "the replacement sandbox image did not build.",
+        redact(customImage.detail),
+        "Replacement sandbox image preflight failed",
+        bail,
+      );
+      return false;
+    }
   }
   if (!(await preflightRebuildBraveSearchCredential(target.durableConfig, bail))) return false;
 

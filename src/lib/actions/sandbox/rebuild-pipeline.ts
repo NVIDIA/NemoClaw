@@ -77,6 +77,7 @@ async function rebuildSandboxUnlocked(
     baseImagePreflight,
     liveState,
     recoveryManifest: validatedRecoveryManifest,
+    dcodePreflight,
     releaseOnboardLock,
     log,
     bail,
@@ -98,114 +99,137 @@ async function rebuildSandboxUnlocked(
   let recoveryRegistrySnapshot = preparedBackupRecovery
     ? JSON.parse(JSON.stringify(registry.load()))
     : liveState.staleRegistrySnapshot;
-  const shieldsPhase = runRebuildShieldsPhase(
-    sandboxName,
-    recoveryRecreate,
-    releaseOnboardLock,
-    bail,
-  );
-  if (!shieldsPhase) return;
-  const {
-    window: rebuildShieldsWindow,
-    staleSandboxWasLocked,
-    relock: relockShieldsIfNeeded,
-  } = shieldsPhase;
-  let sandboxStillExists = true;
-
   try {
-    const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
+    const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
-      sandboxEntry,
-      recoveryManifest,
-      recoveryRegistrySnapshot,
+      recoveryRecreate,
+      releaseOnboardLock,
       bail,
     );
-    recoveryManifest = preDeleteRecovery.manifest;
-    recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
-
-    const backup = runRebuildBackupPhase({
-      sandboxName,
-      sandboxEntry,
-      staleRecovery,
-      preparedRecoveryManifest: recoveryManifest,
-      messagingPlan,
-      log,
-      bail,
-      relockShieldsIfNeeded,
-    });
-    if (!backup) return;
-
-    const mcpPreparation = await runRebuildDestroyPhase({
-      sandboxName,
-      sandboxEntry,
-      staleRecovery,
-      backupManifest: backup.backupManifest,
-      log,
-      bail,
-      relockShieldsIfNeeded,
-      onDeleted: () => {
-        sandboxStillExists = false;
-      },
-    });
-    if (!mcpPreparation) return;
-
-    const recreated = await runRebuildRecreatePhase({
-      sandboxName,
-      sandboxEntry,
-      sessionSnapshot,
-      sessionMatchesSandbox,
-      durableConfig,
-      resumeConfig,
-      recreateOptions,
-      fromDockerfile,
-      rebuildAgent,
-      messagingPlan,
-      rebuildsHermesSandbox: rebuildAgent === "hermes",
-      hermesToolGateways,
-      hasHermesToolGateways,
-      sessionPolicyPresets: backup.sessionPolicyPresets,
-      credentialEnv,
-      baseImagePreflight,
-      recoveryRecreate,
-      recoveryRegistrySnapshot,
-      backupManifest: backup.backupManifest,
-      mcpEntries: mcpPreparation.entries,
-      rebuildShieldsWindow,
-      relockShieldsIfNeeded,
-      onCreated: () => {
-        sandboxStillExists = true;
-      },
-      log,
-      bail,
-    });
-    if (!recreated) return;
-
-    const restored = runRebuildRestorePhase({
-      sandboxName,
-      backupManifest: backup.backupManifest,
-      policyPresets: backup.policyPresets,
-      log,
-    });
-    await runRebuildPostRestorePhase({
-      sandboxName,
-      sandboxEntry,
-      messagingPlan,
-      backupManifest: backup.backupManifest,
-      mcpEntries: mcpPreparation.entries,
-      restoreSucceeded: restored.restoreSucceeded,
-      restoredPresets: restored.restoredPresets,
-      failedPresets: restored.failedPresets,
-      staleRecovery,
-      recoveryRecreate,
-      preparedBackupRecovery,
+    if (!shieldsPhase) return;
+    const {
+      window: rebuildShieldsWindow,
       staleSandboxWasLocked,
-      versionCheck,
-      relockShieldsIfNeeded,
-      log,
-      bail,
-    });
+      relock: relockShieldsIfNeeded,
+    } = shieldsPhase;
+    let sandboxStillExists = true;
+
+    try {
+      const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
+        sandboxName,
+        sandboxEntry,
+        recoveryManifest,
+        recoveryRegistrySnapshot,
+        bail,
+      );
+      recoveryManifest = preDeleteRecovery.manifest;
+      recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+
+      const backup = runRebuildBackupPhase({
+        sandboxName,
+        sandboxEntry,
+        staleRecovery,
+        preparedRecoveryManifest: recoveryManifest,
+        messagingPlan,
+        log,
+        bail,
+        relockShieldsIfNeeded,
+      });
+      if (!backup) return;
+
+      // DCode's retained replacement and live inference route must still match at
+      // the last safe point. This check intentionally precedes MCP adapter scrub,
+      // provider detach, NIM stop, and sandbox deletion in the destroy phase.
+      if (
+        !(await dcodePreflight.revalidateBeforeDelete(
+          resumeConfig,
+          recoveryRecreate,
+          recreateOptions.targetGatewayPort,
+        ))
+      ) {
+        return;
+      }
+
+      const mcpPreparation = await runRebuildDestroyPhase({
+        sandboxName,
+        sandboxEntry,
+        staleRecovery,
+        backupManifest: backup.backupManifest,
+        log,
+        bail,
+        relockShieldsIfNeeded,
+        onDeleted: () => {
+          sandboxStillExists = false;
+        },
+      });
+      if (!mcpPreparation) return;
+
+      const restoreDcodeGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
+      let recreated: boolean;
+      try {
+        recreated = await runRebuildRecreatePhase({
+          sandboxName,
+          sandboxEntry,
+          sessionSnapshot,
+          sessionMatchesSandbox,
+          durableConfig,
+          resumeConfig,
+          recreateOptions,
+          fromDockerfile,
+          rebuildAgent,
+          messagingPlan,
+          rebuildsHermesSandbox: rebuildAgent === "hermes",
+          hermesToolGateways,
+          hasHermesToolGateways,
+          sessionPolicyPresets: backup.sessionPolicyPresets,
+          credentialEnv,
+          baseImagePreflight,
+          recoveryRecreate,
+          recoveryRegistrySnapshot,
+          backupManifest: backup.backupManifest,
+          mcpEntries: mcpPreparation.entries,
+          rebuildShieldsWindow,
+          relockShieldsIfNeeded,
+          onCreated: () => {
+            sandboxStillExists = true;
+          },
+          log,
+          bail,
+        });
+      } finally {
+        restoreDcodeGpuPatchNetwork();
+      }
+      if (!recreated) return;
+
+      const restored = runRebuildRestorePhase({
+        sandboxName,
+        backupManifest: backup.backupManifest,
+        policyPresets: backup.policyPresets,
+        log,
+      });
+      await runRebuildPostRestorePhase({
+        sandboxName,
+        sandboxEntry,
+        messagingPlan,
+        backupManifest: backup.backupManifest,
+        mcpEntries: mcpPreparation.entries,
+        restoreSucceeded: restored.restoreSucceeded,
+        restoredPresets: restored.restoredPresets,
+        failedPresets: restored.failedPresets,
+        staleRecovery,
+        recoveryRecreate,
+        preparedBackupRecovery,
+        staleSandboxWasLocked,
+        versionCheck,
+        relockShieldsIfNeeded,
+        log,
+        bail,
+      });
+    } finally {
+      if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
+    }
   } finally {
-    if (!rebuildShieldsWindow.relocked) relockShieldsIfNeeded(sandboxStillExists);
+    dcodePreflight.cleanup();
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
   }

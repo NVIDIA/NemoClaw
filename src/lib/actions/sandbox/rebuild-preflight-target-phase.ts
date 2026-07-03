@@ -6,6 +6,7 @@ import type { SandboxMessagingPlan } from "../../messaging";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import { isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import { validatedRebuildRegistryUpdate } from "./rebuild-durable-config";
 import {
   ensureRebuildAgentBaseImage,
@@ -104,7 +105,10 @@ export async function prepareRebuildTargetPreflights(args: {
     return null;
   if (!checkRebuildGatewaySchemaPreflight(sandboxName, sandboxEntry, bail)) return null;
 
-  const baseImagePreflight = ensureRebuildAgentBaseImage(rebuildAgent, bail);
+  const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
+  const baseImagePreflight = rebuildsDcodeSandbox
+    ? { ok: true, imageRef: null, overrideEnvVar: null }
+    : ensureRebuildAgentBaseImage(rebuildAgent, bail);
   if (!baseImagePreflight.ok) return null;
   const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
   let targetRuntimeReady = false;
@@ -115,6 +119,7 @@ export async function prepareRebuildTargetPreflights(args: {
       recreateOptions,
       log,
       bail,
+      { skipImagePreflight: rebuildsDcodeSandbox },
     );
   } finally {
     restoreBaseImageOverride();

@@ -7,6 +7,7 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
+import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
 export type RebuildGpuOptOutEntry = {
@@ -83,6 +84,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayName: string;
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
+  preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   noGpu?: true;
 };
@@ -91,6 +93,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
+  preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   usageNoticeAccepted: true;
 }): RebuildRecreateOnboardOpts {
@@ -130,6 +133,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     targetGatewayName,
     targetGatewayPort,
     onboardLockAlreadyHeld: true,
+    ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };
