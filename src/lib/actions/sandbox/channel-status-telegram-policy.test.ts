@@ -58,7 +58,10 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
     );
   });
 
-  it("accepts Telegram disabled group policy from rendered config", async () => {
+  it.each([
+    "allowlist",
+    "disabled",
+  ] as const)("accepts Telegram %s group policy without reporting one global mention mode (#5691)", async (groupPolicy) => {
     const { deps } = makeDeps({
       exec: () => ({
         status: 0,
@@ -67,7 +70,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
             telegram: {
               accounts: {
                 default: {
-                  groupPolicy: "disabled",
+                  groupPolicy,
                 },
               },
             },
@@ -84,7 +87,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
             required: false,
             sourceEnv: "TELEGRAM_GROUP_POLICY",
             statePath: "telegramConfig.groupPolicy",
-            value: "disabled",
+            value: groupPolicy,
           },
         ],
       }),
@@ -100,7 +103,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
     ).toMatchObject({
       severity: "ok",
-      detail: "disabled",
+      detail: groupPolicy,
     });
     expect(
       signals.find(
