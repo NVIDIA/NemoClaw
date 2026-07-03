@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -73,7 +74,7 @@ async function startInferenceServer(
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("test server did not bind TCP");
+  assert(address && typeof address !== "string", "test server did not bind TCP");
   return { server, baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
