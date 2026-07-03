@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { formatPhaseTimingsSummary, getPhaseTimings, resetPhaseTimings } from "../phase-timings";
 import { createPhaseProgressReporter } from "./phase-progress";
 import { fakePhase, makeHarness } from "./phase-progress-test-support";
 import {
@@ -83,5 +84,61 @@ describe("buildOnboardSequenceHandlers wiring (seam integration)", () => {
       true,
     );
     expect(harness.records[0]).toMatchObject({ phase: "gateway", status: "completed" });
+  });
+});
+
+describe("phase-progress pipeline (real reporter + real timing registry)", () => {
+  // Runtime validation of the full observability pipeline with the genuine
+  // reporter — default `Date.now`, default `setInterval`/`clearInterval` driven
+  // by fake timers, and the real module-level `recordPhaseTiming` registry
+  // (only `logLine` is captured). Ties the whole chain end-to-end: phase runs →
+  // heartbeat fires → timing recorded → summary emitted → registry cleared.
+  beforeEach(() => {
+    resetPhaseTimings();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetPhaseTimings();
+  });
+
+  it("runs a phase, fires a heartbeat, records timing, emits the summary, then clears", async () => {
+    const lines: string[] = [];
+    const reporter = createPhaseProgressReporter({
+      enabled: true,
+      logLine: (line) => lines.push(line),
+      heartbeatIntervalMs: 30_000,
+      completionThresholdMs: 5_000,
+    });
+
+    // Gate the phase open so a real heartbeat interval can fire mid-flight.
+    let releasePhase: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releasePhase = resolve;
+    });
+    const gatewayPhase = fakePhase("gateway", async () => {
+      await gate;
+      return { context: "ctx", result: "ok" };
+    });
+
+    const handlers = buildOnboardSequenceHandlers<string>([gatewayPhase], () => {}, reporter);
+    const running = handlers.gateway?.("ctx");
+    // Advance past one heartbeat interval while the phase is still pending; the
+    // real setInterval fires and logs the in-phase elapsed seconds.
+    await vi.advanceTimersByTimeAsync(31_000);
+    releasePhase();
+    await running;
+
+    // heartbeat fired
+    expect(lines.some((line) => line.includes("Still working on Gateway startup"))).toBe(true);
+    // timing recorded into the real module registry
+    const timings = getPhaseTimings();
+    expect(timings).toHaveLength(1);
+    expect(timings[0]).toMatchObject({ phase: "gateway", status: "completed" });
+    // summary emitted from the registry
+    expect(formatPhaseTimingsSummary()).toContain("Gateway startup");
+    // registry cleared at the terminal seam
+    resetPhaseTimings();
+    expect(getPhaseTimings()).toHaveLength(0);
   });
 });
