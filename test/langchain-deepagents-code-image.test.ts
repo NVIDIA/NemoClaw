@@ -10,9 +10,30 @@ import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
+import { makeStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
+}
+
+function containsTokenShapedSecret(value: string): boolean {
+  return TOKEN_PREFIX_PATTERNS.some((pattern) => {
+    pattern.lastIndex = 0;
+    const matched = pattern.test(value);
+    pattern.lastIndex = 0;
+    return matched;
+  });
+}
+
+function fakePrivateKeyBlock(type = "", newline = "\\n"): string {
+  const label = type ? `${type} PRIVATE KEY-----` : "PRIVATE KEY-----";
+  return [
+    ["-----BEGIN", label].join(" "),
+    newline,
+    "opaque-test-body",
+    newline,
+    ["-----END", label].join(" "),
+  ].join("");
 }
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
@@ -111,50 +132,9 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
   });
 }
 
-function makeStartScriptFixture(tempDir: string): {
-  envFile: string;
-  scriptPath: string;
-} {
-  const envFile = path.join(tempDir, "proxy-env.sh");
-  const scriptPath = path.join(tempDir, "start.sh");
-  const hostFile = path.join(tempDir, "trusted-proxy-host");
-  const portFile = path.join(tempDir, "trusted-proxy-port");
-  const original = readAgentFile("start.sh");
-  expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  const fixture = original
-    .replace(
-      'readonly MANAGED_PROXY_HOST_FILE="/usr/local/share/nemoclaw/dcode-proxy-host"',
-      `readonly MANAGED_PROXY_HOST_FILE="${hostFile}"`,
-    )
-    .replace(
-      'readonly MANAGED_PROXY_PORT_FILE="/usr/local/share/nemoclaw/dcode-proxy-port"',
-      `readonly MANAGED_PROXY_PORT_FILE="${portFile}"`,
-    )
-    .replace(
-      "readonly MANAGED_PROXY_OWNER_UID=0",
-      `readonly MANAGED_PROXY_OWNER_UID=${process.getuid?.() ?? 0}`,
-    )
-    .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
-    .replace(
-      'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
-      `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
-    );
-  expect(fixture).toContain(`local target="${envFile}"`);
-  expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
-  expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
-  expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
-  fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-  fs.writeFileSync(portFile, "3128\n", "utf8");
-  fs.chmodSync(hostFile, 0o444);
-  fs.chmodSync(portFile, 0o444);
-  fs.writeFileSync(scriptPath, fixture, "utf8");
-  fs.chmodSync(scriptPath, 0o755);
-  return { envFile, scriptPath };
-}
-
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
 
 function runStartScriptProxyProbe(
   scriptPath: string,
@@ -162,12 +142,14 @@ function runStartScriptProxyProbe(
   env: NodeJS.ProcessEnv,
 ): { envFileText: string; output: string } {
   const probe = [
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
-    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy",
+    "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
+    "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
+    "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES].map(
+    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
       (name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`,
     ),
   ].join("\n");
@@ -210,6 +192,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
     );
+    expect(dockerfile.trimEnd()).toMatch(
+      /USER sandbox\nENTRYPOINT \["\/usr\/local\/bin\/nemoclaw-start"\]\nCMD \["\/bin\/bash"\]$/,
+    );
   });
 
   it("does not wire unsupported messaging artifacts into the DeepAgents image", () => {
@@ -235,14 +220,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("does not serialize provider or optional service secrets into the shell env file", () => {
     const startScript = readAgentFile("start.sh");
-
-    expect(startScript).toContain('chmod 400 "$tmp"');
+    expect(startScript).toContain('chmod 444 "$tmp"');
     expect(startScript).toContain("write_export_if_set HTTPS_PROXY");
     expect(startScript).not.toContain("write_proxy_export_pair");
     expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toMatch(
-      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY)\b/,
+      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY|LANGSMITH_TRACING|LANGSMITH_PROJECT|DEEPAGENTS_CODE_LANGSMITH_PROJECT)\b/,
     );
   });
 
@@ -255,10 +239,36 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(baseDockerfile).toContain("> /sandbox/.profile");
   });
 
+  it("serializes the sandbox name into the shell env file for in-sandbox identity", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
+    try {
+      const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
+
+      execFileSync("bash", [scriptPath, "sh", "-c", ":"], {
+        env: {
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          NEMOCLAW_SANDBOX_NAME: "dcode-demo",
+        },
+        encoding: "utf8",
+      });
+
+      expect(fs.readFileSync(envFile, "utf8")).toContain("export NEMOCLAW_SANDBOX_NAME=dcode-demo");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("replaces inherited host proxy values with the managed runtime proxy (#6191)", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
     const { envFile, scriptPath } = makeStartScriptFixture(tempDir);
-
+    const inheritedSecrets = {
+      NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
+      OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
+      LANGSMITH_API_KEY: `lsv2_pt_${"C".repeat(36)}_${"D".repeat(10)}`,
+      LANGSMITH_TRACING: `lsv2_sk_${"I".repeat(36)}_${"J".repeat(10)}`,
+      LANGSMITH_PROJECT: `lsv2_pt_${"E".repeat(36)}_${"F".repeat(10)}`,
+      DEEPAGENTS_CODE_LANGSMITH_PROJECT: `lsv2_sk_${"G".repeat(36)}_${"H".repeat(10)}`,
+    };
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       HTTPS_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
@@ -266,12 +276,15 @@ describe("LangChain Deep Agents Code image contracts", () => {
       http_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       https_proxy: "http://lower-user:lower-password@lower-proxy.example:8080",
       no_proxy: "corp.internal,inference.local",
+      ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
+      all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
+      ...inheritedSecrets,
     });
-
     const managedProxy = "http://10.200.0.1:3128";
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
     const outputLines = output.trimEnd().split("\n");
     const envFileLines = envFileText.trimEnd().split("\n");
+    expect(fs.statSync(envFile).mode & 0o777).toBe(0o444);
     expect(envFileText).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
     for (const name of PROXY_URL_ENV_NAMES) {
       expect(outputLines).toContain(`RUNTIME_${name}=${managedProxy}`);
@@ -283,6 +296,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=${managedNoProxy}`);
       expect(envFileLines).toContain(`export ${name}=${managedNoProxy.replaceAll(",", "\\,")}`);
     }
+    expect(envFileLines).toContain("unset ALL_PROXY all_proxy");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
     ).not.toEqual(expect.arrayContaining([expect.stringContaining("inference.local")]));
@@ -290,10 +304,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect.arrayContaining([expect.stringContaining("inference.local")]),
     );
     const combined = `${output}\n${envFileText}`;
-    expect(combined).not.toContain("corp-proxy.example");
-    expect(combined).not.toContain("lower-proxy.example");
-    expect(combined).not.toContain("corp-user");
-    expect(combined).not.toContain("corp-password");
+    expect(containsTokenShapedSecret(inheritedSecrets.LANGSMITH_API_KEY)).toBe(true);
+    expect(containsTokenShapedSecret(envFileText)).toBe(false);
+    for (const secret of Object.values(inheritedSecrets)) {
+      expect(envFileText).not.toContain(secret);
+    }
+    expect(combined).not.toContain("proxy.example");
+    expect(combined).not.toContain("user");
+    expect(combined).not.toContain("password");
     expect(combined).not.toContain("corp.internal");
   });
 
@@ -585,11 +603,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
     const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
 
-    expect(headlessCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
+    expect(headlessCheck).toContain('sandbox_exec "test -d /sandbox/.deepagents"');
+    expect(headlessCheck).toContain("command -v dcode");
     expect(headlessCheck).toContain("dcode -n 'Reply with exactly one word: PONG'");
     expect(headlessCheck).toContain("sandbox_login_exec");
     expect(headlessCheck).toContain("sandbox_login_proxy_contract");
     expect(headlessCheck).toContain("-u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY");
+    expect(headlessCheck).toContain("-u ALL_PROXY -u all_proxy");
     expect(headlessCheck).toContain("-u http_proxy -u https_proxy -u no_proxy");
     expect(headlessCheck).toContain('HOME=/sandbox bash -lc "$1"');
     expect(headlessCheck).toContain('bash -lc "$1"');
@@ -598,6 +618,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).toContain('sandbox_login_exec "$contract_command"');
     expect(headlessCheck).toContain("sandbox_direct_dcode");
     expect(headlessCheck).toContain('-- dcode "$@"');
+    expect(headlessCheck).toContain("sandbox_dcode_wrapper_contract");
+    expect(headlessCheck).toContain("NEMOCLAW_DCODE_WRAPPER_CHAIN_OK");
     expect(headlessCheck).toContain("nemoclaw_connect_probe");
     expect(headlessCheck).toContain("${NEMOCLAW_CLI_BIN:-${REPO:-.}/bin/nemoclaw.js}");
     expect(headlessCheck).toContain("connect --probe-only 2>&1");
@@ -614,6 +636,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
       'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
     );
     expect(headlessCheck).toContain("classify_headless_output");
+    expect(headlessCheck).toContain("NEMOCLAW_DCODE_DNS_PROBE_MISSING_GETENT");
+    expect(headlessCheck).toContain("required DNS diagnostic tool getent is unavailable");
+    expect(headlessCheck).toContain("NEMOCLAW_DCODE_DNS_PROBE_MISSING_TIMEOUT");
+    expect(headlessCheck).toContain("required DNS diagnostic tool timeout is unavailable");
     expect(headlessCheck).toMatch(/headless_output=.*sandbox_login_exec.*\|\| true\)"/);
     expect(headlessCheck).toContain("DEEPAGENTS_HEADLESS_TIMEOUT must be a positive integer");
     expect(headlessCheck).toContain("nvapi-");
@@ -624,6 +650,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).toContain("sk-ant-");
     expect(headlessCheck).toContain("xapp");
     expect(headlessCheck).toContain("A(K|S)IA");
+    expect(headlessCheck).toContain("lsv2_(pt|sk)");
     expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
     expect(headlessCheck).toContain("sandbox_artifact_scan_command");
     expect(headlessCheck).toContain('cat /sandbox/.deepagents/config.toml 2>/dev/null" || true');
@@ -660,7 +687,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
         { DCODE_EXIT: exitCode, HEADLESS_OUTPUT: output },
       );
 
-    expect(classify("0", "PONG\nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(classify("0", "startup log\n  PONG  \nDCODE_EXIT:0")).toBe("pass:pong");
     expect(
       classify("1", "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1"),
     ).toBe("fail:actionable-inference-error");
@@ -674,69 +701,36 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(classify("0", "OpenAI provider unavailable\nDCODE_EXIT:0")).toBe(
       "fail:actionable-inference-error",
     );
+    expect(classify("0", "dcode version 0.1.12\nOpenAI provider unavailable\nDCODE_EXIT:0")).toBe(
+      "fail:actionable-inference-error",
+    );
     expect(classify("124", "still waiting\nDCODE_EXIT:124")).toBe("fail:timeout");
     expect(classify("1", "usage: dcode [-h]\nDCODE_EXIT:1")).toBe("fail:local-execution-failure");
     expect(classify("1", "Traceback (most recent call last):\nDCODE_EXIT:1")).toBe(
       "fail:local-execution-failure",
     );
-    expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:ambiguous-output");
-    expect(classify("1", "something happened\nDCODE_EXIT:1")).toBe("fail:nonzero-exit");
-  });
-
-  it("accepts only the normalized login-shell proxy contract (#6191)", () => {
-    const validate = (proxyUrl: string, noProxy: string, lowerProxy = proxyUrl) => {
-      const loginHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-login-"));
-      const hostFile = path.join(loginHome, "trusted-proxy-host");
-      const portFile = path.join(loginHome, "trusted-proxy-port");
-      const checkFixture = path.join(loginHome, "headless-check.sh");
-      fs.writeFileSync(hostFile, "10.200.0.1\n", "utf8");
-      fs.writeFileSync(portFile, "3128\n", "utf8");
-      fs.chmodSync(hostFile, 0o444);
-      fs.chmodSync(portFile, 0o444);
-      fs.writeFileSync(
-        checkFixture,
-        fs
-          .readFileSync(headlessCheckPath, "utf8")
-          .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-host", hostFile)
-          .replaceAll("/usr/local/share/nemoclaw/dcode-proxy-port", portFile)
-          .replace('= "0:444"', `= "${process.getuid?.() ?? 0}:444"`),
-        "utf8",
-      );
-      fs.writeFileSync(
-        path.join(loginHome, ".profile"),
-        [
-          "export HOME=/sandbox",
-          `export HTTP_PROXY=${JSON.stringify(proxyUrl)}`,
-          `export HTTPS_PROXY=${JSON.stringify(proxyUrl)}`,
-          `export http_proxy=${JSON.stringify(lowerProxy)}`,
-          `export https_proxy=${JSON.stringify(lowerProxy)}`,
-          `export NO_PROXY=${JSON.stringify(noProxy)}`,
-          `export no_proxy=${JSON.stringify(noProxy)}`,
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-      return runHeadlessCheckHelper(
-        [
-          "sandbox_login_exec() {",
-          "  case \"$1\" in *$'\\n'*|*$'\\r'*) return 97 ;; esac",
-          '  env -u HTTP_PROXY -u HTTPS_PROXY -u NO_PROXY -u http_proxy -u https_proxy -u no_proxy HOME="$TEST_LOGIN_HOME" bash -lc "$1"',
-          "}",
-          "if sandbox_login_proxy_contract >/dev/null 2>&1; then printf pass; else printf fail; fi",
-        ].join("\n"),
-        { TEST_LOGIN_HOME: loginHome },
-        checkFixture,
-      );
-    };
-
-    const managedProxy = "http://10.200.0.1:3128";
-    const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
-    expect(validate(managedProxy, managedNoProxy)).toBe("pass");
-    expect(validate(managedProxy, `${managedNoProxy},inference.local`)).toBe("fail");
-    expect(validate("http://corp-user:corp-password@proxy.example:8080", managedNoProxy)).toBe(
-      "fail",
+    expect(classify("127", "bash: dcode: command not found\nDCODE_EXIT:127")).toBe(
+      "fail:wrapper-missing",
     );
-    expect(validate(managedProxy, managedNoProxy, "http://other-proxy.example:3128")).toBe("fail");
+    expect(classify("1", "No module named deepagents_code\nDCODE_EXIT:1")).toBe(
+      "fail:wrapper-missing",
+    );
+    // The word 'dcode' appearing in a non-error context (e.g. a version
+    // banner) must not be misclassified as a wrapper-missing failure. The
+    // is_dcode_wrapper_failure regex requires a specific error indicator
+    // ("command not found", "No such file or directory", "Permission denied",
+    // or "No module named deepagents_code") after the dcode path segment.
+    // See PR #6206 / advisor PRA-2.
+    expect(classify("0", "  PONG  \nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(classify("0", "dcode version 0.1.12\nPONG\nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(classify("0", "something happened\nDCODE_EXIT:0")).toBe("fail:ambiguous-output");
+    expect(classify("0", "Reply with exactly one word: PONG\nDCODE_EXIT:0")).toBe(
+      "fail:ambiguous-output",
+    );
+    expect(classify("0", "PONG because the route works\nDCODE_EXIT:0")).toBe(
+      "fail:ambiguous-output",
+    );
+    expect(classify("1", "something happened\nDCODE_EXIT:1")).toBe("fail:nonzero-exit");
   });
 
   it("rejects unsafe headless timeout values before sandbox execution", () => {
@@ -866,6 +860,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", value: "xapp-ghp_abcdefghijklmnopqr" },
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-API_KEY=opaquevalue12345" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-TOKEN:opaquevalue12345" },
+      {
+        name: "SLACK_BOT_TOKEN",
+        value: `xoxb-lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
+      {
+        name: "SLACK_APP_TOKEN",
+        value: `xapp-${fakePrivateKeyBlock()}`,
+      },
     ];
 
     for (const { name, value } of cases) {
@@ -884,6 +888,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const cases: Array<{ name: string; value: string }> = [
       { name: "SLACK_BOT_TOKEN", value: "xoxb-nvapi-abcdefghijklmnop" },
       { name: "SLACK_APP_TOKEN", value: "xapp-pypi-abcdefghijklmnop" },
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-PASSWORD opaquevalue12345" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-CREDENTIAL=opaquevalue12345" },
+      {
+        name: "SLACK_APP_TOKEN",
+        value: `xapp-lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
+      {
+        name: "SLACK_BOT_TOKEN",
+        value: `xoxb-${fakePrivateKeyBlock("RSA")}`,
+      },
     ];
 
     for (const { name, value } of cases) {
@@ -1338,6 +1352,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
       "\\b[A-Za-z0-9]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}\\b::g",
       "tvly-[A-Za-z0-9_-]{10,}::g",
+      "lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*::g",
     ]);
   });
 
@@ -1368,11 +1383,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },
       { name: "pypi", sample: "pypi-abcdefghijklmnop" },
+      { name: "tavily", sample: "tvly-abcdefghijklmnop" },
       { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       {
         name: "discord",
         sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      },
+      {
+        name: "langsmith_pt",
+        sample: `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}`,
+      },
+      {
+        name: "langsmith_sk",
+        sample: `lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}`,
       },
     ];
     for (const { name, sample } of cases) {

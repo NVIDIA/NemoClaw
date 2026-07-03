@@ -57,6 +57,7 @@ describe("openshell helpers", () => {
   it("parses semantic versions from CLI output", () => {
     expect(parseVersionFromText("openshell 0.0.9")).toBe("0.0.9");
     expect(parseVersionFromText("v1.2.3\n")).toBe("1.2.3");
+    expect(parseVersionFromText("Hermes Agent v0.17.0 (2026.6.19)")).toBe("0.17.0");
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 
