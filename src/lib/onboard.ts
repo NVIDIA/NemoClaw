@@ -1971,10 +1971,10 @@ async function startGatewayWithOptions(
   if (isLinuxDockerDriverGatewayEnabled()) {
     return startDockerDriverGateway({
       exitOnFailure,
-      skipSandboxBridgeReachability:
-        gpuPassthrough &&
-        process.env.NEMOCLAW_DOCKER_GPU_PATCH !== "0" &&
-        dockerGpuPatch.getDockerGpuPatchNetworkMode(process.env) === "host",
+      skipSandboxBridgeReachability: dockerGpuLocalInference.shouldSkipGpuBridgeProbe(
+        gpuPassthrough,
+        _gpu?.platform,
+      ),
     });
   }
 
@@ -2999,10 +2999,9 @@ async function createSandbox(
   const envMessagingState = MessagingHostStateApplier.readPlanStateFromEnv();
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
-  const plannedMessagingPlan = plannedMessagingState?.plan;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
     configuredMessagingChannels:
-      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
+      getChannelsFromPlan(plannedMessagingState?.plan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3034,6 +3033,7 @@ async function createSandbox(
       agent,
       chatUiUrl,
       createArgs: launchCreateArgs,
+      sandboxName,
       env: process.env,
       extraPlaceholderKeys,
       getDashboardForwardPort,

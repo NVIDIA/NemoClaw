@@ -16,6 +16,51 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.73
+
+NemoClaw v0.0.73 improves custom endpoint safety, Linux GPU onboarding, agent-aware policy validation, upgrade recovery, LangChain Deep Agents Code inference, and operator documentation.
+
+- Custom endpoint handling now fails closed before downstream handoff when an HTTPS endpoint relies on DNS and NemoClaw cannot pin the validated peer across the OpenShell runtime boundary.
+  Public HTTP endpoints continue to use DNS-pinned IP URLs, and HTTPS IP-literal endpoints remain accepted.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [NemoClaw Inference Options](../inference/inference-options), and [Troubleshooting](../reference/troubleshooting).
+- GPU sandbox onboarding now uses OpenShell native GPU injection by default on ordinary native Linux hosts with usable CDI.
+  Docker Desktop WSL and Jetson/Tegra retain the compatibility path, which preserves the OpenShell supervisor boundary, captures bounded redacted diagnostics, and attempts rollback when a recreated container fails.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Troubleshooting](../reference/troubleshooting), and [Use a Local Inference Server](../inference/use-local-inference).
+- Messaging policy presets now respect agent support before `policy-add` changes state.
+  Terminal runtimes such as LangChain Deep Agents Code reject unsupported channel presets before endpoint disclosure or confirmation, matching the existing `channels add` boundary.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Messaging Channels](../manage-sandboxes/messaging-channels), and [Platform Support and Launch Claims](../reference/platform-support).
+- Pre-upgrade backups can skip a running sandbox whose in-sandbox SSH endpoint is unreachable when `NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1` is set.
+  Installer-driven upgrades restore skipped sandboxes from the latest validated backup, while standalone `backup-all` runs only skip the failure and do not schedule a restore.
+  Any uncommitted state since the latest successful backup is not preserved.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands), [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), and [Host Files and State](../reference/host-files-and-state).
+- LangChain Deep Agents Code now reaches `inference.local` through the managed OpenShell proxy across interactive, login-shell, direct-exec, and connect-probe paths.
+  The runtime normalizes proxy environment state, clears inherited bypass settings, and keeps credential-shaped values out of persisted proxy configuration.
+  Rebuild existing LangChain Deep Agents Code sandboxes after upgrading so they receive the corrected image scripts.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](../../openclaw/get-started/quickstart-langchain-deepagents-code) and [Troubleshooting](../reference/troubleshooting).
+- Setup and recovery guidance now covers the Docker CLI requirement for Homebrew Colima, Cursor terminal restrictions on Windows, stale Kubernetes namespace cleanup, OpenShell and OpenClaw gateway startup order, and stopped-container recovery.
+  The new Host Files and State reference explains files under `~/.nemoclaw/` and which registry and backup state uninstall preserves.
+  For more information, refer to [Prerequisites](../get-started/prerequisites), [Prepare Windows for NemoClaw](../get-started/prerequisites/windows-preparation), [Host Files and State](../reference/host-files-and-state), and [Troubleshooting](../reference/troubleshooting).
+
+## v0.0.72
+
+NemoClaw v0.0.72 improves installer recovery, sandbox diagnostics, inference setup, credential handling, and custom policy safety.
+
+- Installer and upgrade flows now recover eligible non-Ready sandboxes before generic onboarding.
+  The installer runs `backup-all` when available, runs `upgrade-sandboxes --auto`, restores only validated latest backups with matching sandbox identity and managed-image provenance, and exits before onboarding if any eligible recovery is blocked or fails.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart) and [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle).
+- Day-two commands provide clearer diagnostics before work reaches a lower-level failure.
+  `channels status` prints a compact summary for configured channels and non-secret rendered-config comparisons, `credentials add` registers provider credentials by provider name and type, `status` separates host inventory from per-sandbox health, `exec` rejects newline-containing arguments with recovery guidance, and connect shells point policy-denial failures at logs.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands) and [Troubleshooting](../reference/troubleshooting).
+- Inference setup and model switching fail with safer context.
+  NVIDIA Endpoints onboarding uses a public featured-model catalog with safe bundled fallback behavior, provider-not-found errors list registered providers and point back to onboarding, Hermes Provider endpoint URLs are validated before credentials are dispatched, and curl-based probes keep API keys out of process arguments.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options), [Switch Inference Providers](../inference/switch-inference-providers), and [Security Best Practices](../security/best-practices).
+- Custom policy and sandbox credential boundaries are tighter.
+  User-supplied custom presets reject `allowed_ips` except the explicit host bridge, OpenClaw processes receive `AWS_EC2_METADATA_DISABLED=true`, Hermes runtime configuration output masks API key fields, and `exec` restores mutable OpenClaw config permissions after one-shot commands.
+  For more information, refer to [Customize the Network Policy](../network-policy/customize-network-policy), [Security Best Practices](../security/best-practices), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Runtime repair covers more sandbox-specific drift.
+  OpenClaw gateway watchdog exits respawn the gateway instead of ending PID 1, Hermes upgrade checks compare agent versions in the Hermes runtime scheme, Tavily access is restored for managed Python workflows, and prompt-stdin EOF during onboarding is treated as cancellation.
+  For more information, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), [Common NemoClaw Integration Policy Examples](../network-policy/integration-policy-examples), and [NemoClaw CLI Commands Reference](../reference/commands).
+
 ## v0.0.71
 
 NemoClaw v0.0.71 improves gateway recovery, OpenShell gateway authentication, policy provenance, uninstall safety, Windows bootstrap diagnostics, messaging behavior, and inference guidance.

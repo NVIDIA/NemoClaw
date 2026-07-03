@@ -32,6 +32,7 @@ const SANDBOX_RUNTIME_INFERENCE_ENDPOINT = "https://inference.local/v1/models";
 type DockerGpuLocalInferenceConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
+  hostGpuPlatform?: string | null;
   // Written back by `verifyGpuSandboxAfterReady` with the CUDA-usability proof
   // result so the registry/`status` can distinguish a configured GPU from a
   // proven-usable one (#4231).
@@ -52,6 +53,20 @@ function resolveDockerDesktopWsl(options: DockerGpuLocalInferenceOptions): boole
 
 function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
+}
+
+export function shouldSkipGpuBridgeProbe(
+  gpuPassthrough: boolean,
+  hostGpuPlatform?: string | null,
+  options: Partial<DockerGpuLocalInferenceOptions> = {},
+): boolean {
+  return (
+    gpuPassthrough &&
+    shouldUseDockerGpuPatchHostNetwork(
+      { sandboxGpuEnabled: true, hostGpuPlatform },
+      { ...options, dockerDriverGateway: true },
+    )
+  );
 }
 
 /**
