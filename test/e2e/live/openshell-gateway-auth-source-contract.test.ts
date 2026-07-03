@@ -9,9 +9,10 @@ const CONTRACT_ENABLED =
   shouldRunLiveE2E() || process.env.NEMOCLAW_LIVE_OPENSHELL_GATEWAY_AUTH_CONTRACT === "1";
 const liveTest = CONTRACT_ENABLED ? test : test.skip;
 const LIVE_TIMEOUT_MS = 8 * 60_000;
+const OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION = "0.0.72";
 
 liveTest(
-  "OpenShell 0.0.71 Docker-driver gateway auth uses NemoClaw mTLS plus sandbox JWT",
+  `OpenShell ${OPENSHELL_GATEWAY_AUTH_CONTRACT_VERSION} Docker-driver gateway auth uses NemoClaw mTLS plus sandbox JWT`,
   { timeout: LIVE_TIMEOUT_MS },
   runOpenShellGatewayAuthSourceContractScenario,
 );

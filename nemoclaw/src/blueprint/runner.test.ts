@@ -193,7 +193,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (
       args[0] === "policy" &&
       args[1] === "get" &&
-      args[2] === "--full" &&
+      args[2] === "--base" &&
       args[3] === "test-sandbox"
     ) {
       return { exitCode: 0, stdout, stderr: "" };
@@ -638,7 +638,7 @@ describe("runner", () => {
       );
     });
 
-    it("applies blueprint policy additions by merging into the live policy", async () => {
+    it("applies blueprint policy additions by merging into the base policy", async () => {
       const bp = minimalBlueprint({
         components: {
           inference: {
@@ -673,12 +673,11 @@ describe("runner", () => {
           },
         },
       });
-
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (
           args[0] === "policy" &&
           args[1] === "get" &&
-          args[2] === "--full" &&
+          args[2] === "--base" &&
           args[3] === "test-sandbox"
         ) {
           return {
@@ -774,7 +773,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("fails closed when policy get --full does not include a policy document", async () => {
+    it("fails closed when policy get --base does not include a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
@@ -792,7 +791,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("can merge policy additions into an empty policy document", async () => {
+    it("fails closed when policy get --base returns metadata without a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",
@@ -801,20 +800,13 @@ describe("runner", () => {
       });
       mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---"].join("\n"));
 
-      await actionApply("default", bp);
-
-      const mergedPolicyKey = [...store.keys()].find(
-        (k) => k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
+      await expect(actionApply("default", bp)).rejects.toThrow(
+        /does not contain a policy YAML document/i,
       );
-      if (!mergedPolicyKey) throw new Error("merged policy file not written");
-      const mergedEntry = store.get(mergedPolicyKey);
-      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
-      const merged = YAML.parse(mergedEntry.content) as {
-        version?: number;
-        network_policies?: Record<string, unknown>;
-      };
-      expect(merged.version).toBe(1);
-      expect(merged.network_policies).toHaveProperty("nim_service");
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
     });
 
     it("skips policy commands when policy additions are empty", async () => {
