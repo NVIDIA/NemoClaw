@@ -8,6 +8,10 @@
 // even though `nemoclaw status` flags the same drift (#6193). This probes the
 // installed version through the caller's OpenShell runner and reuses the exact
 // staleness contract `status` uses (`evaluateStaleness`), so both surfaces agree.
+// A stale base image can create the invalid runtime/manifest pairing; image
+// build and promotion are a separate pipeline boundary. This gate remains a
+// defense-in-depth invariant until that pipeline can atomically prove the
+// promoted image and every resumed sandbox satisfy the active manifest.
 
 import { parseVersionFromText } from "../adapters/openshell/client";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
@@ -47,13 +51,27 @@ export type TerminalAgentVersionCheck =
     }
   | TerminalAgentVersionFailure;
 
+function unverifiedResult(
+  sandboxName: string,
+  expectedVersion: string,
+  reason: TerminalAgentVersionUnverified["reason"],
+): TerminalAgentVersionUnverified {
+  console.debug(
+    `  Terminal-agent version verification failed for sandbox '${sandboxName}' ` +
+      `(expected ${expectedVersion}; reason: ${reason}).`,
+  );
+  return { status: "unverified", installedVersion: null, expectedVersion, reason };
+}
+
 /**
  * Probe the installed terminal-agent version via the injected runner and
  * compare it to the manifest's `expected_version`.
  *
- * Returns an explicit state so onboarding can distinguish current, stale, and
- * unverifiable runtimes. Probe failures are contained and returned as
- * `unverified`; they never silently pass the version gate.
+ * @returns `not-required` when no version is declared; `current` when the
+ * installed version satisfies the manifest; `stale` when it does not or its
+ * version scheme differs; and `unverified` with `probe-failed` or
+ * `unparseable-output` when the runtime cannot be verified. Unverified probes
+ * never silently pass the version gate.
  */
 export function checkTerminalAgentVersion(
   sandboxName: string,
@@ -76,12 +94,7 @@ export function checkTerminalAgentVersion(
     );
     const output = typeof result === "string" ? result : (result?.output ?? null);
     if (!output) {
-      return {
-        status: "unverified",
-        installedVersion: null,
-        expectedVersion,
-        reason: "probe-failed",
-      };
+      return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
     }
 
     // Prefer the version associated with the manifest command's executable.
@@ -89,12 +102,7 @@ export function checkTerminalAgentVersion(
     // shared fallback parser intentionally returns the first numeric triplet.
     const installedVersion = parseVersionFromText(output, agent.versionCommand);
     if (!installedVersion) {
-      return {
-        status: "unverified",
-        installedVersion: null,
-        expectedVersion,
-        reason: "unparseable-output",
-      };
+      return unverifiedResult(sandboxName, expectedVersion, "unparseable-output");
     }
 
     const verdict = evaluateStaleness(
@@ -119,12 +127,7 @@ export function checkTerminalAgentVersion(
       schemeMismatch: verdict.schemeMismatch,
     };
   } catch {
-    return {
-      status: "unverified",
-      installedVersion: null,
-      expectedVersion,
-      reason: "probe-failed",
-    };
+    return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }
 }
 
@@ -136,9 +139,13 @@ export function formatTerminalAgentVersionFailure(
   failure: TerminalAgentVersionFailure,
 ): string {
   if (failure.status === "unverified") {
+    const detail =
+      failure.reason === "probe-failed"
+        ? "the version probe failed or returned no output"
+        : "the version command returned no attributable version";
     return (
       `${agent.displayName} version could not be verified against required version ` +
-      failure.expectedVersion
+      `${failure.expectedVersion}: ${detail}`
     );
   }
   if (failure.schemeMismatch) {

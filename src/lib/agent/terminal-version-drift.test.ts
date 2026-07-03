@@ -67,6 +67,7 @@ describe("checkTerminalAgentVersion (#6193)", () => {
   });
 
   it("reports unverified when the probe output has no parseable version", () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const runner = vi.fn(() => "command not found");
     expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
       status: "unverified",
@@ -74,9 +75,25 @@ describe("checkTerminalAgentVersion (#6193)", () => {
       expectedVersion: "0.1.13",
       reason: "unparseable-output",
     });
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("unparseable-output"));
+    debugSpy.mockRestore();
+  });
+
+  it("does not attribute an unrelated version when the executable reports no version", () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    const runner = vi.fn(() => "Python 3.12.0\ndcode command failed");
+    expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
+      status: "unverified",
+      installedVersion: null,
+      expectedVersion: "0.1.13",
+      reason: "unparseable-output",
+    });
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("unparseable-output"));
+    debugSpy.mockRestore();
   });
 
   it("reports unverified when the probe produces no output", () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const runner = vi.fn(() => ({ output: null }));
     expect(checkTerminalAgentVersion("dcode-sb", makeAgent(), runner)).toEqual({
       status: "unverified",
@@ -84,9 +101,12 @@ describe("checkTerminalAgentVersion (#6193)", () => {
       expectedVersion: "0.1.13",
       reason: "probe-failed",
     });
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("probe-failed"));
+    debugSpy.mockRestore();
   });
 
   it("contains runner exceptions as an unverified result", () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => undefined);
     const runner = vi.fn(() => {
       throw new Error("probe transport failed");
     });
@@ -96,6 +116,8 @@ describe("checkTerminalAgentVersion (#6193)", () => {
       expectedVersion: "0.1.13",
       reason: "probe-failed",
     });
+    expect(debugSpy).toHaveBeenCalledWith(expect.stringContaining("probe-failed"));
+    debugSpy.mockRestore();
   });
 
   it("accepts the { output } runner result shape", () => {

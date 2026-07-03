@@ -61,6 +61,13 @@ describe("openshell helpers", () => {
     expect(parseVersionFromText("built on 2026.7.1, dcode 0.1.12", "dcode --version")).toBe(
       "0.1.12",
     );
+    expect(
+      parseVersionFromText("Python 3.12.0\ndcode command failed", "dcode --version"),
+    ).toBeNull();
+    expect(parseVersionFromText("LangChain Deep Agents Code v0.1.12", "dcode --version")).toBe(
+      "0.1.12",
+    );
+    expect(parseVersionFromText("dcode 0.1.12, dcode 0.2.0", "dcode --version")).toBe("0.1.12");
     expect(parseVersionFromText("no version here")).toBeNull();
   });
 

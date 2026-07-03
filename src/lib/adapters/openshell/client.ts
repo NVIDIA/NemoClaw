@@ -69,14 +69,17 @@ export function parseVersionFromText(value = "", versionCommand?: string): strin
   const executable = commandToken.split("/").pop() ?? "";
   if (executable) {
     const executablePattern = new RegExp(`\\b${escapeRegExp(executable)}\\b`, "i");
+    let executableSeen = false;
     for (const line of text.split(/\r?\n/)) {
       const executableMatch = executablePattern.exec(line);
       if (!executableMatch) continue;
+      executableSeen = true;
       const versionMatch = line
         .slice(executableMatch.index + executableMatch[0].length)
         .match(/([0-9]+\.[0-9]+\.[0-9]+)/);
       if (versionMatch) return versionMatch[1];
     }
+    if (executableSeen) return null;
   }
 
   const match = text.match(/([0-9]+\.[0-9]+\.[0-9]+)/);
