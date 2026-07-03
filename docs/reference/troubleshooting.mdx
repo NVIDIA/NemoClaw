@@ -964,6 +964,8 @@ If the host should be reachable, allow it with a preset or a [custom preset](../
 $$nemoclaw <name> policy-add <preset>
 ```
 
+Replace `<preset>` with a real preset name such as `github`, `pypi`, or `npm`. Run `$$nemoclaw <name> policy-add` with no preset to list the available presets.
+
 ### Sandbox creation reports a TLS certificate mismatch
 
 If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.

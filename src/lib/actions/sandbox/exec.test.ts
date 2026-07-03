@@ -290,7 +290,11 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
   });
 
   it("stays silent and preserves the exit code on an unrelated failure", async () => {
-    const { exitCode, stderr } = await runExec(2, "");
+    // A present-but-non-denial log line exercises the filter, not just "no logs".
+    const { exitCode, stderr } = await runExec(
+      2,
+      "[1000.500] [sandbox] [INFO ] some unrelated runtime error: connection reset",
+    );
     expect(exitCode).toBe(2);
     expect(stderr).toHaveLength(0);
   });
