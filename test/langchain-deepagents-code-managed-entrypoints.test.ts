@@ -38,9 +38,10 @@ function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: 
   const authFile = path.join(tempDir, "auth.json");
   const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
   const source = readAgentFile("dcode-wrapper.sh");
-  if (source.includes(MANAGED_MCP_VALIDATOR_INVOCATION)) {
-    throw new Error("managed MCP descriptors must be opened by the long-lived Python process");
-  }
+  expect(
+    source,
+    "managed MCP descriptors must be opened by the long-lived Python process",
+  ).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
   const fixture = source
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',

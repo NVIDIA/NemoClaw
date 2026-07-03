@@ -2,6 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Patch the pinned Deep Agents Code package for NemoClaw-managed posture."""
 
+# Source-of-truth review for this pinned third-party patch boundary:
+# invalidState: upstream entrypoints can independently enable credential stores,
+# ambient MCP discovery, update/install flows, or child-process config paths that
+# bypass NemoClaw's managed inference, policy, and sealed-MCP boundaries.
+# sourceBoundary: deepagents-code owns those Python entrypoints; NemoClaw owns the
+# sandbox image posture and therefore validates every patched symbol before build.
+# whyNotSourceFix: upstream 0.1.30 has no single managed-runtime hook that can
+# enforce these constraints across CLI, UI, headless, server, and restart paths.
+# regressionTest: the exact version plus AST symbol/method gates fail the image
+# build on drift, and direct-module tests execute the patched start/restart paths.
+# removalCondition: replace these sites only when a pinned upstream release offers
+# equivalent discovery-free, credential-free, update-disabled, sealed MCP hooks.
+
 from __future__ import annotations
 
 import ast
