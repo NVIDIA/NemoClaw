@@ -111,6 +111,55 @@ describe("managed DCode rebuild image preflight", () => {
 
     const prepared = expectPreparedImage(result);
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
+
+    const savedDockerfile = `${buildCtx}-saved-Dockerfile`;
+    const symlinkTarget = `${buildCtx}-symlink-target`;
+    fs.writeFileSync(symlinkTarget, "FROM attacker-controlled-path\n");
+    const originalOpenSync = fs.openSync;
+    const symlinkReadSpy = vi.spyOn(fs, "readFileSync");
+    const openSpy = vi.spyOn(fs, "openSync").mockImplementationOnce(((...args: unknown[]) => {
+      fs.renameSync(stagedDockerfile, savedDockerfile);
+      fs.symlinkSync(symlinkTarget, stagedDockerfile);
+      return Reflect.apply(originalOpenSync, fs, args);
+    }) as never);
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    expect(symlinkReadSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+    symlinkReadSpy.mockRestore();
+    fs.rmSync(stagedDockerfile);
+    fs.renameSync(savedDockerfile, stagedDockerfile);
+    fs.rmSync(symlinkTarget);
+
+    const openedDockerfile = `${buildCtx}-opened-Dockerfile`;
+    const replacementDockerfile = `${buildCtx}-replacement-Dockerfile`;
+    fs.writeFileSync(replacementDockerfile, "FROM scratch\n");
+    const originalPathReadFileSync = fs.readFileSync;
+    const replacedPathReadSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
+      ...args: unknown[]
+    ) => {
+      const contents = Reflect.apply(originalPathReadFileSync, fs, args) as Buffer;
+      fs.renameSync(stagedDockerfile, openedDockerfile);
+      fs.renameSync(replacementDockerfile, stagedDockerfile);
+      return contents;
+    }) as never);
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    replacedPathReadSpy.mockRestore();
+    fs.rmSync(stagedDockerfile);
+    fs.renameSync(openedDockerfile, stagedDockerfile);
+
+    const originalReadFileSync = fs.readFileSync;
+    const racedReadSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
+      ...args: unknown[]
+    ) => {
+      const contents = Reflect.apply(originalReadFileSync, fs, args) as Buffer;
+      fs.appendFileSync(stagedDockerfile, "# changed during fingerprinting\n");
+      return contents;
+    }) as never);
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    racedReadSpy.mockRestore();
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
+
     fs.appendFileSync(stagedDockerfile, "# changed after preflight\n");
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
     expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);

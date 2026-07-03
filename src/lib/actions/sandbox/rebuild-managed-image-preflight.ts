@@ -68,6 +68,37 @@ function defaultImageTag(): string {
   return `nemoclaw-rebuild-preflight:${String(process.pid)}-${crypto.randomUUID()}`;
 }
 
+function sameBuildContextEntry(left: fs.Stats, right: fs.Stats): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+function readStableBuildContextFile(absolutePath: string, expected: fs.Stats): Buffer {
+  const descriptor = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || !sameBuildContextEntry(expected, opened)) {
+      throw new Error("build-context file changed before fingerprinting");
+    }
+    const contents = fs.readFileSync(descriptor);
+    if (
+      !sameBuildContextEntry(opened, fs.fstatSync(descriptor)) ||
+      !sameBuildContextEntry(opened, fs.lstatSync(absolutePath))
+    ) {
+      throw new Error("build-context file changed during fingerprinting");
+    }
+    return contents;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 function fingerprintBuildContext(buildCtx: string): string {
   const hash = crypto.createHash("sha256");
   const visit = (relativePath: string): void => {
@@ -86,7 +117,7 @@ function fingerprintBuildContext(buildCtx: string): string {
         visit(relativePath ? path.join(relativePath, name) : name);
       }
     } else if (stat.isFile()) {
-      hash.update(fs.readFileSync(absolutePath));
+      hash.update(readStableBuildContextFile(absolutePath, stat));
     } else if (stat.isSymbolicLink()) {
       hash.update(fs.readlinkSync(absolutePath));
     } else {
