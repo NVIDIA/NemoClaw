@@ -21,7 +21,7 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 |------|----------|---------|
 | `bin/` | JavaScript (CJS) | CLI launcher (`nemoclaw.js`) and small compatibility helpers |
 | `src/lib/` | TypeScript | Core CLI logic: onboard, credentials, inference, policies, preflight, runner |
-| `nemoclaw/` | TypeScript | Plugin project (Commander CLI extension for OpenClaw) |
+| `nemoclaw/` | TypeScript | Plugin registering `/nemoclaw` TUI slash commands inside OpenClaw; `openclaw nemoclaw <cmd>` shell subcommand path is descoped |
 | `nemoclaw/src/blueprint/` | TypeScript | Runner, snapshot, SSRF validation, state management |
 | `nemoclaw/src/commands/` | TypeScript | Slash commands, migration state |
 | `nemoclaw/src/onboard/` | TypeScript | Onboarding config |
