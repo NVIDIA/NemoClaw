@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { styleText } from "node:util";
+
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
@@ -13,16 +15,47 @@ export const RD = useColor ? "\x1b[1;31m" : "";
 export const YW = useColor ? "\x1b[1;33m" : "";
 
 /**
- * Preflight result line helpers (#6004). Render a warning (`⚠`) line in yellow
- * and a failure (`✗`) line in red so they stand out from the default-colored
- * `✓`/INFO lines in the lengthy onboard preflight output. Color is suppressed
- * automatically when `NO_COLOR` is set or stdout is not a TTY (via `YW`/`RD`/`R`
- * being empty strings), so CI output stays plain text.
+ * Semantic severity levels for onboard preflight output (#6004).
+ *
+ * `info` keeps the default terminal color; `ok`/`warn`/`error` add a colored
+ * marker so warnings and failures stand out in the lengthy preflight output.
  */
-export function warnLine(message: string): string {
-  return `  ${YW}⚠ ${message}${R}`;
+export type SeverityLevel = "info" | "ok" | "warn" | "error";
+
+type SeverityStyle = {
+  marker: string;
+  format: "green" | "yellow" | "red" | null;
+  stream: NodeJS.WriteStream;
+};
+
+// The stream each level is written to decides its color. `ok`/`info` are
+// emitted on stdout (`console.log`/`console.info`); `warn`/`error` on stderr
+// (`console.warn`/`console.error`). `styleText({ stream })` then keys color off
+// that stream's own capability and honors NO_COLOR / NODE_DISABLE_COLORS /
+// FORCE_COLOR (#6004). This replaces the previous helpers, which colored from
+// `process.stdout.isTTY` while printing to stderr — so redirecting either
+// stream independently mis-styled the other (dropped color on `onboard >log`,
+// leaked ANSI into `onboard 2>log`).
+const SEVERITY_STYLES: Record<SeverityLevel, SeverityStyle> = {
+  info: { marker: "", format: null, stream: process.stdout },
+  ok: { marker: "✓ ", format: "green", stream: process.stdout },
+  warn: { marker: "⚠ ", format: "yellow", stream: process.stderr },
+  error: { marker: "✗ ", format: "red", stream: process.stderr },
+};
+
+/**
+ * Render one indented preflight line at `level`. The returned string is meant
+ * to be passed to the matching console method (`ok`/`info` → `console.log` /
+ * `console.info`; `warn` → `console.warn`; `error` → `console.error`) so its
+ * color decision matches the stream it lands on.
+ */
+export function severityLine(level: SeverityLevel, message: string): string {
+  const { marker, format, stream } = SEVERITY_STYLES[level];
+  const body = `${marker}${message}`;
+  return `  ${format ? styleText(format, body, { stream }) : body}`;
 }
 
-export function failLine(message: string): string {
-  return `  ${RD}✗ ${message}${R}`;
-}
+export const infoLine = (message: string): string => severityLine("info", message);
+export const okLine = (message: string): string => severityLine("ok", message);
+export const warnLine = (message: string): string => severityLine("warn", message);
+export const failLine = (message: string): string => severityLine("error", message);
