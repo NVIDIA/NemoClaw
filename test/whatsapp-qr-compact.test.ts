@@ -272,20 +272,14 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       } else {
         wrapperLines.push("unset OPENCLAW_GATEWAY_URL");
       }
-      if (opts.privateGatewayUrl !== undefined) {
-        wrapperLines.push(
-          `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.privateGatewayUrl)}`,
-        );
-      } else {
-        wrapperLines.push("unset NEMOCLAW_OPENCLAW_GATEWAY_URL");
-      }
-      if (opts.insecurePrivateWs !== undefined) {
-        wrapperLines.push(
-          `export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePrivateWs)}`,
-        );
-      } else {
-        wrapperLines.push("unset NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS");
-      }
+      wrapperLines.push(
+        opts.privateGatewayUrl !== undefined
+          ? `export NEMOCLAW_OPENCLAW_GATEWAY_URL=${JSON.stringify(opts.privateGatewayUrl)}`
+          : "unset NEMOCLAW_OPENCLAW_GATEWAY_URL",
+        opts.insecurePrivateWs !== undefined
+          ? `export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=${JSON.stringify(opts.insecurePrivateWs)}`
+          : "unset NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+      );
       wrapperLines.push(
         guardBody,
         `openclaw ${args.map((a) => JSON.stringify(a)).join(" ")}`,
