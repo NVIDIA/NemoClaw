@@ -448,7 +448,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const chain = buildChain({
       chatUiUrl,
       isWsl: deps.isWsl(),
-      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl() }),
+      wslHostAddress: getWslHostAddress({ isWsl: deps.isWsl(), runCapture: deps.runCapture }),
     });
     const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
     const dashboardUrl = dashboardUrlForDisplay(
