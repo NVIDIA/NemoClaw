@@ -25,6 +25,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
+const LEGACY_NEMOCLAW_VERSION = "0.0.71";
 const OLD_HERMES_VERSION = "v2026.5.16";
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
 const OLD_HERMES_SEMVER = "0.14.0";
@@ -296,6 +297,9 @@ function seedRegistryAndSession(): SessionArtifactSummary {
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
     createdAt: new Date().toISOString(),
+    // This synthetic registry entry models a NemoClaw-managed image, so retain
+    // the positive provenance signal required by fail-closed rebuild preflight.
+    nemoclawVersion: LEGACY_NEMOCLAW_VERSION,
     model: HOSTED_MODEL,
     provider: "compatible-endpoint",
     endpointUrl: HOSTED_ENDPOINT_URL,

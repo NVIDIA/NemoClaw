@@ -270,6 +270,7 @@ describe("preflightRebuildImage", () => {
 
   it("still cleans the throwaway image and re-signals when context cleanup throws (#6195)", async () => {
     let sigtermHandler: (() => void) | null = null;
+    const processOnSpy = vi.spyOn(process, "on").mockReturnValue(process);
     vi.spyOn(process, "once").mockImplementation(((
       eventName: string | symbol,
       listener: (...args: unknown[]) => void,
@@ -304,6 +305,7 @@ describe("preflightRebuildImage", () => {
       suppressOutput: true,
     });
     expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGTERM");
+    expect(processOnSpy).toHaveBeenCalledWith("exit", expect.any(Function));
     expect(cleanupBuildCtx.mock.invocationCallOrder[0]).toBeLessThan(
       removeImage.mock.invocationCallOrder[0],
     );

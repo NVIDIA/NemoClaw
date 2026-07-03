@@ -195,6 +195,11 @@ process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const binary of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(path.join(tmpDir, binary), "#!/usr/bin/env node\nprocess.exit(0);\n", {
+      mode: 0o755,
+    });
+  }
 
   // Fake docker — covers both the basic cases and kubectl exec proxying.
   // For shields lock/unlock, we return zero exit with the data shields.ts

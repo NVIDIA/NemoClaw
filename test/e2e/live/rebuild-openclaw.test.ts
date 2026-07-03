@@ -232,6 +232,15 @@ function seedRegistryAndSession(): void {
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
   registry.sandboxes = registry.sandboxes ?? {};
+  const existingDashboardPort = registry.sandboxes[SANDBOX_NAME]?.dashboardPort;
+  if (
+    typeof existingDashboardPort !== "number" ||
+    !Number.isInteger(existingDashboardPort) ||
+    existingDashboardPort < 1 ||
+    existingDashboardPort > 65535
+  ) {
+    throw new Error(`phase-1 onboard did not persist a valid dashboard port for ${SANDBOX_NAME}`);
+  }
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
     createdAt: new Date().toISOString(),
@@ -245,6 +254,9 @@ function seedRegistryAndSession(): void {
     // This synthetic entry models a NemoClaw-managed image, not a custom
     // Dockerfile whose deleted source path would make rebuild unreproducible.
     nemoclawVersion: LEGACY_NEMOCLAW_VERSION,
+    // Reuse the port allocated by phase-1 onboard so rebuild can faithfully
+    // recreate this dashboard-managed OpenClaw sandbox.
+    dashboardPort: existingDashboardPort,
   };
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
