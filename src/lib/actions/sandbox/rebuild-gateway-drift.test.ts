@@ -10,6 +10,20 @@ import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-dr
 type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
+const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+const registry = requireDist("../../state/registry.js");
+const resolve = requireDist("../../adapters/openshell/resolve.js");
+const sandboxSession = requireDist("../../state/sandbox-session.js");
+const onboardSession = requireDist("../../state/onboard-session.js");
+const sandboxVersion = requireDist("../../sandbox/version.js");
+const agentRuntime = requireDist("../../agent/runtime.js");
+const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
+const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
+const { rebuildSandbox } = requireDist("./rebuild.js") as {
+  rebuildSandbox: RebuildSandbox;
+};
 
 const driftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -28,7 +42,6 @@ function mockExit() {
 }
 
 describe("rebuild gateway drift preflight", () => {
-  let rebuildSandbox: RebuildSandbox;
   let exitSpy: ReturnType<typeof mockExit>;
   let errorSpy: MockInstance;
   let spies: MockInstance[];
@@ -43,18 +56,6 @@ describe("rebuild gateway drift preflight", () => {
     spies = [];
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const registry = requireDist("../../state/registry.js");
-    const resolve = requireDist("../../adapters/openshell/resolve.js");
-    const sandboxSession = requireDist("../../state/sandbox-session.js");
-    const onboardSession = requireDist("../../state/onboard-session.js");
-    const sandboxVersion = requireDist("../../sandbox/version.js");
-    const agentRuntime = requireDist("../../agent/runtime.js");
-    const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
-    const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 
     printIssueSpy = vi
       .spyOn(gatewayDrift, "printOpenShellStateRpcIssue")
@@ -118,9 +119,7 @@ describe("rebuild gateway drift preflight", () => {
       vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
       checkAgentVersionSpy,
     );
-
-    ({ rebuildSandbox } = requireDist("./rebuild.js"));
-  }, 30_000);
+  });
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
@@ -208,18 +207,6 @@ describe("rebuild gateway drift preflight", () => {
     // recover the wrong (and possibly nonexistent) default gateway.
     for (const spy of spies) spy.mockRestore();
     spies.length = 0;
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const registry = requireDist("../../state/registry.js");
-    const resolve = requireDist("../../adapters/openshell/resolve.js");
-    const sandboxSession = requireDist("../../state/sandbox-session.js");
-    const onboardSession = requireDist("../../state/onboard-session.js");
-    const sandboxVersion = requireDist("../../sandbox/version.js");
-    const agentRuntime = requireDist("../../agent/runtime.js");
-    const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
-    const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
-
     let listCalls = 0;
     detectPreflightIssueSpy = vi
       .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
@@ -305,9 +292,6 @@ describe("rebuild gateway drift preflight", () => {
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
       vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
     );
-
-    ({ rebuildSandbox } = requireDist("./rebuild.js"));
-
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(
       /stale-sandbox recovery/,
     );
