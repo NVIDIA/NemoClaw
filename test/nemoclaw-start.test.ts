@@ -976,7 +976,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
+  it("unsets gateway env and leaves failed approval state to OpenClaw (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -1007,11 +1007,7 @@ exit 1
       { mode: 0o755 },
     );
     try {
-      for (const [replacementId, shouldRecover] of [
-        ["replacement-1", true],
-        ["replacement-10", false],
-        ["", true],
-      ] as const) {
+      for (const replacementId of ["replacement-1", "replacement-10", ""]) {
         resetState();
         const result = runGuardedShell(setup, [
           `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
@@ -1020,27 +1016,20 @@ exit 1
         ]);
         const paired = readJson(pairedFile);
         const pending = readJson(pendingFile);
-        expect(result.status).toBe(shouldRecover ? 0 : 1);
+        expect(result.status).toBe(1);
         expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
           "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         );
-        const expectedScopes = shouldRecover
-          ? ["operator.pairing", "operator.read", "operator.write"]
-          : ["operator.pairing"];
         for (const scopes of [
           paired["device-1"].approvedScopes,
           paired["device-1"].scopes,
           paired["device-1"].tokens.operator.scopes,
         ]) {
-          expect(scopes).toEqual(expectedScopes);
+          expect(scopes).toEqual(["operator.pairing"]);
         }
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
-        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
-          shouldRecover ? {} : "replacement-1",
-        );
-        expect(
-          shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
-        ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
+        expect(pending.replacement.requestId).toBe("replacement-1");
+        expect(result.stderr).toContain("gateway connect failed");
       }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });

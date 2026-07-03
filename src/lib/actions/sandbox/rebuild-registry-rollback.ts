@@ -55,6 +55,7 @@ export function createRebuildRegistryRollback(
             ? {
                 from: removedRegistryReceipt.fallbackDefault,
                 to: options.sandboxName,
+                expectedRevision: removedRegistryReceipt.postRemovalDefaultSelectionRevision,
               }
             : undefined;
           restoreSandboxEntry(snapshotEntry, {

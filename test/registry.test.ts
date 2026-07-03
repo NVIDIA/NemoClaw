@@ -237,7 +237,11 @@ describe("registry", () => {
       model: "captured",
       imageTag: "old-image",
     });
-    expect(receipt).toMatchObject({ wasDefault: true, fallbackDefault: null });
+    expect(receipt).toMatchObject({
+      wasDefault: true,
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 2,
+    });
     expect(registry.getSandbox("receipt")).toBeNull();
     expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
   });
@@ -454,6 +458,7 @@ describe("registry", () => {
     expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
       sandboxes: {},
       defaultSandbox: null,
+      defaultSelectionRevision: 3,
     });
   });
 

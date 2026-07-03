@@ -24,12 +24,17 @@ function registrySnapshot(entry: SandboxEntry, defaultSandbox: string | null): S
 
 function removalReceipt(
   entry: SandboxEntry,
-  options: { wasDefault?: boolean; fallbackDefault?: string | null } = {},
+  options: {
+    wasDefault?: boolean;
+    fallbackDefault?: string | null;
+    postRemovalDefaultSelectionRevision?: number;
+  } = {},
 ): SandboxRemovalReceipt {
   return {
     entry,
     wasDefault: options.wasDefault ?? true,
     fallbackDefault: options.fallbackDefault ?? "beta",
+    postRemovalDefaultSelectionRevision: options.postRemovalDefaultSelectionRevision ?? 17,
   };
 }
 
@@ -59,7 +64,7 @@ describe("createRebuildRegistryRollback", () => {
 
     expect(restoreSandboxEntry).toHaveBeenCalledOnce();
     expect(restoreSandboxEntry).toHaveBeenCalledWith(refreshed, {
-      defaultTransition: { from: "beta", to: "alpha" },
+      defaultTransition: { from: "beta", to: "alpha", expectedRevision: 17 },
     });
     expect(restoreSandboxEntryIfMissing).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(
@@ -91,6 +96,7 @@ describe("createRebuildRegistryRollback", () => {
       entry: { ...removed, imageTag: null },
       wasDefault: true,
       fallbackDefault: "beta",
+      postRemovalDefaultSelectionRevision: 17,
     });
     expect(log).toHaveBeenCalledWith("Recreate failed: restored registry metadata for retry");
   });

@@ -8,6 +8,8 @@ type NamedRegistryEntry = {
 type RegistryState<Entry extends NamedRegistryEntry> = {
   sandboxes: Record<string, Entry>;
   defaultSandbox: string | null;
+  /** Internal operation revision for durable default-pointer ownership. */
+  defaultSelectionRevision?: number;
 };
 
 export type RegistryRemovalReceipt<Entry extends NamedRegistryEntry> = {
@@ -16,6 +18,8 @@ export type RegistryRemovalReceipt<Entry extends NamedRegistryEntry> = {
   wasDefault: boolean;
   /** The fallback selected by this removal when it moved the default pointer. */
   fallbackDefault: string | null;
+  /** Default-pointer revision immediately after the removal was persisted. */
+  postRemovalDefaultSelectionRevision: number;
 };
 
 type RegistryRemovalResult<Entry extends NamedRegistryEntry> = {
@@ -27,6 +31,26 @@ type RegistryRestoreResult<Entry extends NamedRegistryEntry> = {
   registry: RegistryState<Entry>;
   restored: boolean;
 };
+
+/** Migrate registries written before the default-selection revision existed. */
+export function normalizeDefaultSelectionRevision(revision: unknown): number {
+  if (revision === undefined) return 0;
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error(
+      "Sandbox registry default-selection revision must be a non-negative safe integer",
+    );
+  }
+  return revision;
+}
+
+/** Advance the durable default-pointer operation revision without losing precision. */
+export function incrementDefaultSelectionRevision(revision: number | undefined): number {
+  const current = normalizeDefaultSelectionRevision(revision);
+  if (current === Number.MAX_SAFE_INTEGER) {
+    throw new Error("Sandbox registry default-selection revision is exhausted");
+  }
+  return current + 1;
+}
 
 /** Derive the registry state and receipt for one atomic sandbox removal. */
 export function removeSandboxFromRegistry<Entry extends NamedRegistryEntry>(
@@ -40,14 +64,23 @@ export function removeSandboxFromRegistry<Entry extends NamedRegistryEntry>(
   delete sandboxes[name];
   const fallbackDefault = Object.keys(sandboxes)[0] || null;
   const wasDefault = registry.defaultSandbox === name;
+  const defaultSelectionRevision = wasDefault
+    ? incrementDefaultSelectionRevision(registry.defaultSelectionRevision)
+    : normalizeDefaultSelectionRevision(registry.defaultSelectionRevision);
 
   return {
     registry: {
       ...registry,
       sandboxes,
       defaultSandbox: wasDefault ? fallbackDefault : registry.defaultSandbox,
+      defaultSelectionRevision,
     },
-    receipt: { entry, wasDefault, fallbackDefault },
+    receipt: {
+      entry,
+      wasDefault,
+      fallbackDefault,
+      postRemovalDefaultSelectionRevision: defaultSelectionRevision,
+    },
   };
 }
 
@@ -67,15 +100,22 @@ export function restoreSandboxIfMissingInRegistry<Entry extends NamedRegistryEnt
   const currentDefaultIsValid =
     registry.defaultSandbox !== null && sandboxes[registry.defaultSandbox] !== undefined;
   const shouldReclaimRemovedDefault =
-    receipt.wasDefault && registry.defaultSandbox === receipt.fallbackDefault;
+    receipt.wasDefault &&
+    registry.defaultSandbox === receipt.fallbackDefault &&
+    normalizeDefaultSelectionRevision(registry.defaultSelectionRevision) ===
+      receipt.postRemovalDefaultSelectionRevision;
   const defaultSandbox = shouldReclaimRemovedDefault
     ? entry.name
     : currentDefaultIsValid
       ? registry.defaultSandbox
       : entry.name;
+  const defaultSelectionRevision =
+    defaultSandbox === registry.defaultSandbox
+      ? normalizeDefaultSelectionRevision(registry.defaultSelectionRevision)
+      : incrementDefaultSelectionRevision(registry.defaultSelectionRevision);
 
   return {
-    registry: { ...registry, sandboxes, defaultSandbox },
+    registry: { ...registry, sandboxes, defaultSandbox, defaultSelectionRevision },
     restored: true,
   };
 }

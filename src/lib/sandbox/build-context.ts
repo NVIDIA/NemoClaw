@@ -206,6 +206,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-issue-4434-diagnostics.ts"),
     path.join(stagedScriptsDir, "patch-openclaw-issue-4434-diagnostics.ts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-device-self-approval.ts"),
+    path.join(stagedScriptsDir, "patch-openclaw-device-self-approval.ts"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }

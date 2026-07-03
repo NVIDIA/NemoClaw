@@ -138,9 +138,11 @@ RUN npm ci --omit=dev \
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
+COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
         /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts
+        /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \
+        /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts
 
 # Pre-install the codex-acp package so the embedded ACPx runtime can
 # call the local binary instead of `npx @zed-industries/codex-acp`.
@@ -639,6 +641,21 @@ RUN set -eu; \
 # and openclaw/openclaw#50298, or when NemoClaw no longer ships an affected OpenClaw.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Keep OpenClaw 2026.6.10 scope-upgrade approvals inside the gateway's
+# canonical locked pairing writer (#4462). The upstream devices CLI otherwise
+# asks for the very scopes it is trying to approve, so the handshake fails
+# before device.pair.approve runs and its operator.admin retry fails likewise.
+# This exact-dist patch allows only a signed, device-token-authenticated CLI to
+# approve its own complete operator-only request while it already holds
+# operator.pairing; the canonical pairing function repeats identity, role, and
+# bounded-scope validation after acquiring its state lock.
+#
+# Removal criteria: drop when upstream OpenClaw can approve the same bounded
+# self-upgrade through the gateway using only operator.pairing.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \
     /usr/local/lib/node_modules/openclaw/dist
 
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.

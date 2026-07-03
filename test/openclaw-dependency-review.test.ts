@@ -32,6 +32,11 @@ const ISSUE_4434_PATCH = path.join(
   "scripts",
   "patch-openclaw-issue-4434-diagnostics.ts",
 );
+const DEVICE_SELF_APPROVAL_PATCH = path.join(
+  REPO_ROOT,
+  "scripts",
+  "patch-openclaw-device-self-approval.ts",
+);
 const REBUILD_RESUME_SESSION = path.join(
   REPO_ROOT,
   "src",
@@ -170,6 +175,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
           "formatRawAssistantErrorForUi",
         ],
       ],
+      [
+        "Patch 8:",
+        ["bounded same-device device scope approval", "operator.pairing", "approveDevicePairing"],
+      ],
     ] as const) {
       const row = review.split("\n").find((line) => line.includes(`| ${patch}`));
       expect(row, patch).toBeDefined();
@@ -204,6 +213,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
+    expect(review).toContain("scripts/patch-openclaw-device-self-approval.ts");
+    expect(review).toContain("NemoClaw no longer reads or writes device state during approval");
     expect(review).toContain("Merge disposition for this OpenClaw 2026.6.10 bump");
     expect(review).toContain("Issue #4434 full live acceptance");
     expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.10` artifact");
@@ -253,10 +264,11 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("future-shaped positional pin names");
     expect(review).toContain("Recovered Gateway Credential Boundary");
     expect(review).toContain("OpenClaw Device Approval Convergence Boundary");
-    expect(review).toContain("retry through an `isRepair: true` admin-shaped request");
-    expect(review).toContain("never copies or grants `operator.admin`");
+    expect(review).toContain("device-token authentication");
+    expect(review).toContain("repeats current pending identity, role, repair-marker");
+    expect(review).toContain("NemoClaw no longer reads or writes device state during approval");
     expect(review).toContain(
-      "delete this compatibility repair when a reviewed OpenClaw release returns success",
+      "delete Patch 8 when a reviewed OpenClaw release completes this bounded same-device flow",
     );
     expect(review).toContain("src/lib/onboard/recovered-provider-reuse.ts");
     expect(review).toContain("passes that route only in memory to the same sandbox's recreate");
@@ -352,9 +364,15 @@ check_contains "$optional_plugin_block" 'rm -rf "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}
 	grep -Fq 'formatRawAssistantErrorForUi' "$issue_4434_patch"
 	grep -Fq 'OPENSHELL_SANDBOX !== "1"' "$issue_4434_patch"
-	grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
-	grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts' Dockerfile
-	grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \\' Dockerfile
+		grep -Fq 'nemoclaw: #4434 structured unreachable-inference diagnostic' "$issue_4434_patch"
+		grep -Fq 'COPY scripts/patch-openclaw-issue-4434-diagnostics.ts /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue-4434-diagnostics.ts \\' Dockerfile
+		device_self_approval_patch=${JSON.stringify(DEVICE_SELF_APPROVAL_PATCH)}
+		grep -Fq 'nemoclaw: reach gateway for bounded same-device scope approval' "$device_self_approval_patch"
+		grep -Fq 'nemoclaw: bounded same-device scope approval' "$device_self_approval_patch"
+		grep -Fq 'nemoclaw: validate bounded self-approval inside pairing lock' "$device_self_approval_patch"
+		grep -Fq 'COPY scripts/patch-openclaw-device-self-approval.ts /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts' Dockerfile
+		grep -Fq 'node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-device-self-approval.ts \\' Dockerfile
 
 	phase_count="$(grep -Ec '^RUN OPENCLAW_VERSION="[$][{]OPENCLAW_VERSION[}]" node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier\\.mts --agent openclaw --phase (runtime-setup|agent-install|post-agent-install)$' Dockerfile)"
 test "$phase_count" -eq 3

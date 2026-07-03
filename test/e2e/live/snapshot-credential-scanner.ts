@@ -4,13 +4,13 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { shouldStripCredentialEnv } from "../../../src/lib/security/credential-env.ts";
 import {
   isCredentialField,
   isSafeCredentialPlaceholder,
   shouldScanSnapshotFileForCredentials,
   valueLooksLikeSecret,
 } from "../../../src/lib/security/credential-filter.ts";
-import { shouldStripCredentialEnv } from "../../../src/lib/security/credential-env.ts";
 
 const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
 const ENV_ASSIGNMENT_PATTERN = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=/gm;

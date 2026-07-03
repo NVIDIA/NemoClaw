@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { runRealOpenClawDeviceSelfApprovalProof } from "./helpers/openclaw-real-device-self-approval-proof";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const PATCH_OPENCLAW_CHAT_SEND = path.join(REPO_ROOT, "scripts", "patch-openclaw-chat-send.js");
@@ -17,7 +19,10 @@ const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   "scripts",
   "patch-openclaw-issue-4434-diagnostics.ts",
 );
-const PATCH_COMMAND_TIMEOUT_MS = 45_000;
+// Focused patch scripts also scan the full generated dist. APFS cold-cache
+// reads can exceed one minute, so keep them bounded without using unit-fixture
+// timings as the real-artifact limit.
+const PATCH_COMMAND_TIMEOUT_MS = 120_000;
 // The compiled-dist classifier performs several full-tree grep/sed passes.
 // A cold 2026.6.10 materialization can exceed three minutes on macOS while the
 // same patch completes normally; keep this bounded below the 12-minute CI job.
@@ -380,6 +385,16 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           "issue-4434-diagnostics: already-applied",
           "#4434 patch state audit",
         );
+
+        // This proof installs the reviewed shrinkwrapped runtime dependencies
+        // with lifecycle scripts disabled. Keep it after every shape-only dist
+        // scan so dependency materialization cannot perturb their timing.
+        runRealOpenClawDeviceSelfApprovalProof({
+          dist,
+          patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.ts"),
+          timeoutMs: PATCH_COMMAND_TIMEOUT_MS,
+          tmp,
+        });
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }

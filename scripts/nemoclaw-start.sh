@@ -2402,11 +2402,10 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
-        getattr(module, 'recover_failed_scope_approval', None),
     )
 
 
-approval_request_decision, gateway_approval_env, recover_failed_scope_approval = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2491,16 +2490,12 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x and 2026.6.x, a gateway-pinned
-# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection, replace the pending request, and return the same
-# pending-scope error it is trying to resolve. List calls must stay
-# gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
-# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
-# pairing fallback. Remove this when OpenClaw approve can complete scope
-# upgrades through the gateway using only operator.pairing.
+# Workaround boundary (NemoClaw#4462): list calls stay gateway-pinned so the
+# watcher inspects live state. Approval calls drop the gateway env triplet so
+# OpenClaw resolves its local loopback gateway and device token. The reviewed
+# 2026.6.10 dist patch requests only operator.pairing for a complete bounded
+# CLI self-upgrade, then validates and commits it in OpenClaw's canonical
+# locked pairing writer. Remove both pieces when upstream supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
@@ -2614,19 +2609,6 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
-            elif callable(recover_failed_scope_approval):
-                recovered = recover_failed_scope_approval(
-                    request_id,
-                    os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw',
-                    aerr or aout or '',
-                    device,
-                )
-                if recovered:
-                    HANDLED.add(request_id)
-                    APPROVED += 1
-                    print(f'[auto-pair] recovered failed approve request={request_id} client={client_id} mode={client_mode}')
-                elif aout or aerr:
-                    print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
         # Drop previously-bumped requestIds that the gateway no longer reports
@@ -2986,107 +2968,18 @@ _nemoclaw_messaging_connect_node_options() {
   printf '%s' "$_nemoclaw_options"
 }
 openclaw() {
-  # NemoClaw#4462: keep user-initiated device approval usable from an
-  # interactive sandbox shell until upstream OpenClaw can approve scope
-  # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Approval calls temporarily drop the gateway
-  # URL/port/token; other commands keep the full gateway environment.
+  # NemoClaw#4462: approval calls temporarily drop the gateway URL/port/token
+  # so OpenClaw resolves the local loopback gateway and device token. The
+  # reviewed 2026.6.10 compatibility patch then performs bounded same-device
+  # scope upgrades in the gateway's canonical locked pairing writer. This
+  # wrapper never reads or writes pending.json/paired.json.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    _nemoclaw_approve_request_id="${3:-}"
-    _nemoclaw_approve_state_dir="${OPENCLAW_STATE_DIR:-/sandbox/.openclaw}"
-    _nemoclaw_approve_before=""
-    if [ -n "$_nemoclaw_approve_request_id" ] && command -v python3 >/dev/null 2>&1; then
-      _nemoclaw_approve_before="$(NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" python3 -I - <<'PYAPPROVEBEFORE' 2>/dev/null || true
-import json
-import os
-from pathlib import Path
-
-root = Path(os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw") / "devices"
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-try:
-    pending = json.loads((root / "pending.json").read_text(encoding="utf-8"))
-except Exception:
-    pending = {}
-if not isinstance(pending, dict):
-    pending = {}
-request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
-if request:
-    snapshot = {
-        "requestId": request_id,
-        "deviceId": request.get("deviceId"),
-        "publicKey": request.get("publicKey"),
-        "clientId": request.get("clientId"),
-        "clientMode": request.get("clientMode"),
-        "role": request.get("role"),
-        "roles": request.get("roles"),
-    }
-    for key in ("scopes", "requestedScopes"):
-        if key in request:
-            snapshot[key] = request.get(key)
-    print(json.dumps(snapshot, sort_keys=True))
-PYAPPROVEBEFORE
-)"
-    fi
     _nemoclaw_approve_errexit=0
     case $- in *e*) _nemoclaw_approve_errexit=1 ;; esac
     set +e
-    _nemoclaw_approve_output="$(unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" 2>&1)"
+    (unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@")
     _nemoclaw_approve_rc=$?
     if [ "$_nemoclaw_approve_errexit" = "1" ]; then set -e; else set +e; fi
-    if [ "$_nemoclaw_approve_rc" -eq 0 ]; then
-      printf '%s\n' "$_nemoclaw_approve_output"
-      return 0
-    fi
-    if [ -n "$_nemoclaw_approve_request_id" ] && [ -n "$_nemoclaw_approve_before" ] && command -v python3 >/dev/null 2>&1; then
-      if NEMOCLAW_APPROVE_REQUEST_ID="$_nemoclaw_approve_request_id" NEMOCLAW_APPROVE_STATE_DIR="$_nemoclaw_approve_state_dir" NEMOCLAW_APPROVE_BEFORE="$_nemoclaw_approve_before" NEMOCLAW_APPROVE_OUTPUT="$_nemoclaw_approve_output" python3 -I - <<'PYAPPROVEAFTER'; then
-import importlib.util
-import json
-import os
-import stat
-
-request_id = os.environ.get("NEMOCLAW_APPROVE_REQUEST_ID") or ""
-state_dir = os.environ.get("NEMOCLAW_APPROVE_STATE_DIR") or "/sandbox/.openclaw"
-approve_output = os.environ.get("NEMOCLAW_APPROVE_OUTPUT") or ""
-try:
-    before = json.loads(os.environ.get("NEMOCLAW_APPROVE_BEFORE") or "{}")
-except Exception:
-    before = {}
-
-policy_path = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py"
-try:
-    policy_stat = os.lstat(policy_path)
-except OSError:
-    raise SystemExit(1)
-policy_mode = policy_stat.st_mode
-if (
-    not stat.S_ISREG(policy_mode)
-    or policy_mode & (stat.S_IWGRP | stat.S_IWOTH)
-    or (policy_stat.st_uid == os.geteuid() and policy_mode & stat.S_IWUSR)
-):
-    raise SystemExit(1)
-spec = importlib.util.spec_from_file_location(
-    "openclaw_device_approval_policy", policy_path
-)
-if spec is None or spec.loader is None:
-    raise SystemExit(1)
-policy = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(policy)
-recover_failed_scope_approval = getattr(
-    policy, "recover_failed_scope_approval", None
-)
-if not callable(recover_failed_scope_approval):
-    raise SystemExit(1)
-recovered = recover_failed_scope_approval(
-    request_id, state_dir, approve_output, before
-)
-if not isinstance(recovered, dict):
-    raise SystemExit(1)
-print(json.dumps(recovered, sort_keys=True))
-PYAPPROVEAFTER
-        return 0
-      fi
-    fi
-    printf '%s\n' "$_nemoclaw_approve_output"
     return "$_nemoclaw_approve_rc"
   fi
   case "$1" in

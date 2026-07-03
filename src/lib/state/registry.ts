@@ -114,6 +114,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+  /** Internal durable operation revision for default-pointer ownership. */
+  defaultSelectionRevision?: number;
   extraProviders?: string[];
 }
 
@@ -337,6 +339,9 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -352,6 +357,9 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -468,6 +476,9 @@ export function registerSandbox(entry: SandboxEntry): void {
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
+      data.defaultSelectionRevision = reversibleRemoval.incrementDefaultSelectionRevision(
+        data.defaultSelectionRevision,
+      );
     }
     save(data);
   });
@@ -510,14 +521,19 @@ export function removeSandbox(name: string): boolean {
  * window).
  *
  * `defaultTransition` undoes the exact default-pointer move captured by the
- * removal receipt. It reclaims the original default only while the pointer
- * still equals the fallback selected by that removal, preserving a genuine
- * concurrent `setDefault` to any other sandbox.
+ * removal receipt. It reclaims the original default only while both the
+ * pointer and its operation revision still match that removal, preserving a
+ * concurrent `setDefault` even when the user explicitly chooses the same
+ * fallback sandbox.
  */
 export function restoreSandboxEntry(
   entry: SandboxEntry,
   options: {
-    defaultTransition?: { readonly from: string | null; readonly to: string };
+    defaultTransition?: {
+      readonly from: string | null;
+      readonly to: string;
+      readonly expectedRevision: number;
+    };
   } = {},
 ): void {
   withLock(() => {
@@ -526,9 +542,13 @@ export function restoreSandboxEntry(
     if (
       options.defaultTransition &&
       data.defaultSandbox === options.defaultTransition.from &&
+      data.defaultSelectionRevision === options.defaultTransition.expectedRevision &&
       data.sandboxes[options.defaultTransition.to]
     ) {
       data.defaultSandbox = options.defaultTransition.to;
+      data.defaultSelectionRevision = reversibleRemoval.incrementDefaultSelectionRevision(
+        data.defaultSelectionRevision,
+      );
     }
     save(data);
   });
@@ -557,6 +577,9 @@ export function setDefault(name: string): boolean {
     const data = load();
     if (!data.sandboxes[name]) return false;
     data.defaultSandbox = name;
+    data.defaultSelectionRevision = reversibleRemoval.incrementDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    );
     save(data);
     return true;
   });
@@ -564,7 +587,12 @@ export function setDefault(name: string): boolean {
 
 export function clearAll(): void {
   withLock(() => {
-    save({ sandboxes: {}, defaultSandbox: null });
+    const data = load();
+    const defaultSelectionRevision =
+      data.defaultSandbox === null
+        ? reversibleRemoval.normalizeDefaultSelectionRevision(data.defaultSelectionRevision)
+        : reversibleRemoval.incrementDefaultSelectionRevision(data.defaultSelectionRevision);
+    save({ sandboxes: {}, defaultSandbox: null, defaultSelectionRevision });
   });
 }
 

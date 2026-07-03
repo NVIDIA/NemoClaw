@@ -438,6 +438,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       entry: { name: "alpha", imageTag: "old-image" },
       wasDefault: preDeleteDefaultSandbox === "alpha",
       fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 1,
     });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);

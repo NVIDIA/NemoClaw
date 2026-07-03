@@ -600,6 +600,7 @@ describe("rebuildSandbox flow", () => {
       entry: { name: "alpha", imageTag: null },
       wasDefault: true,
       fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 1,
     });
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
