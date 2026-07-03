@@ -294,6 +294,16 @@ describe.skipIf(!canRun)(
           expect(run.stderr).toContain(varName);
           expect(run.stderr).not.toContain(sample);
           expect(run.stderr).not.toContain("opaque-test-body");
+
+          fs.writeFileSync(fixture.envFile, `${varName}="${sample}"\n`, "utf8");
+          const envFileRun = runBashWrapper(fixture, ["--version"], {});
+
+          expect(envFileRun.status).toBe(2);
+          expect(envFileRun.launched).toBe(false);
+          expect(envFileRun.stderr).toContain(path.join(dir, ".env"));
+          expect(envFileRun.stderr).not.toContain(sample);
+          expect(envFileRun.stderr).not.toContain("PRIVATE KEY-----");
+          expect(envFileRun.stderr).not.toContain("opaque-test-body");
         });
       }
     });

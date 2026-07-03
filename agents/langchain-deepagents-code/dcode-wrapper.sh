@@ -86,6 +86,19 @@ has_private_key_block_shape() {
   return 1
 }
 
+has_multiline_private_key_block_shape() {
+  local value="$1"
+  local begin_marker="-----BEGIN "
+  local end_marker="-----END "
+  local newline=$'\n'
+  case "$value" in
+    *"$begin_marker"*"PRIVATE KEY-----"*"$newline"*"$end_marker"*"PRIVATE KEY-----"*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 has_non_slack_secret_shape() {
   local value="$1"
   if has_private_key_block_shape "$value"; then
@@ -295,7 +308,13 @@ assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
   local -a lines=()
-  local line key value
+  local env_file_content line key value
+  # Scan the whole file before line parsing so raw multiline blocks cannot put
+  # their begin and end markers on different physical dotenv lines.
+  env_file_content="$(<"$env_file")"
+  if has_multiline_private_key_block_shape "$env_file_content"; then
+    refuse_secret_env "$env_file" "private-key block"
+  fi
   while IFS= read -r line || [ -n "$line" ]; do
     lines+=("$line")
   done <"$env_file"
