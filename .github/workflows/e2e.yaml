@@ -306,6 +306,16 @@ jobs:
             exit 1
           fi
 
+      - name: Configure live E2E trace directory
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}" >> "${GITHUB_ENV}"
+
+      # Configure NEMOCLAW_TRACE_DIR before workspace prep so every child
+      # command writes raw traces under runner temp, never under upload roots.
       - name: Prepare E2E workspace
         uses: NVIDIA/NemoClaw/.github/actions/prepare-e2e@50281ee84c4a6fc759da95ea28fc0b7d9c378a28
 
@@ -316,6 +326,40 @@ jobs:
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts -t "^${TARGET_ID}$" --silent=false --reporter=default
+
+      # The sanitizer reads raw traces only after checking the workflow-owned
+      # runner-temp path, then writes the timing-only file into upload roots.
+      - name: Build trusted live E2E timing summary
+        if: always()
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            exit 1
+          fi
+          python3 scripts/e2e/sanitize-trace-timing.py \
+            "${NEMOCLAW_TRACE_DIR}" \
+            "${E2E_ARTIFACT_DIR}/${TARGET_ID}"
+
+      # Cleanup intentionally runs after sanitization and before upload so raw
+      # trace JSON never becomes part of the uploaded artifact surface.
+      - name: Delete raw live E2E traces
+        if: always()
+        env:
+          TARGET_ID: ${{ matrix.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            exit 1
+          fi
+          rm -rf -- "${NEMOCLAW_TRACE_DIR}"
 
       - name: Summarize artifacts
         if: always()
@@ -370,6 +414,7 @@ jobs:
             e2e-artifacts/live/${{ matrix.id }}/environment.result.json
             e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json
             e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json
+            e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json
             e2e-artifacts/live/${{ matrix.id }}/actions/
             e2e-artifacts/live/${{ matrix.id }}/logs/
             e2e-artifacts/live/${{ matrix.id }}/shell/
@@ -2803,6 +2848,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            exit 1
+          fi
           python3 scripts/e2e/sanitize-trace-timing.py \
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}"

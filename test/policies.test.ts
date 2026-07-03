@@ -50,6 +50,12 @@ function parseRepoYaml(relativePath: string): Record<string, any> {
   >;
 }
 
+function presetInfoPath(preset: { file: string }): string {
+  return preset.file.includes("/")
+    ? path.join(REPO_ROOT, preset.file)
+    : path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file);
+}
+
 function parseResultPayload(stdout: string): any {
   const marker = "__RESULT__";
   const markerIndex = stdout.indexOf(marker);
@@ -1603,151 +1609,6 @@ exit 1
       }
     });
 
-    it("Slack REST endpoints opt into OpenShell request-body credential rewrite", () => {
-      const policySources = [
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets/slack.yaml"),
-          "utf8",
-        ),
-        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"), "utf8"),
-        fs.readFileSync(path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"), "utf8"),
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml"),
-          "utf8",
-        ),
-      ];
-      const slackRestHosts = new Set(["slack.com", "api.slack.com", "hooks.slack.com"]);
-
-      for (const content of policySources) {
-        const parsed = YAML.parse(content) as {
-          network_policies?: Record<
-            string,
-            {
-              endpoints?: Array<{
-                host?: string;
-                protocol?: string;
-                request_body_credential_rewrite?: boolean;
-              }>;
-            }
-          >;
-        };
-        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
-          (policy) => policy.endpoints ?? [],
-        );
-        for (const endpoint of endpoints.filter((candidate) =>
-          slackRestHosts.has(candidate.host ?? ""),
-        )) {
-          expect(endpoint).toMatchObject({
-            protocol: "rest",
-            request_body_credential_rewrite: true,
-          });
-        }
-      }
-    });
-
-    it("Hermes messaging gateway policies use native inspected WebSocket policy", () => {
-      const policyFiles = [
-        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
-        path.join(REPO_ROOT, "agents/hermes/policy-permissive.yaml"),
-      ];
-      const cases = [
-        "gateway.discord.gg",
-        "*.discord.gg",
-        "wss-primary.slack.com",
-        "wss-backup.slack.com",
-      ];
-
-      for (const file of policyFiles) {
-        const content = fs.readFileSync(file, "utf8");
-        const parsed = YAML.parse(content) as {
-          network_policies?: Record<
-            string,
-            {
-              endpoints?: Array<{
-                host?: string;
-                protocol?: string;
-                access?: string;
-                tls?: string;
-                websocket_credential_rewrite?: boolean;
-                rules?: Array<{ allow?: { method?: string; path?: string } }>;
-              }>;
-            }
-          >;
-        };
-        const endpoints = Object.values(parsed.network_policies ?? {}).flatMap(
-          (policy) => policy.endpoints ?? [],
-        );
-        for (const host of cases) {
-          const endpoint = endpoints.find((candidate) => candidate.host === host);
-          expect(endpoint).toBeTruthy();
-          expect(endpoint).toMatchObject({
-            protocol: "websocket",
-            enforcement: "enforce",
-            websocket_credential_rewrite: true,
-          });
-          expect(endpoint).not.toHaveProperty("access");
-          expect(endpoint).not.toHaveProperty("tls");
-          expect(endpoint?.rules).toEqual(
-            expect.arrayContaining([
-              { allow: { method: "GET", path: "/**" } },
-              { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
-            ]),
-          );
-        }
-      }
-    });
-
-    it("Hermes Discord REST mutations are scoped to discord.com", () => {
-      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
-      const networkPolicies = parsed.network_policies as Record<
-        string,
-        {
-          endpoints?: Array<{
-            host?: string;
-            rules?: Array<{ allow?: { method?: string; path?: string } }>;
-          }>;
-        }
-      >;
-      const rulesFor = (policy: string, host: string) =>
-        (networkPolicies[policy]?.endpoints ?? [])
-          .filter((endpoint) => endpoint.host === host)
-          .flatMap((endpoint) => endpoint.rules ?? [])
-          .map((rule) => rule.allow)
-          .filter((rule): rule is { method: string; path: string } =>
-            Boolean(rule?.method && rule?.path),
-          );
-      const sortRules = (rules: Array<{ method: string; path: string }>) =>
-        [...rules].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
-
-      const nousRules = rulesFor("nous_research", "nousresearch.com");
-      expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
-      expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
-      expect(nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method))).toEqual(
-        [],
-      );
-
-      const discordMutationRules = sortRules(
-        rulesFor("discord", "discord.com").filter((rule) =>
-          ["PUT", "PATCH", "DELETE"].includes(rule.method),
-        ),
-      );
-      expect(discordMutationRules).toEqual(
-        sortRules([
-          { method: "PUT", path: "/api/v*/applications/*/commands" },
-          { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
-          { method: "PATCH", path: "/api/v*/applications/*" },
-          { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
-          { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
-          { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
-          { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
-        ]),
-      );
-      expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
-    });
-
     it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
       const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const pypiPolicy = parsed.network_policies?.pypi as
@@ -1809,11 +1670,7 @@ exit 1
         : [];
       const policyFiles = [
         path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-        ...policies
-          .listPresets()
-          .map((preset) =>
-            path.join(REPO_ROOT, "nemoclaw-blueprint/policies/presets", preset.file),
-          ),
+        ...policies.listPresets().map((preset) => presetInfoPath(preset)),
         ...agentPolicyFiles,
       ];
 

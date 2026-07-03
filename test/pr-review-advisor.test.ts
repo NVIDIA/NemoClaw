@@ -214,9 +214,9 @@ describe("PR review advisor", () => {
   });
 
   it("classifies sandbox and workflow changes as requiring deeper validation", () => {
-    expect(classifyTestDepth(["nemoclaw-blueprint/policies/presets/slack.yaml"]).verdict).toBe(
-      "runtime_validation_recommended",
-    );
+    expect(
+      classifyTestDepth(["src/lib/messaging/channels/slack/policy/openclaw.yaml"]).verdict,
+    ).toBe("runtime_validation_recommended");
     expect(classifyTestDepth(["src/lib/credentials.ts"]).verdict).toBe("mocks_recommended");
     expect(classifyTestDepth(["docs/get-started/quickstart.mdx"]).verdict).toBe("unit_sufficient");
   });

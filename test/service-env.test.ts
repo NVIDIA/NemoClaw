@@ -997,6 +997,9 @@ describe("service environment", () => {
           "set +u",
           persistBlock,
           extractRuntimeShellEnvShimSnippet(),
+          // validate_tmp_permissions also inspects fixed runtime log paths; keep
+          // this fixture independent of ambient /tmp state left by other tests.
+          "install -m 600 /dev/null /tmp/gateway.log",
           "validate_tmp_permissions " + JSON.stringify(proxyEnvPath),
         ].join("\n");
         writeFileSync(tmpFile, wrapper, { mode: 0o700 });

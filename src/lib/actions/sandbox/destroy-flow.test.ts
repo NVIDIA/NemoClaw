@@ -20,6 +20,7 @@ type DestroyHarness = {
   removeSandboxSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
+  stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
   shieldsUpSpy: MockInstance;
@@ -29,6 +30,7 @@ type DestroyHarnessOptions = {
   activeTimer?: boolean;
   deleteStatus?: number;
   deleteOutput?: string;
+  registeredSandboxCount?: number;
   shieldsUpError?: Error;
 };
 
@@ -69,7 +71,11 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     sessions: [{ pid: 1 }],
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    sandboxes: Array.from({ length: options.registeredSandboxCount ?? 0 }, (_, i) => ({
+      name: `sb-${i}`,
+    })),
+  });
   const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockReturnValue(true);
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
@@ -117,7 +123,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const unloadOllamaModelsSpy = vi
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
-  vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
   vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
     options.activeTimer
       ? {
@@ -156,6 +162,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     removeSandboxSpy,
     runOpenshellSpy,
     selectGatewaySpy,
+    stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
     shieldsUpSpy,
@@ -218,6 +225,27 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(7);
+  });
+
+  it("does not stop shared host services when --force cleans up the last sandbox with the gateway down (#6046)", async () => {
+    // Gateway-unreachable delete failure + --force triggers forcedLocalCleanup:
+    // the local record is removed but the gateway-side delete was never
+    // confirmed, so the sandbox may still exist. Even as the only registered
+    // sandbox, that must not tear down shared host services (CodeRabbit #6050).
+    const harness = createDestroyHarness({
+      deleteStatus: 1,
+      deleteOutput: "error trying to connect: connection refused",
+      registeredSandboxCount: 1,
+    });
+
+    await expect(harness.destroySandbox("alpha", { force: true })).resolves.toBeUndefined();
+
+    // Local cleanup still proceeds...
+    expect(harness.removeSandboxSpy).toHaveBeenCalledWith("alpha");
+    // ...but shared host services are preserved on the unconfirmed delete.
+    expect(harness.stopAllSpy).not.toHaveBeenCalled();
+    expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {

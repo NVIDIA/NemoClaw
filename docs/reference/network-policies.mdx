@@ -73,8 +73,8 @@ The baseline policy is always applied regardless of the selected tier.
 | Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
-Tier-default presets are pre-selected; additional presets can be added from the full list.
-NemoClaw filters tier defaults by the active agent's supported integrations.
+Tier-default presets are pre-selected; additional presets can be added from the built-in preset list available to the sandbox's active agent.
+NemoClaw filters tier defaults and built-in preset choices by the active agent's supported integrations.
 For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 Hermes managed-tool gateway selections can add Hermes-specific presets, such as Nous-hosted web, image, audio, browser, or code tools, without applying unsupported OpenClaw-only presets.
 OpenClaw onboarding also adds the `openclaw-pricing` preset on top of tier defaults so session-cost records can populate from LiteLLM and OpenRouter without manual configuration.
