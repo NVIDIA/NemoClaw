@@ -91,13 +91,18 @@ describe("Telegram mention diagnostics in doctor", () => {
     );
   });
 
-  it("reports Hermes all-messages mode from telegram.require_mention (#5691)", async () => {
+  it.each([
+    ["configured mention-only", "1", true, "ok", "mention-only (1)"],
+    ["configured all-messages", "0", false, "ok", "all-messages (0)"],
+    ["default mention-only", undefined, true, "ok", "mention-only (1, default)"],
+    ["rendered drift", "0", true, "warn", "expected all-messages (0); rendered mention-only (1)"],
+  ] as const)("reports Hermes %s Telegram group replies (#5691)", async (_caseName, configuredValue, renderedValue, expectedStatus, expectedDetail) => {
     const harness = createDoctorHarness();
-    const openClawMessaging = telegramMessaging("0");
+    const messaging = telegramMessaging(configuredValue);
     const hermesMessaging = {
-      ...openClawMessaging,
+      ...messaging,
       plan: {
-        ...openClawMessaging.plan,
+        ...messaging.plan,
         agent: "hermes" as const,
       },
     };
@@ -125,7 +130,7 @@ describe("Telegram mention diagnostics in doctor", () => {
       command.includes("/sandbox/.hermes/config.yaml")
         ? {
             status: 0,
-            stdout: "telegram:\n  require_mention: false\n",
+            stdout: `telegram:\n  require_mention: ${renderedValue}\n`,
             stderr: "",
           }
         : { status: 0, stdout: "ok", stderr: "" },
@@ -137,8 +142,8 @@ describe("Telegram mention diagnostics in doctor", () => {
       expect.objectContaining({
         group: "Messaging",
         label: "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
-        status: "ok",
-        detail: "all-messages (0)",
+        status: expectedStatus,
+        detail: expectedDetail,
       }),
     );
     expect(harness.executeSandboxCommandForVerificationSpy).toHaveBeenCalledWith(

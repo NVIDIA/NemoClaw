@@ -42,6 +42,10 @@ type ExpectedConfigValue = {
   readonly hasValue: boolean;
 };
 
+/**
+ * Returns `null` when the selected agent does not render this config input, so
+ * callers can omit diagnostics that have no agent-specific source to compare.
+ */
 export function configInputSignal(
   input: ChannelConfigInputSpec,
   planInput: SandboxMessagingInputReference | undefined,

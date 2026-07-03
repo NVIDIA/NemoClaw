@@ -95,7 +95,7 @@ describe("telegram rendered config parser", () => {
     ).toBe(false);
   });
 
-  it("reports mixed OpenClaw group overrides without claiming one global mode (#5691)", () => {
+  it("reports mixed OpenClaw group overrides as sorted unique values (#5691)", () => {
     const requireMentionKey = telegramRenderedConfigParser
       .listConfigVisibilityKeys(openClawContext)
       .find((key) => key.key === "openclawGroupRequireMention");
