@@ -12,6 +12,14 @@ import { reviewedOpenClawPluginIntegrityByPackageSpec } from "../src/lib/messagi
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
+const PRODUCTION_DOCKERFILES = [
+  DOCKERFILE,
+  DOCKERFILE_BASE,
+  path.join(REPO_ROOT, "agents", "hermes", "Dockerfile"),
+  path.join(REPO_ROOT, "agents", "hermes", "Dockerfile.base"),
+  path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "Dockerfile"),
+  path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "Dockerfile.base"),
+];
 const BLUEPRINT = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
 const DEPENDENCY_REVIEW_NOTE = path.join(
   REPO_ROOT,
@@ -185,6 +193,19 @@ function runProductionBuildArgGuard(
     encoding: "utf-8",
     env: { ...process.env, ...env },
   });
+}
+
+function declaredProductionPinArgNames(): string[] {
+  const names = PRODUCTION_DOCKERFILES.flatMap((dockerfile) =>
+    fs
+      .readFileSync(dockerfile, "utf-8")
+      .split("\n")
+      .flatMap((line) => {
+        const match = /^ARG ([A-Z_][A-Z0-9_]*(?:_INTEGRITY|_TARBALL))(?:=|$)/.exec(line);
+        return match?.[1] ? [match[1]] : [];
+      }),
+  );
+  return [...new Set(names)].sort();
 }
 
 function runOptionalOpenClawPluginBlock(
@@ -822,6 +843,48 @@ describe("OpenClaw npm integrity pins", () => {
       expect(result.status, JSON.stringify(args)).toBe(1);
       expect(result.stderr).toContain("must not contain CR or LF characters");
     }
+  });
+
+  it("production build arg guard rejects current reviewed pin overrides", () => {
+    const currentPinArgNames = declaredProductionPinArgNames();
+    expect(currentPinArgNames).toEqual([
+      "CODEX_ACP_0_11_1_INTEGRITY",
+      "HERMES_NPM_INTEGRITY",
+      "OPENCLAW_2026_3_11_INTEGRITY",
+      "OPENCLAW_2026_3_11_TARBALL",
+      "OPENCLAW_2026_4_24_INTEGRITY",
+      "OPENCLAW_2026_4_24_TARBALL",
+      "OPENCLAW_2026_6_10_INTEGRITY",
+      "OPENCLAW_2026_6_10_TARBALL",
+      "OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY",
+      "OPENCLAW_DIAGNOSTICS_OTEL_2026_6_10_INTEGRITY",
+    ]);
+
+    const futurePinArgNames = [
+      "OPENCLAW_FUTURE_PLUGIN_2099_1_1_INTEGRITY",
+      "FUTURE_DEPENDENCY_2099_1_1_TARBALL",
+    ];
+    for (const pinArgName of [...currentPinArgNames, ...futurePinArgNames]) {
+      for (const args of [
+        [`${pinArgName}=attacker-controlled`],
+        [`--build-arg=${pinArgName}=attacker-controlled`],
+        ["--build-arg", `${pinArgName}=attacker-controlled`],
+        ["--build-arg", pinArgName],
+      ]) {
+        const result = runProductionBuildArgGuard(args);
+        expect(result.status, args.join(" ")).toBe(1);
+        expect(result.stderr).toContain("pin overrides are not allowed");
+      }
+    }
+
+    for (const pinArgName of currentPinArgNames) {
+      const envResult = runProductionBuildArgGuard([], { [pinArgName]: "attacker-controlled" });
+      expect(envResult.status, pinArgName).toBe(1);
+      expect(envResult.stderr).toContain("pin overrides are not allowed");
+    }
+
+    expect(runProductionBuildArgGuard([], { RELEASE_INTEGRITY: "verified" }).status).toBe(0);
+    expect(runProductionBuildArgGuard([], { SOURCE_TARBALL: "source.tgz" }).status).toBe(0);
   });
 
   it("fails closed before npm install when the registry integrity drifts", () => {

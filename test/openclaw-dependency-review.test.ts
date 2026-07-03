@@ -242,6 +242,8 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
     expect(review).toContain("machine.state='openclaw'");
     expect(review).toContain("scripts/check-production-build-args.sh");
+    expect(review).toContain("every declared integrity/tarball ARG override");
+    expect(review).toContain("future-shaped positional pin names");
     expect(review).toContain("Recovered Gateway Credential Boundary");
     expect(review).toContain("OpenClaw Device Approval Convergence Boundary");
     expect(review).toContain("retry through an `isRepair: true` admin-shaped request");

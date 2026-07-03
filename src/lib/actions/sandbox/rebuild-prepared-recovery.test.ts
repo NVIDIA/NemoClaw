@@ -144,7 +144,7 @@ describe("prepared rebuild recovery", () => {
 
     expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      { reclaimDefault: null },
+      {},
     );
   });
 
@@ -189,7 +189,7 @@ describe("prepared rebuild recovery", () => {
     expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
     expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
       expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
-      { reclaimDefault: "alpha" },
+      { defaultTransition: { from: null, to: "alpha" } },
     );
     expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
   });

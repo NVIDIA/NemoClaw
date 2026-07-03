@@ -252,13 +252,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     nimContainer: null,
     ...(overrides.sandboxEntry ?? {}),
   };
+  const preDeleteDefaultSandbox =
+    overrides.preDeleteDefaultSandbox === undefined ? "alpha" : overrides.preDeleteDefaultSandbox;
   vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
   let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     return {
-      defaultSandbox: isPreDeleteRead ? (overrides.preDeleteDefaultSandbox ?? "alpha") : "alpha",
+      defaultSandbox: isPreDeleteRead ? preDeleteDefaultSandbox : "alpha",
       sandboxes: {
         alpha:
           isPreDeleteRead && overrides.preDeleteSandboxEntry
@@ -339,7 +341,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
     entry: { name: "alpha", imageTag: "old-image" },
-    wasDefault: true,
+    wasDefault: preDeleteDefaultSandbox === "alpha",
     fallbackDefault: null,
   });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
