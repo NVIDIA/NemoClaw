@@ -51,7 +51,6 @@ state_dirs:
 # user-added service credentials; this managed harness disables MCP at runtime.
 state_files:
   - path: config.toml
-  - path: hooks.json
 user_managed_files:
   - .env
   - .mcp.json

@@ -124,10 +124,7 @@ describe("agent definitions", () => {
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
     expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-    expect(deepAgentsCode.stateFiles).toEqual([
-      { path: "config.toml", strategy: "copy" },
-      { path: "hooks.json", strategy: "copy" },
-    ]);
+    expect(deepAgentsCode.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
     expect(deepAgentsCode.userManagedFiles).toEqual([".env", ".mcp.json"]);
   });

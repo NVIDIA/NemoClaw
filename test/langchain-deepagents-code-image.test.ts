@@ -57,11 +57,18 @@ function readAgentFile(name: string): string {
 function makeWrapperFixture(
   tempDir: string,
   envFileOverride?: string,
-): { wrapperPath: string; ranMarker: string; envFile: string; authFile: string } {
+): {
+  wrapperPath: string;
+  ranMarker: string;
+  envFile: string;
+  authFile: string;
+  codexAuthFile: string;
+} {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
   const envFile = envFileOverride ?? path.join(tempDir, ".env");
   const authFile = path.join(tempDir, "auth.json");
+  const codexAuthFile = path.join(tempDir, "chatgpt-auth.json");
   const fixture = readAgentFile("dcode-wrapper.sh")
     .replace(
       'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
@@ -72,13 +79,18 @@ function makeWrapperFixture(
       `readonly DEEPAGENTS_AUTH_FILE="${authFile}"`,
     )
     .replace(
-      "exec python3 -m deepagents_code",
-      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : python3 -m deepagents_code`,
+      'readonly DEEPAGENTS_CODEX_AUTH_FILE="/sandbox/.deepagents/.state/chatgpt-auth.json"',
+      `readonly DEEPAGENTS_CODEX_AUTH_FILE="${codexAuthFile}"`,
+    )
+    .replace('/opt/venv/bin/python3 -I - "$auth_file"', 'python3 -I - "$auth_file"')
+    .replace(
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, fixture, "utf8");
   fs.chmodSync(wrapperPath, 0o755);
-  return { wrapperPath, ranMarker, envFile, authFile };
+  return { wrapperPath, ranMarker, envFile, authFile, codexAuthFile };
 }
 
 function makeNetworkSimulatingFixture(tempDir: string): {
@@ -95,8 +107,8 @@ function makeNetworkSimulatingFixture(tempDir: string): {
       `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
     )
     .replace(
-      "exec python3 -m deepagents_code",
-      `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : python3 -m deepagents_code`,
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, fixture, "utf8");
@@ -133,7 +145,17 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
 
 const PROXY_URL_ENV_NAMES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 const NO_PROXY_ENV_NAMES = ["NO_PROXY", "no_proxy"] as const;
-const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy"] as const;
+const CLEARED_PROXY_ENV_NAMES = ["ALL_PROXY", "all_proxy", "OPENAI_PROXY"] as const;
+const TRACING_ENABLE_ENV_NAMES = [
+  "DEEPAGENTS_CODE_LANGSMITH_TRACING",
+  "DEEPAGENTS_CODE_LANGSMITH_TRACING_V2",
+  "DEEPAGENTS_CODE_LANGCHAIN_TRACING",
+  "DEEPAGENTS_CODE_LANGCHAIN_TRACING_V2",
+  "LANGSMITH_TRACING",
+  "LANGSMITH_TRACING_V2",
+  "LANGCHAIN_TRACING",
+  "LANGCHAIN_TRACING_V2",
+] as const;
 
 function runStartScriptProxyProbe(
   scriptPath: string,
@@ -141,16 +163,22 @@ function runStartScriptProxyProbe(
   env: NodeJS.ProcessEnv,
 ): { envFileText: string; output: string } {
   const probe = [
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
-      (name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`,
-    ),
+    ...[
+      ...PROXY_URL_ENV_NAMES,
+      ...NO_PROXY_ENV_NAMES,
+      ...CLEARED_PROXY_ENV_NAMES,
+      ...TRACING_ENABLE_ENV_NAMES,
+    ].map((name) => `printf 'RUNTIME_${name}=%s\\n' "\${${name}-__unset__}"`),
     "unset HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy ALL_PROXY all_proxy",
     "export ALL_PROXY=socks5://persisted-user:persisted-password@persisted-all-proxy.example:1080",
     "export all_proxy=socks5://lower-persisted-user:lower-persisted-password@lower-persisted-all-proxy.example:1080",
     '. "$NEMOCLAW_TEST_PROXY_ENV"',
-    ...[...PROXY_URL_ENV_NAMES, ...NO_PROXY_ENV_NAMES, ...CLEARED_PROXY_ENV_NAMES].map(
-      (name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`,
-    ),
+    ...[
+      ...PROXY_URL_ENV_NAMES,
+      ...NO_PROXY_ENV_NAMES,
+      ...CLEARED_PROXY_ENV_NAMES,
+      ...TRACING_ENABLE_ENV_NAMES,
+    ].map((name) => `printf 'SOURCED_${name}=%s\\n' "\${${name}-__unset__}"`),
   ].join("\n");
   const result = spawnSync("bash", [scriptPath, "bash", "-c", probe], {
     env: {
@@ -217,22 +245,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("exec sleep infinity");
   });
 
-  it("does not serialize provider or optional service secrets into the shell env file", () => {
-    const startScript = readAgentFile("start.sh");
-    expect(startScript).toContain('chmod 444 "$tmp"');
-    expect(startScript).toContain("write_export_if_set HTTPS_PROXY");
-    expect(startScript).not.toContain("write_proxy_export_pair");
-    expect(startScript).toContain("export DEEPAGENTS_CODE_LANGSMITH_TRACING=false");
-    expect(startScript).toContain("export LANGSMITH_TRACING=false");
-    expect(startScript).toContain("export DEEPAGENTS_CODE_OFFLINE=1");
-    expect(startScript).toContain("export DEEPAGENTS_CODE_RIPGREP_INSTALLER=system");
-    expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-    expect(startScript).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
-    expect(startScript).not.toMatch(
-      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY|LANGSMITH_TRACING|LANGSMITH_PROJECT|DEEPAGENTS_CODE_LANGSMITH_PROJECT)\b/,
-    );
-  });
-
   it("sources the managed runtime environment in interactive and login shells (#6191)", () => {
     const baseDockerfile = readAgentFile("Dockerfile.base");
     const sourceLine = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
@@ -272,6 +284,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       LANGSMITH_PROJECT: `lsv2_pt_${"E".repeat(36)}_${"F".repeat(10)}`,
       DEEPAGENTS_CODE_LANGSMITH_PROJECT: `lsv2_sk_${"G".repeat(36)}_${"H".repeat(10)}`,
     };
+    const inheritedTracingFlags = Object.fromEntries(
+      TRACING_ENABLE_ENV_NAMES.map((name) => [name, "true"]),
+    );
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       HTTPS_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
@@ -281,7 +296,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
       no_proxy: "corp.internal,inference.local",
       ALL_PROXY: "socks5://all-user:all-password@all-proxy.example:1080",
       all_proxy: "socks5://lower-all-user:lower-all-password@lower-all-proxy.example:1080",
+      OPENAI_PROXY: "http://openai-user:openai-password@attacker.example:8080",
       ...inheritedSecrets,
+      ...inheritedTracingFlags,
     });
     const managedProxy = "http://10.200.0.1:3128";
     const managedNoProxy = "localhost,127.0.0.1,::1,10.200.0.1";
@@ -299,7 +316,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(outputLines).toContain(`SOURCED_${name}=${managedNoProxy}`);
       expect(envFileLines).toContain(`export ${name}=${managedNoProxy.replaceAll(",", "\\,")}`);
     }
-    expect(envFileLines).toContain("unset ALL_PROXY all_proxy");
+    for (const name of TRACING_ENABLE_ENV_NAMES) {
+      expect(outputLines).toContain(`RUNTIME_${name}=false`);
+      expect(outputLines).toContain(`SOURCED_${name}=false`);
+      expect(envFileLines).toContain(`export ${name}=false`);
+    }
+    expect(envFileLines).toContain("unset ALL_PROXY all_proxy OPENAI_PROXY");
     expect(
       outputLines.filter((line) => /^(?:RUNTIME|SOURCED)_(?:NO_PROXY|no_proxy)=/.test(line)),
     ).not.toEqual(expect.arrayContaining([expect.stringContaining("inference.local")]));
@@ -332,9 +354,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("deepagents-code==0.1.30");
     expect(wrapper).toContain("Schema pin");
     expect(wrapper).toContain("truthy top-level");
-    expect(wrapper).toContain("exec python3 -m deepagents_code");
+    expect(wrapper).toContain("unset PYTHONHOME PYTHONPATH");
+    expect(wrapper).toContain('/opt/venv/bin/python3 -I - "$auth_file"');
+    expect(wrapper).toContain("exec /opt/venv/bin/python3 -I -m deepagents_code");
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(wrapper).toContain("assert_no_auth_store_credentials");
+    expect(wrapper).toContain("assert_no_codex_auth_credentials");
     for (const s of [
       "export DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
       "export LANGSMITH_TRACING=false",
@@ -818,7 +843,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const review = readAgentFile("dependency-review.md");
 
     expect(review).toContain("requirements.lock");
-    expect(review).toContain("47ebb552378f5071db027659d39c3de94785bd52a75a77b59fd63f844aa44794");
+    expect(review).toContain("229efec862ec10e6b128525e95c8fb8b44cdef8285a6cee78e3a7c73af780a9b");
+    expect(review).toContain("Audit date: 2026-07-03");
     expect(review).toContain(
       "uvx --python 3.13 pip-audit -r agents/langchain-deepagents-code/requirements.lock --progress-spinner off",
     );
@@ -1103,6 +1129,19 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
+  it("rejects the separate ChatGPT OAuth token store before dcode runs", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-codex-auth-"));
+    const { wrapperPath, ranMarker, codexAuthFile } = makeWrapperFixture(tempDir);
+    fs.writeFileSync(codexAuthFile, "{}", "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("chatgpt-auth.json");
+    expect(result.stderr).toContain("stored Deep Agents Code credentials");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
   it.each([
     { args: ["update"], posture: "dependency update posture" },
     { args: ["install", "anthropic"], posture: "dependency update posture" },
@@ -1119,6 +1158,26 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(posture);
     expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it.each([
+    ["--update"],
+    ["--upd"],
+    ["--auto-update"],
+    ["--auto-upd"],
+    ["--install", "nvidia"],
+    ["--install=nvidia"],
+    ["--inst", "nvidia"],
+    ["--install", "provider-package", "--package", "--yes"],
+  ])("rejects upstream global mutation flags before dcode runs: %s", (...args) => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-global-flag-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+
+    const result = runWrapper(wrapperPath, args, {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("dependency update posture");
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 

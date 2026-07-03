@@ -91,7 +91,11 @@ function writeDcodeWrapperFixture(tmpDir: string, home: string): string {
       path.join(REPO_ROOT, "agents", "langchain-deepagents-code", "dcode-wrapper.sh"),
       "utf8",
     )
-    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`);
+    .replace("export HOME=/sandbox", `export HOME=${JSON.stringify(home)}`)
+    .replace(
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `exec env PYTHONPATH=${JSON.stringify(path.join(tmpDir, "python"))} python3 -m deepagents_code`,
+    );
   fs.writeFileSync(wrapperPath, wrapper, { mode: 0o755 });
   return wrapperPath;
 }

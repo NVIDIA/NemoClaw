@@ -70,8 +70,8 @@ function buildFixture(tempDir: string, configContent: string): Fixture {
       `readonly DEEPAGENTS_CONFIG_FILE="${configFile}"`,
     )
     .replace(
-      "exec python3 -m deepagents_code",
-      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : python3 -m deepagents_code`,
+      "exec /opt/venv/bin/python3 -I -m deepagents_code",
+      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : /opt/venv/bin/python3 -I -m deepagents_code`,
     );
   fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(configFile, configContent, "utf8");
