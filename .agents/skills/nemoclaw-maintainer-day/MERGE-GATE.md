@@ -22,10 +22,7 @@ For the full priority list see [PR-REVIEW-PRIORITIES.md](PR-REVIEW-PRIORITIES.md
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number>
 ```
 
-This checks all gates programmatically and returns structured JSON with `allPass`, per-gate
-`pass`/`details`, and non-blocking `advisories`, including contributor/approver overlap. Use
-[PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) for the shared triage loop when
-individual findings need investigation.
+This checks all gates programmatically and returns structured JSON with `allPass`, per-gate `pass`/`details`, and non-blocking `advisories`, including contributor/approver overlap. Use [PR CI and Automated Review Follow-Up](../_shared/pr-follow-up.md) for the shared triage loop when individual findings need investigation.
 
 ## Step 2: Interpret Results
 
@@ -33,11 +30,7 @@ The script handles the deterministic checks. You handle judgment calls:
 
 - **Missing required checks:** The script verifies that `checks`, `commit-lint`, and `dco-check` are present in the status rollup. If any are missing, **workflows have not been triggered** — this happens on fork PRs from first-time contributors that need "Approve and run" clicked in the Actions tab. Go to the PR's Checks tab, approve the workflows, wait for all checks to complete, then re-run the gate checker. **Never approve a PR with missing checks.**
 - **Contributor compliance failed:** Reject the PR and ask the contributor to provide the PR-body DCO declaration or replace unverified commits with a clean verified history. Do not approve, merge, amend, sign, or force-push on the contributor's behalf.
-- **Contributor/approver overlap:** Surface `advisories.contributorApprovalOverlap` when the same
-  account appears as the current PR opener, commit author, or co-author and its latest opinionated
-  review is approved. This snapshot does not track push-only or rebased-away contributors. The
-  warning is advisory: it does not invalidate the approval, require another reviewer, or change
-  `allPass` or merge readiness.
+- **Contributor/approver overlap:** Surface `advisories.contributorApprovalOverlap` when the same account appears as the current PR opener, commit author, or co-author and its latest opinionated review is approved. This snapshot does not track push-only or rebased-away contributors. The warning is advisory: it does not invalidate the approval, require another reviewer, or change `allPass` or merge readiness.
 - **Conflicts (DIRTY):** Do NOT approve — GitHub invalidates approvals when new commits are pushed. Salvage first (rebase), wait for CI, then re-run the gate checker. Follow [SALVAGE-PR.md](SALVAGE-PR.md).
 - **CI failing but narrow:** Follow the salvage workflow in [SALVAGE-PR.md](SALVAGE-PR.md).
 - **CI pending:** Wait and re-check. Do not approve while checks are still running.
@@ -53,11 +46,9 @@ The correct sequence for a conflicted PR: **salvage (rebase) → CI green → ap
 
 **All pass + no conflicts:** Approve and summarize why.
 
-After submitting an approval, re-run the gate checker before reporting the PR ready. This captures
-an approval that creates contributor/approver overlap during the current maintainer pass.
+After submitting an approval, re-run the gate checker before reporting the PR ready. This captures an approval that creates contributor/approver overlap during the current maintainer pass.
 
-If the contributor/approver advisory is present, include it in the summary without converting it
-into a failed gate.
+If the contributor/approver advisory is present, include it in the summary without converting it into a failed gate.
 
 **Any fail:**
 
