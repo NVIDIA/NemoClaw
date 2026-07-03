@@ -42,12 +42,12 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 # Dependency review evidence for this runtime pin lives in
-# docs/security/openclaw-2026.6.9-dependency-review.md.
-ARG OPENCLAW_VERSION=2026.6.9
-ARG OPENCLAW_2026_6_9_INTEGRITY=sha512-y0PGUdE87S8QtQXABPDL0CjNKhH3q/R1h9/WiRQkhVCGSBVhs63/M1iZn2DYVyJCAbDyMz3KNyAE0WzSQIWCRg==
-ARG OPENCLAW_2026_6_9_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.6.9.tgz
-ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_6_9_INTEGRITY=sha512-jU2q4L6L3qdZZDEIDXrWgwCWOGUaTSF+YzUlfgHED42TB4N3maF6seYchFpwKLB8neOzIDpnzMagEMjxZ/7Wqw==
-ARG OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY=sha512-8HawXB5ylo+vkvkmDJZAE9uhOtm0l9YtzrVqJdM4UqwXeF4uGAkVEOrR3Hxy0sI3Moi5ZBzq2Jx/K5ZQKdiWjQ==
+# docs/security/openclaw-2026.6.10-dependency-review.md.
+ARG OPENCLAW_VERSION=2026.6.10
+ARG OPENCLAW_2026_6_10_INTEGRITY=sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==
+ARG OPENCLAW_2026_6_10_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz
+ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_6_10_INTEGRITY=sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==
+ARG OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY=sha512-DDRnb4reL99O8kbISNbRFyk/xoUPYHsXG3UGikKAsVs+zIldYYA0hY0d3Z2aWoE+0vfda27mJUByCo7Xr15qdw==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
 # behavior. Production workflows reject the fixture flag, both legacy version
@@ -64,7 +64,7 @@ ARG CODEX_ACP_0_11_1_INTEGRITY=sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLr
 # credential chains from attempting an impossible metadata discovery path.
 ENV AWS_EC2_METADATA_DISABLED=true
 
-# OpenClaw 2026.6.9 loads some generated source through jiti. Disable its
+# OpenClaw 2026.6.10 loads some generated source through jiti. Disable its
 # filesystem transform cache so source fragments that mention provider marker
 # names do not persist under /tmp/jiti inside the sandbox.
 ENV JITI_FS_CACHE=false
@@ -223,7 +223,7 @@ RUN set -eu; \
     fi; \
     EXPECTED_INTEGRITY=""; \
     EXPECTED_TARBALL=""; \
-    if [ "$OPENCLAW_VERSION" = "2026.6.9" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_6_9_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_6_9_TARBALL"; fi; \
+    if [ "$OPENCLAW_VERSION" = "2026.6.10" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_6_10_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_6_10_TARBALL"; fi; \
     if [ "$OPENCLAW_VERSION" = "2026.3.11" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_3_11_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_3_11_TARBALL"; fi; \
     if [ "$OPENCLAW_VERSION" = "2026.4.24" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_4_24_INTEGRITY"; EXPECTED_TARBALL="$OPENCLAW_2026_4_24_TARBALL"; fi; \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
@@ -274,7 +274,7 @@ RUN set -eu; \
     rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
     npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
     case "$OPENCLAW_VERSION" in \
-        2026.4.24|2026.6.9) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+        2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
         2026.3.11) ;; \
         *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
     esac; \
@@ -445,7 +445,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
-    # Reviewed against openclaw@2026.6.9 dist: fetchWithWebToolsNetworkGuard \
+    # Reviewed against openclaw@2026.6.10 dist: fetchWithWebToolsNetworkGuard \
     # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
     # the SSRF guard consumes policy.allowedHostnames to skip private-network \
     # checks for an exact normalized hostname. hostnameAllowlist only gates \
@@ -481,7 +481,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 4: route unconfigured strict fetches through the sandbox egress proxy (#4687) --- \
-    # Reviewed against openclaw@2026.6.9 dist fetch-guard: the STRICT-mode \
+    # Reviewed against openclaw@2026.6.10 dist fetch-guard: the STRICT-mode \
     # managed-proxy gate is `mode === GUARDED_FETCH_MODE.STRICT && \
     # isManagedProxyActive() && hasProxyEnvConfigured()`. Extend activation to \
     # OPENSHELL_SANDBOX=1 only for fetches with no explicit dispatcherPolicy so \
@@ -515,7 +515,7 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
-    # Reviewed against openclaw@2026.6.9 dist: the cron isolated-agent preflight \
+    # Reviewed against openclaw@2026.6.10 dist: the cron isolated-agent preflight \
     # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
     # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
     # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
@@ -625,7 +625,7 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.6.9.
+# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.6.10.
 #
 # OpenClaw can accept rapid TUI/WebChat chat.send requests and then emit a
 # terminal chat event with state="final" but no assistant message for the later
@@ -643,7 +643,7 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
 
 # Patch OpenClaw TUI unreachable-inference diagnostics for #4434.
 #
-# OpenClaw 2026.6.9 formats sandbox inference egress failures as either generic
+# OpenClaw 2026.6.10 formats sandbox inference egress failures as either generic
 # `TypeError: fetch failed` or `LLM request timed out.` messages, which leave the
 # TUI without the required HTTP/cause, gateway/upstream reporting layer, and
 # recovery hint fields. This version-scoped shim enriches only those reviewed
@@ -657,7 +657,7 @@ RUN node --experimental-strip-types /usr/local/lib/nemoclaw/patch-openclaw-issue
     /usr/local/lib/node_modules/openclaw/dist
 
 # Run the compact tool catalog shim for OpenClaw selection runtimes that still
-# need it. OpenClaw 2026.6.9 ships a built-in catalog surface, so the script
+# need it. OpenClaw 2026.6.10 ships a built-in catalog surface, so the script
 # skips cleanly after classifying the compiled selection-*.js shape.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
@@ -795,7 +795,7 @@ ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 ARG NEMOCLAW_OPENCLAW_OTEL=0
 # The default local OTEL endpoint is intentionally the single host-gateway
 # collector path covered by the openclaw-diagnostics-otel-local policy preset.
-# @openclaw/diagnostics-otel@2026.6.9 exports through OpenTelemetry's OTLP
+# @openclaw/diagnostics-otel@2026.6.10 exports through OpenTelemetry's OTLP
 # trace exporter path, not OpenClaw web_fetch, so Patch 2b's host gateway
 # exception remains scoped to user-requested web_fetch proxy calls.
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
@@ -872,8 +872,8 @@ RUN set -eu; \
         expected_integrity=""; \
         expected_tarball=""; \
         case "$plugin_spec" in \
-            "@openclaw/diagnostics-otel@2026.6.9") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_6_9_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.9.tgz" ;; \
-            "@openclaw/brave-plugin@2026.6.9") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz" ;; \
+            "@openclaw/diagnostics-otel@2026.6.10") expected_integrity="$OPENCLAW_DIAGNOSTICS_OTEL_2026_6_10_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz" ;; \
+            "@openclaw/brave-plugin@2026.6.10") expected_integrity="$OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY"; expected_tarball="https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz" ;; \
         esac; \
         if [ -z "$expected_integrity" ]; then \
             echo "ERROR: OpenClaw plugin ${plugin_spec} has no committed npm integrity pin" >&2; exit 1; \

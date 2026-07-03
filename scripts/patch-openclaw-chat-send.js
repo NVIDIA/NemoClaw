@@ -196,7 +196,7 @@ function patchFollowupRunIdPreservation(source, file) {
   // Source boundary: OpenClaw 2026.5.18 passed opts into runQueuedFollowup,
   // 2026.5.22 closes over params.opts and uses createReplyOperation, and
   // 2026.5.27 closes over params.opts and admits a queued reply turn before
-  // creating the run id. OpenClaw 2026.6.9 keeps that admission flow but routes
+  // creating the run id. OpenClaw 2026.6.10 keeps that admission flow but routes
   // the session id through effectiveQueued and includes routeThreadId.
   let nextSource = working.replace(
     /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,

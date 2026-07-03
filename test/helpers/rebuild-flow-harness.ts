@@ -339,6 +339,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
     entry: { name: "alpha", imageTag: "old-image" },
+    wasDefault: true,
+    fallbackDefault: null,
   });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);

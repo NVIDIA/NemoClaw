@@ -33,13 +33,13 @@ export function createRebuildRegistryRollback(
   const restoreSandboxEntry = deps.restoreSandboxEntry ?? registry.restoreSandboxEntry;
   const restoreSandboxEntryIfMissing =
     deps.restoreSandboxEntryIfMissing ?? registry.restoreSandboxEntryIfMissing;
-  let removedRegistryEntry: registry.SandboxEntry | null = null;
+  let removedRegistryReceipt: registry.SandboxRemovalReceipt | null = null;
   let registryEntryRemoved = false;
   let rollbackAttempted = false;
 
   return {
     recordRemoval(receipt): void {
-      removedRegistryEntry = receipt?.entry ?? null;
+      removedRegistryReceipt = receipt;
       registryEntryRemoved = receipt !== null;
     },
 
@@ -51,11 +51,14 @@ export function createRebuildRegistryRollback(
       if (options.preparedBackupRecovery && snapshotEntry) {
         rollbackAttempted = true;
         try {
+          const defaultTransition = removedRegistryReceipt?.wasDefault
+            ? {
+                from: removedRegistryReceipt.fallbackDefault,
+                to: options.sandboxName,
+              }
+            : undefined;
           restoreSandboxEntry(snapshotEntry, {
-            reclaimDefault:
-              recoveryRegistrySnapshot?.defaultSandbox === options.sandboxName
-                ? options.sandboxName
-                : null,
+            ...(defaultTransition ? { defaultTransition } : {}),
           });
           options.log("Recovery recreate failed: restored preserved registry entry for retry");
         } catch (error) {
@@ -66,12 +69,15 @@ export function createRebuildRegistryRollback(
         return;
       }
 
-      if (!registryEntryRemoved || !removedRegistryEntry) return;
+      if (!registryEntryRemoved || !removedRegistryReceipt) return;
       rollbackAttempted = true;
       try {
         const restored = restoreSandboxEntryIfMissing({
-          ...removedRegistryEntry,
-          imageTag: null,
+          ...removedRegistryReceipt,
+          entry: {
+            ...removedRegistryReceipt.entry,
+            imageTag: null,
+          },
         });
         const recreateLabel = options.staleRecovery ? "Stale-recovery recreate" : "Recreate";
         options.log(

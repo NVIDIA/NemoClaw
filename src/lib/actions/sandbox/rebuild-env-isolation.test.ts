@@ -47,6 +47,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_PROVIDER_KEY",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_PREFERRED_API",
       "NEMOCLAW_REASONING",
     ]);
   });
@@ -63,11 +64,13 @@ describe("assessAmbientRecreateEnv", () => {
     const result = assessAmbientRecreateEnv("openclaw", {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
+      NEMOCLAW_PREFERRED_API: "chat-completions",
       NEMOCLAW_REASONING: "true",
     });
     expect(result.presentVars).toEqual([
       "NEMOCLAW_AGENT",
       "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_PREFERRED_API",
       "NEMOCLAW_REASONING",
     ]);
     expect(result.agentMismatch).toEqual({
@@ -103,6 +106,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
       NEMOCLAW_MODEL: "some-model",
+      NEMOCLAW_PREFERRED_API: "chat-completions",
       NEMOCLAW_REASONING: "false",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
@@ -120,6 +124,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus");
     expect(env.NEMOCLAW_MODEL).toBe("some-model");
+    expect(env.NEMOCLAW_PREFERRED_API).toBe("chat-completions");
     expect(env.NEMOCLAW_REASONING).toBe("false");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.

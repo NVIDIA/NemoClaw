@@ -6,6 +6,7 @@ import type { SandboxEntry, SandboxRegistry } from "./registry";
 import {
   removeSandboxFromRegistry,
   restoreSandboxIfMissingInRegistry,
+  type RegistryRemovalReceipt,
 } from "./registry-reversible-removal";
 
 function entry(name: string, model?: string): SandboxEntry {
@@ -19,6 +20,17 @@ function registry(entries: SandboxEntry[], defaultSandbox: string | null): Sandb
   };
 }
 
+function receipt(
+  sandbox: SandboxEntry,
+  options: { wasDefault?: boolean; fallbackDefault?: string | null } = {},
+): RegistryRemovalReceipt<SandboxEntry> {
+  return {
+    entry: sandbox,
+    wasDefault: options.wasDefault ?? false,
+    fallbackDefault: options.fallbackDefault ?? null,
+  };
+}
+
 describe("reversible registry removal", () => {
   it("returns the removed row without mutating its source registry", () => {
     const alpha = entry("alpha", "old-model");
@@ -26,7 +38,7 @@ describe("reversible registry removal", () => {
 
     const result = removeSandboxFromRegistry(source, "alpha");
 
-    expect(result.receipt).toEqual({ entry: alpha });
+    expect(result.receipt).toEqual({ entry: alpha, wasDefault: true, fallbackDefault: "beta" });
     expect(result.registry).toEqual({
       sandboxes: { beta: entry("beta") },
       defaultSandbox: "beta",
@@ -52,7 +64,7 @@ describe("reversible registry removal", () => {
     const original = entry("alpha", "old-model");
     const source = registry([entry("beta")], "beta");
 
-    const result = restoreSandboxIfMissingInRegistry(source, original);
+    const result = restoreSandboxIfMissingInRegistry(source, receipt(original));
 
     expect(result).toEqual({
       registry: {
@@ -71,7 +83,7 @@ describe("reversible registry removal", () => {
     expect(removed.receipt).not.toBeNull();
 
     const concurrent = registry([beta], "beta");
-    const restored = restoreSandboxIfMissingInRegistry(concurrent, removed.receipt!.entry);
+    const restored = restoreSandboxIfMissingInRegistry(concurrent, removed.receipt!);
 
     expect(restored).toEqual({
       registry: {
@@ -97,11 +109,11 @@ describe("reversible registry removal", () => {
 
     const restoredAlpha = restoreSandboxIfMissingInRegistry(
       removedBeta.registry,
-      removedAlpha.receipt!.entry,
+      removedAlpha.receipt!,
     );
     const restoredBeta = restoreSandboxIfMissingInRegistry(
       restoredAlpha.registry,
-      removedBeta.receipt!.entry,
+      removedBeta.receipt!,
     );
 
     expect(restoredBeta.registry).toEqual({
@@ -116,7 +128,7 @@ describe("reversible registry removal", () => {
   ])("makes the restored row default when the prior pointer is %s", (defaultSandbox) => {
     const result = restoreSandboxIfMissingInRegistry(
       registry([entry("beta")], defaultSandbox),
-      entry("alpha"),
+      receipt(entry("alpha")),
     );
 
     expect(result.registry.defaultSandbox).toBe("alpha");
@@ -126,10 +138,29 @@ describe("reversible registry removal", () => {
     const replacement = entry("alpha", "replacement-model");
     const source = registry([replacement, entry("beta")], "beta");
 
-    const result = restoreSandboxIfMissingInRegistry(source, entry("alpha", "old-model"));
+    const result = restoreSandboxIfMissingInRegistry(source, receipt(entry("alpha", "old-model")));
 
     expect(result).toEqual({ registry: source, restored: false });
     expect(result.registry).toBe(source);
     expect(result.registry.sandboxes.alpha).toBe(replacement);
+  });
+
+  it("reclaims the removed default only while its removal-selected fallback remains current", () => {
+    const alpha = entry("alpha", "old-model");
+    const beta = entry("beta");
+    const gamma = entry("gamma");
+    const removed = removeSandboxFromRegistry(registry([alpha, beta, gamma], "alpha"), "alpha");
+    expect(removed.receipt).toEqual({
+      entry: alpha,
+      wasDefault: true,
+      fallbackDefault: "beta",
+    });
+
+    const reclaimed = restoreSandboxIfMissingInRegistry(removed.registry, removed.receipt!);
+    expect(reclaimed.registry.defaultSandbox).toBe("alpha");
+
+    const concurrentDefault = { ...removed.registry, defaultSandbox: "gamma" };
+    const preserved = restoreSandboxIfMissingInRegistry(concurrentDefault, removed.receipt!);
+    expect(preserved.registry.defaultSandbox).toBe("gamma");
   });
 });

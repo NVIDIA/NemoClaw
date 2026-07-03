@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import {
+  classifyIssue4434AcceptanceFields,
+  extractFinalIssue4434ErrorBlock,
+  hasFullIssue4434Diagnostics,
+  stripTerminalControl,
+} from "./e2e/support/issue-4434-tui-capture.ts";
 
 type ChatEvent = {
   state: "delta" | "final" | "error";
@@ -23,15 +29,13 @@ const TUI_ERROR_CAUSE_RE =
 const CONNECTED_SPINNER_RE =
   /(?:flibbertigibbeting|thinking|waiting|processing).*?\|\s*connected|[0-9]+m\s+[0-9]+s\s*\|\s*connected/i;
 
-function stripAnsi(value: string): string {
-  return value.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "");
-}
-
 function analyzeIssue4434TuiCapture(capture: string) {
-  const plain = stripAnsi(capture);
+  const plain = stripTerminalControl(capture);
   const lines = plain.split(/\n/).map((line) => line.trim());
   const runErrorLines = lines.filter((line) => TUI_RUN_ERROR_RE.test(line));
   const runErrorLineWithCause = runErrorLines.find((line) => TUI_ERROR_CAUSE_RE.test(line)) ?? "";
+  const finalErrorBlock = extractFinalIssue4434ErrorBlock(plain);
+  const diagnosticFields = classifyIssue4434AcceptanceFields(finalErrorBlock);
   const visibleError = VISIBLE_ERROR_RE.test(plain);
   const connectedSpinner = CONNECTED_SPINNER_RE.test(plain);
   return {
@@ -39,6 +43,9 @@ function analyzeIssue4434TuiCapture(capture: string) {
     runErrorLinePresent: runErrorLines.length > 0,
     runErrorLine: runErrorLineWithCause || runErrorLines.at(-1) || "",
     runErrorLineHasCause: runErrorLineWithCause.length > 0,
+    finalErrorBlock,
+    diagnosticFields,
+    hasFullDiagnostics: hasFullIssue4434Diagnostics(diagnosticFields),
     connectedSpinner,
     issue4434Signature: connectedSpinner && !visibleError,
   };
@@ -120,6 +127,13 @@ describe("unreachable inference TUI behavior (#4434)", () => {
       runErrorLinePresent: false,
       runErrorLine: "",
       runErrorLineHasCause: false,
+      finalErrorBlock: "",
+      diagnosticFields: {
+        httpStatusOrCause: false,
+        reportingLayer: false,
+        recoveryHint: false,
+      },
+      hasFullDiagnostics: false,
       connectedSpinner: true,
       issue4434Signature: true,
     });
@@ -166,6 +180,53 @@ describe("unreachable inference TUI behavior (#4434)", () => {
       runErrorLineHasCause: false,
       connectedSpinner: false,
       issue4434Signature: false,
+    });
+  });
+
+  it("requires every diagnostic field in the final contiguous run-error block", () => {
+    const complete = [
+      "user: hello",
+      "run error: TypeError: fetch failed",
+      "Cause: fetch failed while reaching the upstream API.",
+      "Reporting layer: gateway proxy / upstream API.",
+      "Recovery hint: check sandbox egress and provider reachability, then retry.",
+      "running | error",
+    ].join("\n");
+
+    expect(analyzeIssue4434TuiCapture(complete)).toMatchObject({
+      finalErrorBlock: [
+        "run error: TypeError: fetch failed",
+        "Cause: fetch failed while reaching the upstream API.",
+        "Reporting layer: gateway proxy / upstream API.",
+        "Recovery hint: check sandbox egress and provider reachability, then retry.",
+      ].join("\n"),
+      diagnosticFields: {
+        httpStatusOrCause: true,
+        reportingLayer: true,
+        recoveryHint: true,
+      },
+      hasFullDiagnostics: true,
+    });
+  });
+
+  it("does not borrow diagnostic keywords from unrelated earlier transcript lines", () => {
+    const incomplete = [
+      "earlier probe returned HTTP 503",
+      "earlier note mentioned the upstream API",
+      "earlier suggestion said retry",
+      "",
+      "run error: TypeError: fetch failed",
+      "running | error",
+    ].join("\n");
+
+    expect(analyzeIssue4434TuiCapture(incomplete)).toMatchObject({
+      finalErrorBlock: "run error: TypeError: fetch failed",
+      diagnosticFields: {
+        httpStatusOrCause: false,
+        reportingLayer: false,
+        recoveryHint: false,
+      },
+      hasFullDiagnostics: false,
     });
   });
 

@@ -82,7 +82,14 @@ jobs:
           OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$OPENCLAW_VERSION_INPUT" | grep -qxE '[0-9]+(\.[0-9]+)*'
+          if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
+            echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
+            exit 1
+          fi
+          if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+            echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
+            exit 1
+          fi
 
       - name: Validate production Docker build args
         env:

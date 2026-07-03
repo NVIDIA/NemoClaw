@@ -6,8 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { CREDENTIAL_ENV_EXPLICIT_DENY } from "../../../src/lib/security/credential-env.ts";
 
 import {
+  MODELS_JSON_CREDENTIAL_ENV_REFERENCES,
   modelsJsonContainsCredentialLeak,
   scanSnapshotCredentialLeaks,
   snapshotFileContainsCredentialLeak,
@@ -69,6 +71,20 @@ describe("snapshot credential scanner", () => {
       ),
     ).toBe(true);
     expect(modelsJsonContainsCredentialLeak('{"providers":')).toBe(true);
+  });
+
+  it.each([
+    ...new Set([
+      ...CREDENTIAL_ENV_EXPLICIT_DENY,
+      ...[...MODELS_JSON_CREDENTIAL_ENV_REFERENCES].filter((name) => name !== "AWS_PROFILE"),
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ]),
+  ])("rejects an opaque assignment for the supported credential name %s", (name) => {
+    expect(snapshotFileContainsCredentialLeak("runtime.env", `${name}=opaque-value`)).toBe(true);
+    expect(snapshotFileContainsCredentialLeak("runtime.env", `export ${name}=opaque-value`)).toBe(
+      true,
+    );
   });
 
   it("preserves the existing non-model file boundaries", () => {

@@ -20,8 +20,8 @@ const SCRIPT_PATH = path.join(
   "build",
   "messaging-build-applier.mts",
 );
-const OPENCLAW_SLACK_2026_6_9_INTEGRITY =
-  "sha512-JZHc0L3s6s+yBsWowZtE/DWZJOuy4lTE6uTuUbF5QNjUvQQUlCHMFrwPycrXLesVq1il5yAvo82VbERRsIzgxQ==";
+const OPENCLAW_SLACK_2026_6_10_INTEGRITY =
+  "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==";
 
 function channelsB64(channels: string[]): string {
   return Buffer.from(JSON.stringify(channels)).toString("base64");
@@ -34,8 +34,8 @@ function fakeSlackNpmScript(): string {
     'if [ "${1:-}" = "pack" ]; then',
     '  pack_dir="${4:-}";',
     '  test -n "$pack_dir";',
-    '  reported_filename="${OPENCLAW_PACK_FILENAME_OVERRIDE:-slack-2026.6.9.tgz}";',
-    '  printf "fake plugin tarball" > "$pack_dir/slack-2026.6.9.tgz";',
+    '  reported_filename="${OPENCLAW_PACK_FILENAME_OVERRIDE:-slack-2026.6.10.tgz}";',
+    '  printf "fake plugin tarball" > "$pack_dir/slack-2026.6.10.tgz";',
     '  printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$reported_filename" "$OPENCLAW_PACK_INTEGRITY_OVERRIDE";',
     "  exit 0",
     "fi",
@@ -77,11 +77,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
-            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
-            OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
+            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_10_INTEGRITY,
+            OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_6_10_INTEGRITY,
             OPENCLAW_UNEXPECTED_TARBALL_URL:
-              "https://unexpected.invalid/openclaw/slack-2026.6.9.tgz",
-            OPENCLAW_VERSION: "2026.6.9",
+              "https://unexpected.invalid/openclaw/slack-2026.6.10.tgz",
+            OPENCLAW_VERSION: "2026.6.10",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },
           "openclaw",
@@ -106,11 +106,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
         expect(result.status, result.stderr).toBe(0);
         const trace = fs.readFileSync(tracePath, "utf-8");
-        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.9|dist.integrity");
+        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
         expect(trace).not.toContain("dist.tarball");
-        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.9|--pack-destination");
+        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
         expect(trace).toContain("openclaw|plugins|install");
-        expect(trace).toContain("slack-2026.6.9.tgz|--pin");
+        expect(trace).toContain("slack-2026.6.10.tgz|--pin");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
@@ -119,7 +119,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
   );
 
   it(
-    "fails closed before installing the 2026.6.9 Slack plugin when the packed archive integrity drifts",
+    "fails closed before installing the 2026.6.10 Slack plugin when the packed archive integrity drifts",
     () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-pack-"));
       const tracePath = path.join(tmp, "openclaw.trace");
@@ -140,9 +140,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
-            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
+            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_10_INTEGRITY,
             OPENCLAW_PACK_INTEGRITY_OVERRIDE: "sha512-packed-drift",
-            OPENCLAW_VERSION: "2026.6.9",
+            OPENCLAW_VERSION: "2026.6.10",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },
           "openclaw",
@@ -167,13 +167,13 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain(
-          "OpenClaw plugin @openclaw/slack@2026.6.9 downloaded tarball integrity mismatch",
+          "OpenClaw plugin @openclaw/slack@2026.6.10 downloaded tarball integrity mismatch",
         );
-        expect(result.stderr).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_9_INTEGRITY}`);
+        expect(result.stderr).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_10_INTEGRITY}`);
         expect(result.stderr).toContain("Actual: sha512-packed-drift");
         const trace = fs.readFileSync(tracePath, "utf-8");
-        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.9|dist.integrity");
-        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.9|--pack-destination");
+        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
+        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
         expect(trace).not.toContain("openclaw|plugins|install");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
@@ -204,10 +204,10 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
-            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
-            OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_6_9_INTEGRITY,
-            OPENCLAW_PACK_FILENAME_OVERRIDE: "../slack-2026.6.9.tgz",
-            OPENCLAW_VERSION: "2026.6.9",
+            OPENCLAW_SLACK_INTEGRITY: OPENCLAW_SLACK_2026_6_10_INTEGRITY,
+            OPENCLAW_PACK_INTEGRITY_OVERRIDE: OPENCLAW_SLACK_2026_6_10_INTEGRITY,
+            OPENCLAW_PACK_FILENAME_OVERRIDE: "../slack-2026.6.10.tgz",
+            OPENCLAW_VERSION: "2026.6.10",
             NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
           },
           "openclaw",
@@ -232,11 +232,11 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
         expect(result.status).not.toBe(0);
         expect(result.stderr).toContain(
-          "npm pack @openclaw/slack@2026.6.9 reported unsafe archive filename: ../slack-2026.6.9.tgz",
+          "npm pack @openclaw/slack@2026.6.10 reported unsafe archive filename: ../slack-2026.6.10.tgz",
         );
         const trace = fs.readFileSync(tracePath, "utf-8");
-        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.9|dist.integrity");
-        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.9|--pack-destination");
+        expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
+        expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
         expect(trace).not.toContain("openclaw|plugins|install");
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });

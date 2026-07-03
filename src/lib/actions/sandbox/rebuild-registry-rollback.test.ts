@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry, SandboxRegistry } from "../../state/registry";
+import type { SandboxEntry, SandboxRegistry, SandboxRemovalReceipt } from "../../state/registry";
 import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 
 function sandboxEntry(overrides: Partial<SandboxEntry> = {}): SandboxEntry {
@@ -19,6 +19,17 @@ function registrySnapshot(entry: SandboxEntry, defaultSandbox: string | null): S
   return {
     sandboxes: { [entry.name]: entry },
     defaultSandbox,
+  };
+}
+
+function removalReceipt(
+  entry: SandboxEntry,
+  options: { wasDefault?: boolean; fallbackDefault?: string | null } = {},
+): SandboxRemovalReceipt {
+  return {
+    entry,
+    wasDefault: options.wasDefault ?? true,
+    fallbackDefault: options.fallbackDefault ?? "beta",
   };
 }
 
@@ -40,14 +51,16 @@ describe("createRebuildRegistryRollback", () => {
       },
       { restoreSandboxEntry, restoreSandboxEntryIfMissing },
     );
-    rollback.recordRemoval({ entry: original });
+    rollback.recordRemoval(removalReceipt(original));
     snapshot = registrySnapshot(refreshed, "alpha");
 
     rollback.restoreForRetry();
     rollback.restoreForRetry();
 
     expect(restoreSandboxEntry).toHaveBeenCalledOnce();
-    expect(restoreSandboxEntry).toHaveBeenCalledWith(refreshed, { reclaimDefault: "alpha" });
+    expect(restoreSandboxEntry).toHaveBeenCalledWith(refreshed, {
+      defaultTransition: { from: "beta", to: "alpha" },
+    });
     expect(restoreSandboxEntryIfMissing).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(
       "Recovery recreate failed: restored preserved registry entry for retry",
@@ -68,13 +81,17 @@ describe("createRebuildRegistryRollback", () => {
       },
       { restoreSandboxEntryIfMissing },
     );
-    rollback.recordRemoval({ entry: removed });
+    rollback.recordRemoval(removalReceipt(removed));
 
     rollback.restoreForRetry();
     rollback.restoreForRetry();
 
     expect(restoreSandboxEntryIfMissing).toHaveBeenCalledOnce();
-    expect(restoreSandboxEntryIfMissing).toHaveBeenCalledWith({ ...removed, imageTag: null });
+    expect(restoreSandboxEntryIfMissing).toHaveBeenCalledWith({
+      entry: { ...removed, imageTag: null },
+      wasDefault: true,
+      fallbackDefault: "beta",
+    });
     expect(log).toHaveBeenCalledWith("Recreate failed: restored registry metadata for retry");
   });
 
@@ -91,7 +108,7 @@ describe("createRebuildRegistryRollback", () => {
       },
       { restoreSandboxEntryIfMissing },
     );
-    rollback.recordRemoval({ entry: sandboxEntry() });
+    rollback.recordRemoval(removalReceipt(sandboxEntry()));
 
     rollback.restoreForRetry();
 
@@ -117,7 +134,7 @@ describe("createRebuildRegistryRollback", () => {
     );
 
     rollback.restoreForRetry();
-    rollback.recordRemoval({ entry: sandboxEntry() });
+    rollback.recordRemoval(removalReceipt(sandboxEntry()));
     expect(() => rollback.restoreForRetry()).not.toThrow();
     rollback.restoreForRetry();
 

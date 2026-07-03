@@ -104,17 +104,17 @@ describe("reviewed npm lifecycle policy", () => {
       schemaVersion: 1,
       defaultPolicy: "deny",
       reviewedArchivePackages: [
-        "@openclaw/brave-plugin@2026.6.9",
-        "@openclaw/diagnostics-otel@2026.6.9",
-        "@openclaw/discord@2026.6.9",
-        "@openclaw/msteams@2026.6.9",
-        "@openclaw/slack@2026.6.9",
-        "@openclaw/whatsapp@2026.6.9",
+        "@openclaw/brave-plugin@2026.6.10",
+        "@openclaw/diagnostics-otel@2026.6.10",
+        "@openclaw/discord@2026.6.10",
+        "@openclaw/msteams@2026.6.10",
+        "@openclaw/slack@2026.6.10",
+        "@openclaw/whatsapp@2026.6.10",
         "@tencent-weixin/openclaw-weixin@2.4.3",
         "@zed-industries/codex-acp@0.11.1",
         "openclaw@2026.3.11",
         "openclaw@2026.4.24",
-        "openclaw@2026.6.9",
+        "openclaw@2026.6.10",
       ],
       allowedLifecycleScripts: [
         {
@@ -125,7 +125,7 @@ describe("reviewed npm lifecycle policy", () => {
             "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
         },
         {
-          packageSpec: "openclaw@2026.6.9",
+          packageSpec: "openclaw@2026.6.10",
           event: "postinstall",
           manifestCommand: "node scripts/postinstall-bundled-plugins.mjs",
           explicitCommand:
@@ -137,7 +137,7 @@ describe("reviewed npm lifecycle policy", () => {
 
   it("cross-checks the allowlist against every production archive install boundary", () => {
     const messagingPackageSpecs = Object.keys(
-      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.6.9" }),
+      reviewedOpenClawPluginIntegrityByPackageSpec({ OPENCLAW_VERSION: "2026.6.10" }),
     );
     const result = spawnSync(process.execPath, ["-e", PRODUCTION_BOUNDARY_AUDIT], {
       cwd: REPO_ROOT,

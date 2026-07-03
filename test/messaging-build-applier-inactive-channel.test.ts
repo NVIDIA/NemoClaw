@@ -53,7 +53,7 @@ describe("messaging build applier inactive channels", () => {
 
       const env = {
         PATH: `${tmp}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-        OPENCLAW_VERSION: "2026.6.9",
+        OPENCLAW_VERSION: "2026.6.10",
         UNEXPECTED_INSTALL_TRACE: tracePath,
         NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
       };

@@ -13,11 +13,11 @@ const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
   "docs",
   "security",
-  "openclaw-2026.6.9-dependency-review.md",
+  "openclaw-2026.6.10-dependency-review.md",
 );
 const CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
-const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.9.tgz";
+const OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz";
 const MESSAGING_BUILD_APPLIER = path.join(
   REPO_ROOT,
   "src",
@@ -110,7 +110,7 @@ function findProductionBuildGuardCoverage(
   });
 }
 
-describe("OpenClaw 2026.6.9 dependency review contract", () => {
+describe("OpenClaw 2026.6.10 dependency review contract", () => {
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
 
@@ -140,7 +140,7 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).not.toContain("PRA-5");
     expect(review).toContain("3/3 fields are present in the NemoClaw-patched runtime output");
     expect(review).toContain(
-      "3/3 fields are missing in the upstream-shaped `openclaw@2026.6.9` output",
+      "3/3 fields are missing in the upstream-shaped `openclaw@2026.6.10` output",
     );
     expect(review).toContain("OpenClaw Patch Source-of-Truth Table");
     expect(review).toContain(
@@ -197,12 +197,12 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
-    expect(review).toContain("Merge disposition for this OpenClaw 2026.6.9 bump");
+    expect(review).toContain("Merge disposition for this OpenClaw 2026.6.10 bump");
     expect(review).toContain("Issue #4434 full live acceptance");
-    expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.9` artifact");
+    expect(review).toContain("code-backed for the reviewed `openclaw@2026.6.10` artifact");
     expect(review).toContain("src/lib/messaging/channels/manifests.test.ts");
     expect(review).toContain("npm audit result in this note is a manual snapshot");
-    expect(review).toContain("Advisory audit revalidated: 2026-06-26");
+    expect(review).toContain("Advisory audit revalidated: 2026-07-03");
     expect(review).toContain("0` critical vulnerabilities across `763` total dependencies");
     expect(review).toContain("Node `v22.22.2`");
     expect(review).toContain("engine requirement of `>=22.19.0`");
@@ -211,22 +211,22 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     );
     expect(review).toContain("Transitive Dependency Graph Rationale");
     expect(review).toContain(
-      "The OpenClaw 2026.6.9 bump does not newly introduce an unfrozen OpenClaw transitive graph",
+      "The OpenClaw 2026.6.10 bump does not newly introduce an unfrozen OpenClaw transitive graph",
     );
     expect(review).toContain(
-      "The reviewed `openclaw@2026.6.9` artifact ships `npm-shrinkwrap.json`",
+      "The reviewed `openclaw@2026.6.10` artifact ships `npm-shrinkwrap.json`",
     );
     expect(review).toContain(
-      "the previous reviewed `openclaw@2026.5.27` artifact also shipped `npm-shrinkwrap.json`",
+      "the previous reviewed `openclaw@2026.6.9` artifact also shipped `npm-shrinkwrap.json`",
     );
     expect(review).toContain("lockfile version `3`, `306` package entries");
     expect(review).toContain("no resolved package entries missing integrity metadata");
-    expect(review).toContain("`@openclaw/diagnostics-otel@2026.6.9`");
-    expect(review).toContain("`@openclaw/brave-plugin@2026.6.9`");
-    expect(review).toContain("`@openclaw/discord@2026.6.9`");
-    expect(review).toContain("`@openclaw/slack@2026.6.9`");
-    expect(review).toContain("`@openclaw/whatsapp@2026.6.9`");
-    expect(review).toContain("`@openclaw/msteams@2026.6.9`");
+    expect(review).toContain("`@openclaw/diagnostics-otel@2026.6.10`");
+    expect(review).toContain("`@openclaw/brave-plugin@2026.6.10`");
+    expect(review).toContain("`@openclaw/discord@2026.6.10`");
+    expect(review).toContain("`@openclaw/slack@2026.6.10`");
+    expect(review).toContain("`@openclaw/whatsapp@2026.6.10`");
+    expect(review).toContain("`@openclaw/msteams@2026.6.10`");
     expect(review).toContain("`@zed-industries/codex-acp@0.11.1` has no declared npm dependencies");
     expect(review).toContain(
       "the existing non-OpenClaw Tencent WeChat plugin, `@tencent-weixin/openclaw-weixin@2.4.3`",
@@ -312,8 +312,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
     Dockerfile) end_marker='# Patch OpenClaw media fetch' ;;
     Dockerfile.base) end_marker='# Baseline health check.' ;;
   esac
-  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.6.9/,/$end_marker/p" "$dockerfile")"
-  check_contains "$openclaw_block" "ARG OPENCLAW_2026_6_9_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
+  openclaw_block="$(sed -n "/ARG OPENCLAW_VERSION=2026.6.10/,/$end_marker/p" "$dockerfile")"
+  check_contains "$openclaw_block" "ARG OPENCLAW_2026_6_10_TARBALL=${OPENCLAW_TARBALL}" "$dockerfile tarball arg"
   check_contains "$openclaw_block" 'npm view "openclaw@\${OPENCLAW_VERSION}" dist.integrity' "$dockerfile registry integrity"
   check_contains "$openclaw_block" 'npm view "openclaw@\${OPENCLAW_VERSION}" dist.tarball' "$dockerfile registry tarball"
   check_contains "$openclaw_block" 'OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR"' "$dockerfile pack path"
@@ -435,8 +435,9 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(validation.env).toEqual({
       OPENCLAW_VERSION_INPUT: "${{ inputs.openclaw_version }}",
     });
-    expect(validation.run).toContain(`printf '%s\\n' "$OPENCLAW_VERSION_INPUT"`);
-    expect(validation.run).toContain("grep -qxE '[0-9]+(\\.[0-9]+)*'");
+    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\r'*`);
+    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\n'*`);
+    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$`);
     expect(requiredStepIndex(buildAndPush, "Validate OpenClaw version input")).toBeLessThan(
       requiredStepIndex(buildAndPush, "Validate production Docker build args"),
     );
@@ -447,6 +448,31 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
           "${{ inputs.openclaw_version }}",
         );
       }
+    }
+
+    for (const input of ["2026", "2026.6.10", "1.2.3.4"]) {
+      const result = spawnSync("bash", ["-c", validation.run ?? ""], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, OPENCLAW_VERSION_INPUT: input },
+      });
+      expect(result.status, `${JSON.stringify(input)}: ${result.stderr}`).toBe(0);
+    }
+
+    for (const input of [
+      "",
+      "v2026.6.10",
+      "2026.6.10-beta.1",
+      "2026.6.10 trailing",
+      "2026.6.10\r",
+      "2026.6.10\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24",
+    ]) {
+      const result = spawnSync("bash", ["-c", validation.run ?? ""], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, OPENCLAW_VERSION_INPUT: input },
+      });
+      expect(result.status, JSON.stringify(input)).toBe(1);
     }
   });
 

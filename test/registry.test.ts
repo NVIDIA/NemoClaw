@@ -237,6 +237,7 @@ describe("registry", () => {
       model: "captured",
       imageTag: "old-image",
     });
+    expect(receipt).toMatchObject({ wasDefault: true, fallbackDefault: null });
     expect(registry.getSandbox("receipt")).toBeNull();
     expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
   });
@@ -249,7 +250,7 @@ describe("registry", () => {
     registry.registerSandbox({ name: "concurrent", model: "new" });
     expect(registry.setDefault("concurrent")).toBe(true);
 
-    expect(registry.restoreSandboxEntryIfMissing(receipt!.entry)).toBe(true);
+    expect(registry.restoreSandboxEntryIfMissing(receipt!)).toBe(true);
     expect(registry.getSandbox("alpha")).toMatchObject({
       name: "alpha",
       model: "original",
@@ -339,7 +340,7 @@ describe("registry", () => {
         child.once("exit", (code, signal) => resolve({ code, signal }));
       });
       (async () => {
-        const restore = spawn(process.execPath, ["-e", ${JSON.stringify(restoreScript)}, ${JSON.stringify(JSON.stringify(receipt!.entry))}], { stdio: "inherit" });
+        const restore = spawn(process.execPath, ["-e", ${JSON.stringify(restoreScript)}, ${JSON.stringify(JSON.stringify(receipt))}], { stdio: "inherit" });
         const restoreExit = waitForExit(restore);
         waitForFile(${JSON.stringify(restoreEntered)});
         const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerScript)}], { stdio: "inherit" });
@@ -375,10 +376,10 @@ describe("registry", () => {
       expect(registry.getSandbox("alpha")).toMatchObject({ model: "original" });
       expect(registry.getSandbox("beta")).toMatchObject({ model: "existing" });
       expect(registry.getSandbox("concurrent")).toMatchObject({ model: "new" });
-      expect(registry.getDefault()).toBe("beta");
+      expect(registry.getDefault()).toBe("alpha");
       const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
       expect(Object.keys(persisted.sandboxes).sort()).toEqual(["alpha", "beta", "concurrent"]);
-      expect(persisted.defaultSandbox).toBe("beta");
+      expect(persisted.defaultSandbox).toBe("alpha");
       expect(
         fs.readdirSync(path.dirname(regFile)).filter((name) => name.includes(".tmp.")),
       ).toEqual([]);
@@ -394,27 +395,34 @@ describe("registry", () => {
     registry.setDefault("alpha");
     const original = registry.getSandbox("alpha");
 
-    registry.removeSandbox("alpha");
+    const firstReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(firstReceipt).not.toBeNull();
     expect(registry.getDefault()).toBe("beta");
-    expect(registry.restoreSandboxEntryIfMissing({ ...original, imageTag: null })).toBe(true);
-    expect(registry.getDefault()).toBe("beta");
+    expect(
+      registry.restoreSandboxEntryIfMissing({
+        ...firstReceipt!,
+        entry: { ...original, imageTag: null },
+      }),
+    ).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
     expect(registry.getSandbox("alpha").imageTag).toBe(null);
 
     registry.updateSandbox("alpha", {
       model: "replacement",
       imageTag: "replacement-image",
     });
-    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(false);
+    expect(registry.restoreSandboxEntryIfMissing(firstReceipt!)).toBe(false);
     expect(registry.getSandbox("alpha").model).toBe("replacement");
     expect(registry.getSandbox("alpha").imageTag).toBe("replacement-image");
 
-    registry.removeSandbox("alpha");
+    const secondReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(secondReceipt).not.toBeNull();
     registry.setDefault("gamma");
-    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(true);
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
     expect(registry.getDefault()).toBe("gamma");
 
     registry.clearAll();
-    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(true);
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
     expect(registry.getDefault()).toBe("alpha");
   });
 

@@ -302,7 +302,7 @@ describe("sandbox provisioning: runtime npm online state", () => {
 describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
   it("pins Brave web-search and preserves its placeholder during build-time doctor", () => {
     const braveIntegrity =
-      "sha512-8HawXB5ylo+vkvkmDJZAE9uhOtm0l9YtzrVqJdM4UqwXeF4uGAkVEOrR3Hxy0sI3Moi5ZBzq2Jx/K5ZQKdiWjQ==";
+      "sha512-DDRnb4reL99O8kbISNbRFyk/xoUPYHsXG3UGikKAsVs+zIldYYA0hY0d3Z2aWoE+0vfda27mJUByCo7Xr15qdw==";
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const command = dockerRunCommandBetween(
       dockerfile,
@@ -318,9 +318,9 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
           [
             "npm() {",
             '  printf "npm %s|BRAVE_API_KEY=%s\\n" "$*" "${BRAVE_API_KEY:-}" >> "$call_log"',
-            `  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.9 dist.integrity" ]; then printf "%s\\n" "${braveIntegrity}"; return 0; fi`,
-            '  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.9 dist.tarball" ]; then printf "%s\\n" "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz"; return 0; fi',
-            `  if [ "$1" = "pack" ]; then pack_dir="\${4:-}"; test -n "$pack_dir"; printf "fake brave plugin tarball" > "$pack_dir/brave-plugin-2026.6.9.tgz"; printf '[{"filename":"brave-plugin-2026.6.9.tgz","integrity":"%s"}]\\n' "${braveIntegrity}"; return 0; fi`,
+            `  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.10 dist.integrity" ]; then printf "%s\\n" "${braveIntegrity}"; return 0; fi`,
+            '  if [ "$1 $2 $3" = "view @openclaw/brave-plugin@2026.6.10 dist.tarball" ]; then printf "%s\\n" "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz"; return 0; fi',
+            `  if [ "$1" = "pack" ]; then pack_dir="\${4:-}"; test -n "$pack_dir"; printf "fake brave plugin tarball" > "$pack_dir/brave-plugin-2026.6.10.tgz"; printf '[{"filename":"brave-plugin-2026.6.10.tgz","integrity":"%s"}]\\n' "${braveIntegrity}"; return 0; fi`,
             "  return 1",
             "}",
             "openclaw() {",
@@ -331,19 +331,19 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
         {
           NEMOCLAW_OPENCLAW_OTEL: "0",
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-          OPENCLAW_VERSION: "2026.6.9",
-          OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY: braveIntegrity,
+          OPENCLAW_VERSION: "2026.6.10",
+          OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY: braveIntegrity,
         },
       );
 
       expect(result.status, `stderr: ${result.stderr}`).toBe(0);
-      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.9 dist.integrity");
-      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.9 dist.tarball");
+      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.10 dist.integrity");
+      expect(calls).toContain("npm view @openclaw/brave-plugin@2026.6.10 dist.tarball");
       expect(calls).toContain(
-        "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz --pack-destination",
+        "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz --pack-destination",
       );
       expect(calls).toContain("plugins install ");
-      expect(calls).toContain("brave-plugin-2026.6.9.tgz --pin|BRAVE_API_KEY=");
+      expect(calls).toContain("brave-plugin-2026.6.10.tgz --pin|BRAVE_API_KEY=");
       expect(calls).toContain(
         "doctor --fix --non-interactive|BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY",
       );

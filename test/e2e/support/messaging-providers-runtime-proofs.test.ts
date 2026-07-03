@@ -152,7 +152,7 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
   });
 
-  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.9 live lane", () => {
+  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.10 live lane", () => {
     expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
       'installedSlackProof.proof === "openclaw-pipeline-runtime"',
     );

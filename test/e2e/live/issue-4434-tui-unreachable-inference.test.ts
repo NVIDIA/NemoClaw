@@ -12,6 +12,12 @@ import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compati
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import {
+  classifyIssue4434AcceptanceFields,
+  extractFinalIssue4434ErrorBlock,
+  hasFullIssue4434Diagnostics,
+  stripTerminalControl,
+} from "../support/issue-4434-tui-capture.ts";
 
 // This remains a privileged opt-in live repro: it onboards a real cloud
 // OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
@@ -49,12 +55,6 @@ const CONNECTED_SPINNER_RE =
 const STATUS_LINE_RE =
   /(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\|\s*(connected|error)/i;
 const ERROR_STATUS_RE = /\|\s*error\b/i;
-const ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS = {
-  httpStatusOrCause: /\b(?:HTTP\s+\d{3}|status(?:\s+code)?\s*[:=]\s*\d{3}|cause\s*[:=]\s*\S+)/i,
-  reportingLayer:
-    /\b(?:gateway proxy|gateway layer|reported by gateway|upstream API|from upstream)\b/i,
-  recoveryHint: /\b(?:recovery hint|hint\s*[:=]|check (?:egress|network|provider)|retry)\b/i,
-} as const;
 const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
@@ -63,7 +63,6 @@ const runIssue4434LiveTest =
     : test.skip;
 
 type CommandResultText = { stdout: string; stderr: string };
-type Issue4434AcceptanceFields = Record<keyof typeof ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS, boolean>;
 
 function resultText(result: CommandResultText): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
@@ -90,26 +89,6 @@ function readBundledOpenClawVersion(): string {
   return match[1];
 }
 
-function stripTerminalControl(value: string): string {
-  return value
-    .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, "")
-    .replace(/\r/g, "\n");
-}
-
-function classifyIssue4434AcceptanceFields(plain: string): Issue4434AcceptanceFields {
-  return Object.fromEntries(
-    Object.entries(ISSUE_4434_ACCEPTANCE_FIELD_PATTERNS).map(([name, pattern]) => [
-      name,
-      pattern.test(plain),
-    ]),
-  ) as Issue4434AcceptanceFields;
-}
-
-function hasFullIssue4434Diagnostics(fields: Issue4434AcceptanceFields): boolean {
-  return fields.httpStatusOrCause && fields.reportingLayer && fields.recoveryHint;
-}
-
 function analyzeIssue4434TuiCapture(capture: string) {
   const plain = stripTerminalControl(capture);
   const statusLines = plain
@@ -117,15 +96,17 @@ function analyzeIssue4434TuiCapture(capture: string) {
     .map((line) => line.trim())
     .filter((line) => STATUS_LINE_RE.test(line));
   const lastStatusLine = statusLines.at(-1) ?? "";
+  const finalErrorBlock = extractFinalIssue4434ErrorBlock(plain);
   return {
     plain,
+    finalErrorBlock,
     visibleError: VISIBLE_ERROR_RE.test(plain),
     connectedSpinner: CONNECTED_SPINNER_RE.test(plain),
     issue4434Signature: CONNECTED_SPINNER_RE.test(plain) && !VISIBLE_ERROR_RE.test(plain),
     lastStatusLine,
     finalStatusIsError: ERROR_STATUS_RE.test(lastStatusLine),
     finalStatusIsConnectedSpinner: CONNECTED_SPINNER_RE.test(lastStatusLine),
-    diagnosticFields: classifyIssue4434AcceptanceFields(plain),
+    diagnosticFields: classifyIssue4434AcceptanceFields(finalErrorBlock),
   };
 }
 
@@ -545,6 +526,7 @@ runIssue4434LiveTest(
       lastStatusLine: analysis.lastStatusLine,
       finalStatusIsError: analysis.finalStatusIsError,
       finalStatusIsConnectedSpinner: analysis.finalStatusIsConnectedSpinner,
+      finalErrorBlock: analysis.finalErrorBlock,
       diagnosticFields: analysis.diagnosticFields,
     });
 
@@ -552,6 +534,7 @@ runIssue4434LiveTest(
       `expect exit=${tui.exitCode}`,
       `capture=${captureFile}`,
       `lastStatusLine=${analysis.lastStatusLine}`,
+      `finalErrorBlock=${analysis.finalErrorBlock}`,
       `diagnosticFields=${JSON.stringify(analysis.diagnosticFields)}`,
       "plain capture:",
       analysis.plain,

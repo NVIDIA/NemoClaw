@@ -376,12 +376,14 @@ describe("rebuildSandbox flow", () => {
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_PROVIDER",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_PREFERRED_API",
       "NEMOCLAW_REASONING",
       "COMPATIBLE_API_KEY",
     ]);
     process.env.NEMOCLAW_ENDPOINT_URL = "https://attacker.example.test/v1";
     process.env.NEMOCLAW_PROVIDER = "build";
     process.env.NEMOCLAW_MODEL = "attacker-model";
+    process.env.NEMOCLAW_PREFERRED_API = "chat-completions";
     process.env.NEMOCLAW_REASONING = "false";
     process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
 
@@ -389,12 +391,17 @@ describe("rebuildSandbox flow", () => {
     try {
       const harness = createRebuildFlowHarness({
         applyPreset: () => true,
-        sandboxEntry: { provider: "compatible-endpoint", model: "session-model" },
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: "session-model",
+          preferredInferenceApi: "openai-responses",
+        },
         onboard: () => {
           envSeenInsideOnboard = {
             endpoint: process.env.NEMOCLAW_ENDPOINT_URL,
             provider: process.env.NEMOCLAW_PROVIDER,
             model: process.env.NEMOCLAW_MODEL,
+            preferredApi: process.env.NEMOCLAW_PREFERRED_API,
             reasoning: process.env.NEMOCLAW_REASONING,
           };
         },
@@ -404,6 +411,7 @@ describe("rebuildSandbox flow", () => {
       harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
       harness.session.provider = "compatible-endpoint";
       harness.session.model = "session-model";
+      harness.session.preferredInferenceApi = "openai-responses";
       harness.session.compatibleEndpointReasoning = "true";
 
       await expect(
@@ -415,17 +423,20 @@ describe("rebuildSandbox flow", () => {
         endpoint: undefined,
         provider: undefined,
         model: undefined,
+        preferredApi: undefined,
         reasoning: undefined,
       });
       expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
       // Provider/model come from the registry entry, not the ambient values.
       expect(harness.session.provider).toBe("compatible-endpoint");
       expect(harness.session.model).toBe("session-model");
+      expect(harness.session.preferredInferenceApi).toBe("openai-responses");
       expect(harness.session.compatibleEndpointReasoning).toBe("true");
       // Caller env restored afterward.
       expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe("https://attacker.example.test/v1");
       expect(process.env.NEMOCLAW_PROVIDER).toBe("build");
       expect(process.env.NEMOCLAW_MODEL).toBe("attacker-model");
+      expect(process.env.NEMOCLAW_PREFERRED_API).toBe("chat-completions");
       expect(process.env.NEMOCLAW_REASONING).toBe("false");
     } finally {
       restoreEnv();
@@ -575,7 +586,11 @@ describe("rebuildSandbox flow", () => {
     });
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
     expect(harness.restoreRegistryEntryIfMissingSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "alpha", imageTag: null }),
+      expect.objectContaining({
+        entry: expect.objectContaining({ name: "alpha", imageTag: null }),
+        wasDefault: true,
+        fallbackDefault: null,
+      }),
     );
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
 
@@ -602,8 +617,9 @@ describe("rebuildSandbox flow", () => {
     ).rejects.toThrow("session rewind boom");
 
     expect(harness.restoreRegistryEntryIfMissingSpy).toHaveBeenCalledWith({
-      name: "alpha",
-      imageTag: null,
+      entry: { name: "alpha", imageTag: null },
+      wasDefault: true,
+      fallbackDefault: null,
     });
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });

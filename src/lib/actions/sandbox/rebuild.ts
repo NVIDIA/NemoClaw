@@ -1025,10 +1025,10 @@ export async function rebuildSandbox(
     // #5735: isolate ambient onboard-selection env only for the duration of the
     // recreate. The session was just pinned to the registry agent/provider/
     // model/credential above, so removing NEMOCLAW_AGENT/PROVIDER/PROVIDER_KEY/
-    // ENDPOINT_URL/MODEL forces onboard --resume to recreate from that pinned
-    // config (and the already-registered gateway provider) instead of an
-    // unrelated onboard's values. Restored in finally so a bulk rebuild loop
-    // and the caller's process env are left untouched.
+    // ENDPOINT_URL/MODEL/PREFERRED_API forces onboard --resume to recreate from
+    // that pinned config (and the already-registered gateway provider) instead
+    // of an unrelated onboard's values. Restored in finally so a bulk rebuild
+    // loop and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
     try {
       await onboard({

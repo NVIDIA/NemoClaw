@@ -211,8 +211,8 @@ export const slackManifest = {
       spec: "npm:@openclaw/slack@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.9":
-          "sha512-JZHc0L3s6s+yBsWowZtE/DWZJOuy4lTE6uTuUbF5QNjUvQQUlCHMFrwPycrXLesVq1il5yAvo82VbERRsIzgxQ==",
+        "2026.6.10":
+          "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
       },
       required: true,
     },

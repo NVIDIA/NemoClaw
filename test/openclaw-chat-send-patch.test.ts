@@ -61,7 +61,7 @@ function writeChatSendFixture(dist: string): string {
   return fixture;
 }
 
-function writeChatSend20260609Fixture(dist: string): string {
+function writeChatSend20260610Fixture(dist: string): string {
   const fixture = path.join(dist, "chat-fixture.js");
   fs.writeFileSync(
     fixture,
@@ -345,7 +345,7 @@ function writeFollowupRunner20260527Fixture(dist: string): string {
   return fixture;
 }
 
-function writeFollowupRunner20260609Fixture(dist: string): string {
+function writeFollowupRunner20260610Fixture(dist: string): string {
   const fixture = path.join(dist, "agent-runner.fixture.js");
   fs.writeFileSync(
     fixture,
@@ -450,7 +450,7 @@ function writeGetReplyFixture(dist: string): string {
   return fixture;
 }
 
-function writeGetReply20260609Fixture(dist: string): string {
+function writeGetReply20260610Fixture(dist: string): string {
   const fixture = path.join(dist, "get-reply.fixture.js");
   fs.writeFileSync(
     fixture,
@@ -789,13 +789,13 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("recognizes the 2026.6.9 chat final and admission-session followup runner shape", async () => {
+  it("recognizes the 2026.6.10 chat final and admission-session followup runner shape", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-669-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
-    const chatFixture = writeChatSend20260609Fixture(dist);
-    const followupFixture = writeFollowupRunner20260609Fixture(dist);
-    const getReplyFixture = writeGetReply20260609Fixture(dist);
+    const chatFixture = writeChatSend20260610Fixture(dist);
+    const followupFixture = writeFollowupRunner20260610Fixture(dist);
+    const getReplyFixture = writeGetReply20260610Fixture(dist);
 
     try {
       const patch = runPatch(dist);

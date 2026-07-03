@@ -195,8 +195,8 @@ export const discordManifest = {
       spec: "npm:@openclaw/discord@{{openclaw.version}}",
       pin: true,
       integrityByVersion: {
-        "2026.6.9":
-          "sha512-esFhwYW0nrFQvBhkPeK/1qmvumlVAY8ddhYBt7geIYLlBriwPJRwtnVLLfp0n1LbS0/XVZ0ORqlvkWq8Vv61vg==",
+        "2026.6.10":
+          "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
       },
       required: true,
     },

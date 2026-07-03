@@ -17,39 +17,39 @@ const DEPENDENCY_REVIEW_NOTE = path.join(
   REPO_ROOT,
   "docs",
   "security",
-  "openclaw-2026.6.9-dependency-review.md",
+  "openclaw-2026.6.10-dependency-review.md",
 );
 const PRODUCTION_BUILD_ARG_GUARD = path.join(
   REPO_ROOT,
   "scripts",
   "check-production-build-args.sh",
 );
-const UNPINNED_OPENCLAW_VERSION = "2026.6.10";
-const PINNED_OPENCLAW_VERSION = "2026.6.9";
+const UNPINNED_OPENCLAW_VERSION = "2026.6.11";
+const PINNED_OPENCLAW_VERSION = "2026.6.10";
 const PINNED_OPENCLAW_INTEGRITY =
-  "sha512-y0PGUdE87S8QtQXABPDL0CjNKhH3q/R1h9/WiRQkhVCGSBVhs63/M1iZn2DYVyJCAbDyMz3KNyAE0WzSQIWCRg==";
-const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.9.tgz";
+  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==";
+const PINNED_OPENCLAW_TARBALL = "https://registry.npmjs.org/openclaw/-/openclaw-2026.6.10.tgz";
 const PINNED_CODEX_ACP_VERSION = "0.11.1";
 const PINNED_CODEX_ACP_TARBALL =
   "https://registry.npmjs.org/@zed-industries/codex-acp/-/codex-acp-0.11.1.tgz";
 const PINNED_CODEX_ACP_INTEGRITY =
   "sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
-  "sha512-jU2q4L6L3qdZZDEIDXrWgwCWOGUaTSF+YzUlfgHED42TB4N3maF6seYchFpwKLB8neOzIDpnzMagEMjxZ/7Wqw==";
+  "sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
-  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.9.tgz";
+  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
-  "sha512-8HawXB5ylo+vkvkmDJZAE9uhOtm0l9YtzrVqJdM4UqwXeF4uGAkVEOrR3Hxy0sI3Moi5ZBzq2Jx/K5ZQKdiWjQ==";
+  "sha512-DDRnb4reL99O8kbISNbRFyk/xoUPYHsXG3UGikKAsVs+zIldYYA0hY0d3Z2aWoE+0vfda27mJUByCo7Xr15qdw==";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
-  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz";
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz";
 const PINNED_OPENCLAW_DISCORD_INTEGRITY =
-  "sha512-esFhwYW0nrFQvBhkPeK/1qmvumlVAY8ddhYBt7geIYLlBriwPJRwtnVLLfp0n1LbS0/XVZ0ORqlvkWq8Vv61vg==";
+  "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
-  "sha512-JZHc0L3s6s+yBsWowZtE/DWZJOuy4lTE6uTuUbF5QNjUvQQUlCHMFrwPycrXLesVq1il5yAvo82VbERRsIzgxQ==";
+  "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==";
 const PINNED_OPENCLAW_WHATSAPP_INTEGRITY =
-  "sha512-HWz9CryGcSk5ork03DlESVlRcDBnwuXPEKgqdSz/Qt0OnQ2Z1wqNGpwVlAqngvDQDH2AzkNXWuTu2M0C16R8vA==";
+  "sha512-k/XrRdZY77SHrdaRwJOEB7/JRbjp4yVgGD/ZNyakjTMqo32XRVtwPBUnj7726rW8Kl5yyOMQQLKFiD9MDfhmPQ==";
 const PINNED_OPENCLAW_MSTEAMS_INTEGRITY =
-  "sha512-Ye1nf2fZYGM3lqQJ/zGlhToThyz1lLZE7HqR2F31iWcD5pV89+eEyRFNNH2FrwYeDVjw+EyWpQh2RkN1r867qg==";
+  "sha512-GjHnCPvjbnI0C7mEFcdT2uKDH4/WwOe2dZBfQiWxBtkE76m6TNG0J9dJjD4mc8/pk8rXSO0cWw+KV9jzWtF9VA==";
 const PINNED_WECHAT_PLUGIN_INTEGRITY =
   "sha512-dPQbidUNWigC6V10vGW4i+GLH09x+6zUhafZRjuxkJ9GDu8o62WBsnUTojp4KqUH756hz+t2v9khiCRSi0dBDw==";
 const LEGACY_REBUILD_OPENCLAW_VERSION = "2026.3.11";
@@ -125,8 +125,8 @@ function runInstallBlock(
     `call_log=${JSON.stringify(log)}`,
     `real_node=${JSON.stringify(process.execPath)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_2026_6_9_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
-    `OPENCLAW_2026_6_9_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
+    `OPENCLAW_2026_6_10_INTEGRITY=${JSON.stringify(committedIntegrity)}`,
+    `OPENCLAW_2026_6_10_TARBALL=${JSON.stringify(PINNED_OPENCLAW_TARBALL)}`,
     `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=${allowLegacyFixture ? "1" : "0"}`,
     `OPENCLAW_2026_3_11_INTEGRITY=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_INTEGRITY)}`,
     `OPENCLAW_2026_3_11_TARBALL=${JSON.stringify(LEGACY_REBUILD_OPENCLAW_TARBALL)}`,
@@ -221,8 +221,8 @@ function runOptionalOpenClawPluginBlock(
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
-    `OPENCLAW_DIAGNOSTICS_OTEL_2026_6_9_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
-    `OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
+    `OPENCLAW_DIAGNOSTICS_OTEL_2026_6_10_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY)}`,
+    `OPENCLAW_BRAVE_PLUGIN_2026_6_10_INTEGRITY=${JSON.stringify(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY)}`,
     `NEMOCLAW_OPENCLAW_OTEL=${otel ? "1" : "0"}`,
     `NEMOCLAW_WEB_SEARCH_ENABLED=${webSearch ? "1" : "0"}`,
     'openclaw() { printf \'openclaw %s\\nopenclaw-env %s %s\\n\' "$*" "${NPM_CONFIG_IGNORE_SCRIPTS:-}" "${npm_config_ignore_scripts:-}" >> "$call_log"; }',
@@ -271,17 +271,17 @@ describe("OpenClaw npm integrity pins", () => {
     expect(reviewNote).toContain(`@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}`);
     expect(reviewNote).toContain(PINNED_CODEX_ACP_TARBALL);
     expect(reviewNote).toContain(PINNED_CODEX_ACP_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/brave-plugin@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/brave-plugin@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/discord@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/discord@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_DISCORD_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/slack@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/slack@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_SLACK_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/whatsapp@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/whatsapp@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_WHATSAPP_INTEGRITY);
-    expect(reviewNote).toContain("@openclaw/msteams@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/msteams@2026.6.10");
     expect(reviewNote).toContain(PINNED_OPENCLAW_MSTEAMS_INTEGRITY);
     expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
     expect(reviewNote).toContain(PINNED_WECHAT_PLUGIN_INTEGRITY);
@@ -303,8 +303,8 @@ describe("OpenClaw npm integrity pins", () => {
     expect(reviewNote).toContain("openclaw-diagnostics-otel-local");
     expect(reviewNote).toContain("imports `OTLPTraceExporter`");
     expect(reviewNote).toContain("contains no `web_fetch`, `fetchWithSsrFGuard`");
-    expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.6.9");
-    expect(reviewNote).toContain("@openclaw/brave-plugin@2026.6.9");
+    expect(reviewNote).toContain("@openclaw/diagnostics-otel@2026.6.10");
+    expect(reviewNote).toContain("@openclaw/brave-plugin@2026.6.10");
     expect(reviewNote).toContain("@tencent-weixin/openclaw-weixin@2.4.3");
     expect(reviewNote).toContain("`0` high");
     expect(reviewNote).toContain("`0` critical");
@@ -330,7 +330,7 @@ describe("OpenClaw npm integrity pins", () => {
     expect(reviewNote).toContain("default 180-second timeout");
   });
 
-  it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.6.9 integrity", () => {
+  it("keeps the Teams OpenClaw plugin manifest pinned to the reviewed 2026.6.10 integrity", () => {
     const teamsManifest = createBuiltInChannelManifestRegistry().get("teams");
     const teamsPackage = teamsManifest?.agentPackages?.find(
       (agentPackage) =>
@@ -385,7 +385,7 @@ describe("OpenClaw npm integrity pins", () => {
 
   it.each([
     "latest",
-    "^2026.6.9",
+    "^2026.6.10",
   ])("rejects a trusted OpenClaw plugin manifest with non-exact version %s", (version) => {
     const slackManifest = createBuiltInChannelManifestRegistry().get("slack");
     expect(slackManifest).toBeDefined();
@@ -421,9 +421,9 @@ describe("OpenClaw npm integrity pins", () => {
       `npm view @openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION} dist.tarball`,
     );
     expect(calls).toContain(
-      "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.9.tgz --pack-destination",
+      "npm pack https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.10.tgz --pack-destination",
     );
-    expect(calls).toContain("diagnostics-otel-2026.6.9.tgz --pin");
+    expect(calls).toContain("diagnostics-otel-2026.6.10.tgz --pin");
     expect(calls).toContain(
       `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
     );
@@ -431,9 +431,9 @@ describe("OpenClaw npm integrity pins", () => {
       `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.tarball`,
     );
     expect(calls).toContain(
-      "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz --pack-destination",
+      "npm pack https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz --pack-destination",
     );
-    expect(calls).toContain("brave-plugin-2026.6.9.tgz --pin");
+    expect(calls).toContain("brave-plugin-2026.6.10.tgz --pin");
     expect(calls).toContain("openclaw-env true true");
   });
 
@@ -459,7 +459,7 @@ describe("OpenClaw npm integrity pins", () => {
 
   it("fails closed before optional OpenClaw plugin install when the registry tarball URL drifts", () => {
     const driftedTarball =
-      "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz";
+      "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.11.tgz";
     const { result, calls } = runOptionalOpenClawPluginBlock({
       otel: false,
       braveRegistryTarball: driftedTarball,
@@ -606,7 +606,7 @@ describe("OpenClaw npm integrity pins", () => {
         openclawVersion: PINNED_OPENCLAW_VERSION,
         committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
         registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-        packFilename: "../openclaw-2026.6.9.tgz",
+        packFilename: "../openclaw-2026.6.10.tgz",
       },
     );
     const codexAcp = runInstallBlock(
@@ -632,18 +632,18 @@ describe("OpenClaw npm integrity pins", () => {
         openclawVersion: PINNED_OPENCLAW_VERSION,
         committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
         registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
-        packFilename: "../openclaw-2026.6.9.tgz",
+        packFilename: "../openclaw-2026.6.10.tgz",
       },
     );
     const optionalPlugin = runOptionalOpenClawPluginBlock({
-      pluginPackFilename: "../diagnostics-otel-2026.6.9.tgz",
+      pluginPackFilename: "../diagnostics-otel-2026.6.10.tgz",
     });
 
     for (const item of [
       {
         label: "production Dockerfile",
         outcome: production,
-        unsafeFilename: "../openclaw-2026.6.9.tgz",
+        unsafeFilename: "../openclaw-2026.6.10.tgz",
         blockedCommand: "npm install -g",
       },
       {
@@ -655,13 +655,13 @@ describe("OpenClaw npm integrity pins", () => {
       {
         label: "base Dockerfile",
         outcome: base,
-        unsafeFilename: "../openclaw-2026.6.9.tgz",
+        unsafeFilename: "../openclaw-2026.6.10.tgz",
         blockedCommand: "npm install -g",
       },
       {
         label: "optional OpenClaw plugin Dockerfile",
         outcome: optionalPlugin,
-        unsafeFilename: "../diagnostics-otel-2026.6.9.tgz",
+        unsafeFilename: "../diagnostics-otel-2026.6.10.tgz",
         blockedCommand: "openclaw plugins install",
       },
     ]) {
@@ -807,6 +807,20 @@ describe("OpenClaw npm integrity pins", () => {
       const result = runProductionBuildArgGuard([], env);
       expect(result.status, JSON.stringify(env)).toBe(1);
       expect(result.stderr).toContain("not allowed in production image builds");
+    }
+
+    for (const args of [
+      [
+        "--build-arg",
+        `OPENCLAW_VERSION=${PINNED_OPENCLAW_VERSION}\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24`,
+      ],
+      [`--build-arg=OPENCLAW_VERSION=${PINNED_OPENCLAW_VERSION}\r`],
+      ["BASE_IMAGE=base\nINJECTED=value"],
+      ["--build-arg\r"],
+    ]) {
+      const result = runProductionBuildArgGuard(args);
+      expect(result.status, JSON.stringify(args)).toBe(1);
+      expect(result.stderr).toContain("must not contain CR or LF characters");
     }
   });
 

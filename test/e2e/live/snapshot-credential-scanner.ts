@@ -10,21 +10,21 @@ import {
   shouldScanSnapshotFileForCredentials,
   valueLooksLikeSecret,
 } from "../../../src/lib/security/credential-filter.ts";
+import { shouldStripCredentialEnv } from "../../../src/lib/security/credential-env.ts";
 
 const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
-const CREDENTIAL_ENV_ASSIGNMENT_PATTERN =
-  /(?:^|\n)\s*(?:export\s+)?(?:NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*=/i;
+const ENV_ASSIGNMENT_PATTERN = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=/gm;
 const STRUCTURED_CREDENTIAL_KEY_PATTERN =
   /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
 
-// OpenClaw 2026.6.9 persists an environment variable name, rather than its
+// OpenClaw 2026.6.10 persists an environment variable name, rather than its
 // resolved value, in generated agents/*/agent/models.json provider entries.
 // Keep bare/braced names bounded to provider credentials used by NemoClaw or
 // OpenClaw's ambient AWS auth. An explicitly prefixed secretref-env marker can
 // name a custom environment variable because the prefix carries provenance.
 // Re-audit this allowlist whenever OpenClaw changes its models.json credential
 // encoding; remove it once snapshots use only typed secret-reference markers.
-const MODELS_JSON_CREDENTIAL_ENV_REFERENCES: ReadonlySet<string> = new Set([
+export const MODELS_JSON_CREDENTIAL_ENV_REFERENCES: ReadonlySet<string> = new Set([
   "ANTHROPIC_API_KEY",
   "AWS_ACCESS_KEY_ID",
   "AWS_BEARER_TOKEN_BEDROCK",
@@ -84,6 +84,14 @@ function isModelsJsonCredentialMarker(value: unknown): boolean {
   );
 }
 
+function containsCredentialEnvAssignment(value: string): boolean {
+  for (const match of value.matchAll(ENV_ASSIGNMENT_PATTERN)) {
+    const name = match[1];
+    if (name && shouldStripCredentialEnv(name)) return true;
+  }
+  return false;
+}
+
 function modelsJsonValueContainsCredentialLeak(value: unknown, fieldName?: string): boolean {
   if (fieldName && isModelsJsonCredentialField(fieldName)) {
     if (value === null) return false;
@@ -91,7 +99,7 @@ function modelsJsonValueContainsCredentialLeak(value: unknown, fieldName?: strin
   }
 
   if (typeof value === "string") {
-    return CREDENTIAL_ENV_ASSIGNMENT_PATTERN.test(value) || valueLooksLikeSecret(value);
+    return containsCredentialEnvAssignment(value) || valueLooksLikeSecret(value);
   }
   if (Array.isArray(value)) {
     return value.some((entry) => modelsJsonValueContainsCredentialLeak(entry));
@@ -125,7 +133,7 @@ export function snapshotFileContainsCredentialLeak(filename: string, body: strin
   if (basename === "models.json") return modelsJsonContainsCredentialLeak(body);
 
   const tokenValueLeak = CREDENTIAL_TOKEN_VALUE_PATTERN.test(body);
-  const envAssignmentLeak = CREDENTIAL_ENV_ASSIGNMENT_PATTERN.test(body);
+  const envAssignmentLeak = containsCredentialEnvAssignment(body);
   // openclaw.json may legitimately contain non-secret provider metadata such
   // as credential env-var references. Still fail it on token-shaped values or
   // concrete env assignments, but reserve generic structured-key checks for

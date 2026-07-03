@@ -23,6 +23,11 @@ fail_legacy_pin() {
   exit 1
 }
 
+fail_multiline_arg() {
+  echo "ERROR: production Docker build arguments must not contain CR or LF characters." >&2
+  exit 1
+}
+
 check_legacy_pin_arg() {
   case "$1" in
     OPENCLAW_VERSION=2026.3.11 | OPENCLAW_VERSION=2026.4.24 | \
@@ -52,6 +57,10 @@ fi
 
 previous_arg=""
 for arg in "$@"; do
+  case "$arg" in
+    *$'\r'* | *$'\n'*) fail_multiline_arg ;;
+  esac
+
   case "$arg" in
     "${legacy_fixture_key}=1" | "--build-arg=${legacy_fixture_key}=1")
       fail_legacy_fixture

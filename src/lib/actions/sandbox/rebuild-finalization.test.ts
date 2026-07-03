@@ -14,8 +14,8 @@ function options(
 ): RebuildPostRestoreFinalizationOptions {
   return {
     sandboxName: "alpha",
-    agentExpectedVersion: "2026.6.9",
-    reportedVersion: "2026.6.9",
+    agentExpectedVersion: "2026.6.10",
+    reportedVersion: "2026.6.10",
     rebuiltAgentName: "OpenClaw",
     restoredPresets: ["github"],
     failedPresets: [],
@@ -76,7 +76,7 @@ describe("finalizeRebuildPostRestore", () => {
 
     expect(calls.slice(0, 4)).toEqual(["registry", "log", "relock", "forward"]);
     expect(updateSandbox).toHaveBeenCalledWith("alpha", {
-      agentVersion: "2026.6.9",
+      agentVersion: "2026.6.10",
       policies: ["github"],
     });
     expect(writeLine.mock.calls.flat().join("\n")).toContain(

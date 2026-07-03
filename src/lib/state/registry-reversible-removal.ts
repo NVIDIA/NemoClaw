@@ -12,6 +12,10 @@ type RegistryState<Entry extends NamedRegistryEntry> = {
 
 export type RegistryRemovalReceipt<Entry extends NamedRegistryEntry> = {
   entry: Entry;
+  /** Whether the removed row owned the default pointer. */
+  wasDefault: boolean;
+  /** The fallback selected by this removal when it moved the default pointer. */
+  fallbackDefault: string | null;
 };
 
 type RegistryRemovalResult<Entry extends NamedRegistryEntry> = {
@@ -35,14 +39,15 @@ export function removeSandboxFromRegistry<Entry extends NamedRegistryEntry>(
   const sandboxes = { ...registry.sandboxes };
   delete sandboxes[name];
   const fallbackDefault = Object.keys(sandboxes)[0] || null;
+  const wasDefault = registry.defaultSandbox === name;
 
   return {
     registry: {
       ...registry,
       sandboxes,
-      defaultSandbox: registry.defaultSandbox === name ? fallbackDefault : registry.defaultSandbox,
+      defaultSandbox: wasDefault ? fallbackDefault : registry.defaultSandbox,
     },
-    receipt: { entry },
+    receipt: { entry, wasDefault, fallbackDefault },
   };
 }
 
@@ -53,13 +58,19 @@ export function removeSandboxFromRegistry<Entry extends NamedRegistryEntry>(
  */
 export function restoreSandboxIfMissingInRegistry<Entry extends NamedRegistryEntry>(
   registry: RegistryState<Entry>,
-  entry: Entry,
+  receipt: RegistryRemovalReceipt<Entry>,
 ): RegistryRestoreResult<Entry> {
+  const { entry } = receipt;
   if (registry.sandboxes[entry.name]) return { registry, restored: false };
 
   const sandboxes = { ...registry.sandboxes, [entry.name]: entry };
-  const defaultSandbox =
-    registry.defaultSandbox && sandboxes[registry.defaultSandbox]
+  const currentDefaultIsValid =
+    registry.defaultSandbox !== null && sandboxes[registry.defaultSandbox] !== undefined;
+  const shouldReclaimRemovedDefault =
+    receipt.wasDefault && registry.defaultSandbox === receipt.fallbackDefault;
+  const defaultSandbox = shouldReclaimRemovedDefault
+    ? entry.name
+    : currentDefaultIsValid
       ? registry.defaultSandbox
       : entry.name;
 

@@ -7,8 +7,9 @@
 // `upgrade-sandboxes --auto`) must never steer `onboard --resume` away from the
 // target sandbox's recorded agent/provider/model/credential. These are the env
 // vars that onboard's resume path reads to pick the agent, provider, model,
-// endpoint, credential, and endpoint reasoning mode — isolating them during
-// the recreate forces the pinned session + gateway-registered provider to win.
+// endpoint, credential, preferred inference API, and endpoint reasoning mode —
+// isolating them during the recreate forces the pinned session +
+// gateway-registered provider to win.
 //
 // SOURCE-OF-TRUTH NOTE (#5735, PRA-4): the real source boundary is
 // `onboard --resume`, which still reads these from the global `process.env`:
@@ -17,6 +18,9 @@
 //   - NEMOCLAW_PROVIDER_KEY → src/lib/onboard/provider-key-bridge.ts / providers.ts
 //   - NEMOCLAW_ENDPOINT_URL → src/lib/onboard.ts (remote endpoint override)
 //   - NEMOCLAW_MODEL        → src/lib/onboard.ts (model override)
+//   - NEMOCLAW_PREFERRED_API → src/lib/onboard/inference-selection-validation.ts
+//                              and src/lib/onboard/setup-nim-selection.ts
+//                              (probe/API override)
 //   - NEMOCLAW_REASONING    → src/lib/onboard/reasoning-mode.ts
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
@@ -31,6 +35,7 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_PROVIDER_KEY",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_PREFERRED_API",
   "NEMOCLAW_REASONING",
 ] as const;
 

@@ -509,31 +509,35 @@ export function removeSandbox(name: string): boolean {
  * not clobber other sandboxes' entries another command added during the rebuild
  * window).
  *
- * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
- * performed: when this sandbox was the default, `removeSandbox` reassigned
- * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
- * it back. This is best-effort "undo my operation" — a deliberate default change
- * by a concurrent command during the rebuild window is an inherent race and may
- * be overwritten.
+ * `defaultTransition` undoes the exact default-pointer move captured by the
+ * removal receipt. It reclaims the original default only while the pointer
+ * still equals the fallback selected by that removal, preserving a genuine
+ * concurrent `setDefault` to any other sandbox.
  */
 export function restoreSandboxEntry(
   entry: SandboxEntry,
-  options: { reclaimDefault?: string | null } = {},
+  options: {
+    defaultTransition?: { readonly from: string | null; readonly to: string };
+  } = {},
 ): void {
   withLock(() => {
     const data = load();
     data.sandboxes[entry.name] = entry;
-    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
-      data.defaultSandbox = options.reclaimDefault;
+    if (
+      options.defaultTransition &&
+      data.defaultSandbox === options.defaultTransition.from &&
+      data.sandboxes[options.defaultTransition.to]
+    ) {
+      data.defaultSandbox = options.defaultTransition.to;
     }
     save(data);
   });
 }
 
 /** Restore a removed entry unless a recreate already registered its replacement. */
-export function restoreSandboxEntryIfMissing(entry: SandboxEntry): boolean {
+export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
   return withLock(() => {
-    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), entry);
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), receipt);
     if (!result.restored) return false;
     save(result.registry);
     return result.restored;
