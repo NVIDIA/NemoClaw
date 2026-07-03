@@ -931,22 +931,24 @@ curl: (56) CONNECT tunnel failed, response 403
 This is a network-policy denial, not a tool or certificate problem.
 
 When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw checks the sandbox audit log for a policy denial recorded after the command started.
-If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below:
+If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` when it can be extracted safely and showing the commands below:
 
 ```text
 curl: (56) CONNECT tunnel failed, response 403
-nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
+$$nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
   The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
-  See the denied flow:    nemoclaw oc-fresh logs --tail 50
-  Review applied presets: nemoclaw oc-fresh policy-list
-  Allow the host:         nemoclaw oc-fresh policy-add <preset>
+  See the denied flow:    $$nemoclaw oc-fresh logs --tail 50
+  Review applied presets: $$nemoclaw oc-fresh policy-list
+  Allow the host:         $$nemoclaw oc-fresh policy-add <preset>
   Silence this hint:      export NEMOCLAW_NO_POLICY_HINT=1
 ```
+
+If the log probe fails, no breadcrumb is added. Unsafe endpoint data is omitted from the breadcrumb, and an invalid sandbox name is shown as `<name>`.
 
 An IPv6 target is named in its RFC 3986 bracketed form:
 
 ```text
-nemoclaw: recent network policy denial detected for [2001:db8::1]:443 inside sandbox 'oc-fresh'.
+$$nemoclaw: recent network policy denial detected for [2001:db8::1]:443 inside sandbox 'oc-fresh'.
 ```
 
 The tool's own stdout/stderr bytes and its exit code are left unchanged. The breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial. A command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb. Set `NEMOCLAW_NO_POLICY_HINT` to any non-empty value other than `0` or `false` to suppress it entirely.
