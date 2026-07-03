@@ -3,17 +3,21 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { executeMock, loadMock, runCommandMock } = vi.hoisted(() => ({
-  executeMock: vi.fn(),
+const { flushMock, handleMock, loadMock, runCommandMock, runMock } = vi.hoisted(() => ({
+  flushMock: vi.fn(),
+  handleMock: vi.fn(),
   loadMock: vi.fn(),
   runCommandMock: vi.fn(),
+  runMock: vi.fn(),
 }));
 
 vi.mock("@oclif/core", () => ({
   Config: {
     load: loadMock,
   },
-  execute: executeMock,
+  flush: flushMock,
+  handle: handleMock,
+  run: runMock,
 }));
 
 import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
@@ -46,22 +50,26 @@ describe("runOclifArgv", () => {
   let originalArgv: string[];
 
   beforeEach(() => {
-    executeMock.mockReset();
+    flushMock.mockReset();
+    handleMock.mockReset();
     loadMock.mockReset();
     runCommandMock.mockReset();
+    runMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());
     originalArgv = process.argv;
     process.argv = ["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"];
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     process.argv = originalArgv;
+    process.exitCode = undefined;
   });
 
   it("executes native oclif argv with branded package metadata", async () => {
     const config = makeConfig();
     loadMock.mockResolvedValue(config);
-    executeMock.mockImplementation(async () => {
+    runMock.mockImplementation(async () => {
       expect(process.argv).toEqual([
         "/usr/bin/node",
         "/repo/bin/nemoclaw.js",
@@ -77,21 +85,20 @@ describe("runOclifArgv", () => {
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
-    expect(executeMock).toHaveBeenCalledWith({
-      args: ["sandbox", "channels", "start", "--help"],
-      loadOptions: {
-        root: "/repo",
-        pjson: config.pjson,
-      },
+    expect(runMock).toHaveBeenCalledWith(["sandbox", "channels", "start", "--help"], {
+      root: "/repo",
+      pjson: config.pjson,
     });
+    expect(flushMock).toHaveBeenCalled();
+    expect(handleMock).not.toHaveBeenCalled();
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
   });
 
-  it("restores process argv when native oclif execution throws", async () => {
+  it("delegates ordinary native-route failures to oclif's handler and restores argv", async () => {
     const error = new Error("Missing 1 required arg: channel");
-    executeMock.mockImplementation(async () => {
+    runMock.mockImplementation(async () => {
       expect(process.argv).toEqual([
         "/usr/bin/node",
         "/repo/bin/nemoclaw.js",
@@ -103,11 +110,70 @@ describe("runOclifArgv", () => {
       throw error;
     });
 
-    await expect(
-      runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" }),
-    ).rejects.toBe(error);
+    await runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" });
 
+    // oclif's handle() owns pretty-printing and process exit for ordinary
+    // failures (it never returns control for a real error), so we just forward.
+    expect(handleMock).toHaveBeenCalledWith(error);
     expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
+  });
+
+  it("forces a non-zero exit for native-route errors riding oclif.exit === 0 (#5974)", async () => {
+    // oclif's handle() would Exit.exit(0) for this error, silently reporting
+    // success on the native `internal`/`sandbox` routes. The native path must
+    // mirror runOclifCommandById: surface the message and exit non-zero, never
+    // delegating to handle() (which would exit 0).
+    class WeirdError extends Error {
+      oclif = { exit: 0 };
+    }
+    runMock.mockRejectedValue(new WeirdError("sandbox transport closed unexpectedly"));
+    const errorLine = vi.fn();
+
+    await runOclifArgv(["sandbox", "list"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(1);
+    expect(errorLine).toHaveBeenCalledWith("  sandbox transport closed unexpectedly");
+    expect(handleMock).not.toHaveBeenCalled();
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
+  });
+
+  it("falls back to a generic line for blank-message native-route oclif.exit === 0 errors (#5974)", async () => {
+    class BlankError extends Error {
+      oclif = { exit: 0 };
+    }
+    runMock.mockRejectedValue(new BlankError(""));
+    const errorLine = vi.fn();
+
+    await runOclifArgv(["sandbox", "list"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(1);
+    expect(errorLine).toHaveBeenCalledOnce();
+    const [line] = errorLine.mock.calls[0];
+    expect(String(line).trim().length).toBeGreaterThan(0);
+    expect(handleMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a genuine native-route ExitError(0) as a graceful exit (#5974)", async () => {
+    // Command.exit(0) / --help on the native route must stay silent and
+    // delegate to oclif's handler, which performs the graceful exit 0.
+    // This mocks handleOclif to assert delegation; the runtime counterpart
+    // (real `nemoclaw sandbox --help` → exit 0 through the actual binary) is
+    // locked by test/exit-code-user-error-surfaces.test.ts
+    // ("a native-route --help stays a clean exit 0").
+    class ExitError extends Error {
+      oclif = { exit: 0 };
+    }
+    const exitError = new ExitError("EEXIT: 0");
+    runMock.mockRejectedValue(exitError);
+    const errorLine = vi.fn();
+
+    await runOclifArgv(["sandbox", "list"], { rootDir: "/repo", error: errorLine });
+
+    expect(errorLine).not.toHaveBeenCalled();
+    // The runner must NOT force a failure code here — handle() owns the
+    // graceful exit 0 for a genuine ExitError(0).
+    expect(process.exitCode).toBeUndefined();
+    expect(handleMock).toHaveBeenCalledWith(exitError);
   });
 });
 
@@ -115,7 +181,8 @@ describe("runOclifCommandById", () => {
   let originalArgv: string[];
 
   beforeEach(() => {
-    executeMock.mockReset();
+    flushMock.mockReset();
+    handleMock.mockReset();
     runCommandMock.mockReset();
     loadMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());
@@ -195,11 +262,12 @@ describe("runOclifCommandById", () => {
     expect(errorLine).not.toHaveBeenCalled();
   });
 
-  it("surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them (#2666)", async () => {
-    // Before #2666 this branch silently set exit 0 and produced no output.
-    // The bug was an arbitrary error riding the same `oclif.exit === 0`
-    // channel, e.g. propagated from inside a command's run(). Surface the
-    // message so the user gets signal.
+  it("surfaces AND fails on errors that merely carry oclif.exit === 0 (#2666, #5974)", async () => {
+    // #2666 stopped this branch silently swallowing an arbitrary error that
+    // rode the same `oclif.exit === 0` channel (e.g. propagated from inside a
+    // command's run()) — but it still reported success. #5974: such an error
+    // is a genuine failure, so surface the message AND exit non-zero so `$?`
+    // stays scriptable. Only a real oclif ExitError(0) stays exit 0.
     class WeirdError extends Error {
       oclif = { exit: 0 };
     }
@@ -210,16 +278,17 @@ describe("runOclifCommandById", () => {
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(1);
     expect(errorLine).toHaveBeenCalledWith(
       "  Could not verify sandbox 'my-assist' against the live OpenShell gateway",
     );
   });
 
-  it("falls back to a generic line when the error message is empty (#2666)", async () => {
+  it("falls back to a generic line and still fails when the message is empty (#2666, #5974)", async () => {
     // Closes the residual silent path: if a non-ExitError(0) carries an
-    // empty message (or one that trims to empty), still emit *something*
-    // so the user is never left looking at exit 0 + blank stdout/stderr.
+    // empty message (or one that trims to empty), still emit *something* and
+    // exit non-zero so the user is never left looking at exit 0 + blank
+    // stdout/stderr.
     class BlankError extends Error {
       oclif = { exit: 0 };
     }
@@ -228,7 +297,7 @@ describe("runOclifCommandById", () => {
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(1);
     expect(errorLine).toHaveBeenCalledOnce();
     const [line] = errorLine.mock.calls[0];
     expect(String(line).trim().length).toBeGreaterThan(0);

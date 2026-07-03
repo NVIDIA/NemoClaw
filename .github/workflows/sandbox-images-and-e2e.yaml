@@ -80,6 +80,15 @@ jobs:
       - name: Resolve Hermes base image
         uses: ./.github/actions/resolve-hermes-base-image
 
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
       - name: Build Hermes production image
         run: docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production .
 

@@ -461,6 +461,36 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it("seeds credentialless WhatsApp from its optional allowlist input in non-interactive mode", async () => {
+    process.env.WHATSAPP_ALLOWED_IDS = "15551234567,15557654321";
+    const notes: string[] = [];
+
+    const result = await setupMessagingChannels(null, null, {
+      note: (message) => notes.push(message),
+      isNonInteractive: () => true,
+      sandboxName: "whatsapp-seed",
+    });
+
+    expect(result).toEqual(["whatsapp"]);
+    expect(notes).toEqual(["  [non-interactive] Messaging channel inputs detected: whatsapp"]);
+    expect(MessagingSetupApplier.requirePlanFromEnv()).toMatchObject({
+      sandboxName: "whatsapp-seed",
+      channels: [
+        {
+          channelId: "whatsapp",
+          active: true,
+          inputs: [
+            {
+              inputId: "allowedIds",
+              value: "15551234567,15557654321",
+            },
+          ],
+        },
+      ],
+    });
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("validates detected non-interactive Slack inputs before returning enabled channels", async () => {
     process.env.SLACK_BOT_TOKEN = "not-a-slack-token";
     process.env.SLACK_APP_TOKEN = "xapp-existing-token";
@@ -628,6 +658,12 @@ describe("detectMessagingChannelsFromEnv", () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
 
     expect(detectMessagingChannelsFromEnv(null)).toContain("telegram");
+  });
+
+  it("detects credentialless WhatsApp when WHATSAPP_ALLOWED_IDS is supplied", () => {
+    process.env.WHATSAPP_ALLOWED_IDS = "15551234567";
+
+    expect(detectMessagingChannelsFromEnv(null)).toContain("whatsapp");
   });
 
   it("does not detect channels for unsupported named agents even when env inputs are complete", () => {

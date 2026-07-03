@@ -63,9 +63,17 @@ and artifact shape operators needed from the retired workflows:
 - per-target `run-plan.json`;
 - per-phase `environment.result.json`, `onboarding.result.json`, and
   `state-validation.result.json`;
+- per-target sanitized onboard trace timing summary at
+  `e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json`;
 - per-target step summary rendered from `run-plan.json`;
 - explicit artifact upload allowlist with action, log, shell command-evidence,
   and JSON summary paths plus 14-day retention.
+
+Raw onboard traces are not uploaded from the live matrix.
+The workflow writes them under runner temporary storage, sanitizes them before
+artifact upload, and deletes the raw trace directory afterward.
+Only the dedicated `cloud-onboard` artifact feeds Slack and GitHub scorecard
+timing comparisons.
 
 ## What Replaced It
 

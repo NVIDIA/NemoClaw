@@ -26,11 +26,16 @@ export interface UninstallPathOptions {
   xdgBinHome?: string;
 }
 
+/** Agent-alias CLI shims installed alongside `nemoclaw` (e.g. nemohermes). */
+export const AGENT_ALIAS_CLI_BINARIES = ["nemohermes", "nemo-deepagents"] as const;
+
 export interface UninstallPaths {
   helperServiceGlob: string;
   managedSwapMarkerPath: string;
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
+  /** Sibling agent-alias shims (nemohermes, nemo-deepagents) in the same bin dir. */
+  agentAliasShimPaths: Array<{ binName: string; path: string }>;
   nemoclawStateDir: string;
   gatewayLocalStateDir: string;
   openshellConfigDir: string;
@@ -59,6 +64,10 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     managedSwapMarkerPath: path.join(options.home, ".nemoclaw", "managed_swap"),
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
+    agentAliasShimPaths: AGENT_ALIAS_CLI_BINARIES.map((binName) => ({
+      binName,
+      path: path.join(options.home, ".local", "bin", binName),
+    })),
     nemoclawStateDir: path.join(options.home, ".nemoclaw"),
     gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
