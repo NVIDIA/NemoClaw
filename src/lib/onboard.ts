@@ -39,7 +39,6 @@ const {
 }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
-const sandboxPrebuild: typeof import("./onboard/sandbox-prebuild") = require("./onboard/sandbox-prebuild");
 const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = require("./onboard/prepared-dcode-rebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
@@ -747,6 +746,12 @@ const {
 
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
+const waitForSandboxReady = sandboxReadinessTracing.createSandboxReadyWaiter({
+  runCaptureOpenshell,
+  isSandboxReady,
+  isLinuxDockerDriverGatewayEnabled,
+  sleep: sleepSeconds,
+});
 const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
   gatewayBinding.createGatewayNameBoundClassifiers(gatewayState, () => GATEWAY_NAME);
 
@@ -1552,39 +1557,6 @@ async function ensureNamedCredential(
   helpUrl: string | null = null,
 ): Promise<string | typeof BACK_TO_SELECTION> {
   return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
-}
-
-function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
-  for (let i = 0; i < attempts; i += 1) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) return true;
-
-    // Package-managed OpenShell gateways report readiness through
-    // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
-    if (isLinuxDockerDriverGatewayEnabled()) {
-      if (i < attempts - 1) sleepSeconds(delaySeconds);
-      continue;
-    }
-    const podPhase = runCaptureOpenshell(
-      [
-        "doctor",
-        "exec",
-        "--",
-        "kubectl",
-        "-n",
-        "openshell",
-        "get",
-        "pod",
-        sandboxName,
-        "-o",
-        "jsonpath={.status.phase}",
-      ],
-      { ignoreError: true },
-    );
-    if (podPhase === "Running") return true;
-    sleepSeconds(delaySeconds);
-  }
-  return false;
 }
 
 // parsePolicyPresetEnv — see urlUtils import above
@@ -2941,21 +2913,11 @@ async function createSandbox(
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  // Pre-build the image locally with BuildKit so openshell skips its slower
-  // classic build; falls back to the openshell build if ineligible/fails (#6002).
-  const { createArgs: launchCreateArgs, imageRef: prebuiltImageRef } =
-    await sandboxPrebuild.prebuildSandboxImageIfEligible({
-      buildCtx,
-      buildId,
-      createArgs,
-      sandboxName,
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
-    });
-  const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
-    sandboxCreateLaunch.prepareSandboxCreateLaunch({
+  const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
       chatUiUrl,
-      createArgs: launchCreateArgs,
+      createArgs,
       sandboxName,
       env: process.env,
       extraPlaceholderKeys,
@@ -2963,6 +2925,8 @@ async function createSandbox(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
+      // Transitional BuildKit handoff removal is tracked by #6258.
+      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3024,7 +2988,7 @@ async function createSandbox(
         backupPath: restoreBackupPath,
       });
       console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output, { createArgs: launchCreateArgs });
+      printSandboxCreateRecoveryHints(createResult.output, { createArgs: prebuild.createArgs });
       process.exit(createResult.status || 1);
     }
   }
@@ -3111,7 +3075,7 @@ async function createSandbox(
   // Register only after confirmed ready — prevents phantom entries
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
-    prebuiltImageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
+    prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   const inferenceSelection = sandboxRegistration.selection;
@@ -4617,20 +4581,7 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-async function onboard(opts: OnboardOptions = {}): Promise<void> {
-  const previousNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE;
-  const propagateNonInteractiveFlag = opts.nonInteractive === true;
-  if (propagateNonInteractiveFlag) process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-  try {
-    await runOnboard(opts);
-  } finally {
-    if (propagateNonInteractiveFlag) {
-      if (previousNonInteractive === undefined) delete process.env.NEMOCLAW_NON_INTERACTIVE;
-      else process.env.NEMOCLAW_NON_INTERACTIVE = previousNonInteractive;
-    }
-  }
-}
-
+const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);

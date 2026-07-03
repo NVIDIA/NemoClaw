@@ -86,6 +86,8 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 /**
  * Build the already-staged sandbox context with BuildKit on the shared local
  * Docker daemon. Any failure preserves the original OpenShell build path.
+ * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
+ * extraction and observable retirement criteria are tracked by #6258.
  */
 export async function prebuildSandboxImageIfEligible(
   input: SandboxPrebuildInput,

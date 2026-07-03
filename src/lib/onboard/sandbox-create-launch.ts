@@ -10,6 +10,11 @@ import type { HermesDashboardOnboardState } from "./hermes-dashboard";
 import { appendHermesDashboardEnvArgs } from "./hermes-dashboard";
 import { appendHostProxyEnvArgs } from "./host-proxy-env";
 import { appendOpenClawRuntimeEnvArgs } from "./openclaw-runtime-env";
+import {
+  prebuildSandboxImageIfEligible,
+  type SandboxPrebuildInput,
+  type SandboxPrebuildResult,
+} from "./sandbox-prebuild";
 
 type OpenshellShellCommand = (args: string[]) => string;
 
@@ -33,6 +38,15 @@ export interface SandboxCreateLaunch {
   envArgs: string[];
   sandboxEnv: Record<string, string>;
   sandboxStartupCommand: string[];
+}
+
+export interface SandboxCreateLaunchWithPrebuildInput extends SandboxCreateLaunchInput {
+  sandboxName: string;
+  prebuild: Omit<SandboxPrebuildInput, "createArgs" | "sandboxName">;
+}
+
+export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
+  prebuild: SandboxPrebuildResult;
 }
 
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
@@ -109,5 +123,21 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     envArgs,
     sandboxEnv,
     sandboxStartupCommand,
+  };
+}
+
+/** Coordinate the optional local image build with the canonical launch renderer. */
+export async function prepareSandboxCreateLaunchWithPrebuild(
+  input: SandboxCreateLaunchWithPrebuildInput,
+): Promise<SandboxCreateLaunchWithPrebuild> {
+  const { prebuild: prebuildInput, ...launchInput } = input;
+  const prebuild = await prebuildSandboxImageIfEligible({
+    ...prebuildInput,
+    createArgs: input.createArgs,
+    sandboxName: input.sandboxName,
+  });
+  return {
+    ...prepareSandboxCreateLaunch({ ...launchInput, createArgs: prebuild.createArgs }),
+    prebuild,
   };
 }
