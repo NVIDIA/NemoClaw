@@ -52,6 +52,10 @@ export type ChannelStatusConfigOptions = {
   inputIds?: readonly string[];
 };
 
+export type ChannelStatusConfigSignal = DiagnosticSignal & {
+  readonly kind: "config-input" | "rendered-config-source";
+};
+
 export function buildConfigStatusSignals(
   sandboxName: string,
   channelName: string,
@@ -59,7 +63,7 @@ export function buildConfigStatusSignals(
   agent: AgentDefinition,
   deps: ChannelStatusConfigDeps,
   options: ChannelStatusConfigOptions = {},
-): DiagnosticSignal[] {
+): ChannelStatusConfigSignal[] {
   const plan = registry.getMessagingPlanFromEntry(entry);
   const channelPlan = plan?.channels.find((channel) => channel.channelId === channelName);
   if (!channelPlan?.configured) return [];
@@ -94,7 +98,7 @@ export function buildConfigStatusSignals(
       .filter((input) => input.kind === "config")
       .map((input) => [input.inputId, input] as const),
   );
-  const signals: DiagnosticSignal[] = configSourceReadSignals(sandboxName, sourceReads);
+  const signals: ChannelStatusConfigSignal[] = configSourceReadSignals(sandboxName, sourceReads);
 
   for (const input of manifestConfigInputs) {
     const signal = configInputSignal(input, configInputs.get(input.id), renderSources, sourceReads);
@@ -109,7 +113,7 @@ function configInputSignal(
   planInput: SandboxMessagingInputReference | undefined,
   renderSources: readonly ConfigRenderSource[],
   sourceReads: ConfigSourceReads,
-): DiagnosticSignal | null {
+): ChannelStatusConfigSignal | null {
   const label = configInputLabel(input, planInput);
   const expected = expectedConfigValue(input, planInput);
   const sources = renderSources.filter((source) => source.inputId === input.id);
@@ -126,6 +130,7 @@ function configInputSignal(
     checkedComparisons.length === comparisons.length && checkedComparisons.length > 0;
   const hasUncheckedExpectedValue = expected.hasValue && !allSourcesChecked;
   return {
+    kind: "config-input",
     label,
     severity:
       hasMismatch || hasUncheckedExpectedValue
@@ -200,9 +205,11 @@ function configInputValueDetail(
   const labelKey =
     booleanValue === null ? configInputDetail(value) : booleanValue === true ? "1" : "0";
   const label = input.diagnostics?.valueLabels?.[labelKey];
-  const renderedValue = label ? `${label} (${labelKey}` : configInputDetail(value);
-  if (label) return `${renderedValue}${options.isDefault ? ", default" : ""})`;
-  return `${renderedValue}${options.isDefault ? " (default)" : ""}`;
+  if (label) {
+    return options.isDefault ? `${label} (${labelKey}, default)` : `${label} (${labelKey})`;
+  }
+  const renderedValue = configInputDetail(value);
+  return options.isDefault ? `${renderedValue} (default)` : renderedValue;
 }
 
 interface ConfigRenderSource extends RenderedConfigVisibilityKey {
@@ -248,11 +255,12 @@ type ParsedConfigSourceRead =
 function configSourceReadSignals(
   sandboxName: string,
   sourceReads: ConfigSourceReads,
-): DiagnosticSignal[] {
-  const signals: DiagnosticSignal[] = [];
+): ChannelStatusConfigSignal[] {
+  const signals: ChannelStatusConfigSignal[] = [];
   for (const [target, read] of sourceReads.targetReads.entries()) {
     if (read.ok) continue;
     signals.push({
+      kind: "rendered-config-source",
       label: "Rendered config source",
       severity: "warn",
       detail: `${read.error}; config comparisons not checked`,
@@ -261,6 +269,7 @@ function configSourceReadSignals(
   }
   for (const [target, error] of sourceReads.targetParseErrors.entries()) {
     signals.push({
+      kind: "rendered-config-source",
       label: "Rendered config source",
       severity: "warn",
       detail: `${error}; config comparisons not checked`,

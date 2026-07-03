@@ -11,7 +11,7 @@ type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 const requireDist = createRequire(resolve("src/lib/actions/sandbox/doctor-flow.test.ts"));
 const doctorModulePath = "./doctor.js";
 
-export function telegramMessaging(requireMention: "0" | "1") {
+export function telegramMessaging(requireMention?: "0" | "1") {
   return {
     schemaVersion: 1 as const,
     plan: {
@@ -29,15 +29,19 @@ export function telegramMessaging(requireMention: "0" | "1") {
           configured: true,
           disabled: false,
           inputs: [
-            {
-              channelId: "telegram",
-              inputId: "requireMention",
-              kind: "config" as const,
-              required: false,
-              sourceEnv: "TELEGRAM_REQUIRE_MENTION",
-              statePath: "telegramConfig.requireMention",
-              value: requireMention,
-            },
+            ...(requireMention === undefined
+              ? []
+              : [
+                  {
+                    channelId: "telegram",
+                    inputId: "requireMention",
+                    kind: "config" as const,
+                    required: false,
+                    sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+                    statePath: "telegramConfig.requireMention" as const,
+                    value: requireMention,
+                  },
+                ]),
             {
               channelId: "telegram",
               inputId: "groupPolicy",
@@ -85,7 +89,7 @@ export function createDoctorHarness(): {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const openshellResolve = requireDist("../../adapters/openshell/resolve.js");
   const runtime = requireDist("../../adapters/openshell/runtime.js");
   const agentDefs = requireDist("../../agent/defs.js");
   const agentRuntime = requireDist("../../agent/runtime.js");
@@ -118,7 +122,7 @@ export function createDoctorHarness(): {
     .mockReturnValue([]);
   vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
   const resolveOpenShellSpy = vi
-    .spyOn(resolve, "resolveOpenshell")
+    .spyOn(openshellResolve, "resolveOpenshell")
     .mockReturnValue("/usr/bin/openshell");
   vi.spyOn(gatewayBinding, "resolveSandboxGatewayName").mockReturnValue("nemoclaw-19080");
   vi.spyOn(gatewayBinding, "resolveGatewayName").mockReturnValue("nemoclaw-19080");

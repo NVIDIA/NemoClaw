@@ -110,5 +110,6 @@ function getOpenClawGroupRequireMention(
     values.push(value);
   }
   if (values.length === 0) return true;
-  return [...new Set(values)].sort().length === 1 ? values[0] : [...new Set(values)].sort();
+  const uniqueValues = [...new Set(values)].sort((a, b) => Number(a) - Number(b));
+  return uniqueValues.length === 1 ? uniqueValues[0] : uniqueValues;
 }

@@ -121,6 +121,7 @@ describe("showSandboxChannelStatus config comparison", () => {
     const signals = result && "signals" in result ? result.signals : [];
     expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
       expect.objectContaining({
+        kind: "rendered-config-source",
         severity: "warn",
         detail:
           "rendered config source too large: /sandbox/.openclaw/openclaw.json; config comparisons not checked",
@@ -319,6 +320,7 @@ describe("showSandboxChannelStatus config comparison", () => {
     const signals = result && "signals" in result ? result.signals : [];
     expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
       expect.objectContaining({
+        kind: "rendered-config-source",
         severity: "warn",
         detail: "could not parse /sandbox/.openclaw/openclaw.json; config comparisons not checked",
       }),

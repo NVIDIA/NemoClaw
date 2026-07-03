@@ -304,7 +304,7 @@ function configuredChannelDiagnosticChecks(
       ...signals.map((signal) => ({
         group: "Messaging" as const,
         label:
-          signal.label === "Rendered config source"
+          signal.kind === "rendered-config-source"
             ? `${manifest.displayName} rendered config`
             : signal.label,
         status: signal.severity,
