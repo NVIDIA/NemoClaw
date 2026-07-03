@@ -71,6 +71,20 @@ export const POLICY_HINT_TAIL_LINES = 200;
 const SAFE_ENDPOINT_RE =
   /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*:\d{1,5}$/;
 
+// The RFC 3986 bracketed form for an IPv6 literal target (`[2001:db8::1]:443`,
+// `[::1]:8080`, including the IPv4-mapped `[::ffff:1.2.3.4]:443`). The bracket
+// body is bounded to hex digits, colons, and dots so the same "no untrusted
+// token may reach the terminal" guarantee holds: no shell metacharacters,
+// control bytes, or TTY escapes can pass this allowlist.
+const SAFE_IPV6_ENDPOINT_RE = /^\[[0-9A-Fa-f:.]{2,45}\]:\d{1,5}$/;
+
+// True when a candidate is a safe `host:port` — a DNS/IPv4 host or a bracketed
+// IPv6 literal. Anything else is dropped so a malformed or crafted line falls
+// back to the generic hint rather than echoing an untrusted token.
+function isSafeEndpoint(candidate: string): boolean {
+  return SAFE_ENDPOINT_RE.test(candidate) || SAFE_IPV6_ENDPOINT_RE.test(candidate);
+}
+
 /**
  * True when a log line records a network policy denial. Matches the OpenShell
  * OCSF audit signature (`NET:OPEN ... DENIED`) plus the proxy/JSON denial
@@ -96,21 +110,26 @@ const LEADING_ISO_TIMESTAMP_RE =
 /**
  * Extract the denied `host:port` endpoint from an audit line, preferring the
  * `-> host:port` arrow target of a NET:OPEN event and falling back to the first
- * `host:port` token after any leading timestamp. Returns null when no token
- * passes the safe allowlist so a malformed or crafted line can never inject
- * bytes into the emitted hint.
+ * `host:port` token after any leading timestamp. Both a DNS/IPv4 host and a
+ * bracketed IPv6 literal (`[2001:db8::1]:443`) are recognized; the bracketed
+ * alternative is matched ahead of the bare-host form so the enclosing brackets
+ * are captured whole rather than split on the address's own colons. Returns null
+ * when no token passes the safe allowlist so a malformed or crafted line can
+ * never inject bytes into the emitted hint.
  */
 export function extractDeniedEndpoint(line: string): string | null {
   const candidates: string[] = [];
-  const arrow = line.match(/->\s*([^\s\]]+:\d{1,5})(?:\b|$)/);
+  const arrow = line.match(/->\s*(\[[^\]\s]+\]:\d{1,5}|[^\s\]]+:\d{1,5})(?:\b|$)/);
   if (arrow) candidates.push(arrow[1]);
   const withoutTimestamp = line
     .replace(LEADING_EPOCH_TIMESTAMP_RE, "")
     .replace(LEADING_ISO_TIMESTAMP_RE, "");
+  const genericIpv6 = withoutTimestamp.match(/\[[0-9A-Fa-f:.]+\]:\d{1,5}/);
+  if (genericIpv6) candidates.push(genericIpv6[0]);
   const generic = withoutTimestamp.match(/\b([a-zA-Z0-9.-]+:\d{1,5})\b/);
   if (generic) candidates.push(generic[1]);
   for (const candidate of candidates) {
-    if (SAFE_ENDPOINT_RE.test(candidate)) return candidate;
+    if (isSafeEndpoint(candidate)) return candidate;
   }
   return null;
 }

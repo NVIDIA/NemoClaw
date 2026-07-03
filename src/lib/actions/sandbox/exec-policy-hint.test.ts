@@ -55,6 +55,21 @@ describe("extractDeniedEndpoint (#5978)", () => {
       "2026-07-03T04:00:00Z proxy CONNECT example.com:443 policy_denied",
       "example.com:443",
     ],
+    [
+      "bracketed IPv6 arrow target (kept whole, not split on its colons)",
+      "NET:OPEN DENIED /usr/bin/curl(7) -> [2001:db8::1]:443 [reason:blocked]",
+      "[2001:db8::1]:443",
+    ],
+    [
+      "compressed IPv6 loopback arrow target",
+      "NET:OPEN DENIED x -> [::1]:8080 [reason:blocked]",
+      "[::1]:8080",
+    ],
+    [
+      "bracketed IPv6 in a timestamped proxy fallback (no arrow)",
+      "2026-07-03T04:00:00Z proxy CONNECT [2001:db8::1]:443 policy_denied",
+      "[2001:db8::1]:443",
+    ],
   ])("extracts the safe host:port from %s", (_label, line, expected) => {
     expect(extractDeniedEndpoint(line)).toBe(expected);
   });
@@ -83,6 +98,14 @@ describe("findRecentPolicyDenial (#5978)", () => {
 
   it("ignores a denial that predates the command start (no spam on unrelated failures)", () => {
     expect(findRecentPolicyDenial(DENIED_CURL_LINE, START_AFTER_DENIAL)).toBeNull();
+  });
+
+  it("returns a bracketed IPv6 endpoint for a fresh IPv6 denial", () => {
+    const ipv6Denial =
+      "[1783046573.602] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(9) -> [2001:db8::1]:443 [reason:not allowed by any policy]";
+    expect(findRecentPolicyDenial(ipv6Denial, START_BEFORE_DENIAL)).toEqual({
+      endpoint: "[2001:db8::1]:443",
+    });
   });
 
   it("ignores non-denial NET:OPEN INFO lines even when recent", () => {
@@ -165,6 +188,11 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
     const generic = buildPolicyDenialExecHint("nemoclaw", "oc-fresh", null);
     expect(generic).toContain("recent network policy denial detected inside sandbox 'oc-fresh'");
     expect(generic).toContain("nemoclaw oc-fresh logs --tail 50");
+  });
+
+  it("names a bracketed IPv6 endpoint verbatim", () => {
+    const ipv6 = buildPolicyDenialExecHint("nemoclaw", "oc-fresh", "[2001:db8::1]:443");
+    expect(ipv6).toContain("for [2001:db8::1]:443");
   });
 
   it.each([

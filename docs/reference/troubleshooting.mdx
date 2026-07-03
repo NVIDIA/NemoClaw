@@ -931,7 +931,8 @@ curl: (56) CONNECT tunnel failed, response 403
 This is a network-policy denial, not a tool or certificate problem.
 
 When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw checks the sandbox audit log for a policy denial recorded after the command started.
-If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below:
+If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below.
+An IPv6 target is named in its bracketed form (for example `[2001:db8::1]:443`):
 
 ```text
 curl: (56) CONNECT tunnel failed, response 403
