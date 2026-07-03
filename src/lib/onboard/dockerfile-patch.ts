@@ -298,24 +298,26 @@ function validateToolDisclosureDockerfileContract(
   toolDisclosure: ToolDisclosure,
 ): DockerfileInstruction {
   const instructions = dockerfileInstructions(dockerfile);
-  const declarations = instructions.filter((instruction) =>
-    /^ARG\s+NEMOCLAW_TOOL_DISCLOSURE\s*=/.test(instruction.text),
-  );
-  if (declarations.length !== 1) {
-    const detail = declarations.length === 0 ? "does not declare" : "declares more than once";
-    throw new Error(
-      `Custom Dockerfile ${detail} ARG NEMOCLAW_TOOL_DISCLOSURE; exactly one final-stage declaration is required to apply tool disclosure '${toolDisclosure}'.`,
-    );
-  }
-
   const finalFromIndex = instructions.reduce(
     (last, instruction, index) => (/^FROM(?:\s|$)/i.test(instruction.text) ? index : last),
     -1,
   );
   const finalStage = instructions.slice(finalFromIndex + 1);
-  if (!finalStage.includes(declarations[0]!)) {
+  const declarations = finalStage.filter((instruction) =>
+    /^ARG\s+NEMOCLAW_TOOL_DISCLOSURE\s*=/.test(instruction.text),
+  );
+  if (declarations.length !== 1) {
+    const hasEarlierDeclaration = instructions
+      .slice(0, finalFromIndex + 1)
+      .some((instruction) => /^ARG\s+NEMOCLAW_TOOL_DISCLOSURE\s*=/.test(instruction.text));
+    const detail =
+      declarations.length === 0
+        ? hasEarlierDeclaration
+          ? "declares ARG NEMOCLAW_TOOL_DISCLOSURE outside the final stage but does not declare it in the final stage"
+          : "does not declare ARG NEMOCLAW_TOOL_DISCLOSURE"
+        : "declares ARG NEMOCLAW_TOOL_DISCLOSURE more than once in the final stage";
     throw new Error(
-      `Custom Dockerfile declares ARG NEMOCLAW_TOOL_DISCLOSURE outside the final stage; cannot apply tool disclosure '${toolDisclosure}'.`,
+      `Custom Dockerfile ${detail}; exactly one final-stage declaration is required to apply tool disclosure '${toolDisclosure}'.`,
     );
   }
 

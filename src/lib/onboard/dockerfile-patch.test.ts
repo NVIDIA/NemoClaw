@@ -194,6 +194,18 @@ describe("dockerfile patch helpers", () => {
         "FROM scratch\nARG \\\n  NEMOCLAW_TOOL_DISCLOSURE=progressive\nENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}\n",
       ),
     ).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=direct");
+    const patchedMultiStage = patchCustom(
+      [
+        "FROM scratch AS build",
+        "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+        "FROM scratch",
+        "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+        "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      ].join("\n"),
+    );
+    expect(patchedMultiStage.match(/ARG NEMOCLAW_TOOL_DISCLOSURE=progressive/g)).toHaveLength(1);
+    expect(patchedMultiStage.match(/ARG NEMOCLAW_TOOL_DISCLOSURE=direct/g)).toHaveLength(1);
     expect(() =>
       patchCustom(
         [
