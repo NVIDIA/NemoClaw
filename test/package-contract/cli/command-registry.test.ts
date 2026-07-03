@@ -56,15 +56,16 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 55 entries", () => {
-      // 49 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+    it("should return exactly 57 entries", () => {
+      // 49 visible + 8 hidden (shields×3 + config get/set/rotate-token +
+      // inference get/set).
       // 49 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, and
       // the download + upload host-side openshell wrappers, plus five MCP
       // bridge display entries under the `mcp` parent and the gateway restart
       // command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(55);
+      expect(sandboxCommands()).toHaveLength(57);
     });
 
     it("every entry has scope sandbox", () => {
@@ -87,9 +88,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 12 hidden commands: help/version aliases + shields + config", () => {
+    it("exactly 14 hidden commands: help/version aliases + shields + config + inference", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(12);
+      expect(hidden).toHaveLength(14);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -99,6 +100,8 @@ describe("command-registry", () => {
         "nemoclaw <name> config get",
         "nemoclaw <name> config rotate-token",
         "nemoclaw <name> config set",
+        "nemoclaw <name> inference get",
+        "nemoclaw <name> inference set",
         "nemoclaw <name> shields down",
         "nemoclaw <name> shields status",
         "nemoclaw <name> shields up",
@@ -220,9 +223,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 31 unique action tokens including empty string", () => {
+    it("returns exactly 32 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(31);
+      expect(tokens).toHaveLength(32);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -233,6 +236,7 @@ describe("command-registry", () => {
         "exec",
         "status",
         "doctor",
+        "inference",
         "logs",
         "policy-add",
         "policy-explain",

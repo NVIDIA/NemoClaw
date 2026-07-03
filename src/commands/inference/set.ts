@@ -3,21 +3,13 @@
 
 import { Flags } from "@oclif/core";
 
-function nonEmptyFlag(description: string) {
-  return Flags.string({
-    description,
-    parse: async (input: string) => {
-      const trimmed = input.trim();
-      if (!trimmed) throw new Error(`${description} cannot be empty`);
-      return trimmed;
-    },
-  });
-}
-
 import { InferenceSetError, runInferenceSet } from "../../lib/actions/inference-set";
 import { CLI_NAME } from "../../lib/cli/branding";
+import { nonEmptyFlag } from "../../lib/cli/flag-helpers";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
+// Global inference:set is paired with the sandbox-first sandbox:inference:set
+// command; both delegate to the shared runInferenceSet action.
 export default class InferenceSetCommand extends NemoClawCommand {
   static id = "inference:set";
   static strict = true;
