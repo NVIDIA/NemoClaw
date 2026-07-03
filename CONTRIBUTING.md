@@ -74,12 +74,13 @@ From the repository root, prepare the checkout with one command:
 ./scripts/dev-setup.sh
 ```
 
-The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, installs prek hooks, and exposes the development `nemoclaw` command.
+The setup command installs repository-local dependencies, synchronizes the root Python environment, builds and type-checks the CLI and plugin, and installs prek hooks.
 It is safe to rerun and does not install host packages, change accounts or global Git configuration, accept licenses, manage credentials, or create a runtime sandbox.
 Use `./scripts/dev-setup.sh --repair` to explicitly rerun the same repository-local repairs.
 
 The command finishes with the read-only contributor doctor.
-Follow each remediation it reports for host tools, Docker, GitHub authentication, contributor identity, or commit signing, then rerun setup.
+Follow each remediation it reports for host tools, Docker, GitHub authentication, contributor identity, or commit signing, then rerun `npm run dev:doctor` or `./scripts/dev-setup.sh --doctor`.
+Reserve setup and `--repair` for repository-local dependency, build, or hook repair.
 You can run the doctor independently in human-readable or JSON form:
 
 ```bash
@@ -95,30 +96,37 @@ To drive the same workflow through a compatible coding agent, ask:
 > Set up this machine as a NemoClaw contributor and prepare it for a first PR.
 
 The `nemoclaw-contributor-onboard` skill invokes the setup script, pauses for user-controlled account or privileged changes, and explains the first-PR workflow.
-Launch the repository-pinned Pi coding agent with:
+Expose the development `nemoclaw` command only when you want an npm link or user-local shim:
+
+```bash
+./scripts/dev-setup.sh --expose-cli
+```
+
+When you specifically want the repository-pinned Pi coding agent, launch it with:
 
 ```bash
 npm run agent
 ```
 
+Do not install or invoke a global Pi binary.
+
 Runtime onboarding is separate because many documentation and unit-test changes do not need a sandbox.
 Run `./scripts/dev-setup.sh --with-runtime` only when the intended issue requires runtime validation.
-That mode delegates to the interactive `nemoclaw onboard` workflow so you retain control of software acceptance, inference, credentials, sandbox resources, messaging, and network policy.
+That mode also opts into CLI exposure, then delegates to the interactive `nemoclaw onboard` workflow so you retain control of software acceptance, inference, credentials, sandbox resources, messaging, and network policy.
 
 ### Manual and Advanced Setup
 
 Use these commands when troubleshooting an individual setup step:
 
 ```bash
-npm install --ignore-scripts
-npm --prefix nemoclaw install --ignore-scripts
-uv sync --python 3.11
+npm install --include=dev --ignore-scripts
+npm --prefix nemoclaw install --include=dev --ignore-scripts
+uv sync --python /path/to/python3.11-or-newer --no-python-downloads
 npm run build:cli
 npm --prefix nemoclaw run build
 npm run typecheck:cli
-npm --prefix nemoclaw exec -- tsc --noEmit
+./nemoclaw/node_modules/.bin/tsc --noEmit -p nemoclaw/tsconfig.json
 ./node_modules/.bin/prek install
-bash scripts/npm-link-or-shim.sh
 ```
 
 ## Building

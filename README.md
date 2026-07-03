@@ -89,7 +89,9 @@ Or ask a compatible coding agent to use the repository's contributor-onboarding 
 > Set up this machine as a NemoClaw contributor and prepare it for a first PR.
 
 The contributor path is separate from the end-user installer above.
-Use `./scripts/dev-setup.sh --with-runtime` only when your change needs sandbox validation.
+The default and `--repair` modes change only repository-local dependencies, builds, and hooks.
+Use `./scripts/dev-setup.sh --expose-cli` only when you explicitly want a host-visible development CLI.
+Use `./scripts/dev-setup.sh --with-runtime` only when your change needs sandbox validation; that approved flow also opts into CLI exposure.
 
 ## Security
 

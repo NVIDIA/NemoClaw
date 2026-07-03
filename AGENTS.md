@@ -43,6 +43,7 @@ Package-specific guides:
 |------|---------|
 | Set up contributor checkout | `npm run dev:setup` |
 | Check contributor environment | `npm run dev:doctor` |
+| Expose development CLI | `./scripts/dev-setup.sh --expose-cli` |
 | Launch pinned coding agent | `npm run agent` |
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
@@ -169,7 +170,8 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 1. Read `CONTRIBUTING.md` for the full contributor guide
 2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
 3. Run `npm run dev:doctor` to verify the contributor environment without changing it
-4. Run tests targeted to the area you plan to change; reserve the full suite for broad changes
+4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+5. Run tests targeted to the area you plan to change; reserve the full suite for broad changes
 
 ### Git and GitHub Access Failures
 

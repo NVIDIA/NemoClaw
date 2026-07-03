@@ -30,7 +30,7 @@ Covers the daily maintainer cadence (morning standup, daytime loop, evening hand
 ### `nemoclaw-contributor-*` (4 skills)
 
 For contributors to the NemoClaw codebase.
-Covers creating pull requests that follow the project template, monitoring CI and automated review feedback after pushing, drafting documentation updates from recent commits, and onboarding new messaging channels.
+Covers trusted checkout setup and readiness checks, creating pull requests that follow the project template, monitoring CI and automated review feedback, drafting documentation updates, and onboarding new messaging channels.
 
 ## Skill Catalog
 
@@ -64,7 +64,7 @@ Covers creating pull requests that follow the project template, monitoring CI an
 
 | Skill | Summary |
 |-------|---------|
-| `nemoclaw-contributor-onboard` | Prepare a source checkout for a first compliant PR through the repository's setup script and readiness doctor. |
+| `nemoclaw-contributor-onboard` | Set up, repair, or verify a trusted source checkout, with explicit opt-ins for host-visible CLI exposure, the pinned agent, and runtime onboarding. |
 | `nemoclaw-contributor-create-pr` | Create GitHub pull requests that follow the NemoClaw PR template, including pre-PR checks, conventional commit titles, DCO sign-off, post-push CI monitoring, and CodeRabbit/PR Review Advisor follow-up. |
 | `nemoclaw-contributor-onboard-messaging-channel` | Add or review a new messaging channel with manifest-first implementation, upstream source analysis, plugin install confirmation, reachability checks, policies, docs, and tests. |
 | `nemoclaw-contributor-update-docs` | Scan recent git commits for user-facing changes and draft or update documentation pages during release prep. |

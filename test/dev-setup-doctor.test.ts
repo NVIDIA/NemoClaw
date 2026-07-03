@@ -16,8 +16,10 @@ type Fixture = {
   commandLog: string;
   env: NodeJS.ProcessEnv;
   fakeBin: string;
+  globalRoot: string;
   pluginArtifact: string;
   repo: string;
+  script: string;
 };
 
 function writeExecutable(filePath: string, contents = "#!/usr/bin/env bash\nexit 0\n"): void {
@@ -38,6 +40,25 @@ ${body}
   );
 }
 
+function writeManagedCliShim(
+  fakeBin: string,
+  repo: string,
+  extraLines: string[] = [],
+  nodeDir = fakeBin,
+): void {
+  writeExecutable(
+    path.join(fakeBin, "nemoclaw"),
+    [
+      "#!/usr/bin/env bash",
+      "# NemoClaw dev-shim - managed by scripts/npm-link-or-shim.sh",
+      `export PATH="${nodeDir}:$PATH"`,
+      ...extraLines,
+      `exec "${repo}/bin/nemoclaw.js" "$@"`,
+      "",
+    ].join("\n"),
+  );
+}
+
 function createFixture(): Fixture {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dev-doctor-"));
   tempRoots.push(tmp);
@@ -52,6 +73,10 @@ function createFixture(): Fixture {
   fs.mkdirSync(globalRoot, { recursive: true });
   fs.writeFileSync(path.join(repo, "package.json"), "{}\n");
   fs.writeFileSync(path.join(repo, "AGENTS.md"), "# Agent Instructions\n");
+  const fixtureScript = path.join(repo, "scripts", "dev-setup.sh");
+  fs.mkdirSync(path.dirname(fixtureScript), { recursive: true });
+  fs.copyFileSync(scriptUnderTest, fixtureScript);
+  fs.chmodSync(fixtureScript, 0o755);
 
   for (const file of [
     "node_modules/.bin/tsc",
@@ -91,7 +116,17 @@ fi
     writeExecutable(path.join(hooksDir, hook));
   }
 
-  writeTool(fakeBin, "node", 'echo "v22.16.0"');
+  writeTool(
+    fakeBin,
+    "node",
+    `if [ "\${1:-}" = "--version" ]; then
+  echo "v22.16.0"
+elif [ "\${1:-}" = "${repo}/bin/nemoclaw.js" ] && [ "\${2:-}" = "onboard" ]; then
+  echo "runtime onboard"
+else
+  exit 1
+fi`,
+  );
   writeTool(
     fakeBin,
     "npm",
@@ -133,7 +168,20 @@ fi`,
     if [ "\${FAKE_GIT_SIGNING_MISSING:-}" = "1" ]; then exit 1; fi
     echo "test-signing-key"
     ;;
-  *" config --get core.hooksPath "*) exit 1 ;;
+  *" config --local --get core.hooksPath "*)
+    if [ -n "\${FAKE_GIT_LOCAL_HOOKS_PATH:-}" ]; then
+      echo "\${FAKE_GIT_LOCAL_HOOKS_PATH}"
+    else
+      exit 1
+    fi
+    ;;
+  *" config --get core.hooksPath "*)
+    if [ -n "\${FAKE_GIT_HOOKS_PATH:-}" ]; then
+      echo "\${FAKE_GIT_HOOKS_PATH}"
+    else
+      exit 1
+    fi
+    ;;
   *" rev-parse --git-path hooks "*) echo "${hooksDir}" ;;
   *) exit 1 ;;
 esac`,
@@ -174,12 +222,7 @@ fi`,
   *) exit 1 ;;
 esac`,
   );
-  writeTool(
-    fakeBin,
-    "nemoclaw",
-    `# Managed checkout launcher: ${repo}/bin/nemoclaw.js
-echo "nemoclaw v0.1.0"`,
-  );
+  fs.symlinkSync(path.join(repo, "bin", "nemoclaw.js"), path.join(fakeBin, "nemoclaw"));
 
   return {
     cliArtifact,
@@ -189,12 +232,13 @@ echo "nemoclaw v0.1.0"`,
       HOME: path.join(tmp, "home"),
       NEMOCLAW_DEV_DOCTOR_CLI_ARTIFACT: cliArtifact,
       NEMOCLAW_DEV_DOCTOR_PLUGIN_ARTIFACT: pluginArtifact,
-      NEMOCLAW_DEV_DOCTOR_REPO_ROOT: repo,
       PATH: `${fakeBin}:/usr/bin:/bin`,
     },
     fakeBin,
+    globalRoot,
     pluginArtifact,
     repo,
+    script: fixtureScript,
   };
 }
 
@@ -205,7 +249,7 @@ function runDoctor(
   output: string;
   status: number;
 } {
-  const result = spawnSync("/bin/bash", [scriptUnderTest, "--doctor"], {
+  const result = spawnSync("/bin/bash", [fixture.script, "--doctor"], {
     cwd: fixture.repo,
     encoding: "utf-8",
     env: { ...fixture.env, ...env },
@@ -224,7 +268,7 @@ function runSetup(
   output: string;
   status: number;
 } {
-  const result = spawnSync("/bin/bash", [scriptUnderTest, ...args], {
+  const result = spawnSync("/bin/bash", [fixture.script, ...args], {
     cwd: fixture.repo,
     encoding: "utf-8",
     env: { ...fixture.env, ...env },
@@ -233,6 +277,10 @@ function runSetup(
     output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
     status: result.status ?? -1,
   };
+}
+
+function readCommandLog(fixture: Fixture): string {
+  return fs.existsSync(fixture.commandLog) ? fs.readFileSync(fixture.commandLog, "utf-8") : "";
 }
 
 afterEach(() => {
@@ -276,7 +324,9 @@ describe("contributor environment doctor", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Python repository environment: missing");
-    expect(result.output).toContain("Next: Run: uv sync --python 3.11");
+    expect(result.output).toContain(
+      "Next: Run: uv sync --python /path/to/python3.11-or-newer --no-python-downloads",
+    );
   });
 
   it("rejects build artifacts older than their source trees", () => {
@@ -376,14 +426,69 @@ describe("contributor environment doctor", () => {
     expect(result.output).toContain("Git contributor identity is incomplete");
   });
 
-  it("rejects a NemoClaw CLI linked to another checkout", () => {
+  it("does not ask npm to download TypeScript when plugin dependencies are missing", () => {
     const fixture = createFixture();
+    fs.rmSync(path.join(fixture.repo, "nemoclaw", "node_modules", ".bin", "tsc"));
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Plugin TypeScript dependencies: missing or not executable");
+    expect(readCommandLog(fixture)).not.toMatch(/^npm .* exec(?: |$)/m);
+  });
+
+  it("rejects a foreign PATH CLI even when the global package links to this checkout", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.fakeBin, "nemoclaw"));
     writeTool(fixture.fakeBin, "nemoclaw", 'echo "nemoclaw v0.1.0"');
+    fs.symlinkSync(fixture.repo, path.join(fixture.globalRoot, "nemoclaw"), "dir");
 
     const result = runDoctor(fixture);
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("NemoClaw CLI resolves to a different installation");
+  });
+
+  it("accepts the exact managed user-local CLI shim", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.fakeBin, "nemoclaw"));
+    writeManagedCliShim(fixture.fakeBin, fixture.repo);
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain("Local NemoClaw CLI resolves to this checkout");
+  });
+
+  it("rejects a marker-spoofed CLI shim with extra commands", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.fakeBin, "nemoclaw"));
+    writeManagedCliShim(fixture.fakeBin, fixture.repo, ["echo unexpected"]);
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("NemoClaw CLI resolves to a different installation");
+  });
+
+  it("rejects a managed CLI shim that pins a different Node executable", () => {
+    const fixture = createFixture();
+    fs.rmSync(path.join(fixture.fakeBin, "nemoclaw"));
+    writeManagedCliShim(fixture.fakeBin, fixture.repo, [], path.join(fixture.repo, "foreign-bin"));
+
+    const result = runDoctor(fixture);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("NemoClaw CLI resolves to a different installation");
+  });
+
+  it("accepts the repository-root override in doctor mode", () => {
+    const fixture = createFixture();
+
+    const result = runDoctor(fixture, { NEMOCLAW_DEV_DOCTOR_REPO_ROOT: fixture.repo });
+
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`Repo: ${fixture.repo}`);
   });
 
   it("rejects Docker resources below the documented sandbox minimum", () => {
@@ -414,7 +519,7 @@ describe("contributor environment doctor", () => {
 
   it("emits a machine-readable readiness report", () => {
     const fixture = createFixture();
-    const result = spawnSync("/bin/bash", [scriptUnderTest, "--doctor", "--json"], {
+    const result = spawnSync("/bin/bash", [fixture.script, "--doctor", "--json"], {
       cwd: fixture.repo,
       encoding: "utf-8",
       env: fixture.env,
@@ -438,13 +543,7 @@ describe("contributor environment doctor", () => {
     const fixture = createFixture();
     const escapedRepo = path.join(path.dirname(fixture.repo), 'quoted"\\path\b\f\n\r\t\u0001');
     fs.symlinkSync(fixture.repo, escapedRepo, "dir");
-    writeTool(
-      fixture.fakeBin,
-      "nemoclaw",
-      `# Managed checkout launcher: ${escapedRepo}/bin/nemoclaw.js
-echo "nemoclaw v0.1.0"`,
-    );
-    const result = spawnSync("/bin/bash", [scriptUnderTest, "--doctor", "--json"], {
+    const result = spawnSync("/bin/bash", [fixture.script, "--doctor", "--json"], {
       cwd: fixture.repo,
       encoding: "utf-8",
       env: { ...fixture.env, NEMOCLAW_DEV_DOCTOR_REPO_ROOT: escapedRepo },
@@ -457,42 +556,68 @@ echo "nemoclaw v0.1.0"`,
 
   it("rejects unsupported modes with usage and exit status 2", () => {
     const fixture = createFixture();
-    const result = spawnSync("/bin/bash", [scriptUnderTest, "--unknown"], {
+    const result = spawnSync("/bin/bash", [fixture.script, "--unknown"], {
       cwd: fixture.repo,
       encoding: "utf-8",
       env: fixture.env,
     });
 
     expect(result.status).toBe(2);
-    expect(result.stdout).toContain("Usage: ./scripts/dev-setup.sh [--repair | --with-runtime]");
+    expect(result.stdout).toContain(
+      "Usage: ./scripts/dev-setup.sh [--repair | --expose-cli | --with-runtime]",
+    );
   });
 });
 
 describe("contributor repository setup", () => {
-  it("repairs repository-local state and finishes with the doctor", () => {
+  it("repairs only repository-local state and finishes with the doctor", () => {
     const fixture = createFixture();
 
     const result = runSetup(fixture);
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Ready to create a feature branch.");
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).toContain("npm install --ignore-scripts");
-    expect(commands).toContain("npm --prefix nemoclaw install --ignore-scripts");
-    expect(commands).toContain("uv sync --python 3.11");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      `uv sync --python ${path.join(fixture.repo, ".venv", "bin", "python")} --no-python-downloads`,
+    );
+    expect(commands).not.toContain("uv sync --python 3.11");
     expect(commands).toContain("prek install");
-    expect(commands).toContain("npm-link-or-shim");
-    expect(commands).not.toContain("nemoclaw onboard");
+    expect(commands).not.toContain("npm-link-or-shim");
+    expect(commands).not.toContain("onboard");
   });
 
-  it("supports repeated repair runs without starting runtime onboarding", () => {
+  it("supports repeated repair runs without exposing the CLI or starting runtime onboarding", () => {
     const fixture = createFixture();
 
     expect(runSetup(fixture, ["--repair"]).status).toBe(0);
     expect(runSetup(fixture, ["--repair"]).status).toBe(0);
 
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).not.toContain("nemoclaw onboard");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).toContain(
+      `uv sync --python ${path.join(fixture.repo, ".venv", "bin", "python")} --no-python-downloads`,
+    );
+    expect(commands).not.toContain("uv sync --python 3.11");
+    expect(commands).not.toContain("npm-link-or-shim");
+    expect(commands).not.toContain("onboard");
+  });
+
+  it("keeps development dependencies when production npm settings are inherited", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], {
+      NODE_ENV: "production",
+      npm_config_omit: "dev",
+    });
+
+    expect(result.status).toBe(0);
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm install --include=dev --ignore-scripts");
+    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
   });
 
   it("stops before repository changes when a required host command is missing", () => {
@@ -503,10 +628,7 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Missing required host command: uv");
-    const commands = fs.existsSync(fixture.commandLog)
-      ? fs.readFileSync(fixture.commandLog, "utf-8")
-      : "";
-    expect(commands).not.toContain("npm install");
+    expect(readCommandLog(fixture)).not.toContain("npm install");
   });
 
   it("rejects unsupported Node.js before repository changes", () => {
@@ -517,8 +639,7 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Node.js 20.15.0 is below 22.16.0");
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).not.toContain("npm install");
+    expect(readCommandLog(fixture)).not.toContain("npm install");
   });
 
   it("stops before repository changes on an unsupported host", () => {
@@ -531,8 +652,17 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Unsupported host: Plan9 mips64");
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).not.toContain("npm install");
+    expect(readCommandLog(fixture)).not.toContain("npm install");
+  });
+
+  it("stops before dependency installation for an inherited Git hooks override", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, [], { FAKE_GIT_HOOKS_PATH: "/etc/git-hooks" });
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("core.hooksPath");
+    expect(readCommandLog(fixture)).not.toContain("npm install");
   });
 
   it("stops after a failed setup step without running later mutations", () => {
@@ -542,9 +672,9 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Setup stopped while attempting: Install plugin dependencies");
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).toContain("npm --prefix nemoclaw install --ignore-scripts");
-    expect(commands).not.toContain("uv sync --python 3.11");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm --prefix nemoclaw install --include=dev --ignore-scripts");
+    expect(commands).not.toContain("uv sync");
   });
 
   it("stops immediately when the root dependency install fails", () => {
@@ -554,18 +684,52 @@ describe("contributor repository setup", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain("Setup stopped while attempting: Install root dependencies");
-    const commands = fs.readFileSync(fixture.commandLog, "utf-8");
-    expect(commands).toContain("npm install --ignore-scripts");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm install --include=dev --ignore-scripts");
     expect(commands).not.toContain("npm --prefix nemoclaw install");
   });
 
-  it("delegates runtime creation to interactive onboard only when requested", () => {
+  it.each([
+    ["default setup", []],
+    ["repair", ["--repair"]],
+    ["CLI exposure", ["--expose-cli"]],
+    ["runtime onboarding", ["--with-runtime"]],
+  ])("rejects the doctor repository override during %s", (_mode, args) => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, args, {
+      NEMOCLAW_DEV_DOCTOR_REPO_ROOT: fixture.repo,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.output).toContain("NEMOCLAW_DEV_DOCTOR_REPO_ROOT");
+    expect(readCommandLog(fixture)).not.toContain("npm install");
+  });
+
+  it("exposes the development CLI only when requested", () => {
+    const fixture = createFixture();
+
+    const result = runSetup(fixture, ["--expose-cli"]);
+
+    expect(result.status).toBe(0);
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm-link-or-shim");
+    expect(commands).not.toContain("onboard");
+  });
+
+  it("exposes the CLI and invokes trusted runtime onboarding only when requested", () => {
     const fixture = createFixture();
 
     const result = runSetup(fixture, ["--with-runtime"]);
 
     expect(result.status).toBe(0);
     expect(result.output).toContain("Starting optional runtime onboarding");
-    expect(fs.readFileSync(fixture.commandLog, "utf-8")).toContain("nemoclaw onboard");
+    const commands = readCommandLog(fixture);
+    expect(commands).toContain("npm-link-or-shim");
+    expect(commands).toContain(`node ${path.join(fixture.repo, "bin", "nemoclaw.js")} onboard`);
+    expect(commands).not.toContain("nemoclaw onboard");
+    expect(commands.indexOf("npm-link-or-shim")).toBeLessThan(
+      commands.indexOf(`node ${path.join(fixture.repo, "bin", "nemoclaw.js")} onboard`),
+    );
   });
 });

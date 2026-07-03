@@ -119,16 +119,33 @@ describe("repo skill markdown files", () => {
 
     expect(skill).toContain("./scripts/dev-setup.sh");
     expect(skill).toContain("./scripts/dev-setup.sh --doctor");
+    expect(skill).toContain("./scripts/dev-setup.sh --repair");
+    expect(skill).toContain("./scripts/dev-setup.sh --expose-cli");
     expect(skill).toContain("./scripts/dev-setup.sh --with-runtime");
+    expect(skill).toContain("npm run agent");
     expect(skill).toContain("obtain explicit approval");
     expect(skill).toContain("Never print tokens");
     expect(skill).toContain("Signed-off-by:");
     expect(skill).toContain("Verified");
     expect(skill).toContain("Trigger keywords - contributor setup");
     expect(skill).toContain("trusted `origin/main`");
+    expect(skill).toContain("entire checkout/worktree diff");
+    expect(skill).toContain("staged, unstaged, and untracked files");
+    expect(skill).toContain("lockfiles and all transitively executed source");
+    expect(skill).toContain("Readiness only");
+    expect(skill).toContain("never run setup");
+    expect(skill).toContain("must not create a gateway or sandbox or expose");
+    expect(skill).toContain("Do not install or invoke a global Pi binary");
+    expect(skill).toContain("run the doctor first");
+    expect(skill).toContain("Pass user-supplied Pi arguments after `--`");
+    expect(skill).toContain("rerun `npm run dev:doctor`");
+    expect(skill).toContain("Reserve setup and `--repair`");
     expect(skill.indexOf("trusted `origin/main`")).toBeLessThan(
-      skill.indexOf("Run `./scripts/dev-setup.sh`"),
+      skill.indexOf("run `./scripts/dev-setup.sh` from the repository root"),
     );
+    expect(
+      skill.indexOf("after explicit approval, run `./scripts/dev-setup.sh --expose-cli`"),
+    ).toBeGreaterThan(skill.indexOf("Readiness only"));
   });
 
   it("preserves the single NVSkills catalog skill copy", () => {
