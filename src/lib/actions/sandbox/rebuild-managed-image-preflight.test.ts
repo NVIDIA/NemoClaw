@@ -45,11 +45,16 @@ function dcodeInput(
 
 describe("managed DCode rebuild image preflight", () => {
   it("prebuilds the recorded DCode replacement and transfers one disposable context (#6195)", async () => {
-    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-context-"));
+    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-context-"));
+    const buildCtx = path.join(testRoot, "context");
+    fs.mkdirSync(buildCtx);
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    const originalDockerfile = path.join(testRoot, "Dockerfile.original");
+    const replacementDockerfile = path.join(testRoot, "Dockerfile.replacement");
     fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    fs.writeFileSync(replacementDockerfile, "FROM attacker-controlled\n");
     const cleanupBuildCtx = vi.fn(() => {
-      fs.rmSync(buildCtx, { recursive: true, force: true });
+      fs.rmSync(testRoot, { recursive: true, force: true });
       return true;
     });
     const stageBuildContext = vi.fn(() => ({
@@ -110,58 +115,131 @@ describe("managed DCode rebuild image preflight", () => {
     expect(cleanupBuildCtx).not.toHaveBeenCalled();
 
     const prepared = expectPreparedImage(result);
-    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
+    const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+    const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+    const stableOpen = vi.spyOn(fs, "openSync");
+    const stableRead = vi.spyOn(fs, "readFileSync");
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
+      const fileOpen = stableOpen.mock.calls.find(
+        ([candidate]) => String(candidate) === stagedDockerfile,
+      );
+      const flags = Number(fileOpen?.[1] ?? 0);
+      expect(flags & noFollow).toBe(noFollow);
+      expect(flags & nonBlock).toBe(nonBlock);
+      expect(stableRead).toHaveBeenCalledWith(expect.any(Number));
+      expect(stableRead).not.toHaveBeenCalledWith(stagedDockerfile);
+    } finally {
+      stableRead.mockRestore();
+      stableOpen.mockRestore();
+    }
 
-    const savedDockerfile = `${buildCtx}-saved-Dockerfile`;
-    const symlinkTarget = `${buildCtx}-symlink-target`;
-    fs.writeFileSync(symlinkTarget, "FROM attacker-controlled-path\n");
-    const originalOpenSync = fs.openSync;
-    const symlinkReadSpy = vi.spyOn(fs, "readFileSync");
-    const openSpy = vi.spyOn(fs, "openSync").mockImplementationOnce(((...args: unknown[]) => {
-      fs.renameSync(stagedDockerfile, savedDockerfile);
-      fs.symlinkSync(symlinkTarget, stagedDockerfile);
-      return Reflect.apply(originalOpenSync, fs, args);
-    }) as never);
-    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
-    expect(symlinkReadSpy).not.toHaveBeenCalled();
-    openSpy.mockRestore();
-    symlinkReadSpy.mockRestore();
+    const realOpen: typeof fs.openSync = fs.openSync.bind(fs);
+    const preOpenSwap = new Map<string, () => void>([
+      [
+        stagedDockerfile,
+        () => {
+          fs.renameSync(stagedDockerfile, originalDockerfile);
+          fs.symlinkSync(replacementDockerfile, stagedDockerfile);
+        },
+      ],
+    ]);
+    const preOpenRead = vi.spyOn(fs, "readFileSync");
+    const preOpen = vi.spyOn(fs, "openSync").mockImplementation(((target, flags, mode) => {
+      const key = String(target);
+      const swap = preOpenSwap.get(key);
+      preOpenSwap.delete(key);
+      swap?.();
+      return realOpen(target, flags, mode);
+    }) as typeof fs.openSync);
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+      expect(preOpenRead).not.toHaveBeenCalled();
+    } finally {
+      preOpen.mockRestore();
+      preOpenRead.mockRestore();
+    }
+    expect(preOpenSwap.size).toBe(0);
     fs.rmSync(stagedDockerfile);
-    fs.renameSync(savedDockerfile, stagedDockerfile);
-    fs.rmSync(symlinkTarget);
+    fs.renameSync(originalDockerfile, stagedDockerfile);
 
-    const openedDockerfile = `${buildCtx}-opened-Dockerfile`;
-    const replacementDockerfile = `${buildCtx}-replacement-Dockerfile`;
+    const swapOnOpen = new Map<string, () => void>([
+      [
+        stagedDockerfile,
+        () => {
+          fs.renameSync(stagedDockerfile, originalDockerfile);
+          fs.symlinkSync(replacementDockerfile, stagedDockerfile);
+        },
+      ],
+    ]);
+    const racingOpen = vi.spyOn(fs, "openSync").mockImplementation(((target, flags, mode) => {
+      const fd = realOpen(target, flags, mode);
+      const key = String(target);
+      const swap = swapOnOpen.get(key);
+      swapOnOpen.delete(key);
+      swap?.();
+      return fd;
+    }) as typeof fs.openSync);
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    } finally {
+      racingOpen.mockRestore();
+    }
+    expect(swapOnOpen.size).toBe(0);
+    expect(fs.lstatSync(stagedDockerfile).isSymbolicLink()).toBe(true);
+
+    const fallbackRead = vi.spyOn(fs, "readFileSync");
+    const fallbackOpen = vi
+      .spyOn(fs, "openSync")
+      .mockImplementation(((target, flags, mode) =>
+        realOpen(target, Number(flags) & ~noFollow, mode)) as typeof fs.openSync);
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+      expect(fallbackRead).not.toHaveBeenCalled();
+    } finally {
+      fallbackOpen.mockRestore();
+      fallbackRead.mockRestore();
+    }
+
+    fs.rmSync(stagedDockerfile);
+    fs.renameSync(originalDockerfile, stagedDockerfile);
     fs.writeFileSync(replacementDockerfile, "FROM scratch\n");
-    const originalPathReadFileSync = fs.readFileSync;
-    const replacedPathReadSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
+
+    const originalRead: typeof fs.readFileSync = fs.readFileSync.bind(fs);
+    const replaceAfterRead = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
       ...args: unknown[]
     ) => {
-      const contents = Reflect.apply(originalPathReadFileSync, fs, args) as Buffer;
-      fs.renameSync(stagedDockerfile, openedDockerfile);
+      const contents = Reflect.apply(originalRead, fs, args) as Buffer;
+      fs.renameSync(stagedDockerfile, originalDockerfile);
       fs.renameSync(replacementDockerfile, stagedDockerfile);
       return contents;
     }) as never);
-    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
-    replacedPathReadSpy.mockRestore();
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    } finally {
+      replaceAfterRead.mockRestore();
+    }
     fs.rmSync(stagedDockerfile);
-    fs.renameSync(openedDockerfile, stagedDockerfile);
+    fs.renameSync(originalDockerfile, stagedDockerfile);
 
-    const originalReadFileSync = fs.readFileSync;
-    const racedReadSpy = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
+    const appendAfterRead = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((
       ...args: unknown[]
     ) => {
-      const contents = Reflect.apply(originalReadFileSync, fs, args) as Buffer;
+      const contents = Reflect.apply(originalRead, fs, args) as Buffer;
       fs.appendFileSync(stagedDockerfile, "# changed during fingerprinting\n");
       return contents;
     }) as never);
-    expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
-    racedReadSpy.mockRestore();
+    try {
+      expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+    } finally {
+      appendAfterRead.mockRestore();
+    }
     fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
 
     fs.appendFileSync(stagedDockerfile, "# changed after preflight\n");
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(false);
+
     expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
     expect(disposePreparedDcodeRebuildImage(prepared)).toBe(true);
     expect(cleanupBuildCtx).toHaveBeenCalledOnce();

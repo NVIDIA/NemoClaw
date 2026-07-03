@@ -29,6 +29,27 @@ const preparedOptions: PreparedDcodeRebuildOptions = {
     gatewayName: " nemoclaw ",
   },
 };
+const sandboxGpuConfig: SandboxGpuConfig = {
+  mode: "0",
+  hostGpuDetected: false,
+  hostGpuPlatform: null,
+  sandboxGpuEnabled: false,
+  sandboxGpuDevice: null,
+  errors: [],
+};
+const preparedBuildIdInput = {
+  preparedBuildContext,
+  agent: dcodeAgent,
+  fromDockerfile: null,
+  stagedDockerfile: preparedBuildContext.stagedDockerfile,
+  model: "nvidia/test-model",
+  chatUiUrl: "",
+  provider: "nvidia-prod",
+  preferredInferenceApi: null,
+  webSearchConfig: null,
+  hermesToolGateways: [],
+  sandboxGpuConfig,
+};
 
 describe("prepared DCode rebuild adapter", () => {
   it.each([
@@ -123,53 +144,42 @@ describe("prepared DCode rebuild adapter", () => {
     expect(onExit).toHaveBeenCalledWith(ordinary.cleanupBuildCtx);
   });
 
-  it("rejects prepared custom targets before staging", () => {
+  it.each([
+    ["another agent", { agent: { name: "openclaw" } as AgentDefinition, fromDockerfile: null }],
+    ["a custom Dockerfile", { agent: dcodeAgent, fromDockerfile: "/tmp/custom/Dockerfile" }],
+  ])("rejects a prepared context for %s before staging or patching", async (_label, target) => {
     const stage = vi.fn();
+    const patch = vi.fn();
     expect(() =>
       resolveSandboxBuildContext(
         {
           preparedBuildContext,
-          agent: dcodeAgent,
-          fromDockerfile: "/tmp/custom/Dockerfile",
+          ...target,
         },
         { stageCreateSandboxBuildContext: stage },
       ),
     ).toThrow(/cannot be used for this sandbox target/);
+    await expect(
+      resolveSandboxBuildId(
+        { ...preparedBuildIdInput, ...target },
+        { prepareSandboxDockerfilePatch: patch },
+      ),
+    ).rejects.toThrow(/cannot be used for this sandbox target/);
     expect(stage).not.toHaveBeenCalled();
+    expect(patch).not.toHaveBeenCalled();
   });
 
   it("uses the prepared build ID without patching and patches ordinary contexts", async () => {
     const patch = vi.fn(async () => ({ buildId: "fresh-build", resolvedBaseImage: null }));
-    const sandboxGpuConfig: SandboxGpuConfig = {
-      mode: "0",
-      hostGpuDetected: false,
-      hostGpuPlatform: null,
-      sandboxGpuEnabled: false,
-      sandboxGpuDevice: null,
-      errors: [],
-    };
-    const input = {
-      preparedBuildContext,
-      agent: dcodeAgent,
-      fromDockerfile: null,
-      stagedDockerfile: preparedBuildContext.stagedDockerfile,
-      model: "nvidia/test-model",
-      chatUiUrl: "",
-      provider: "nvidia-prod",
-      preferredInferenceApi: null,
-      webSearchConfig: null,
-      hermesToolGateways: [],
-      sandboxGpuConfig,
-    };
 
     await expect(
-      resolveSandboxBuildId(input, { prepareSandboxDockerfilePatch: patch }),
+      resolveSandboxBuildId(preparedBuildIdInput, { prepareSandboxDockerfilePatch: patch }),
     ).resolves.toBe(preparedBuildContext.buildId);
     expect(patch).not.toHaveBeenCalled();
 
     await expect(
       resolveSandboxBuildId(
-        { ...input, preparedBuildContext: null },
+        { ...preparedBuildIdInput, preparedBuildContext: null },
         { prepareSandboxDockerfilePatch: patch },
       ),
     ).resolves.toBe("fresh-build");

@@ -68,63 +68,106 @@ function defaultImageTag(): string {
   return `nemoclaw-rebuild-preflight:${String(process.pid)}-${crypto.randomUUID()}`;
 }
 
-function sameBuildContextEntry(left: fs.Stats, right: fs.Stats): boolean {
+type EntrySnapshot = fs.BigIntStats;
+const FINGERPRINT_OPEN_FLAGS =
+  fs.constants.O_RDONLY |
+  (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0) |
+  (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0);
+
+function lstatEntry(absolutePath: string): EntrySnapshot {
+  return fs.lstatSync(absolutePath, { bigint: true });
+}
+
+function fstatEntry(fd: number): EntrySnapshot {
+  return fs.fstatSync(fd, { bigint: true });
+}
+
+function sameEntrySnapshot(left: EntrySnapshot, right: EntrySnapshot): boolean {
   return (
     left.dev === right.dev &&
     left.ino === right.ino &&
     left.mode === right.mode &&
     left.size === right.size &&
-    left.mtimeMs === right.mtimeMs &&
-    left.ctimeMs === right.ctimeMs
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
   );
 }
 
-function readStableBuildContextFile(absolutePath: string, expected: fs.Stats): Buffer {
-  const descriptor = fs.openSync(absolutePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+function requireStableEntry(
+  relativePath: string,
+  expected: EntrySnapshot,
+  actual: EntrySnapshot,
+): void {
+  if (!sameEntrySnapshot(expected, actual)) {
+    throw new Error(`build-context entry changed during fingerprint: ${relativePath || "."}`);
+  }
+}
+
+function readPinnedRegularFile(
+  absolutePath: string,
+  relativePath: string,
+): { contents: Buffer; stat: EntrySnapshot } | null {
+  let fd: number;
   try {
-    const opened = fs.fstatSync(descriptor);
-    if (!opened.isFile() || !sameBuildContextEntry(expected, opened)) {
-      throw new Error("build-context file changed before fingerprinting");
-    }
-    const contents = fs.readFileSync(descriptor);
-    if (
-      !sameBuildContextEntry(opened, fs.fstatSync(descriptor)) ||
-      !sameBuildContextEntry(opened, fs.lstatSync(absolutePath))
-    ) {
-      throw new Error("build-context file changed during fingerprinting");
-    }
-    return contents;
+    // Open before inspecting the path so CodeQL and the implementation agree on
+    // the security boundary. O_NONBLOCK also prevents a file-to-FIFO swap from
+    // hanging before fstat can reject the descriptor.
+    fd = fs.openSync(absolutePath, FINGERPRINT_OPEN_FLAGS);
+  } catch (openError) {
+    // O_NOFOLLOW rejects symlinks where it is available, and some platforms do
+    // not allow directories through openSync. Both remain path-fingerprinted;
+    // a regular file that could not be pinned must fail closed.
+    if (lstatEntry(absolutePath).isFile()) throw openError;
+    return null;
+  }
+
+  try {
+    const descriptorBefore = fstatEntry(fd);
+    const pathBefore = lstatEntry(absolutePath);
+    // Without O_NOFOLLOW, openSync can follow a symlink. Never consume that
+    // descriptor as a regular build input; the caller fingerprints the link.
+    if (pathBefore.isSymbolicLink() || !descriptorBefore.isFile()) return null;
+    requireStableEntry(relativePath, pathBefore, descriptorBefore);
+    const contents = fs.readFileSync(fd);
+    requireStableEntry(relativePath, descriptorBefore, fstatEntry(fd));
+    requireStableEntry(relativePath, pathBefore, lstatEntry(absolutePath));
+    return { contents, stat: descriptorBefore };
   } finally {
-    fs.closeSync(descriptor);
+    fs.closeSync(fd);
   }
 }
 
 function fingerprintBuildContext(buildCtx: string): string {
   const hash = crypto.createHash("sha256");
+  const updateEntry = (kind: string, relativePath: string, stat: EntrySnapshot): void => {
+    hash.update(`${kind}\0${relativePath}\0${String(stat.mode & 0o777n)}\0${String(stat.size)}\0`);
+  };
   const visit = (relativePath: string): void => {
     const absolutePath = path.join(buildCtx, relativePath);
-    const stat = fs.lstatSync(absolutePath);
-    const kind = stat.isDirectory()
-      ? "dir"
-      : stat.isFile()
-        ? "file"
-        : stat.isSymbolicLink()
-          ? "link"
-          : "other";
-    hash.update(`${kind}\0${relativePath}\0${String(stat.mode & 0o777)}\0${String(stat.size)}\0`);
-    if (stat.isDirectory()) {
-      for (const name of fs.readdirSync(absolutePath).sort()) {
-        visit(relativePath ? path.join(relativePath, name) : name);
-      }
-    } else if (stat.isFile()) {
-      hash.update(readStableBuildContextFile(absolutePath, stat));
-    } else if (stat.isSymbolicLink()) {
-      hash.update(fs.readlinkSync(absolutePath));
+    const pinnedFile = readPinnedRegularFile(absolutePath, relativePath);
+    if (pinnedFile) {
+      updateEntry("file", relativePath, pinnedFile.stat);
+      hash.update(pinnedFile.contents);
     } else {
-      throw new Error(`unsupported build-context entry: ${relativePath || "."}`);
+      const stat = lstatEntry(absolutePath);
+      if (stat.isDirectory()) {
+        updateEntry("dir", relativePath, stat);
+        for (const name of fs.readdirSync(absolutePath).sort()) {
+          visit(relativePath ? path.join(relativePath, name) : name);
+        }
+        requireStableEntry(relativePath, stat, lstatEntry(absolutePath));
+      } else if (stat.isSymbolicLink()) {
+        const target = fs.readlinkSync(absolutePath);
+        requireStableEntry(relativePath, stat, lstatEntry(absolutePath));
+        updateEntry("link", relativePath, stat);
+        hash.update(target);
+      } else {
+        throw new Error(`unsupported build-context entry: ${relativePath || "."}`);
+      }
     }
     hash.update("\0");
   };
+
   visit("");
   return hash.digest("hex");
 }

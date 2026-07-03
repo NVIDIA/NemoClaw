@@ -65,6 +65,16 @@ function loadPrepareSandboxDockerfilePatch(): PrepareSandboxDockerfilePatch {
   ).prepareSandboxDockerfilePatch;
 }
 
+function assertPreparedDcodeTarget(
+  preparedBuildContext: PreparedSandboxBuildContext | null,
+  agent: AgentDefinition | null | undefined,
+  fromDockerfile: string | null,
+): void {
+  if (preparedBuildContext && (agent?.name !== DCODE_AGENT || fromDockerfile)) {
+    throw new Error("A prepared DCode build context cannot be used for this sandbox target.");
+  }
+}
+
 export function createPreparedDcodeRebuildRuntime(
   options: PreparedDcodeRebuildOptions,
   expectedGatewayName: string,
@@ -111,9 +121,7 @@ export function resolveSandboxBuildContext(
   deps: PreparedDcodeRebuildDeps = {},
 ): CreateSandboxBuildContextResult {
   const { preparedBuildContext, agent, fromDockerfile } = input;
-  if (preparedBuildContext && (agent?.name !== DCODE_AGENT || fromDockerfile)) {
-    throw new Error("A prepared DCode build context cannot be used for this sandbox target.");
-  }
+  assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
   if (preparedBuildContext) return preparedBuildContext;
 
   const staged = (deps.stageCreateSandboxBuildContext ?? loadStageCreateSandboxBuildContext())({
@@ -138,6 +146,7 @@ export async function resolveSandboxBuildId(
   deps: PreparedDcodeRebuildDeps = {},
 ): Promise<string> {
   const { preparedBuildContext, ...patchInput } = input;
+  assertPreparedDcodeTarget(preparedBuildContext, patchInput.agent, patchInput.fromDockerfile);
   if (preparedBuildContext) return preparedBuildContext.buildId;
 
   const result: SandboxDockerfilePatchResult = await (
