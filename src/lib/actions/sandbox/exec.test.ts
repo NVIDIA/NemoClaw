@@ -251,10 +251,14 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     } = {},
   ) => {
     const stderr: string[] = [];
-    const probeLogs = vi.fn(() => {
-      if (options.probeError) throw options.probeError;
-      return probeOutput;
-    });
+    const probeError = options.probeError;
+    const probeLogs = vi.fn(
+      probeError
+        ? () => {
+            throw probeError;
+          }
+        : () => probeOutput,
+    );
     const enableAudit = vi.fn(() => {});
     let exitCode = Number.NaN;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
