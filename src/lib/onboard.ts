@@ -652,8 +652,7 @@ const {
 import type { JsonObject as LooseObject } from "./core/json-types";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
-// Non-interactive mode: set by --non-interactive flag or env var.
-// When active, all prompts use env var overrides or sensible defaults.
+// Non-interactive flag/env mode makes prompts use configured or sensible defaults.
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
 let AUTO_YES = false;
@@ -2548,8 +2547,7 @@ async function createSandbox(
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
-  // Declared outside the liveExists block so it is accessible during
-  // post-creation restore (the sandbox create path runs after the block).
+  // Keep restore state outside liveExists for post-creation restoration.
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
   let notReadyRecreateInProgress = false;
