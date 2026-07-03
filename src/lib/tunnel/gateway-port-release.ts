@@ -38,9 +38,8 @@ import {
   type StopHostGatewayResult,
   stopHostGatewayProcesses,
 } from "../onboard/host-gateway-process";
+import { getSandbox as getRegisteredSandbox } from "../state/registry";
 
-const DEFAULT_CONFIRM_TIMEOUT_MS = 2000;
-const DEFAULT_CONFIRM_POLL_INTERVAL_MS = 100;
 const PORT_FREE_PROBE_SCRIPT =
   "const net=require('node:net');" +
   "const port=Number(process.argv[1]);" +
@@ -124,17 +123,6 @@ function defaultProbePortFree(port: number): boolean {
   } catch {
     return false;
   }
-}
-
-function lazyGetSandbox(name: string): SandboxGatewayBinding | null {
-  // Intentionally does not swallow lookup errors: a registry read that throws
-  // (e.g. a corrupt registry file) must reach resolveStopGatewayPort's
-  // fail-closed handling rather than being treated as a clean "no entry",
-  // which would fall back to destructive default-port cleanup.
-  const registry = require("../state/registry") as {
-    getSandbox: (name: string) => SandboxGatewayBinding | null;
-  };
-  return registry.getSandbox(name);
 }
 
 function isValidPort(value: number | undefined): value is number {
@@ -286,7 +274,7 @@ export function releaseManagedGatewayPort(
   const commandExists =
     depsOverrides.commandExists ?? ((cmd: string) => defaultCommandExists(cmd, env));
   const stopFn = depsOverrides.stopHostGatewayProcesses ?? stopHostGatewayProcesses;
-  const getSandbox = depsOverrides.getSandbox ?? lazyGetSandbox;
+  const getSandbox = depsOverrides.getSandbox ?? getRegisteredSandbox;
   const probePortFree = depsOverrides.probePortFree ?? defaultProbePortFree;
   const debug = makeGatewayDebug(env);
 
@@ -347,8 +335,8 @@ export function releaseManagedGatewayPort(
     usePgrepFallback: false,
   });
 
-  const confirmTimeoutMs = options.confirmTimeoutMs ?? DEFAULT_CONFIRM_TIMEOUT_MS;
-  const confirmPollIntervalMs = options.confirmPollIntervalMs ?? DEFAULT_CONFIRM_POLL_INTERVAL_MS;
+  const confirmTimeoutMs = options.confirmTimeoutMs ?? 2000;
+  const confirmPollIntervalMs = options.confirmPollIntervalMs ?? 100;
   const now = depsOverrides.now ?? Date.now;
 
   let released: boolean;
@@ -365,6 +353,10 @@ export function releaseManagedGatewayPort(
       stopResult.failed.length === 0 &&
       waitUntil(() => probePortFree(port), {
         deadlineMs: now() + confirmTimeoutMs,
+        // A stop is user-triggered and bounded by both time and attempts so a
+        // persistently occupied port cannot spawn an unbounded number of probe
+        // subprocesses, even when a custom clock or interval is supplied.
+        maxAttempts: 20,
         initialIntervalMs: confirmPollIntervalMs,
         maxIntervalMs: confirmPollIntervalMs,
         backoffFactor: 1,

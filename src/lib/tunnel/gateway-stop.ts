@@ -48,8 +48,15 @@ function findSharedGatewayOwner(
 
   for (const sandbox of sandboxes) {
     if (sandbox.name === sandboxName) continue;
-    if (resolveSandboxGatewayName(sandbox) === gatewayName) {
-      return { name: sandbox.name, port };
+    try {
+      if (resolveSandboxGatewayName(sandbox) === gatewayName) {
+        return { name: sandbox.name, port };
+      }
+    } catch (error) {
+      throw new Error(
+        `Invalid persisted sandbox gateway for peer '${sandbox.name}': ` +
+          `${(error as Error).message ?? String(error)}`,
+      );
     }
   }
   return null;

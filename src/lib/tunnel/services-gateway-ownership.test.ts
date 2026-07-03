@@ -167,7 +167,9 @@ describe("releaseGatewayPortForStop", () => {
     });
 
     expect(release).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Invalid persisted sandbox"));
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("Invalid persisted sandbox gateway for peer 'beta'"),
+    );
   });
 });
 
