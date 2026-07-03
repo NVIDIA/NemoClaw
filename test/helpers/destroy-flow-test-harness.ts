@@ -15,6 +15,7 @@ const destroyModulePath = "./destroy.js";
 export type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
   destroySandbox: DestroySandbox;
+  errorSpy: MockInstance;
   events: string[];
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
@@ -29,6 +30,7 @@ export type DestroyHarness = {
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
   shieldsDownSpy: MockInstance;
+  stopAllSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
 };
@@ -41,6 +43,7 @@ type DestroyHarnessOptions = {
   finalizeMcpError?: string;
   mcpAddState?: "prepared";
   mcpServers?: string[];
+  registeredSandboxCount?: number;
   restoreMcpError?: string;
   sandboxPresent?: boolean;
   shieldsDown?: boolean;
@@ -94,7 +97,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const events: string[] = [];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const resolve = requireDist("../../adapters/openshell/resolve.js");
@@ -135,8 +138,16 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
         }
       : {}),
   });
-  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockReturnValue(true);
+  let registeredSandboxCount = options.registeredSandboxCount ?? 0;
+  vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
+    sandboxes: Array.from({ length: registeredSandboxCount }, (_, index) => ({
+      name: `sb-${index}`,
+    })),
+  }));
+  const removeSandboxSpy = vi.spyOn(registry, "removeSandbox").mockImplementation(() => {
+    registeredSandboxCount = Math.max(0, registeredSandboxCount - 1);
+    return true;
+  });
   vi.spyOn(onboardSession, "loadSession").mockReturnValue({
     sandboxName: "alpha",
   });
@@ -198,7 +209,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   const unloadOllamaModelsSpy = vi
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
-  vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
+  const stopAllSpy = vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
   vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
     options.activeTimer
       ? {
@@ -268,6 +279,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
   return {
     cleanupGatewaySpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
+    errorSpy,
     events,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
@@ -282,6 +294,7 @@ export function createDestroyHarness(options: DestroyHarnessOptions = {}): Destr
     runOpenshellSpy,
     selectGatewaySpy,
     shieldsDownSpy,
+    stopAllSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
   };

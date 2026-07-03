@@ -34,13 +34,17 @@ export type SandboxDestroyExecutionResult =
   | {
       ok: true;
       alreadyGone: boolean;
+      deleteOutput: string;
       deleteResult: ReturnType<DestroyRunOpenshell>;
       detachOutcome: DetachSandboxProvidersResult;
+      forcedLocalCleanup: boolean;
     }
   | {
       ok: false;
       deleteOutput: string;
       exitCode: number;
+      gatewayUnreachable: boolean;
+      mcpOwnershipRequiresGateway: boolean;
       mcpRecoveryFailure?: string;
     };
 
@@ -183,6 +187,10 @@ export async function executeSandboxDestroy({
       sandboxConfirmedAbsent,
       force,
     );
+    // Prepared-only/incomplete adds have no external resources and are safely
+    // discarded during preparation. Remaining entries are the durable exact
+    // provider ownership manifest and must survive an unconfirmed delete.
+    const hasMcpOwnership = mcpPreparation.entries.length > 0;
     const hardened = wipeAndHardenLiveSandbox(sandboxName, sandboxConfirmedAbsent);
     const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
       ? { detached: [], failures: [] }
@@ -191,9 +199,15 @@ export async function executeSandboxDestroy({
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+    const {
+      output: deleteOutput,
+      alreadyGone,
+      gatewayUnreachable,
+    } = getSandboxDeleteOutcome(deleteResult);
+    const forcedLocalCleanup =
+      deleteResult.status !== 0 && !alreadyGone && gatewayUnreachable && force && !hasMcpOwnership;
 
-    if (deleteResult.status !== 0 && !alreadyGone) {
+    if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
       const mcpRecoveryFailure = sandboxConfirmedAbsent
         ? undefined
         : await restoreMcpAfterDeleteAbort(sandboxName, mcpPreparation, hardened);
@@ -201,13 +215,26 @@ export async function executeSandboxDestroy({
         ok: false as const,
         deleteOutput,
         exitCode: deleteResult.status || 1,
+        gatewayUnreachable,
+        mcpOwnershipRequiresGateway: gatewayUnreachable && hasMcpOwnership,
         mcpRecoveryFailure,
       };
     }
 
-    // The sandbox is gone while the lifecycle lock still serializes this name.
+    // The sandbox is confirmed gone, or --force is discarding only a local
+    // record that has no MCP ownership. Keep this under the lifecycle lock so
+    // stale timer state cannot target a same-name replacement.
     cleanupShieldsArtifacts(sandboxName);
-    await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
-    return { ok: true as const, detachOutcome, deleteResult, alreadyGone };
+    if (!forcedLocalCleanup) {
+      await finalizeMcpDestroy(sandboxName, mcpPreparation, force);
+    }
+    return {
+      ok: true as const,
+      detachOutcome,
+      deleteOutput,
+      deleteResult,
+      alreadyGone,
+      forcedLocalCleanup,
+    };
   });
 }

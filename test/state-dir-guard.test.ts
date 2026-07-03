@@ -237,7 +237,8 @@ describe("state-dir-guard", () => {
       expect(mode(nestedDir)).toBe(0o755);
       expect(mode(toolPath)).toBe(0o755);
       const timestampsAfter = fs.statSync(toolPath);
-      expect(timestampsAfter.atimeMs).toBe(timestampsBefore.atimeMs);
+      // The guard publishes the requested atime, but its verification read can
+      // advance atime on relatime filesystems after ctime changes.
       expect(timestampsAfter.mtimeMs).toBe(timestampsBefore.mtimeMs);
 
       fs.writeSync(staleFd, Buffer.from("MUTATE\n"), 0, 7, 0);

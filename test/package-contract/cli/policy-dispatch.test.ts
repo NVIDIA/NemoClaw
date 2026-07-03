@@ -3,10 +3,12 @@
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+const requireForTest = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(
@@ -14,6 +16,7 @@ const CREDENTIALS_PATH = JSON.stringify(
 );
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
 const REGISTRY_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"));
+const YAML_PATH = JSON.stringify(requireForTest.resolve("yaml"));
 
 type PolicyCall = {
   type: string;
@@ -24,6 +27,33 @@ type PolicyCall = {
 };
 
 describe("compiled CLI policy contracts", () => {
+  it("loads channel-owned messaging YAML from the packaged source layout", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-packaged-channel-"));
+    const scriptPath = path.join(tmpDir, "packaged-channel-policy-check.js");
+    const script = String.raw`
+const YAML = require(${YAML_PATH});
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-contract", agent: "hermes", policies: [] });
+const openclaw = YAML.parse(policies.loadPreset("telegram"));
+const hermes = YAML.parse(policies.loadPresetForSandbox("hermes-contract", "telegram"));
+process.stdout.write("__RESULT__" + JSON.stringify({
+  openclawKeys: Object.keys(openclaw.network_policies || {}),
+  hermesKeys: Object.keys(hermes.network_policies || {}),
+}));
+`;
+    fs.writeFileSync(scriptPath, script);
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, HOME: tmpDir },
+    });
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(result.stdout.split("__RESULT__")[1].trim());
+    expect(payload.openclawKeys).toEqual(["telegram_bot"]);
+    expect(payload.hermesKeys).toEqual(["telegram"]);
+  });
+
   describe("policy-remove custom presets", () => {
     function runPolicyRemoveCustom(
       presetName: string,
@@ -44,6 +74,7 @@ policies.listCustomPresets = () => [
 ];
 policies.getAppliedPresets = () => ["my-api"];
 policies.loadPreset = () => null; // built-in lookup misses
+policies.loadPresetForSandbox = () => null; // built-in lookup misses
 policies.getPresetEndpoints = () => ["api.example.internal"];
 policies.removePreset = (sandboxName, presetName) => {
   calls.push({ type: "remove", sandboxName, presetName });

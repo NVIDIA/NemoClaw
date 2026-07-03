@@ -42,3 +42,13 @@ artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the
 allowlisted `cloud-onboard-trace-timing-summary.json` timing schema and deletes
 the raw directory. Aggregation ratchets require `report-to-pr` and `scorecard`
 to wait for the same execution-job set.
+
+Registry-driven Vitest targets also enable onboard trace collection. Each live
+matrix target writes raw traces under the runner temporary directory, sanitizes
+them before upload, deletes the raw trace directory, and uploads only
+`e2e-artifacts/live/<target>/cloud-onboard-trace-timing-summary.json` with the
+target artifact. These per-target summaries are artifact evidence only; the
+Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
+artifact so baseline aggregation stays stable.
+Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
+map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
