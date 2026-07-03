@@ -120,7 +120,9 @@ export function waitForOpenShellSupervisorReconnect(
   const errorPhaseDebouncePolls =
     deps.errorPhaseDebouncePolls == null || !Number.isFinite(deps.errorPhaseDebouncePolls)
       ? getDockerGpuSupervisorReconnectErrorDebouncePolls()
-      : Math.max(1, Math.trunc(deps.errorPhaseDebouncePolls));
+      : // Round (not truncate) to match the env-var path's envInt rounding and
+        // the sibling create/readiness debounce in sandbox-readiness-tracing.ts.
+        Math.max(1, Math.round(deps.errorPhaseDebouncePolls));
   let consecutiveErrorPolls = 0;
   while (Date.now() <= deadline) {
     const result = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {

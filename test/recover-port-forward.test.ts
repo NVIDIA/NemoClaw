@@ -22,23 +22,46 @@ let nextFixturePort = 47000 + (process.pid % 10000);
 
 afterEach(() => {
   for (const child of listenerProcesses.splice(0)) {
-    child.kill("SIGTERM");
+    child.kill("SIGKILL");
   }
   for (const dir of tmpFixtures.splice(0)) {
+    const listenerPidFile = path.join(dir, "forward-listener-pids");
+    const listenerPids = (
+      fs.existsSync(listenerPidFile) ? fs.readFileSync(listenerPidFile, "utf-8") : ""
+    )
+      .split(/\s+/)
+      .map(Number)
+      .filter((pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid);
+    for (const pid of listenerPids) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch (error) {
+        expect((error as NodeJS.ErrnoException).code).toBe("ESRCH");
+      }
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-function startReachableForward(port: string): void {
-  const child = spawn(
-    process.execPath,
-    [
-      "-e",
-      `require("node:net").createServer(()=>{}).listen(${JSON.stringify(Number(port))},"127.0.0.1")`,
-    ],
-    { stdio: "ignore" },
+function forwardListenerScript(port: string): string {
+  return (
+    'const net=require("node:net");' +
+    "const server=net.createServer(()=>{});" +
+    "let stopping=false;" +
+    'process.on("SIGTERM",()=>{' +
+    "if(stopping)return;" +
+    "stopping=true;" +
+    "setTimeout(()=>server.close(()=>process.exit(0)),150);" +
+    "});" +
+    `server.listen(${JSON.stringify(Number(port))},"127.0.0.1");`
   );
+}
+
+function startReachableForward(port: string, listenerPidFile: string): void {
+  const child = spawn(process.execPath, ["-e", forwardListenerScript(port)], { stdio: "ignore" });
   listenerProcesses.push(child);
+  expect(child.pid, `test forward listener failed to spawn for ${port}`).toBeDefined();
+  fs.appendFileSync(listenerPidFile, `${String(child.pid)}\n`);
 
   const probe =
     "const net=require('node:net');" +
@@ -111,18 +134,21 @@ function setupFixture(opts: {
   const recoveredForwardListBody = `${sandboxName} 127.0.0.1 ${port} 99999 running\n`;
   const forwardStateFile = path.join(tmpDir, "forward-state");
   const forwardPollCountFile = path.join(tmpDir, "forward-poll-count");
+  const listenerPidFile = path.join(tmpDir, "forward-listener-pids");
   fs.writeFileSync(forwardStateFile, "initial");
   fs.writeFileSync(forwardPollCountFile, "0");
+  fs.writeFileSync(listenerPidFile, "");
 
   // Fake openshell: emits the requested gateway-probe and forward-list
-  // shapes, swallows mutating subcommands (forward stop / forward start)
-  // while logging every invocation so the test can assert the order. The
-  // forward state flips to "running" after `forward start` to model the
-  // post-recovery probe.
+  // shapes while logging every invocation so the test can assert the order.
+  // A stop signals the preexisting listener, which releases asynchronously;
+  // a successful start launches a replacement listener before flipping the
+  // forward state to "running" for the post-recovery probe.
   fs.writeFileSync(
     openshellPath,
     `#!${process.execPath}
 const fs = require("node:fs");
+const { spawn } = require("node:child_process");
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(invocationLog)}, args.join(" ") + "\\n");
 
@@ -173,8 +199,33 @@ if (args[0] === "forward" && args[1] === "list") {
   process.exit(0);
 }
 
+if (args[0] === "forward" && args[1] === "stop") {
+  const listenerPids = fs.readFileSync(${JSON.stringify(listenerPidFile)}, "utf-8")
+    .trim()
+    .split(/\\s+/)
+    .map(Number)
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+  const listenerPid = listenerPids.at(-1);
+  if (listenerPid !== undefined) {
+    try {
+      process.kill(listenerPid, "SIGTERM");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  }
+  process.exit(0);
+}
+
 if (args[0] === "forward" && args[1] === "start") {
   if (${opts.forwardStartHeals === false ? "false" : "true"}) {
+    const listener = spawn(process.execPath, ["-e", ${JSON.stringify(forwardListenerScript(port))}], {
+      detached: true,
+      stdio: "ignore",
+    });
+    listener.unref();
+    if (listener.pid !== undefined) {
+      fs.appendFileSync(${JSON.stringify(listenerPidFile)}, String(listener.pid) + "\\n");
+    }
     fs.writeFileSync(
       ${JSON.stringify(forwardStateFile)},
       ${opts.forwardStartDelayPolls ? '"pending"' : '"running"'},
@@ -184,7 +235,6 @@ if (args[0] === "forward" && args[1] === "start") {
 }
 
 if (args[0] === "forward") {
-  // forward stop swallowed; forward state untouched.
   process.exit(0);
 }
 
@@ -208,13 +258,13 @@ process.exit(0);
   // answers. Keep the listener alive in a separate process because runRecover
   // uses spawnSync and blocks this Vitest worker's event loop.
   const reachablePorts = opts.forwardStartHeals !== false ? [port] : [];
-  reachablePorts.forEach(startReachableForward);
+  reachablePorts.forEach((reachablePort) => startReachableForward(reachablePort, listenerPidFile));
 
   return {
     tmpDir,
     sandboxName,
     invocationLog,
-    recoveryWaitMs: opts.recoveryWaitMs ?? "0",
+    recoveryWaitMs: opts.recoveryWaitMs ?? "2000",
   };
 }
 
@@ -297,6 +347,7 @@ describe("nemoclaw <name> recover", () => {
         gatewayProbe: "RUNNING",
         forwardListStatus: "dead",
         forwardStartHeals: false,
+        recoveryWaitMs: "0",
       });
       const result = runRecover(fixture);
       expect(result.status).toBe(1);

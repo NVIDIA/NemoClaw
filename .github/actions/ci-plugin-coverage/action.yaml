@@ -29,6 +29,7 @@ runs:
           --coverage.reporter=cobertura \
           --coverage.reportsDirectory=coverage/plugin \
           --coverage.include="nemoclaw/src/**/*.ts" \
+          --coverage.include="nemoclaw/src/**/*.cts" \
           --coverage.exclude="**/*.test.ts"
         npx tsx scripts/check-coverage-ratchet.ts coverage/plugin/coverage-summary.json ci/coverage-threshold-plugin.json "Plugin coverage"
 

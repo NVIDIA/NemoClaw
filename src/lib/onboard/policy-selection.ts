@@ -13,9 +13,9 @@ import {
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
 import {
-  mergeRequiredMessagingChannelPolicyPresets,
+  allMessagingChannelPolicyPresets,
+  mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
-  requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
 import { mergeRequiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
 import { seedInitialPolicyContext } from "./policy-context-seed";
@@ -118,7 +118,7 @@ export function mergeRequiredSetupPolicyPresets(
 ): string[] {
   const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(policyPresets, options.agent);
   const mergedPresets = mergeRequiredOpenclawOtelPolicyPresets(
-    mergeRequiredMessagingChannelPolicyPresets(
+    mergeEnabledMessagingChannelPolicyPresets(
       mergeRequiredHermesToolGatewayPolicyPresets(
         agentFilteredPresets,
         options.hermesToolGateways,
@@ -189,8 +189,13 @@ export function computeSetupPresetSuggestions(
     for (const preset of allHermesToolGatewayPolicyPresets()) add(preset);
   }
   if (Array.isArray(enabledChannels)) {
-    for (const channel of enabledChannels) add(channel);
-    for (const preset of requiredMessagingChannelPolicyPresets(enabledChannels)) add(preset);
+    // Suggest every enabled channel's egress preset, matching the set
+    // finalization merges via `mergeEnabledMessagingChannelPolicyPresets`.
+    // Resolving through the channel→preset registry keeps the suggestion path
+    // correct for any channel (and any future preset rename) without relying on
+    // the channel name coinciding with its preset name or on `requiredAtCreate`
+    // (#5967).
+    for (const preset of allMessagingChannelPolicyPresets(enabledChannels)) add(preset);
   }
   if (Array.isArray(options.hermesToolGateways)) {
     for (const preset of options.hermesToolGateways) {

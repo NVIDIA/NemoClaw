@@ -16,6 +16,14 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.74
+
+NemoClaw v0.0.74 advances to OpenShell `0.0.72` and adopts its safe policy round-trip boundary:
+
+- Stable installs pin OpenShell `0.0.72` release artifacts and supervisor image, adding MCP Streamable HTTP and JSON-RPC request-policy enforcement.
+- Policy mutations now read the round-trippable base policy instead of the effective policy, preventing provider-composed `_provider_*` entries from being sent back through `policy set` while preserving existing MCP rules.
+  For more information, refer to [OpenShell 0.0.72 Compatibility Review](../security/openshell-0.0.72-compatibility-review) and [Customize the Network Policy](../network-policy/customize-network-policy).
+
 ## v0.0.73
 
 NemoClaw v0.0.73 improves custom endpoint safety, Linux GPU onboarding, agent-aware policy validation, upgrade recovery, LangChain Deep Agents Code inference, and operator documentation.
