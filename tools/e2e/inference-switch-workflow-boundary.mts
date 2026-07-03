@@ -12,6 +12,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 
 type WorkflowStep = {
+  env?: Record<string, unknown>;
   if?: string;
   name?: string;
   run?: string;
@@ -35,6 +36,7 @@ export type InferenceSwitchWorkflow = {
 type JobSpec = {
   agent: "hermes" | "openclaw";
   job: string;
+  runStep: string;
   scenario: string;
   uploadStep: string;
 };
@@ -43,12 +45,14 @@ const JOBS: JobSpec[] = [
   {
     agent: "hermes",
     job: "hermes-inference-switch",
+    runStep: "Run Hermes inference switch live Vitest test",
     scenario: "hermes-inference-switch",
     uploadStep: "Upload Hermes inference switch artifacts",
   },
   {
     agent: "openclaw",
     job: "openclaw-inference-switch",
+    runStep: "Run OpenClaw inference switch live test",
     scenario: "openclaw-inference-switch",
     uploadStep: "Upload OpenClaw inference switch artifacts",
   },
@@ -60,7 +64,8 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
       mode: "hosted",
       sandbox_name: `e2e-${agent}-inference-switch`,
       switch_provider: "compatible-endpoint",
-      switch_model: "nvidia/nvidia/nemotron-3-super-v3",
+      switch_model:
+        agent === "hermes" ? "nvidia/nvidia/nemotron-3-ultra" : "nvidia/nvidia/nemotron-3-super-v3",
       switch_inference_api: "openai-completions",
       switch_mock_anthropic: "0",
     },
@@ -97,6 +102,38 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   };
   for (const [name, value] of Object.entries(requiredEnv)) {
     if (job.env?.[name] !== value) errors.push(`${spec.job} must map ${name} from its mode matrix`);
+  }
+
+  for (const secret of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY"]) {
+    if (job.env?.[secret] !== undefined) {
+      errors.push(`${spec.job} must not expose ${secret} at job scope`);
+    }
+  }
+  const runStep = job.steps?.find((step) => step.name === spec.runStep);
+  const hostedInferenceKeyExpression =
+    "${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}";
+  const expectedInferenceKey =
+    spec.agent === "hermes"
+      ? hostedInferenceKeyExpression
+      : "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+  if (runStep?.env?.NVIDIA_INFERENCE_API_KEY !== expectedInferenceKey) {
+    errors.push(`${spec.job} run step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
+  }
+  const publicKeyExpression = "${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}";
+  if (spec.agent === "hermes") {
+    if (runStep?.env?.NVIDIA_API_KEY !== publicKeyExpression) {
+      errors.push("hermes-inference-switch hosted mode must receive NVIDIA_API_KEY from secrets");
+    }
+  } else if (runStep?.env?.NVIDIA_API_KEY !== undefined) {
+    errors.push("openclaw-inference-switch run step must not receive NVIDIA_API_KEY");
+  }
+  for (const step of job.steps ?? []) {
+    if (step === runStep) continue;
+    for (const secret of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY"]) {
+      if (step.env?.[secret] !== undefined) {
+        errors.push(`${spec.job} must expose ${secret} only to its run step`);
+      }
+    }
   }
 
   const upload = job.steps?.find((step) => step.name === spec.uploadStep);

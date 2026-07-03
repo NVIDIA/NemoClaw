@@ -996,7 +996,7 @@ jobs:
           - mode: hosted
             sandbox_name: e2e-hermes-inference-switch
             switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_model: nvidia/nvidia/nemotron-3-ultra
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -1033,7 +1033,8 @@ jobs:
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"

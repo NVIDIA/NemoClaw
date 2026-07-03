@@ -76,6 +76,42 @@ describe("inference switch workflow boundary", () => {
     );
   });
 
+  it("pins the hosted Hermes target and scopes both provider credentials to its run step", () => {
+    const wrongTarget = readInferenceSwitchWorkflow();
+    const hosted = wrongTarget.jobs["hermes-inference-switch"].strategy?.matrix?.include?.find(
+      (entry) => entry.mode === "hosted",
+    );
+    hosted!.switch_model = "nvidia/nvidia/nemotron-3-super-v3";
+    expect(validateInferenceSwitchWorkflow(wrongTarget)).toContain(
+      "hermes-inference-switch must run the exact hosted and Anthropic-compatible modes",
+    );
+
+    const missingPublicKey = readInferenceSwitchWorkflow();
+    const runStep = missingPublicKey.jobs["hermes-inference-switch"].steps!.find(
+      (step) => step.name === "Run Hermes inference switch live Vitest test",
+    )!;
+    delete runStep.env!.NVIDIA_API_KEY;
+    expect(validateInferenceSwitchWorkflow(missingPublicKey)).toContain(
+      "hermes-inference-switch hosted mode must receive NVIDIA_API_KEY from secrets",
+    );
+
+    const unscopedInferenceKey = readInferenceSwitchWorkflow();
+    const unscopedRunStep = unscopedInferenceKey.jobs["hermes-inference-switch"].steps!.find(
+      (step) => step.name === "Run Hermes inference switch live Vitest test",
+    )!;
+    unscopedRunStep.env!.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(unscopedInferenceKey)).toContain(
+      "hermes-inference-switch run step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+
+    const jobScopedKey = readInferenceSwitchWorkflow();
+    jobScopedKey.jobs["hermes-inference-switch"].env!.NVIDIA_API_KEY =
+      "${{ secrets.NVIDIA_API_KEY }}";
+    expect(validateInferenceSwitchWorkflow(jobScopedKey)).toContain(
+      "hermes-inference-switch must not expose NVIDIA_API_KEY at job scope",
+    );
+  });
+
   it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
     const workflow = readInferenceSwitchWorkflow();
     const steps = workflow.jobs["openclaw-inference-switch"].steps!;

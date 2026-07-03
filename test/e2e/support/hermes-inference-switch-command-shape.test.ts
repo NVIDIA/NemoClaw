@@ -13,12 +13,17 @@ import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
+  compatibleHostedSwitchEnabled,
+  ensureCompatibleHostedSwitchProvider,
+  env,
+  HOSTED_BASELINE_MODEL,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicEndpointUrl,
   mockAnthropicSwitchEnabled,
   openshellGatewayName,
+  parseInferenceRoute,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
@@ -71,6 +76,24 @@ describe("Hermes inference switch command shape", () => {
     ).toBe("initial-hosted-model");
   });
 
+  it("recognizes only the hosted OpenAI-compatible switch lane", () => {
+    expect(
+      compatibleHostedSwitchEnabled({
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-endpoint",
+      }),
+    ).toBe(true);
+    expect(
+      compatibleHostedSwitchEnabled({
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_SWITCH_INFERENCE_API: "anthropic-messages",
+        NEMOCLAW_SWITCH_PROVIDER: "compatible-anthropic-endpoint",
+      }),
+    ).toBe(false);
+    expect(compatibleHostedSwitchEnabled({})).toBe(false);
+  });
+
   it("advertises the mock through the OpenShell host alias", () => {
     expect(mockAnthropicEndpointUrl(18_766, {})).toBe("http://host.openshell.internal:18766");
     expect(
@@ -113,6 +136,28 @@ describe("Hermes inference switch command shape", () => {
     expect(delay).toHaveBeenCalledWith(5_000);
   });
 
+  it("parses exact provider and model values from an inference route", () => {
+    expect(
+      parseInferenceRoute(
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      ),
+    ).toEqual({
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
+  it("parses Provider and Model labels wrapped in OpenShell ANSI styling", () => {
+    expect(
+      parseInferenceRoute(
+        "Gateway inference:\n  \u001b[2mProvider:\u001b[0m \u001b[36mcompatible-endpoint\u001b[0m\n  \u001b[2mModel:\u001b[0m \u001b[36mnvidia/nvidia/nemotron-3-ultra\u001b[0m\n",
+      ),
+    ).toEqual({
+      provider: "compatible-endpoint",
+      model: "nvidia/nvidia/nemotron-3-ultra",
+    });
+  });
+
   it("keeps the Anthropic direct probe within the frozen E2E token budget", () => {
     expect(inferenceLocalMaxTokens("anthropic-messages")).toBe(32);
     expect(inferenceLocalMaxTokens("openai-completions")).toBe(100);
@@ -145,6 +190,74 @@ describe("Hermes inference switch command shape", () => {
       env: baselineEnv,
       redactionValues: ["fixture-key"],
     });
+  });
+
+  it("installs the hosted lane from a public NVIDIA baseline without staging compatible credentials", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const baselineEnv = {
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "0",
+      NEMOCLAW_MODEL: HOSTED_BASELINE_MODEL,
+      NEMOCLAW_PROVIDER: "build",
+    };
+
+    await installHermes(
+      { command } as unknown as HostCliClient,
+      "nvapi-public-baseline-key",
+      baselineEnv,
+      { stageCompatibleHosted: false },
+    );
+
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: {
+        ...baselineEnv,
+        NVIDIA_INFERENCE_API_KEY: "nvapi-public-baseline-key",
+      },
+      redactionValues: ["nvapi-public-baseline-key"],
+    });
+    expect(command.mock.calls[0]?.[2]?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+    expect(command.mock.calls[0]?.[2]?.env).not.toHaveProperty("NEMOCLAW_ENDPOINT_URL");
+  });
+
+  it("registers the hosted compatible target with its own endpoint and credential", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await expect(
+      ensureCompatibleHostedSwitchProvider(
+        { command } as unknown as HostCliClient,
+        "hosted-compatible-key",
+        {
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+          NEMOCLAW_SWITCH_INFERENCE_API: "openai-completions",
+          NEMOCLAW_SWITCH_PROVIDER: "compatible-endpoint",
+        },
+      ),
+    ).resolves.toBe("https://inference-api.nvidia.com/v1");
+
+    const [program, args, options] = command.mock.calls[0]!;
+    expect(program).toBe("bash");
+    expect(args[1]).toContain("provider create -g nemoclaw --name compatible-endpoint");
+    expect(args[1]).toContain("provider update -g nemoclaw compatible-endpoint");
+    expect(args[1]).toContain("OPENAI_BASE_URL=${SWITCH_ENDPOINT_URL}");
+    expect(options).toMatchObject({
+      env: {
+        COMPATIBLE_API_KEY: "hosted-compatible-key",
+        SWITCH_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      },
+      redactionValues: ["hosted-compatible-key"],
+    });
+    expect(options.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+  });
+
+  it("can suppress hosted-compatible staging for a public NVIDIA child env", () => {
+    const childEnv = env(
+      "nvapi-public-baseline-key",
+      { NEMOCLAW_PROVIDER: "build" },
+      { stageCompatibleHosted: false },
+    );
+
+    expect(childEnv.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-public-baseline-key");
+    expect(childEnv.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(childEnv.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
   });
 
   it("resets the sandbox and gateway before each isolated attempt", async () => {
@@ -205,5 +318,27 @@ describe("Hermes inference switch command shape", () => {
 
     expect(command.mock.calls[0]?.[1]).not.toContain("--no-verify");
     expect(command.mock.calls[1]?.[1]).toContain("--no-verify");
+  });
+
+  it("passes a hosted switch key only through COMPATIBLE_API_KEY", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await runHermesInferenceSetWithRetry(
+      { command } as unknown as HostCliClient,
+      "hosted-switch-key",
+      [
+        "--endpoint-url",
+        "https://inference-api.nvidia.com/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+      ],
+      { attempts: 1, credentialEnv: "COMPATIBLE_API_KEY", delay: async () => {} },
+    );
+
+    const childEnv = command.mock.calls[0]?.[2]?.env;
+    expect(childEnv).toMatchObject({ COMPATIBLE_API_KEY: "hosted-switch-key" });
+    expect(childEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 });

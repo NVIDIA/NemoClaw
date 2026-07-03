@@ -11,12 +11,16 @@ import {
   apiKeyShape,
   chatContent,
   cleanupHermesSwitch,
+  compatibleHostedSwitchEnabled,
   ensureCompatibleAnthropicSwitchProvider,
+  ensureCompatibleHostedSwitchProvider,
   env,
   envHash,
   expectAuthenticatedBaselineRequest,
   expectedApiMode,
   expectedBaseUrl,
+  HOSTED_BASELINE_MODEL,
+  HOSTED_BASELINE_PROVIDER,
   hashCheck,
   hermesApiCommand,
   hermesGatewayPid,
@@ -27,6 +31,7 @@ import {
   maybeAssertPidStable,
   mockAnthropicSwitchEnabled,
   parseHermesModelBlock,
+  parseInferenceRoute,
   registryState,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
@@ -49,6 +54,8 @@ test.skipIf(!shouldRunLiveE2E())(
       id: "hermes-inference-switch",
       boundary: "install.sh + Hermes sandbox + inference set + in-sandbox health/chat probes",
       sandboxName: SANDBOX_NAME,
+      hostedBaselineModel: HOSTED_BASELINE_MODEL,
+      hostedBaselineProvider: HOSTED_BASELINE_PROVIDER,
       switchProvider: SWITCH_PROVIDER,
       switchModel: SWITCH_MODEL,
       switchApi: SWITCH_API,
@@ -80,24 +87,57 @@ test.skipIf(!shouldRunLiveE2E())(
       );
       await mockBaseline?.close();
     });
-    const apiKey = mockBaseline
-      ? MOCK_BASELINE_API_KEY
-      : secrets.required("NVIDIA_INFERENCE_API_KEY");
-    const installEnv: NodeJS.ProcessEnv = mockBaseline
+    const hostedCompatibleSwitch = compatibleHostedSwitchEnabled();
+    const switchApiKey = hostedCompatibleSwitch
+      ? secrets.required("NVIDIA_INFERENCE_API_KEY")
+      : mockBaseline
+        ? MOCK_BASELINE_API_KEY
+        : secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const baselineApiKey = hostedCompatibleSwitch
+      ? secrets.required("NVIDIA_API_KEY")
+      : mockBaseline
+        ? MOCK_BASELINE_API_KEY
+        : switchApiKey;
+    if (hostedCompatibleSwitch) {
+      expect(baselineApiKey).toMatch(/^nvapi-/u);
+    }
+    const installEnv: NodeJS.ProcessEnv = hostedCompatibleSwitch
       ? {
-          COMPATIBLE_API_KEY: apiKey,
-          NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
-          NEMOCLAW_ENDPOINT_URL: mockBaseline.baseUrl,
-          NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
-          NEMOCLAW_PREFERRED_API: "openai-completions",
-          NEMOCLAW_PROVIDER: "custom",
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "0",
+          NEMOCLAW_MODEL: HOSTED_BASELINE_MODEL,
+          NEMOCLAW_PROVIDER: "build",
         }
-      : {};
+      : mockBaseline
+        ? {
+            COMPATIBLE_API_KEY: baselineApiKey,
+            NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
+            NEMOCLAW_ENDPOINT_URL: mockBaseline.baseUrl,
+            NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
+            NEMOCLAW_PREFERRED_API: "openai-completions",
+            NEMOCLAW_PROVIDER: "custom",
+          }
+        : {};
 
-    const install = await installHermes(host, apiKey, installEnv);
+    const install = await installHermes(host, baselineApiKey, installEnv, {
+      stageCompatibleHosted: hostedCompatibleSwitch ? false : undefined,
+    });
     expect(install.exitCode, resultText(install)).toBe(0);
     expectAuthenticatedBaselineRequest(mockBaseline, MOCK_BASELINE_MODEL);
-    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
+    if (hostedCompatibleSwitch) {
+      const baselineRoute = await sandbox.openshell(["inference", "get", "-g", "nemoclaw"], {
+        artifactName: "openshell-inference-route-before-switch",
+        env: env(),
+        timeoutMs: 30_000,
+      });
+      expect(baselineRoute.exitCode, resultText(baselineRoute)).toBe(0);
+      expect(parseInferenceRoute(resultText(baselineRoute))).toEqual({
+        provider: HOSTED_BASELINE_PROVIDER,
+        model: HOSTED_BASELINE_MODEL,
+      });
+    }
+    const hostedSwitchEndpointUrl = await ensureCompatibleHostedSwitchProvider(host, switchApiKey);
+    const anthropicSwitchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
+    const switchEndpointUrl = hostedSwitchEndpointUrl ?? anthropicSwitchEndpointUrl;
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
@@ -107,12 +147,17 @@ test.skipIf(!shouldRunLiveE2E())(
           "--endpoint-url",
           switchEndpointUrl,
           "--credential-env",
-          "COMPATIBLE_ANTHROPIC_API_KEY",
+          hostedSwitchEndpointUrl ? "COMPATIBLE_API_KEY" : "COMPATIBLE_ANTHROPIC_API_KEY",
           "--inference-api",
           SWITCH_API,
         ]
       : [];
-    const switched = await runHermesInferenceSetWithRetry(host, apiKey, compatibleMetadataArgs);
+    const switched = await runHermesInferenceSetWithRetry(
+      host,
+      switchApiKey,
+      compatibleMetadataArgs,
+      hostedSwitchEndpointUrl ? { credentialEnv: "COMPATIBLE_API_KEY" } : {},
+    );
     expect(switched.exitCode, resultText(switched)).toBe(0);
     expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
     expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
@@ -134,13 +179,15 @@ test.skipIf(!shouldRunLiveE2E())(
       timeoutMs: 30_000,
     });
     expect(route.exitCode, resultText(route)).toBe(0);
-    expect(resultText(route)).toContain(SWITCH_PROVIDER);
-    expect(resultText(route)).toContain(SWITCH_MODEL);
+    expect(parseInferenceRoute(resultText(route))).toEqual({
+      provider: SWITCH_PROVIDER,
+      model: SWITCH_MODEL,
+    });
 
     const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.hermes/config.yaml"], {
       artifactName: "hermes-config-yaml",
       env: env(),
-      redactionValues: [apiKey],
+      redactionValues: [baselineApiKey, switchApiKey],
       timeoutMs: 30_000,
     });
     expect(config.exitCode, resultText(config)).toBe(0);
@@ -176,6 +223,17 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(state.session.agent).toBe("hermes");
     expect(state.session.provider).toBe(SWITCH_PROVIDER);
     expect(state.session.model).toBe(SWITCH_MODEL);
+    if (switchEndpointUrl) {
+      const expectedCredentialEnv = hostedSwitchEndpointUrl
+        ? "COMPATIBLE_API_KEY"
+        : "COMPATIBLE_ANTHROPIC_API_KEY";
+      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.endpointUrl).toBe(switchEndpointUrl);
+      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(expectedCredentialEnv);
+      expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(SWITCH_API);
+      expect(state.session.endpointUrl).toBe(switchEndpointUrl);
+      expect(state.session.credentialEnv).toBe(expectedCredentialEnv);
+      expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
+    }
 
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
@@ -190,7 +248,7 @@ test.skipIf(!shouldRunLiveE2E())(
           {
             artifactName: `hermes-inference-local-chat-after-switch-${attempt}`,
             env: env(),
-            redactionValues: [apiKey],
+            redactionValues: [baselineApiKey, switchApiKey],
             timeoutMs: 120_000,
           },
         ),
@@ -211,7 +269,7 @@ test.skipIf(!shouldRunLiveE2E())(
           {
             artifactName: `hermes-api-chat-after-switch-${attempt}`,
             env: env(),
-            redactionValues: [apiKey],
+            redactionValues: [baselineApiKey, switchApiKey],
             timeoutMs: 150_000,
           },
         ),
