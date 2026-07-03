@@ -19,6 +19,7 @@
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_WEB_SEARCH_PROVIDER,
 //   NEMOCLAW_OPENCLAW_OTEL, NEMOCLAW_OPENCLAW_OTEL_ENDPOINT,
 //   NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME, NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE.
 
@@ -72,6 +73,11 @@ const SMALL_OLLAMA_CONTEXT_THRESHOLD =
   OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
 const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
+const WEB_SEARCH_PROVIDERS = {
+  brave: { credentialEnv: "BRAVE_API_KEY" },
+  tavily: { credentialEnv: "TAVILY_API_KEY" },
+} as const;
+type WebSearchProvider = keyof typeof WEB_SEARCH_PROVIDERS;
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -79,6 +85,14 @@ const SCRIPT_DIR = dirname(SCRIPT_PATH);
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function resolveWebSearchProvider(env: Env): WebSearchProvider {
+  const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "brave").trim();
+  if (provider === "brave" || provider === "tavily") return provider;
+  throw new Error(
+    `NEMOCLAW_WEB_SEARCH_PROVIDER must be "brave" or "tavily", got ${JSON.stringify(provider)}`,
+  );
 }
 
 function unique<T>(values: Iterable<T>): T[] {
@@ -1270,18 +1284,16 @@ export function buildConfig(env: Env = process.env): JsonObject {
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    // OpenClaw 2026.5.x: web-search providers are external plugins. The
-    // provider-owned apiKey lives under plugins.entries.<plugin>.config,
-    // not inline in tools.web.search. Writing the legacy inline shape makes
-    // the build-time `openclaw plugins install` exit non-zero during its
-    // pre-install config validation (the brave plugin is not installed yet),
-    // aborting the image build under `set -eu` before `doctor --fix` can
-    // migrate it. Emit the current schema directly so install validates
-    // cleanly. See NemoClaw #5266 (follow-up to #4955 / #3948).
-    tools.web.search = { enabled: true, provider: "brave" };
-    config.plugins.entries.brave = {
+    // OpenClaw 2026.5.x keeps provider-owned credentials under
+    // plugins.entries.<provider>.config rather than inline on tools.web.search.
+    // Brave is installed externally during the image build; Tavily ships as a
+    // bundled OpenClaw extension. Both use the same plugin-scoped config shape.
+    const webSearchProvider = resolveWebSearchProvider(env);
+    const credentialEnv = WEB_SEARCH_PROVIDERS[webSearchProvider].credentialEnv;
+    tools.web.search = { enabled: true, provider: webSearchProvider };
+    config.plugins.entries[webSearchProvider] = {
       enabled: true,
-      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
+      config: { webSearch: { apiKey: `openshell:resolve:env:${credentialEnv}` } },
     };
   }
 

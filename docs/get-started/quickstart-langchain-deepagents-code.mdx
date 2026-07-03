@@ -105,6 +105,9 @@ For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detec
 NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables both Deep Agents Code dotenv loading and MCP at runtime.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, successfully builds the replacement from a pinned base and fingerprinted context, and revalidates the target and route.
+Initial failures stop before backup.
+NemoClaw checks the target, route, and retained build inputs again after backup, immediately before deletion, so late failures can leave a backup but keep the existing sandbox intact.
 
 ## Optional Web Search
 
@@ -132,7 +135,7 @@ nemo-deepagents credentials add tavily-search --type tavily --credential TAVILY_
 nemo-deepagents <sandbox-name> rebuild
 ```
 
-The `tavily` preset only opens egress to `api.tavily.com:443`.
+The shared `tavily` preset only opens `POST /search` and `POST /extract` egress to `api.tavily.com:443`.
 Keep `TAVILY_API_KEY` in the host shell only; the gateway injects it at egress, and the sandbox never sees the raw value.
 NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image, and the managed wrapper rejects direct service-key injection into `dcode`.
 Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.

@@ -37,6 +37,7 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 export const SANDBOX_PROVIDER_SUFFIXES = [
   ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
+  "tavily-search",
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;

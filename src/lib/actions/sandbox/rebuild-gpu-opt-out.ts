@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
 export type RebuildGpuOptOutEntry = {
@@ -34,6 +35,7 @@ export type RebuildRecreateOnboardOpts = {
   recreateSandbox: true;
   agent: string | null | undefined;
   fromDockerfile: string | null;
+  preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
   noGpu?: true;
 };
@@ -42,6 +44,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   sb: RebuildGpuOptOutEntry | null | undefined;
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
+  preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
 }): RebuildRecreateOnboardOpts {
   return {
@@ -50,6 +53,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     recreateSandbox: true,
     agent: args.rebuildAgent,
     fromDockerfile: args.storedFromDockerfile,
+    ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };

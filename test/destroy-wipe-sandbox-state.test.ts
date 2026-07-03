@@ -101,6 +101,28 @@ describe("wipeSandboxState (#5449)", () => {
     }
   });
 
+  // #5970: when sandbox exec fails (sandbox not live, 100% CI repro), the warning
+  // must name actionable recovery paths so the user knows how to avoid stale
+  // workspace files after re-onboard. Two self-serve paths exist: re-onboard with
+  // a different name (fresh PVC), or --cleanup-gateway on the last sandbox (purges
+  // the shared cluster volume that retains the PVC, so the same name comes up clean).
+  it("names both recovery paths in the exec-fail warning so users can avoid stale workspace after re-onboard (#5970)", () => {
+    const warnings: string[] = [];
+    const { deps } = buildDeps({
+      runOpenshell: vi.fn(() => ({ status: 1 })),
+      warn: (msg: string) => warnings.push(msg),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const wipeWarn = warnings.find((w) => w.includes("Could not wipe workspace state"));
+    expect(wipeWarn).toBeDefined();
+    // Simple path: different name → fresh PVC (always works).
+    expect(wipeWarn).toContain("re-onboard with a different sandbox name");
+    // Same-name path: --cleanup-gateway purges the retained cluster volume.
+    expect(wipeWarn).toContain("--cleanup-gateway");
+  });
+
   // PRA-6 #5455: a manifest declaring a relative escape (e.g. `../etc`) or an
   // absolute path (e.g. `/etc/passwd`) in state_dirs/state_files would be
   // shell-quoted but fed straight into `rm -rf -- ...` inside `cd ${dir}`,
