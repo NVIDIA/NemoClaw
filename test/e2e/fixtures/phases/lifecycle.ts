@@ -1,13 +1,24 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ArtifactSink } from "../artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { assertExitZero } from "../clients/command.ts";
 import type { GatewayClient, HostGatewayRuntime } from "../clients/gateway.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import type { SandboxClient } from "../clients/sandbox.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
+import { simulateDcodeInvalidCredentialRebuild } from "./lifecycle-dcode-invalid-credential.ts";
+import {
+  type DcodeInvalidCredentialRebuildOptions,
+  isDcodeInvalidCredentialRebuildOptions,
+} from "./lifecycle-dcode-options.ts";
 import type { NemoClawInstance } from "./onboarding.ts";
+
+export {
+  type DcodeInvalidCredentialRebuildOptions,
+  dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
+} from "./lifecycle-dcode-options.ts";
 
 // Mirror of `OPENSHELL_SANDBOX_NAME_LABEL` in
 // `src/lib/onboard/docker-gpu-patch.ts`. Duplicated here because the
@@ -26,7 +37,7 @@ const REBUILD_TIMEOUT_MS = 20 * 60_000;
 const SANDBOX_READY_ATTEMPTS = 30;
 const SANDBOX_READY_DELAY_MS = 5_000;
 
-export type LifecycleProfile = "post-reboot-recovery";
+export type LifecycleProfile = "post-reboot-recovery" | "dcode-rebuild-invalid-credential";
 
 export interface LifecycleCleanup {
   add(name: string, run: () => Promise<void> | void): void;
@@ -54,6 +65,8 @@ export type PostRebootMode = "stop-original" | "rename-to-gpu-backup";
 export interface PostRebootOptions {
   mode?: PostRebootMode;
 }
+
+export type LifecycleSimulationOptions = PostRebootOptions | DcodeInvalidCredentialRebuildOptions;
 
 export interface LifecycleResult {
   profile: LifecycleProfile;
@@ -106,6 +119,7 @@ export class LifecyclePhaseFixture {
     private readonly sandbox: SandboxClient,
     private readonly cleanup: LifecycleCleanup,
     private readonly gateway?: GatewayClient,
+    private readonly artifacts?: ArtifactSink,
   ) {}
 
   async rebuildSandbox(
@@ -158,11 +172,23 @@ export class LifecyclePhaseFixture {
   async simulate(
     profile: LifecycleProfile,
     instance: NemoClawInstance,
-    options: PostRebootOptions = {},
+    options: LifecycleSimulationOptions = {},
   ): Promise<LifecycleResult> {
     switch (profile) {
       case "post-reboot-recovery":
-        return await this.simulatePostReboot(instance, options);
+        return await this.simulatePostReboot(instance, options as PostRebootOptions);
+      case "dcode-rebuild-invalid-credential":
+        if (!isDcodeInvalidCredentialRebuildOptions(options)) {
+          throw new Error(
+            "dcode-rebuild-invalid-credential requires gateway/provider/credential/model runner options",
+          );
+        }
+        return await simulateDcodeInvalidCredentialRebuild(instance, options, {
+          host: this.host,
+          sandbox: this.sandbox,
+          cleanup: this.cleanup,
+          artifacts: this.artifacts,
+        });
       default: {
         const _exhaustive: never = profile;
         throw new Error(`Unsupported lifecycle profile '${_exhaustive}'.`);

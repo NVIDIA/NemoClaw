@@ -1,21 +1,26 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   SandboxClient,
-  type CommandRunner,
 } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
+import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import {
   buildBackupContainerName,
-  LifecyclePhaseFixture,
+  dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
   type LifecycleCleanup,
+  LifecyclePhaseFixture,
 } from "../fixtures/phases/lifecycle.ts";
-import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -317,6 +322,300 @@ describe("LifecyclePhaseFixture profile dispatch", () => {
 
   it("exposes the lifecycle phase on the E2E target context", () => {
     expectTypeOf<E2ETargetFixtures["lifecycle"]>().toEqualTypeOf<LifecyclePhaseFixture>();
+  });
+});
+
+describe("LifecyclePhaseFixture DCode invalid-credential rebuild", () => {
+  const sandboxName = "e2e-ubuntu-repo-cloud-langchain-deepagents-code";
+  const options = {
+    gatewayName: "nemoclaw",
+    providerName: "compatible-endpoint",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    model: "nvidia/nvidia/nemotron-3-ultra",
+    validCredential: "valid-fixture-credential",
+  } as const;
+
+  function dcodeInstance(): NemoClawInstance {
+    return instance({
+      onboarding: "cloud-langchain-deepagents-code",
+      sandboxName,
+      agent: "langchain-deepagents-code",
+      // The onboarding shorthand is intentionally not the authoritative
+      // gateway provider name used by the lifecycle options.
+      provider: "nvidia",
+    });
+  }
+
+  function enqueueValidatedPreamble(runner: FakeRunner): void {
+    runner.enqueue(shellResult(0, `${sandboxName}\n`)); // gateway sandbox names
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`)); // initial Ready
+    runner.enqueue(shellResult(0, "compatible-endpoint\n")); // provider names
+    runner.enqueue(
+      shellResult(0, "Provider: compatible-endpoint\nModel: nvidia/nvidia/nemotron-3-ultra\n"),
+    ); // initial route
+    runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_IDENTITY_OK\n")); // identity
+    runner.enqueue(shellResult(0)); // marker write
+    runner.enqueue(shellResult(0, "container-a\ncontainer-b\n")); // Docker IDs before
+    runner.enqueue(shellResult(0, "200")); // baseline route
+  }
+
+  function enqueueSuccessfulRestoration(runner: FakeRunner): void {
+    runner.enqueue(shellResult(0)); // restore provider
+    runner.enqueue(shellResult(0, "200")); // restored route
+    runner.enqueue(
+      shellResult(0, "Provider: compatible-endpoint\nModel: nvidia/nvidia/nemotron-3-ultra\n"),
+    ); // restored inference route
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`));
+    runner.enqueue(shellResult(0, `Sandbox:\n  Name: ${sandboxName}\n  Phase: Ready\n`));
+  }
+
+  function enqueueSuccessfulAtomicProof(runner: FakeRunner): void {
+    enqueueValidatedPreamble(runner);
+    runner.enqueue(shellResult(0)); // invalid provider update
+    runner.enqueue(shellResult(0, "401")); // rejected route
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`)); // Ready under bad key
+    runner.enqueue(
+      shellResult(
+        1,
+        "Rebuild preflight failed: recorded inference credentials or route for provider " +
+          "'compatible-endpoint' were rejected.\n" +
+          "existing sandbox inference probe returned HTTP 401\n" +
+          "Sandbox is untouched — no data was lost.\n",
+      ),
+    ); // rebuild
+    runner.enqueue(shellResult(0, "container-b\ncontainer-a\n")); // same IDs, other order
+    runner.enqueue(shellResult(0, "NEMOCLAW_DCODE_INVALID_CREDENTIAL_MARKER\n"));
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`));
+    enqueueSuccessfulRestoration(runner);
+  }
+
+  it("derives gateway runner options from the authoritative registry entry", () => {
+    expect(
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "langchain-deepagents-code",
+          gatewayName: "nemoclaw-8081",
+          provider: "compatible-endpoint",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          model: "nvidia/model-from-registry",
+        },
+        "valid-key",
+      ),
+    ).toEqual({
+      gatewayName: "nemoclaw-8081",
+      providerName: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      model: "nvidia/model-from-registry",
+      validCredential: "valid-key",
+    });
+  });
+
+  it("rejects incomplete or non-DCode registry entries", () => {
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          provider: "compatible-endpoint",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          model: "nvidia/model",
+        },
+        "valid-key",
+      ),
+    ).toThrow(/langchain-deepagents-code registry entry/);
+    expect(() =>
+      dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+        {
+          agent: "langchain-deepagents-code",
+          provider: "compatible-endpoint",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          model: "nvidia/model",
+        },
+        "valid-key",
+      ),
+    ).toThrow(/gatewayName/);
+  });
+
+  it("proves a rejected key cannot cross the destructive boundary and restores idempotently", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const runner = new FakeRunner();
+      enqueueSuccessfulAtomicProof(runner);
+      const cleanup = new FakeCleanup();
+
+      const result = await fixture(runner, cleanup).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      );
+
+      expect(result.profile).toBe("dcode-rebuild-invalid-credential");
+      expect(result.steps.map((step) => step.id)).toContain("nemoclaw-rebuild:invalid-credential");
+      expect(cleanup.calls.map((call) => call.name)).toEqual([
+        "lifecycle.restore-dcode-provider-credential:nemoclaw:compatible-endpoint",
+      ]);
+
+      const providerUpdates = runner.calls.filter(
+        (call) =>
+          call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
+      );
+      expect(providerUpdates).toHaveLength(2);
+      const invalidUpdate = providerUpdates[0];
+      const badCredential = invalidUpdate.options?.env?.COMPATIBLE_API_KEY;
+      expect(badCredential).toMatch(/^nvapi-e2e-invalid-/);
+      expect(invalidUpdate.args).toEqual([
+        "provider",
+        "update",
+        "-g",
+        "nemoclaw",
+        "compatible-endpoint",
+        "--credential",
+        "COMPATIBLE_API_KEY",
+      ]);
+      expect(invalidUpdate.args).not.toContain(badCredential);
+      expect(invalidUpdate.options?.redactionValues).toEqual([badCredential]);
+      expect(providerUpdates[1].options?.env?.COMPATIBLE_API_KEY).toBe(options.validCredential);
+
+      const rebuild = runner.calls.find(
+        (call) => call.command === "nemoclaw" && call.args.includes("rebuild"),
+      );
+      expect(rebuild?.options?.env).not.toHaveProperty("COMPATIBLE_API_KEY");
+      const routeProbes = runner.calls.filter(
+        (call) =>
+          call.command === "openshell" &&
+          call.args.includes("https://inference.local/v1/chat/completions"),
+      );
+      expect(routeProbes.length).toBeGreaterThanOrEqual(3);
+      for (const probe of routeProbes) {
+        expect(probe.args).toContain("--data-binary");
+        expect(probe.args).not.toContain("https://inference.local/v1/models");
+        expect(probe.args.join(" ")).toContain(options.model);
+      }
+      expect(
+        runner.calls.filter(
+          (call) =>
+            call.command === "docker" &&
+            call.args.includes("label=openshell.ai/managed-by=openshell") &&
+            call.args.includes(`label=openshell.ai/sandbox-name=${sandboxName}`),
+        ),
+      ).toHaveLength(2);
+
+      // Cleanup remains armed before onboarding teardown, but becomes a no-op
+      // after the explicit finally restoration verified the route and status.
+      const callCountBeforeCleanup = runner.calls.length;
+      await expect(cleanup.calls[0].run()).resolves.toBeUndefined();
+      expect(runner.calls).toHaveLength(callCountBeforeCleanup);
+
+      const repeatedUpdates = runner.calls.filter(
+        (call) =>
+          call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
+      );
+      expect(repeatedUpdates).toHaveLength(2);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      fs.rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  it("does not accept a zero rebuild exit as the expected credential rejection", async () => {
+    const runner = new FakeRunner();
+    enqueueValidatedPreamble(runner);
+    runner.enqueue(shellResult(0)); // invalid provider update
+    runner.enqueue(shellResult(0, "401"));
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`));
+    runner.enqueue(shellResult(0, "unexpected rebuild success"));
+    enqueueSuccessfulRestoration(runner);
+
+    await expect(
+      fixture(runner, new FakeCleanup()).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      ),
+    ).rejects.toThrow(/numeric non-zero exit/);
+  });
+
+  it("rejects output showing that rebuild crossed the delete boundary", async () => {
+    const runner = new FakeRunner();
+    enqueueValidatedPreamble(runner);
+    runner.enqueue(shellResult(0)); // invalid provider update
+    runner.enqueue(shellResult(0, "401"));
+    runner.enqueue(shellResult(0, `NAME  PHASE\n${sandboxName}  Ready\n`));
+    runner.enqueue(
+      shellResult(
+        1,
+        "recorded inference credentials or route were rejected; HTTP 401\n" +
+          "Sandbox is untouched — no data was lost.\n" +
+          "Deleting old sandbox...\n",
+      ),
+    );
+    enqueueSuccessfulRestoration(runner);
+
+    await expect(
+      fixture(runner, new FakeCleanup()).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      ),
+    ).rejects.toThrow(/crossed a destructive boundary/);
+  });
+
+  it("fails closed before provider mutation when another sandbox shares the gateway", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue(shellResult(0, `${sandboxName}\nother-sandbox\n`));
+    const cleanup = new FakeCleanup();
+
+    await expect(
+      fixture(runner, cleanup).simulate(
+        "dcode-rebuild-invalid-credential",
+        dcodeInstance(),
+        options,
+      ),
+    ).rejects.toThrow(/only sandbox/);
+    expect(runner.calls).toHaveLength(1);
+    expect(cleanup.calls).toHaveLength(0);
+  });
+
+  it("preserves both the primary failure and a restoration failure", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-lifecycle-errors-home-"));
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const runner = new FakeRunner();
+      enqueueValidatedPreamble(runner);
+      runner.enqueue(shellResult(1, "invalid provider update failed"));
+      runner.enqueue(shellResult(1, "valid provider restoration failed"));
+      const cleanup = new FakeCleanup();
+
+      const failure = await fixture(runner, cleanup)
+        .simulate("dcode-rebuild-invalid-credential", dcodeInstance(), options)
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toHaveLength(2);
+      expect(String((failure as AggregateError).errors[0])).toContain(
+        "invalid provider update failed",
+      );
+      expect(String((failure as AggregateError).errors[1])).toContain(
+        "valid provider restoration failed",
+      );
+      expect(cleanup.calls).toHaveLength(1);
+      enqueueSuccessfulRestoration(runner);
+      await expect(cleanup.calls[0].run()).resolves.toBeUndefined();
+      const updates = runner.calls.filter(
+        (call) =>
+          call.command === "openshell" && call.args.slice(0, 2).join(" ") === "provider update",
+      );
+      expect(updates).toHaveLength(3);
+      expect(updates[2].options?.env?.COMPATIBLE_API_KEY).toBe(options.validCredential);
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      fs.rmSync(home, { force: true, recursive: true });
+    }
   });
 });
 
