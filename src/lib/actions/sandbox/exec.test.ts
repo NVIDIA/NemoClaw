@@ -239,8 +239,19 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
     }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
   };
 
-  const runExec = async (status: number, probeOutput: string) => {
+  const runExec = async (
+    status: number | null,
+    probeOutput: string,
+    options: {
+      error?: Error;
+      now?: () => number;
+      onRun?: () => void;
+      writeStderr?: (line: string) => void;
+    } = {},
+  ) => {
     const stderr: string[] = [];
+    const probeLogs = vi.fn(() => probeOutput);
+    const enableAudit = vi.fn(() => {});
     let exitCode = Number.NaN;
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       exitCode = code ?? 0;
@@ -253,21 +264,25 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       {},
       {
         resolveBinary: () => "openshell",
-        run: async () => ({ status }),
-        now: () => START_MS,
+        run: async () => {
+          options.onRun?.();
+          return { status, ...(options.error ? { error: options.error } : {}) };
+        },
+        now: options.now ?? (() => START_MS),
         cleanupDeps: cleanupSkipped,
         policyHint: {
           env: {},
-          probeLogs: () => probeOutput,
-          enableAudit: () => {},
+          probeLogs,
+          enableAudit,
           sleep: async () => {},
-          writeStderr: (line) => stderr.push(line),
+          attempts: 1,
+          writeStderr: options.writeStderr ?? ((line) => stderr.push(line)),
         },
       },
     ).catch(() => {});
     exitSpy.mockRestore();
     errSpy.mockRestore();
-    return { exitCode, stderr };
+    return { enableAudit, exitCode, probeLogs, stderr };
   };
 
   afterEach(() => {
@@ -296,6 +311,45 @@ describe("execSandbox policy-denial hint wiring (#5978)", () => {
       "[1000.500] [sandbox] [INFO ] some unrelated runtime error: connection reset",
     );
     expect(exitCode).toBe(2);
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("does not probe policy logs when OpenShell invocation fails", async () => {
+    const { enableAudit, exitCode, probeLogs, stderr } = await runExec(null, DENIAL_LINE, {
+      error: new Error("openshell: command not found"),
+    });
+    expect(exitCode).toBe(1);
+    expect(enableAudit).not.toHaveBeenCalled();
+    expect(probeLogs).not.toHaveBeenCalled();
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("preserves the command exit code when policy-hint stderr writing throws", async () => {
+    const { exitCode } = await runExec(56, DENIAL_LINE, {
+      writeStderr: () => {
+        throw new Error("stderr unavailable");
+      },
+    });
+    expect(exitCode).toBe(56);
+  });
+
+  it("captures the denial cutoff before dispatch and rejects an older denial", async () => {
+    let dispatched = false;
+    const now = vi.fn(() => {
+      expect(dispatched).toBe(false);
+      return START_MS;
+    });
+    const staleDenial =
+      "[999.999] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
+    const { exitCode, stderr } = await runExec(56, staleDenial, {
+      now,
+      onRun: () => {
+        dispatched = true;
+      },
+    });
+    expect(now).toHaveBeenCalledOnce();
+    expect(dispatched).toBe(true);
+    expect(exitCode).toBe(56);
     expect(stderr).toHaveLength(0);
   });
 });

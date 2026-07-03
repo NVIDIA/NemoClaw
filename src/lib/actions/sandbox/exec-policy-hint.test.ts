@@ -37,8 +37,34 @@ describe("isPolicyDenialLine (#5978)", () => {
       true,
     ],
     ["proxy JSON policy_denied body", PROXY_JSON_LINE, true],
+    [
+      "timestamp-prefixed proxy JSON policy_denied body",
+      `[1783046573.602] [gateway] ${PROXY_JSON_LINE}`,
+      true,
+    ],
     ["bare reason phrasing", "endpoint host:443 is not allowed by any policy", true],
     ["NET:OPEN INFO ssh relay (not a denial)", SSH_RELAY_INFO_LINE, false],
+    [
+      "allowed NET:OPEN event with unrelated DENIED text",
+      "[1000.500] NET:OPEN [INFO] ALLOWED -> example.com:443 [message=DENIED count 0]",
+      false,
+    ],
+    [
+      "config key containing the old policy_denied substring",
+      "[1000.500] [config] policy_denied_threshold=5",
+      false,
+    ],
+    [
+      "unstructured policy prose",
+      "[1000.500] [app] request not allowed by policy text in documentation",
+      false,
+    ],
+    ["unstructured policy-cache prose", "[1000.500] [app] route not in policy cache key", false],
+    [
+      "JSON detail without the exact denial error code",
+      '{"detail":"policy_denied is documented here","error":"configuration_notice"}',
+      false,
+    ],
     ["unrelated log line", "[123.0] [sandbox] [INFO ] flushed activity summary", false],
     ["empty line", "", false],
   ])("classifies %s", (_label, line, expected) => {
@@ -162,7 +188,7 @@ describe("findRecentPolicyDenial (#5978)", () => {
   // Same granularity slack for a second-precision ISO gateway stamp.
   const ISO_SECOND_BASE = Date.parse("2026-07-03T04:00:00Z");
   const ISO_SECOND_DENIAL =
-    "2026-07-03T04:00:00Z [gateway] policy_denied CONNECT example.com:443 not allowed by policy";
+    '2026-07-03T04:00:00Z [gateway] {"detail":"CONNECT example.com:443 not permitted by policy","error":"policy_denied"}';
 
   it("keeps a second-precision ISO denial when the command started mid-second", () => {
     expect(findRecentPolicyDenial(ISO_SECOND_DENIAL, ISO_SECOND_BASE + 500)).toEqual({
@@ -198,6 +224,17 @@ describe("buildPolicyDenialExecHint (#5978)", () => {
   it("names a bracketed IPv6 endpoint verbatim", () => {
     const ipv6 = buildPolicyDenialExecHint("nemoclaw", "oc-fresh", "[2001:db8::1]:443");
     expect(ipv6).toContain("for [2001:db8::1]:443");
+  });
+
+  it.each([
+    "a",
+    "valid-lowercase",
+    "valid-with-hyphens",
+    "a".repeat(63),
+  ])("renders a valid RFC-1123 sandbox name unchanged: %s", (valid) => {
+    const hint = buildPolicyDenialExecHint("nemoclaw", valid, "example.com:443");
+    expect(hint).toContain(`inside sandbox '${valid}'`);
+    expect(hint).toContain(`nemoclaw ${valid} logs --tail 50`);
   });
 
   it.each([
@@ -364,6 +401,25 @@ describe("maybeEmitPolicyDenialHint (#5978)", () => {
     );
     expect(hint).toBeNull();
     expect(h.lines).toHaveLength(0);
+  });
+
+  it("degrades silently (no throw) when the stderr sink fails", async () => {
+    const h = harness();
+    const hint = await maybeEmitPolicyDenialHint(
+      "nemoclaw",
+      "oc-fresh",
+      56,
+      false,
+      START_BEFORE_DENIAL,
+      {
+        ...h.base,
+        probeLogs: () => DENIED_CURL_LINE,
+        writeStderr: () => {
+          throw new Error("stderr unavailable");
+        },
+      },
+    );
+    expect(hint).toBeNull();
   });
 
   it("retries the probe until a settling denial event becomes visible", async () => {

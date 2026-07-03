@@ -85,17 +85,46 @@ function isSafeEndpoint(candidate: string): boolean {
   return SAFE_ENDPOINT_RE.test(candidate) || SAFE_IPV6_ENDPOINT_RE.test(candidate);
 }
 
+// Match the OCSF decision token in its structural position: immediately after
+// NET:OPEN's optional bracketed metadata. Requiring that position prevents an
+// allowed event with unrelated text such as `[message=DENIED count 0]` from
+// being mistaken for a denial.
+const OCSF_NETWORK_DENIAL_RE = /\bNET:OPEN\b(?:\s+\[[^\]\r\n]*\])*\s+DENIED(?=\s|$)/;
+
+// Some proxy surfaces return a bare, human-readable reason rather than OCSF or
+// JSON. Keep that fallback narrow: the whole line must be the known endpoint
+// denial shape and its endpoint must pass the same terminal-output allowlist.
+const BARE_ENDPOINT_POLICY_DENIAL_RE =
+  /^\s*endpoint\s+(\S+)\s+is\s+not\s+(?:allowed|permitted)\s+by\s+(?:any\s+)?policy\s*$/i;
+
+function isStructuredJsonPolicyDenial(line: string): boolean {
+  const jsonStart = line.indexOf("{");
+  if (jsonStart === -1) return false;
+  try {
+    const parsed: unknown = JSON.parse(line.slice(jsonStart));
+    return (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).error === "policy_denied"
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * True when a log line records a network policy denial. Matches the OpenShell
- * OCSF audit signature (`NET:OPEN ... DENIED`) plus the proxy/JSON denial
- * phrasings, so the detector is tool- and format-agnostic.
+ * True when a log line records a network policy denial. Matches only the
+ * structured OpenShell OCSF decision, an exact proxy JSON error code, or the
+ * complete bare endpoint-reason shape. Loose policy-related prose and config
+ * keys are deliberately ignored so an unrelated failed exec cannot inherit a
+ * misleading breadcrumb from nearby log text.
  */
 export function isPolicyDenialLine(line: string): boolean {
-  if (line.includes("NET:OPEN") && line.includes("DENIED")) return true;
-  if (line.includes("policy_denied")) return true;
-  if (/\bnot (?:allowed|permitted)\b[^\n]*\bpolic/i.test(line)) return true;
-  if (/\bnot in policy\b/i.test(line)) return true;
-  return false;
+  if (OCSF_NETWORK_DENIAL_RE.test(line)) return true;
+  if (isStructuredJsonPolicyDenial(line)) return true;
+  const bareReason = line.match(BARE_ENDPOINT_POLICY_DENIAL_RE);
+  return Boolean(bareReason && isSafeEndpoint(bareReason[1]));
 }
 
 // A leading log timestamp is stripped before the generic host:port fallback so
@@ -339,11 +368,23 @@ export async function maybeEmitPolicyDenialHint(
     }
     match = findRecentPolicyDenial(logOutput, commandStartedAtMs);
     if (match) break;
-    if (attempt < attempts) await sleep(retryDelayMs);
+    if (attempt < attempts) {
+      try {
+        await sleep(retryDelayMs);
+      } catch {
+        return null;
+      }
+    }
   }
   if (!match) return null;
 
-  const hint = buildPolicyDenialExecHint(cliName, sandboxName, match.endpoint);
-  (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
-  return hint;
+  try {
+    const hint = buildPolicyDenialExecHint(cliName, sandboxName, match.endpoint);
+    (deps.writeStderr ?? ((line: string) => console.error(line)))(hint);
+    return hint;
+  } catch {
+    // Hint rendering and stderr output are best-effort diagnostics. Neither may
+    // replace the command's native exit behavior with a hinting failure.
+    return null;
+  }
 }

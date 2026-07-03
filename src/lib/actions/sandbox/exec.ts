@@ -3,12 +3,12 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { spawnExitCode } from "../../core/process-exit";
-import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
+import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -387,6 +387,23 @@ export type ExecSandboxDeps = {
   cleanupDeps?: SandboxExecCleanupDeps;
 };
 
+async function emitPostExecPolicyDenialHint(
+  cliName: string,
+  sandboxName: string,
+  completion: SandboxExecCompletion,
+  commandStartedAtMs: number,
+  deps?: PolicyDenialHintDeps,
+): Promise<void> {
+  await maybeEmitPolicyDenialHint(
+    cliName,
+    sandboxName,
+    completion.commandCode,
+    Boolean(completion.invocationError),
+    commandStartedAtMs,
+    deps,
+  );
+}
+
 export async function execSandbox(
   sandboxName: string,
   command: readonly string[],
@@ -436,21 +453,14 @@ export async function execSandbox(
   if (completion.cleanupError) {
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
   }
-  // Denial-adjacent breadcrumb for the reporter's failure path (#5978). Emitted
-  // AFTER the child's own bytes and any invocation/cleanup diagnostics, and only
-  // for a genuine command failure with a fresh policy denial in the audit log.
-  // Wrapped defensively: a hint must never change the exec's outcome.
-  try {
-    await maybeEmitPolicyDenialHint(
-      CLI_NAME,
-      sandboxName,
-      completion.commandCode,
-      Boolean(completion.invocationError),
-      commandStartedAtMs,
-      deps.policyHint,
-    );
-  } catch {
-    // Never let hint generation corrupt the exec result or exit code.
-  }
+  // Emit after the child and cleanup diagnostics. The helper's no-throw
+  // contract keeps this best-effort breadcrumb separate from exec's outcome.
+  await emitPostExecPolicyDenialHint(
+    CLI_NAME,
+    sandboxName,
+    completion,
+    commandStartedAtMs,
+    deps.policyHint,
+  );
   process.exit(completion.code);
 }
