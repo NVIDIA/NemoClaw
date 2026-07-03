@@ -23,13 +23,17 @@ function runRecovery(
   requestId = "request-1",
   approveOutput = COMPAT_APPROVE_OUTPUT,
   originalRequest: Record<string, unknown> | null = null,
+  childUmask: string | null = null,
 ) {
   const script = `
 import importlib.util
 import json
+import os
 import sys
 
-policy_path, state_dir, request_id, approve_output, original_json = sys.argv[1:6]
+policy_path, state_dir, request_id, approve_output, original_json, child_umask = sys.argv[1:7]
+if child_umask:
+    os.umask(int(child_umask, 8))
 spec = importlib.util.spec_from_file_location("openclaw_device_approval_policy", policy_path)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -39,7 +43,15 @@ print(json.dumps(result, sort_keys=True))
 `;
   return spawnSync(
     "python3",
-    ["-", POLICY_PATH, stateDir, requestId, approveOutput, JSON.stringify(originalRequest)],
+    [
+      "-",
+      POLICY_PATH,
+      stateDir,
+      requestId,
+      approveOutput,
+      JSON.stringify(originalRequest),
+      childUmask ?? "",
+    ],
     {
       encoding: "utf-8",
       input: script,
@@ -146,6 +158,41 @@ describe("openclaw device approval policy (#4462)", () => {
       expect(paired["device-1"].approvedScopes).toEqual(expectedScopes);
       expect(paired["device-1"].tokens.operator.scopes).toEqual(expectedScopes);
       expect(JSON.stringify(paired)).not.toContain("operator.admin");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves non-world-readable device state modes under a permissive umask", () => {
+    if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
+      return;
+    }
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-approval-policy-"));
+    try {
+      const stateDir = path.join(tmpDir, "state");
+      writeOriginalPendingState(stateDir);
+      const devicesDir = path.join(stateDir, "devices");
+      const pendingFile = path.join(devicesDir, "pending.json");
+      const pairedFile = path.join(devicesDir, "paired.json");
+      fs.chmodSync(pendingFile, 0o660);
+      fs.chmodSync(pairedFile, 0o600);
+
+      const result = runRecovery(
+        stateDir,
+        "request-1",
+        COMPAT_APPROVE_OUTPUT,
+        originalRequest(),
+        "0022",
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout).compatibility).toBe("openclaw-approve-recovered-original");
+      const pendingMode = fs.statSync(pendingFile).mode & 0o777;
+      const pairedMode = fs.statSync(pairedFile).mode & 0o777;
+      expect(pendingMode).toBe(0o660);
+      expect(pairedMode).toBe(0o600);
+      expect(pendingMode & 0o007).toBe(0);
+      expect(pairedMode & 0o007).toBe(0);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

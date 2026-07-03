@@ -204,11 +204,30 @@ def _load_device_state(devices_dir, name):
 def _save_device_state(devices_dir, name, value):
     path = devices_dir / name
     tmp = path.with_name(f".{path.name}.tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, path)
+    try:
+        target_mode = path.stat().st_mode & 0o770
+    except FileNotFoundError:
+        target_mode = 0o600
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(tmp, flags, 0o600)
+    try:
+        os.fchmod(fd, target_mode)
+        handle = os.fdopen(fd, "w", encoding="utf-8")
+        fd = None
+        with handle:
+            handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        if fd is not None:
+            os.close(fd)
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _output_mentions_request_id(output, request_id):
