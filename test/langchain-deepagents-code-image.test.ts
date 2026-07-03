@@ -257,7 +257,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(startScript).not.toContain("write_export_if_set DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toContain("NEMOCLAW_DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
     expect(startScript).not.toMatch(
-      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY|LANGSMITH_PROJECT|DEEPAGENTS_CODE_LANGSMITH_PROJECT)\b/,
+      /write_export_if_set (?:NVIDIA_API_KEY|OPENAI_API_KEY|TAVILY_API_KEY|DEEPAGENTS_CODE_TAVILY_API_KEY|LANGSMITH_API_KEY|LANGSMITH_TRACING|LANGSMITH_PROJECT|DEEPAGENTS_CODE_LANGSMITH_PROJECT)\b/,
     );
   });
 
@@ -277,10 +277,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
       NVIDIA_API_KEY: `nvapi-${"A".repeat(10)}`,
       OPENAI_API_KEY: `sk-${"B".repeat(20)}`,
       LANGSMITH_API_KEY: `lsv2_pt_${"C".repeat(36)}_${"D".repeat(10)}`,
+      LANGSMITH_TRACING: `lsv2_sk_${"I".repeat(36)}_${"J".repeat(10)}`,
       LANGSMITH_PROJECT: `lsv2_pt_${"E".repeat(36)}_${"F".repeat(10)}`,
       DEEPAGENTS_CODE_LANGSMITH_PROJECT: `lsv2_sk_${"G".repeat(36)}_${"H".repeat(10)}`,
     };
-
     const { envFileText, output } = runStartScriptProxyProbe(scriptPath, envFile, {
       HTTP_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
       HTTPS_PROXY: "http://corp-user:corp-password@corp-proxy.example:8080",
