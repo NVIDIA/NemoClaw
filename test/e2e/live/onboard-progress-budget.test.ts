@@ -29,14 +29,18 @@ import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clie
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { extractOpenClawAgentText } from "./agent-turn-latency-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
 const HOSTED_INFERENCE_SECRET = "NVIDIA_INFERENCE_API_KEY";
 const SANDBOX_NAME = process.env.NEMOCLAW_E2E_PROGRESS_SANDBOX ?? "e2e-progress-budget";
-const ONBOARD_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_PHASE_TIMEOUT_MS ?? 1_200) * 1_000;
-const FIRST_TURN_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_FIRST_TURN_TIMEOUT_MS ?? 240) * 1_000;
+// Timeout env vars are named *_SECS because their values are seconds (×1000
+// below), matching their unit; HEARTBEAT_MS is a raw millisecond value.
+const ONBOARD_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_ONBOARD_TIMEOUT_SECS ?? 1_200) * 1_000;
+const FIRST_TURN_TIMEOUT_MS =
+  Number(process.env.NEMOCLAW_E2E_FIRST_TURN_TIMEOUT_SECS ?? 240) * 1_000;
 const HEARTBEAT_MS = Number(process.env.NEMOCLAW_E2E_ONBOARD_HEARTBEAT_MS ?? 3_000);
 // Budget for the whole [1/8]-to-first-response path. Defaults to the issue's
 // ≤3-minute goal (180s); constrained / cold-cache runners can raise
@@ -194,7 +198,11 @@ liveTest(
     );
     const totalSecs = Math.round((Date.now() - startedAt) / 1000);
     const turnText = resultText(turn);
-    const responseChars = turnText.replace(/\s+/g, "").length;
+    // Parse the `--json` payload and measure the assistant reply text — a raw
+    // non-empty output could just be a JSON envelope / log noise, so it would
+    // not prove the agent actually returned content (CodeRabbit).
+    const assistantReply = extractOpenClawAgentText(turnText);
+    const responseChars = assistantReply.trim().length;
 
     await artifacts.writeJson("onboard-progress-budget.json", {
       sandbox: SANDBOX_NAME,
@@ -214,7 +222,10 @@ liveTest(
 
     expect(turn.exitCode, turnText).toBe(0);
     // A real, non-empty first response came back (not just a completed onboard).
-    expect(responseChars, "expected a non-empty first agent response").toBeGreaterThan(0);
+    expect(
+      responseChars,
+      `expected a non-empty first agent reply, got: ${turnText}`,
+    ).toBeGreaterThan(0);
 
     // (5) Whole [1/8]-to-first-response path within the ≤3-minute budget.
     expect(
