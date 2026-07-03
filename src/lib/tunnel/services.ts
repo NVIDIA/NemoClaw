@@ -22,6 +22,7 @@ import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding"
 import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
+import { registerTunnelOrigin } from "./allowed-origins";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -673,6 +674,25 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   let tunnelUrl = "";
   if (isRunning(pidDir, "cloudflared")) {
     tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
+  }
+
+  if (tunnelUrl) {
+    const rawSandboxName =
+      opts.sandboxName ??
+      process.env.NEMOCLAW_SANDBOX_NAME ??
+      process.env.NEMOCLAW_SANDBOX ??
+      process.env.SANDBOX_NAME;
+    if (rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")) {
+      try {
+        registerTunnelOrigin(rawSandboxName, tunnelUrl, { info, warn });
+      } catch (err) {
+        warn(`Could not register tunnel origin (${err instanceof Error ? err.message : err}).`);
+      }
+    } else {
+      warn(
+        "No sandbox name available — skipping tunnel-origin registration in gateway allowedOrigins.",
+      );
+    }
   }
 
   const bannerLines = [

@@ -1949,6 +1949,17 @@ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $$nemoclaw tunnel start
 ```
 
+<AgentOnly variant="openclaw">
+
+When the tunnel comes up, NemoClaw adds the tunnel's public origin to `gateway.controlUi.allowedOrigins` in the in-sandbox OpenClaw config and restarts the gateway so the Web UI works through the tunnel without further configuration.
+For a quick tunnel this is the generated `https://<subdomain>.trycloudflare.com` origin, and for a named tunnel it is the configured hostname.
+NemoClaw prunes stale `*.trycloudflare.com` origins from earlier quick tunnels on each start and preserves other origins such as loopback, `NEMOCLAW_CORS_ORIGIN`, and custom domains.
+The gateway restarts only when the origin list changes, and that restart briefly interrupts any running agent task.
+Registration is best-effort.
+If it fails, `$$nemoclaw tunnel start` still succeeds and prints a warning that suggests setting `NEMOCLAW_CORS_ORIGIN` or opening the Web UI from the gateway host.
+
+</AgentOnly>
+
 `$$nemoclaw start` remains as a deprecated alias that prints a warning and delegates to `tunnel start`.
 
 ### `$$nemoclaw tunnel stop`
