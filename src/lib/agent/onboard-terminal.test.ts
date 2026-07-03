@@ -7,6 +7,7 @@ import { loadAgent } from "./defs";
 // Import source directly so tests cannot pass against a stale build.
 import { handleAgentSetup } from "./onboard";
 import {
+  recordDriftedDeepAgentsRuntimeCall,
   recordFailingDeepAgentsSmokeCall,
   recordSuccessfulDeepAgentsRuntimeCall,
 } from "./onboard-terminal-fixtures";
@@ -98,12 +99,53 @@ describe("Deep Agents Code terminal onboard acceptance", () => {
     });
     expect(context.startRecordedStep).not.toHaveBeenCalled();
     expect(context.recordStepFailed).not.toHaveBeenCalled();
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls[0]).toContain("NEMOCLAW_AGENT_BINARY_CHECK");
     expect(calls.filter((call) => call.includes("NEMOCLAW_AGENT_SMOKE_EXIT"))).toHaveLength(2);
     expect(calls.some((call) => call.includes("nemoclaw-agent-smoke dcode --version"))).toBe(true);
     expect(calls.some((call) => call.includes("/sandbox/.deepagents/config.toml"))).toBe(true);
     expect(calls.some((call) => call.includes("curl"))).toBe(false);
+    // #6193: a plain (non-smoke-wrapped) `dcode --version` version-drift probe runs.
+    expect(
+      calls.some(
+        (call) => call.includes("dcode --version") && !call.includes("nemoclaw-agent-smoke"),
+      ),
+    ).toBe(true);
+  });
+
+  it("warns when the installed terminal version is below expected_version (#6193)", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // BINARY_CHECK ok, both smoke commands pass, but the plain version probe
+    // reports 0.0.1 — below the manifest's expected_version (0.1.12).
+    const calls: string[] = [];
+    const runCaptureOpenshell = vi.fn((args: string[]) =>
+      recordDriftedDeepAgentsRuntimeCall(args, calls),
+    );
+    const context = createAgentSetupContext(runCaptureOpenshell);
+
+    let warnings = "";
+    try {
+      await handleAgentSetup(
+        "deepagents-code",
+        "model-x",
+        "provider-x",
+        makeDeepAgentsCodeAgent(),
+        false,
+        null,
+        context,
+      );
+      // Capture before mockRestore(), which resets the spy's recorded calls.
+      warnings = warnSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    } finally {
+      warnSpy.mockRestore();
+    }
+
+    // Drift is surfaced (not silent) but non-fatal: setup still completes.
+    expect(context.recordStepComplete).toHaveBeenCalled();
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+    expect(warnings).toContain("0.0.1");
+    expect(warnings).toContain("0.1.12");
+    expect(warnings).toMatch(/below the expected version/);
   });
 
   it("fails setup with an actionable terminal smoke error", async () => {

@@ -26,6 +26,10 @@ import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
+import {
+  detectTerminalAgentVersionDrift,
+  formatTerminalAgentVersionDriftWarning,
+} from "./terminal-version-drift";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
@@ -348,6 +352,10 @@ export async function handleAgentSetup(
         syncNemoClawConfig();
         const smokeResult = runAgentSmokeCommands(sandboxName, agent, runCaptureOpenshell);
         if (smokeResult.ok) {
+          const drift = detectTerminalAgentVersionDrift(sandboxName, agent, runCaptureOpenshell);
+          if (drift) {
+            console.warn(formatTerminalAgentVersionDriftWarning(agent, drift));
+          }
           skippedStepMessage("agent_setup", sandboxName);
           await recordStepComplete("agent_setup", { sandboxName, provider, model });
           return;
@@ -407,6 +415,10 @@ export async function handleAgentSetup(
         recordStepFailed,
         smokeResult.output ? [String(redact(smokeResult.output)).slice(0, 500)] : [],
       );
+    }
+    const drift = detectTerminalAgentVersionDrift(sandboxName, agent, runCaptureOpenshell);
+    if (drift) {
+      console.warn(formatTerminalAgentVersionDriftWarning(agent, drift));
     }
     console.log(`  \u2713 ${agent.displayName} terminal runtime is ready`);
     await recordStepComplete("agent_setup", { sandboxName, provider, model });
