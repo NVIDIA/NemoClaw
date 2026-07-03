@@ -45,7 +45,10 @@ import {
   shouldInspectLegacyGatewayContainer,
 } from "./doctor-system-checks";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
-import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
+import {
+  probeSandboxInferenceGatewayHealth,
+  toAuthoritativeInferenceHealth,
+} from "./process-recovery";
 
 export type { DoctorCheck, DoctorReport } from "./doctor-report";
 
@@ -337,34 +340,6 @@ function skippedInferenceGatewayProbe(): ProviderHealthStatus {
   };
 }
 
-async function collectInferenceSubprobes(
-  sandboxName: string,
-  sandboxReachable: boolean,
-  existing: ProviderHealthStatus[],
-): Promise<ProviderHealthStatus[]> {
-  // #6192: probe the `inference.local` gateway chain for every provider, not
-  // just local ones. `inference.local` is the route the agent actually uses
-  // (openclaw gateway -> auth proxy -> backend) regardless of whether the
-  // backend is a local runtime or a cloud/managed endpoint. Gating this to
-  // local providers let cloud sandboxes report "healthy" off the upstream
-  // probe while the real in-sandbox route was broken, contradicting `connect`.
-  if (!sandboxReachable) return [...existing, skippedInferenceGatewayProbe()];
-  const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
-  if (!gateway) return existing;
-  return [
-    ...existing,
-    {
-      ok: gateway.ok,
-      probed: true,
-      providerLabel: "Inference gateway chain",
-      endpoint: gateway.endpoint,
-      detail: gateway.detail,
-      probeLabel: "gateway",
-      ...(gateway.ok ? {} : { failureLabel: "unreachable" as const }),
-    },
-  ];
-}
-
 async function collectInferenceChecks(
   sandboxName: string,
   route: InferenceRoute,
@@ -372,24 +347,31 @@ async function collectInferenceChecks(
 ): Promise<DoctorCheck[]> {
   const checks = [inferenceRouteCheck(sandboxName, route)];
   if (route.provider === "unknown") return checks;
-  const health = probeProviderHealth(route.provider);
-  if (!health) {
-    checks.push({
-      group: "Inference",
-      label: "Provider health",
-      status: "info",
-      detail: `no health probe registered for ${route.provider}`,
-    });
+  // #6192: the in-sandbox `inference.local` route is the authoritative inference
+  // health signal. Probe it independently of whether a direct upstream health
+  // probe is registered (so providers like nvidia-router / hermes-provider are
+  // covered), make it drive the verdict, and demote the upstream reachability
+  // result to a labeled diagnostic so a green upstream can't hide a broken route.
+  const upstream = probeProviderHealth(route.provider);
+  if (!sandboxReachable) {
+    // The sandbox itself is unreachable (already a failure surfaced by other
+    // checks); mark the route probe as skipped rather than double-counting, and
+    // keep the upstream reachability result as a diagnostic.
+    pushInferenceHealthCheck(checks, skippedInferenceGatewayProbe());
+    if (upstream) {
+      pushInferenceHealthCheck(checks, {
+        ...upstream,
+        probeLabel: upstream.probeLabel ?? "provider",
+      });
+    }
     return checks;
   }
-
-  const subprobes = await collectInferenceSubprobes(
-    sandboxName,
-    sandboxReachable,
-    health.subprobes ?? [],
-  );
-  pushInferenceHealthCheck(checks, health);
-  for (const subprobe of subprobes) pushInferenceHealthCheck(checks, subprobe);
+  const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
+  const authoritative = toAuthoritativeInferenceHealth(gateway, upstream);
+  pushInferenceHealthCheck(checks, authoritative);
+  for (const subprobe of authoritative.subprobes ?? []) {
+    pushInferenceHealthCheck(checks, subprobe);
+  }
   return checks;
 }
 

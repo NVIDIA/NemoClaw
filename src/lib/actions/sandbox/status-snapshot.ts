@@ -19,7 +19,11 @@ import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
-import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
+import {
+  probeSandboxInferenceGatewayHealth,
+  type SandboxInferenceGatewayHealth,
+  toAuthoritativeInferenceHealth,
+} from "./process-recovery";
 import {
   getSandboxStatusPreflight,
   type SandboxStatusFailureLayer,
@@ -150,10 +154,12 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
+type ProbeInferenceGatewayHealth = (sandboxName: string) => Promise<SandboxInferenceGatewayHealth>;
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
   probeProviderHealthImpl?: ProbeProviderHealth;
+  probeInferenceGatewayHealthImpl?: ProbeInferenceGatewayHealth;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   reconcile?: ReconcileSandboxGatewayState;
 }
@@ -213,33 +219,30 @@ export async function collectSandboxStatusSnapshot(
   // `getSandboxStatusInferenceHealth` would still issue the remote-provider
   // reachability request even though the caller would overwrite the returned
   // value to null afterwards.
-  const inferenceHealth = maybeGetSandboxStatusInferenceHealth(
+  const upstreamHealth = maybeGetSandboxStatusInferenceHealth(
     opts.suppressInferenceProbe === true,
     lookup.state === "present",
     currentProvider,
     currentModel,
     opts.deps?.probeProviderHealthImpl,
   );
-  // #6192: probe the `inference.local` gateway chain for every provider, not
-  // just local ones. `inference.local` is the route the agent actually uses
-  // (openclaw gateway -> auth proxy -> backend) regardless of whether the
-  // backend is a local runtime or a cloud/managed endpoint. Gating this to
-  // local providers let cloud sandboxes report "healthy" off the upstream
-  // probe while the real in-sandbox route was broken.
-  if (inferenceHealth && lookup.state === "present") {
-    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
-    if (gatewayChain) {
-      const gatewaySubprobe: ProviderHealthStatus = {
-        ok: gatewayChain.ok,
-        probed: true,
-        providerLabel: "Inference gateway chain",
-        endpoint: gatewayChain.endpoint,
-        detail: gatewayChain.detail,
-        probeLabel: "gateway",
-        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
-      };
-      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
-    }
+  // #6192: the in-sandbox `inference.local` route is the authoritative inference
+  // health signal — it is the path the agent actually uses (openclaw gateway ->
+  // auth proxy -> backend). Probe it for every known provider, independent of
+  // whether a direct upstream health probe is registered (so providers like
+  // nvidia-router / hermes-provider are covered too), and demote the upstream
+  // reachability result to a labeled diagnostic. A broken/unhealthy/unavailable
+  // route now fails closed instead of being hidden behind a green upstream probe.
+  let inferenceHealth = upstreamHealth;
+  if (
+    opts.suppressInferenceProbe !== true &&
+    lookup.state === "present" &&
+    currentProvider !== "unknown"
+  ) {
+    const probeRoute =
+      opts.deps?.probeInferenceGatewayHealthImpl ?? probeSandboxInferenceGatewayHealth;
+    const route = await probeRoute(sandboxName);
+    inferenceHealth = toAuthoritativeInferenceHealth(route, upstreamHealth);
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   const terminalRuntimeHealth =

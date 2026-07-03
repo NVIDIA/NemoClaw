@@ -33,7 +33,11 @@ export default class SandboxStatusCommand extends NemoClawCommand {
         report.gatewayState !== "present" ||
         report.rpcIssue ||
         report.failureLayer ||
-        report.terminalRuntimeHealth?.kind === "degraded"
+        report.terminalRuntimeHealth?.kind === "degraded" ||
+        // #6192: the authoritative inference.local route health drives the exit
+        // code — a probed-but-broken route must fail the readiness gate even
+        // when the gateway/preflight layers are otherwise green.
+        (report.inferenceHealth?.probed === true && report.inferenceHealth?.ok === false)
       ) {
         process.exitCode = 1;
       }

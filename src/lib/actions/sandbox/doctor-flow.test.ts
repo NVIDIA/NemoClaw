@@ -121,6 +121,7 @@ function createDoctorHarness(overrides: { provider?: string; gatewayChainOk?: bo
     .spyOn(processRecovery, "probeSandboxInferenceGatewayHealth")
     .mockResolvedValue({
       ok: gatewayChainOk,
+      state: gatewayChainOk ? "reachable" : "broken",
       endpoint: "https://inference.local/v1/models",
       httpStatus: gatewayChainOk ? 200 : 0,
       detail: gatewayChainOk
@@ -236,11 +237,18 @@ describe("runSandboxDoctor flow", () => {
           expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
           expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
           expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
-          expect.objectContaining({ group: "Inference", label: "Provider health", status: "ok" }),
+          // #6192: the authoritative in-sandbox route is the primary
+          // "Provider health" check (broken here), and the upstream provider
+          // reachability result is demoted to a labeled diagnostic.
           expect.objectContaining({
             group: "Inference",
-            label: "Provider health (gateway)",
+            label: "Provider health",
             status: "fail",
+          }),
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health (provider)",
+            status: "ok",
           }),
           expect.objectContaining({ group: "Messaging", label: "Channels", status: "info" }),
           expect.objectContaining({ group: "Local services", label: "Ollama", status: "ok" }),
@@ -257,30 +265,33 @@ describe("runSandboxDoctor flow", () => {
   );
 
   it(
-    "probes the inference.local route for cloud providers, not just local ones (#6192)",
+    "makes the inference.local route authoritative for cloud providers (#6192)",
     testTimeoutOptions(30_000),
     async () => {
-      // Regression: doctor appended the `inference.local` gateway-chain subprobe
-      // only for ollama-local/vllm-local. A cloud sandbox whose upstream endpoint
-      // was reachable but whose in-sandbox inference.local route was broken
-      // reported "healthy" (exit 0), contradicting `connect`.
+      // A cloud sandbox whose upstream endpoint is reachable but whose in-sandbox
+      // inference.local route is broken must report fail — the route is the
+      // authoritative signal and the upstream is a demoted diagnostic.
       const harness = createDoctorHarness({ provider: "nvidia-prod", gatewayChainOk: false });
 
       const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-      // Upstream probe stays green (negative control — we did not break it)...
-      expect(report?.checks).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ group: "Inference", label: "Provider health", status: "ok" }),
-        ]),
-      );
-      // ...but the real inference.local route is now probed and reported broken,
-      // flipping the overall verdict to fail.
+      // Upstream reachability is retained but demoted (still green)...
       expect(report?.checks).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             group: "Inference",
-            label: "Provider health (gateway)",
+            label: "Provider health (provider)",
+            status: "ok",
+          }),
+        ]),
+      );
+      // ...while the authoritative in-sandbox route drives the primary check and
+      // flips the overall verdict to fail.
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health",
             status: "fail",
           }),
         ]),
@@ -301,11 +312,66 @@ describe("runSandboxDoctor flow", () => {
         expect.arrayContaining([
           expect.objectContaining({
             group: "Inference",
-            label: "Provider health (gateway)",
+            label: "Provider health",
             status: "ok",
           }),
         ]),
       );
+      expect(report?.status).not.toBe("fail");
+    },
+  );
+
+  it(
+    "probes the route for providers without a registered direct health probe (#6192)",
+    testTimeoutOptions(30_000),
+    async () => {
+      // nvidia-router / hermes-provider have no direct provider-health probe
+      // (probeProviderHealth returns null); the route must still be probed and
+      // drive the verdict rather than skipping inference entirely.
+      const harness = createDoctorHarness({ provider: "nvidia-router", gatewayChainOk: false });
+      harness.healthProbeSpy.mockReturnValue(null);
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalled();
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health",
+            status: "fail",
+          }),
+        ]),
+      );
+      expect(report?.status).toBe("fail");
+    },
+  );
+
+  it(
+    "fails closed when the route probe is unavailable (#6192)",
+    testTimeoutOptions(30_000),
+    async () => {
+      const harness = createDoctorHarness({ provider: "nvidia-prod" });
+      harness.probeSandboxInferenceGatewayHealthSpy.mockResolvedValue({
+        ok: false,
+        state: "unavailable",
+        endpoint: "https://inference.local/v1/models",
+        httpStatus: 0,
+        detail: "Could not probe the inference route (openshell exec did not complete).",
+      });
+
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health",
+            status: "fail",
+          }),
+        ]),
+      );
+      expect(report?.status).toBe("fail");
     },
   );
 
@@ -469,7 +535,7 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
   });
 
-  it("appends the local gateway result without mutating provider health", async () => {
+  it("demotes the upstream provider result to a diagnostic without mutating it (#6192)", async () => {
     const harness = createDoctorHarness();
     const providerHealth = {
       ok: true,
@@ -482,11 +548,18 @@ describe("runSandboxDoctor flow", () => {
 
     const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
+    // The upstream object we were handed is never mutated (no subprobes added).
     expect(providerHealth).not.toHaveProperty("subprobes");
+    // The authoritative in-sandbox route is the primary Provider health check...
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({ group: "Inference", label: "Provider health", status: "fail" }),
+    );
+    // ...and the upstream reachability result is retained as a demoted diagnostic.
     expect(report?.checks).toContainEqual(
       expect.objectContaining({
         group: "Inference",
-        label: "Provider health (gateway)",
+        label: "Provider health (provider)",
+        status: "ok",
       }),
     );
   });

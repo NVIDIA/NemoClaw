@@ -86,9 +86,18 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   console.log(`      ${probe.detail}`);
 }
 
-function printInferenceStatus(context: SandboxStatusTextContext): void {
+/**
+ * Render inference health and return a non-zero exit code when the authoritative
+ * route (the root `inferenceHealth`) was probed and is not healthy, so a broken
+ * `inference.local` route fails `status` closed instead of printing green (#6192).
+ */
+function printInferenceStatus(context: SandboxStatusTextContext): number | null {
+  let exitCode: number | null = null;
   if (context.inferenceHealth) {
     printInferenceProbeLine(context.inferenceHealth);
+    if (context.inferenceHealth.probed && !context.inferenceHealth.ok) {
+      exitCode = 1;
+    }
     for (const subprobe of context.inferenceHealth.subprobes ?? []) {
       printInferenceProbeLine(subprobe);
     }
@@ -96,6 +105,7 @@ function printInferenceStatus(context: SandboxStatusTextContext): void {
   if (context.lookup.state !== "present") {
     console.log("    Inference: not verified (gateway/sandbox state not verified)");
   }
+  return exitCode;
 }
 
 function getSandboxGpuDisplay(sandbox: SandboxEntry): {
@@ -242,17 +252,17 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);
-  printInferenceStatus(context);
+  const inferenceExitCode = printInferenceStatus(context);
   printSandboxGpuStatus(sb);
   console.log(
     `    OpenShell: ${sb.openshellVersion || "unknown"} (${sb.openshellDriver || "unknown"})`,
   );
   console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
-  const exitCode = printAgentHarness(context);
+  const harnessExitCode = printAgentHarness(context);
   printActiveSessions(sandboxName);
   printShieldsPosture(sandboxName);
   printAgentVersion(context, sb);
-  return { exitCode };
+  return { exitCode: harnessExitCode ?? inferenceExitCode };
 }
 
 async function printGatewayProcessStatus(context: SandboxStatusTextContext): Promise<void> {

@@ -14,6 +14,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
+import type { ProviderHealthStatus } from "../../inference/health";
 import { ROOT, shellQuote } from "../../runner";
 import {
   isDirectSandboxFallbackUnavailableError,
@@ -375,11 +376,34 @@ export async function isSandboxGatewayRunningForStatus(
 }
 
 /**
+ * Outcome of the in-sandbox `inference.local` route probe. `state` classifies
+ * the HTTP result so callers can fail closed:
+ *   - `reachable`   — 1xx–4xx: the full chain answered (incl. 401), routing works.
+ *   - `unhealthy`   — 5xx: the gateway/backend answered but is failing.
+ *   - `broken`      — 000: no response; DNS, proxy, or gateway is down.
+ *   - `unavailable` — the probe could not run (openshell exec failed).
+ */
+export type SandboxInferenceGatewayHealth = {
+  ok: boolean;
+  state: "reachable" | "unhealthy" | "broken" | "unavailable";
+  endpoint: string;
+  httpStatus: number;
+  detail: string;
+};
+
+const INFERENCE_LOCAL_ENDPOINT = "https://inference.local/v1/models";
+
+/**
  * Probe the full inference chain by curling `https://inference.local/v1/models`
  * from inside the sandbox via `openshell sandbox exec`. This is the path agent
- * traffic actually takes (openclaw gateway → auth proxy → backend). Any HTTP
- * response (including 401) means routing works; 000 / no response means DNS,
- * proxy, or gateway is broken. The optional 3rd line in #3265.
+ * traffic actually takes (openclaw gateway → auth proxy → backend) and is the
+ * authoritative inference-health signal (#6192).
+ *
+ * HTTP semantics match `connect`'s route probe (`000|5*` broken): 1xx–4xx means
+ * routing works (incl. 401), 5xx means the backend answered but is unhealthy,
+ * 000 means the route is broken. When the probe itself cannot run it returns
+ * `state: "unavailable"` (never `null`) so callers fail closed rather than
+ * falling back to a healthy upstream result.
  *
  * Injectable via `execImpl` for tests.
  */
@@ -388,21 +412,36 @@ export async function probeSandboxInferenceGatewayHealth(
   options: {
     execImpl?: (sandboxName: string, command: string) => Promise<SandboxCommandResult | null>;
   } = {},
-): Promise<{
-  ok: boolean;
-  endpoint: string;
-  httpStatus: number;
-  detail: string;
-} | null> {
-  const endpoint = "https://inference.local/v1/models";
+): Promise<SandboxInferenceGatewayHealth> {
+  const endpoint = INFERENCE_LOCAL_ENDPOINT;
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
   const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
   const result = await exec(sandboxName, command);
-  if (!result || result.status !== 0) return null;
+  if (!result || result.status !== 0) {
+    return {
+      ok: false,
+      state: "unavailable",
+      endpoint,
+      httpStatus: 0,
+      detail:
+        `Could not probe the inference route at ${endpoint} from inside the sandbox ` +
+        `(openshell exec did not complete). Treating the route as unhealthy.`,
+    };
+  }
   const status = Number.parseInt(result.stdout.trim(), 10) || 0;
+  if (status >= 500) {
+    return {
+      ok: false,
+      state: "unhealthy",
+      endpoint,
+      httpStatus: status,
+      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (backend unhealthy).`,
+    };
+  }
   if (status > 0) {
     return {
       ok: true,
+      state: "reachable",
       endpoint,
       httpStatus: status,
       detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
@@ -410,11 +449,47 @@ export async function probeSandboxInferenceGatewayHealth(
   }
   return {
     ok: false,
+    state: "broken",
     endpoint,
     httpStatus: 0,
     detail:
       `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
       `DNS may have failed or the openclaw gateway / auth proxy is not running.`,
+  };
+}
+
+/**
+ * Build the authoritative inference-health result from an `inference.local`
+ * route probe, demoting the upstream provider-reachability result (when any) to
+ * a labeled diagnostic subprobe. The in-sandbox route is the path the agent
+ * actually uses, so it — not the upstream endpoint check — drives the
+ * status/doctor verdict. Keeping the upstream result visible (but non-verdict)
+ * preserves diagnostics without letting a green upstream hide a broken route
+ * (#6192).
+ */
+export function toAuthoritativeInferenceHealth(
+  route: SandboxInferenceGatewayHealth,
+  upstream: ProviderHealthStatus | null,
+): ProviderHealthStatus {
+  const upstreamDiagnostics: ProviderHealthStatus[] = upstream
+    ? [
+        { ...upstream, probeLabel: upstream.probeLabel ?? "provider" },
+        ...(upstream.subprobes ?? []),
+      ]
+    : [];
+  return {
+    ok: route.ok,
+    probed: true,
+    providerLabel: "Inference route",
+    endpoint: route.endpoint,
+    detail: route.detail,
+    ...(route.ok
+      ? {}
+      : {
+          failureLabel:
+            route.state === "unhealthy" ? ("unhealthy" as const) : ("unreachable" as const),
+        }),
+    subprobes: upstreamDiagnostics,
   };
 }
 
