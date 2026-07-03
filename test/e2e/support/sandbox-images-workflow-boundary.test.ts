@@ -89,9 +89,14 @@ describe("sandbox image workflow boundary", () => {
     for (const stepName of ["Set up Node", "Install root dependencies"]) {
       hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
     }
+    const secretBoundary = hermes.steps!.find(
+      (step) => step.name === "Run Hermes sandbox secret boundary test",
+    )!;
+    delete secretBoundary.id;
     const rootEntrypoint = hermes.steps!.find(
       (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
     )!;
+    delete rootEntrypoint.if;
     rootEntrypoint.env!.NEMOCLAW_HERMES_TEST_IMAGE = "nemoclaw-hermes-rebuilt";
     rootEntrypoint.run = `${rootEntrypoint.run}\ndocker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-rebuilt .`;
 
@@ -100,6 +105,8 @@ describe("sandbox image workflow boundary", () => {
         "Hermes image job timeout must cover both inherited probe budgets",
         "build-hermes-sandbox-image must run 'Set up Node' exactly once",
         "build-hermes-sandbox-image must run 'Install root dependencies' exactly once",
+        "Hermes secret boundary step must expose its outcome to the next probe",
+        "Hermes root entrypoint must run after either secret-boundary outcome",
         "Hermes production image must have exactly one source build",
         "Hermes root entrypoint must consume the prebuilt Hermes production image",
         "Hermes root entrypoint step must not rebuild the prebuilt image",

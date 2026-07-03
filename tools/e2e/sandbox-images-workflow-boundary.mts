@@ -19,6 +19,9 @@ const DEFAULT_MAIN_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "main
 const AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const CLEANUP_STEP_NAME = "Clean up Docker auth";
 const CLEANUP_RUN = "bash .github/scripts/docker-auth-cleanup.sh";
+const HERMES_SECRET_BOUNDARY_STEP_ID = "hermes-secret-boundary";
+const HERMES_ROOT_AFTER_SECRET_CONDITION =
+  "${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}";
 const IMAGE_BUILD_JOBS = [
   "build-sandbox-images",
   "build-hermes-sandbox-image",
@@ -343,6 +346,12 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
     job,
     "Run Hermes root entrypoint smoke Vitest test",
   );
+  if (secretBoundary.id !== HERMES_SECRET_BOUNDARY_STEP_ID) {
+    errors.push("Hermes secret boundary step must expose its outcome to the next probe");
+  }
+  if (rootEntrypoint.if !== HERMES_ROOT_AFTER_SECRET_CONDITION) {
+    errors.push("Hermes root entrypoint must run after either secret-boundary outcome");
+  }
   if (
     build.run !==
     "docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production ."

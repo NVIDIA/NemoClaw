@@ -191,6 +191,7 @@ jobs:
             test -x /usr/local/bin/nemoclaw-start
 
       - name: Run Hermes sandbox secret boundary test
+        id: hermes-secret-boundary
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
@@ -210,6 +211,7 @@ jobs:
           retention-days: 14
 
       - name: Run Hermes root entrypoint smoke Vitest test
+        if: ${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
