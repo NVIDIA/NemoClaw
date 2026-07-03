@@ -61,7 +61,7 @@ Refer to [Commands](../reference/commands) for details.
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
 | WeChat (experimental) | None. Captured through host-side QR scan during `$$nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
-| WhatsApp (experimental) | None. Pair through QR after rebuild | None |
+| WhatsApp (experimental) | None. Pair through QR after rebuild | `WHATSAPP_ALLOWED_IDS` for Hermes sender allowlisting and non-interactive channel selection |
 | Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for direct-message Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
@@ -171,6 +171,8 @@ Keep the terminal in the foreground until you see `✓ WeChat login confirmed`.
 WhatsApp (experimental) uses QR pairing instead of a host-side token, so the wizard does not prompt.
 It prints pairing instructions and you complete the pairing inside the sandbox after rebuild.
 NemoClaw also selects the matching network policy preset during policy setup so the channel can reach its provider API.
+For non-interactive onboarding, set `WHATSAPP_ALLOWED_IDS` to a nonempty comma-separated sender list to select WhatsApp for either agent.
+Hermes also uses these values as its WhatsApp sender allowlist.
 
 For scripted setup, export the credentials and optional settings for the channels you want to enable before you run onboarding:
 
@@ -183,6 +185,7 @@ export SLACK_BOT_TOKEN="<your-slack-bot-token>"
 export SLACK_APP_TOKEN="<your-slack-app-token>"
 export SLACK_ALLOWED_USERS="<your-slack-member-id>"
 export SLACK_ALLOWED_CHANNELS="<your-slack-channel-id>"
+export WHATSAPP_ALLOWED_IDS="<your-whatsapp-sender-id>"
 export MSTEAMS_APP_ID="<your-teams-app-id>"
 export MSTEAMS_APP_PASSWORD="<your-teams-client-secret>"
 export MSTEAMS_TENANT_ID="<your-teams-tenant-id>"
