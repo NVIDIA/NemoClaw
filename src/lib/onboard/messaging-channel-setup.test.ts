@@ -491,6 +491,29 @@ describe("setupMessagingChannels", () => {
     expect(prompt).not.toHaveBeenCalled();
   });
 
+  it.each([
+    undefined,
+    "",
+    "   ",
+  ])("keeps credentialless WhatsApp disabled when its optional allowlist is %p", async (allowedIds) => {
+    if (allowedIds === undefined) delete process.env.WHATSAPP_ALLOWED_IDS;
+    else process.env.WHATSAPP_ALLOWED_IDS = allowedIds;
+    process.env[MESSAGING_SETUP_APPLIER_ENV_KEY] = "stale-plan";
+    const notes: string[] = [];
+
+    const result = await setupMessagingChannels(null, null, {
+      note: (message) => notes.push(message),
+      isNonInteractive: () => true,
+    });
+
+    expect(result).toEqual([]);
+    expect(notes).toEqual([
+      "  [non-interactive] No complete messaging channel inputs configured. Skipping.",
+    ]);
+    expect(process.env[MESSAGING_SETUP_APPLIER_ENV_KEY]).toBeUndefined();
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
   it("validates detected non-interactive Slack inputs before returning enabled channels", async () => {
     process.env.SLACK_BOT_TOKEN = "not-a-slack-token";
     process.env.SLACK_APP_TOKEN = "xapp-existing-token";
@@ -664,6 +687,17 @@ describe("detectMessagingChannelsFromEnv", () => {
     process.env.WHATSAPP_ALLOWED_IDS = "15551234567";
 
     expect(detectMessagingChannelsFromEnv(null)).toContain("whatsapp");
+  });
+
+  it.each([
+    undefined,
+    "",
+    "   ",
+  ])("does not detect credentialless WhatsApp when its optional allowlist is %p", (allowedIds) => {
+    if (allowedIds === undefined) delete process.env.WHATSAPP_ALLOWED_IDS;
+    else process.env.WHATSAPP_ALLOWED_IDS = allowedIds;
+
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("whatsapp");
   });
 
   it("does not detect channels for unsupported named agents even when env inputs are complete", () => {
