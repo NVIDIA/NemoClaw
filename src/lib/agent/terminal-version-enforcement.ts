@@ -5,12 +5,8 @@ import type { AgentDefinition } from "./defs";
 import {
   checkTerminalAgentVersion,
   formatTerminalAgentVersionFailure,
+  type RunCaptureOpenshell,
 } from "./terminal-version-drift";
-
-type RunCaptureOpenshell = (
-  args: string[],
-  opts?: { ignoreError?: boolean; timeout?: number },
-) => string | { output?: string | null } | null;
 
 interface TerminalVersionEnforcementOptions {
   beforeFailure?: () => Promise<void>;

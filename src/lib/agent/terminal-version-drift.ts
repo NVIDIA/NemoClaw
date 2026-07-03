@@ -18,7 +18,7 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { evaluateStaleness } from "../sandbox/version-scheme";
 import type { AgentDefinition } from "./defs";
 
-type RunCaptureOpenshell = (
+export type RunCaptureOpenshell = (
   args: string[],
   opts?: { ignoreError?: boolean; timeout?: number },
 ) => string | { output?: string | null } | null;
@@ -83,52 +83,54 @@ export function checkTerminalAgentVersion(
     return { status: "not-required", installedVersion: null, expectedVersion: null };
   }
 
+  let result: ReturnType<RunCaptureOpenshell>;
   try {
     // `version_command` is shell-form input from repository-shipped agent
     // manifests. Keep this boundary aligned with terminal-smoke.ts; convert it
     // to an argv-form allowlist before accepting custom/user manifests here.
     // The timeout prevents a hung command from wedging onboarding.
-    const result = runCaptureOpenshell(
+    result = runCaptureOpenshell(
       ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", agent.versionCommand],
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
-    const output = typeof result === "string" ? result : (result?.output ?? null);
-    if (!output) {
-      return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
-    }
-
-    // Prefer the version associated with the manifest command's executable.
-    // Some CLIs include build/runtime versions in the same output, and the
-    // shared fallback parser intentionally returns the first numeric triplet.
-    const installedVersion = parseVersionFromText(output, agent.versionCommand);
-    if (!installedVersion) {
-      return unverifiedResult(sandboxName, expectedVersion, "unparseable-output");
-    }
-
-    const verdict = evaluateStaleness(
-      sandboxName,
-      agent.versionScheme ?? null,
-      installedVersion,
-      expectedVersion,
-    );
-    if (!verdict.isStale) {
-      return {
-        status: "current",
-        installedVersion,
-        expectedVersion,
-        schemeMismatch: false,
-      };
-    }
-
-    return {
-      status: "stale",
-      installedVersion,
-      expectedVersion,
-      schemeMismatch: verdict.schemeMismatch,
-    };
   } catch {
     return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
   }
+
+  const output = typeof result === "string" ? result : (result?.output ?? null);
+  if (!output) {
+    return unverifiedResult(sandboxName, expectedVersion, "probe-failed");
+  }
+
+  // Prefer the version associated with the manifest command's executable.
+  // Some CLIs include build/runtime versions in the same output, and the
+  // shared fallback parser intentionally returns the first numeric triplet.
+  const installedVersion = parseVersionFromText(output, agent.versionCommand);
+  if (!installedVersion) {
+    return unverifiedResult(sandboxName, expectedVersion, "unparseable-output");
+  }
+
+  const verdict = evaluateStaleness(
+    sandboxName,
+    agent.versionScheme ?? null,
+    installedVersion,
+    expectedVersion,
+  );
+  if (!verdict.isStale) {
+    return {
+      status: "current",
+      installedVersion,
+      expectedVersion,
+      schemeMismatch: false,
+    };
+  }
+
+  return {
+    status: "stale",
+    installedVersion,
+    expectedVersion,
+    schemeMismatch: verdict.schemeMismatch,
+  };
 }
 
 /**
