@@ -11,6 +11,8 @@ import {
   buildWorkdirProbeArgs,
   computeExitCode,
   evaluateWorkdirProbe,
+  execSandbox,
+  type SandboxExecCleanupDeps,
   validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
@@ -213,5 +215,83 @@ describe("validateWorkdirOrFail", () => {
 
     expect(exitSpy).not.toHaveBeenCalled();
     expect(errSpy).not.toHaveBeenCalled();
+  });
+});
+
+// End-to-end wiring of the post-exec policy-denial hint through execSandbox
+// (#5978): proves the breadcrumb fires for a denied failure while the command's
+// exit code is preserved, and stays silent on success and unrelated failures.
+// All host seams are injected so the test never spawns openshell or touches the
+// registry/shields (getSandbox returns null → cleanup is a no-op).
+describe("execSandbox policy-denial hint wiring (#5978)", () => {
+  const START_MS = 1_000_000;
+  // Epoch [1000.500] parses to 1000500ms, at/after START so it is "fresh".
+  const DENIAL_LINE =
+    "[1000.500] [sandbox] [OCSF ] NET:OPEN [MED] DENIED /usr/bin/curl(1) -> example.com:443 [reason:not allowed by any policy]";
+
+  const cleanupSkipped: SandboxExecCleanupDeps = {
+    getSandbox: () => null,
+    inspectMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["inspectMutableConfigPerms"],
+    repairMutableConfigPerms: vi.fn(() => {
+      throw new Error("cleanup should be skipped for an unregistered sandbox");
+    }) as unknown as SandboxExecCleanupDeps["repairMutableConfigPerms"],
+  };
+
+  const runExec = async (status: number, probeOutput: string) => {
+    const stderr: string[] = [];
+    let exitCode = Number.NaN;
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      exitCode = code ?? 0;
+      throw new Error("__exec_exit__");
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await execSandbox(
+      "wire-sbx",
+      ["curl", "-sS", "https://example.com/"],
+      {},
+      {
+        resolveBinary: () => "openshell",
+        run: async () => ({ status }),
+        now: () => START_MS,
+        cleanupDeps: cleanupSkipped,
+        policyHint: {
+          env: {},
+          probeLogs: () => probeOutput,
+          enableAudit: () => {},
+          sleep: async () => {},
+          writeStderr: (line) => stderr.push(line),
+        },
+      },
+    ).catch(() => {});
+    exitSpy.mockRestore();
+    errSpy.mockRestore();
+    return { exitCode, stderr };
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("appends the breadcrumb and preserves the command exit code on a denied failure", async () => {
+    const { exitCode, stderr } = await runExec(56, DENIAL_LINE);
+    expect(exitCode).toBe(56);
+    expect(stderr.join("\n")).toContain(
+      "recent network policy denial detected for example.com:443",
+    );
+    expect(stderr.join("\n")).toContain("nemoclaw wire-sbx logs --tail 50");
+  });
+
+  it("stays silent and exits 0 on success", async () => {
+    const { exitCode, stderr } = await runExec(0, DENIAL_LINE);
+    expect(exitCode).toBe(0);
+    expect(stderr).toHaveLength(0);
+  });
+
+  it("stays silent and preserves the exit code on an unrelated failure", async () => {
+    const { exitCode, stderr } = await runExec(2, "");
+    expect(exitCode).toBe(2);
+    expect(stderr).toHaveLength(0);
   });
 });

@@ -319,7 +319,7 @@ describe("maybeEmitPolicyDenialHint (#5978)", () => {
         probeLogs,
       },
     );
-    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(calls).toBe(2);
     expect(hint).toContain("example.com:443");
     expect(h.lines).toHaveLength(1);
     // Audit is enabled once up front, not re-enabled per retry.

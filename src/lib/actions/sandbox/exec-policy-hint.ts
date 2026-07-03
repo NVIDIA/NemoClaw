@@ -25,8 +25,16 @@ import {
  * after the sandbox command exits non-zero, NemoClaw reads recent audit logs
  * and, only when a policy denial is recorded AFTER the command started, appends
  * a concise host-side stderr hint. The child's own stdout/stderr bytes and its
- * exit code are left untouched — the hint is emitted by the host CLI process
+ * exit code are left untouched: the hint is emitted by the host CLI process
  * after the child has been reaped, never by wrapping or piping the tool.
+ *
+ * Source boundary / removal condition: the opaque `CONNECT tunnel failed,
+ * response 403` originates in the external OpenShell L7 proxy, which this repo
+ * cannot change. This breadcrumb is a deliberately localized translation of the
+ * denial the proxy already recorded into actionable NemoClaw guidance. Remove it
+ * once OpenShell surfaces the denied endpoint and a logs pointer at the failure
+ * site itself, or exposes a structured exec-denial signal NemoClaw can forward
+ * directly (tracked upstream in NVIDIA/OpenShell).
  */
 
 /** Opt-out env var, shared with the connect-shell breadcrumb stanza. */

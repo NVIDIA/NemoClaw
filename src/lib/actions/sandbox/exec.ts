@@ -379,9 +379,12 @@ export type ExecSandboxDeps = {
   run?: SandboxExecRunner;
   // Injected so the post-exec policy-denial hint stays hermetic in tests. `now`
   // stamps the command start time used to reject stale denials; `policyHint`
-  // overrides the log probe and stderr sink.
+  // overrides the log probe and stderr sink; `cleanupDeps` overrides the
+  // registry/shields lookups so the exec wiring can be exercised end to end
+  // without touching real host state.
   now?: () => number;
   policyHint?: PolicyDenialHintDeps;
+  cleanupDeps?: SandboxExecCleanupDeps;
 };
 
 export async function execSandbox(
@@ -415,7 +418,7 @@ export async function execSandbox(
     command,
     options,
     deps.run ?? runSandboxExecChild,
-    {
+    deps.cleanupDeps ?? {
       getSandbox: (name) =>
         (require("../../state/registry") as typeof import("../../state/registry")).getSandbox(name),
       inspectMutableConfigPerms: (name) =>
