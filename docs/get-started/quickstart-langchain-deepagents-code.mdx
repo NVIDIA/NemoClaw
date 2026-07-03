@@ -34,6 +34,8 @@ nemoclaw onboard --agent langchain
 The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
+Deep Agents Code reaches `inference.local` through the managed OpenShell L7 proxy rather than direct sandbox DNS.
+The image launcher normalizes the runtime proxy environment for interactive, login-shell, and direct-exec paths and removes inherited proxy credentials and bypass entries before `dcode` starts.
 
 ## Choose the Default Sandbox
 
@@ -130,6 +132,8 @@ nemo-deepagents <sandbox-name> snapshot create --name before-change
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
+Proxy launchers and startup scripts are baked into the sandbox image.
+After upgrading NemoClaw from a release with older Deep Agents Code routing, rebuild each existing sandbox before troubleshooting `inference.local` connectivity.
 There is no dashboard port or long-running gateway process for this harness.
 
 ## Next Steps
