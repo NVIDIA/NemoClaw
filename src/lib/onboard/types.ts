@@ -65,6 +65,8 @@ export type OnboardOptions = {
   onboardLockAlreadyHeld?: boolean;
   /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
   preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
+  /** Internal authoritative registry route captured before rebuild deletion. */
+  rebuildRegistryInferenceRoute?: import("./rebuild-route-handoff").RebuildRouteHandoff | null;
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;
