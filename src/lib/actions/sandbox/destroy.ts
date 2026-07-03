@@ -409,29 +409,48 @@ export async function destroySandbox(
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      const { output: deleteOutput, alreadyGone: lockedAlreadyGone } =
-        getSandboxDeleteOutcome(lockedDeleteResult);
+      const {
+        output: deleteOutput,
+        alreadyGone: lockedAlreadyGone,
+        gatewayUnreachable,
+      } = getSandboxDeleteOutcome(lockedDeleteResult);
 
-      if (lockedDeleteResult.status !== 0 && !lockedAlreadyGone) {
+      // When the OpenShell gateway is down, every gateway call (including the
+      // final delete) gets a connection-refused/transport error. That used to
+      // abort destroy with no bypass, leaving no supported way to remove the
+      // sandbox record (#6046). Under --force, fall back to local cleanup;
+      // otherwise keep failing but point at the recovery paths.
+      const forcedLocalCleanup =
+        lockedDeleteResult.status !== 0 &&
+        !lockedAlreadyGone &&
+        gatewayUnreachable &&
+        normalized.force === true;
+
+      if (lockedDeleteResult.status !== 0 && !lockedAlreadyGone && !forcedLocalCleanup) {
         // Any active timer was cleared only after shieldsUp verified the live
         // sandbox was hardened. Preserve that locked state on delete failure;
         // do not remove its local shields record as if deletion had succeeded.
         return {
           ok: false as const,
           deleteOutput,
+          gatewayUnreachable,
           exitCode: lockedDeleteResult.status || 1,
         };
       }
 
-      // The live sandbox is now gone while this name remains serialized.
-      // Revoke the timer and local shields state before releasing the lock so
-      // neither can target a subsequently created sandbox with the same name.
+      // Either the live sandbox is confirmed gone, or --force is discarding the
+      // local record for an unreachable gateway. In both cases the sandbox is
+      // no longer tracked locally, so revoke the timer and local shields state
+      // before releasing the lock so neither can target a subsequently created
+      // sandbox with the same name.
       cleanupShieldsDestroyArtifacts(sandboxName);
       return {
         ok: true as const,
         detachOutcome: lockedDetachOutcome,
         deleteResult: lockedDeleteResult,
         alreadyGone: lockedAlreadyGone,
+        forcedLocalCleanup,
+        deleteOutput,
       };
     },
   );
@@ -440,10 +459,37 @@ export async function destroySandbox(
       console.error(`  ${destructiveResult.deleteOutput}`);
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
+    if (destructiveResult.gatewayUnreachable) {
+      console.error(
+        `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
+      );
+      console.error(
+        `  or re-run with --force to remove the local sandbox record without the gateway.`,
+      );
+    }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone } = destructiveResult;
+  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
+    destructiveResult;
 
+  if (forcedLocalCleanup) {
+    if (deleteOutput) {
+      console.error(`  ${deleteOutput}`);
+    }
+    console.warn(
+      `  ${YW}⚠${R} OpenShell gateway unreachable; removing the local record for '${sandboxName}' (--force).`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} If the gateway comes back, the sandbox may still exist — re-run destroy or remove it via openshell.`,
+    );
+  }
+
+  // Forced local cleanup removes the registry entry/local artifacts but cannot
+  // confirm the gateway-side delete, so it must not trigger shared host-service
+  // or gateway teardown: the sandbox may still exist on the (unreachable)
+  // gateway. Gate that teardown on the *confirmed* delete state only — never on
+  // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
+  // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,

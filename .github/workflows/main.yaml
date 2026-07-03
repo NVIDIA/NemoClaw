@@ -181,3 +181,6 @@ jobs:
   sandbox-images-and-e2e:
     needs: checks
     uses: ./.github/workflows/sandbox-images-and-e2e.yaml
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

@@ -238,7 +238,12 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       }
       const key = normalizeCredentialValue(value);
       if (!key) {
-        console.error(`  ${spec.label} API key is required.`);
+        // Empty input used to loop with no visible escape, leaving Ctrl+C as
+        // the only way out (#6025). Surface the existing back/exit options so
+        // the user can skip web search instead of being stuck.
+        console.error(
+          `  ${spec.label} API key is required. Type back to choose a different option, or exit to quit.`,
+        );
         continue;
       }
       return key;

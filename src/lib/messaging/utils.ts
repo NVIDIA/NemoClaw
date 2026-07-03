@@ -107,10 +107,12 @@ export function formatSupportedMessagingAgentIds(
 export function resolveMessagingManifestSeed(
   manifests: readonly ChannelManifest[],
   existingChannels: readonly string[] | null | undefined,
-  hasChannelRequiredInputs: (manifest: ChannelManifest) => boolean,
+  hasChannelConfiguredInputs: (manifest: ChannelManifest) => boolean,
   { includeAllExisting = false }: { readonly includeAllExisting?: boolean } = {},
 ): string[] {
-  const seeded = new Set(manifests.filter(hasChannelRequiredInputs).map((manifest) => manifest.id));
+  const seeded = new Set(
+    manifests.filter(hasChannelConfiguredInputs).map((manifest) => manifest.id),
+  );
   if (!Array.isArray(existingChannels)) return Array.from(seeded);
 
   const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
@@ -134,6 +136,24 @@ export function hasMessagingManifestRequiredInputs(
     if (!input.envKey) return false;
     return hasResolvedInputValue(resolveInput(input));
   });
+}
+
+/**
+ * Return whether environment-backed inputs explicitly select a channel.
+ *
+ * Credentialed channels require every required input. Credentialless channels
+ * such as WhatsApp have no required input, so any configured optional input is
+ * the explicit signal that non-interactive onboarding should select them.
+ */
+export function hasMessagingManifestConfiguredInputs(
+  manifest: ChannelManifest,
+  resolveInput: MessagingInputResolver,
+): boolean {
+  const requiredInputs = manifest.inputs.filter((input) => input.required);
+  if (requiredInputs.length > 0) {
+    return hasMessagingManifestRequiredInputs(manifest, resolveInput);
+  }
+  return manifest.inputs.some((input) => hasResolvedInputValue(resolveInput(input)));
 }
 
 function hasResolvedInputValue(value: string | null): boolean {

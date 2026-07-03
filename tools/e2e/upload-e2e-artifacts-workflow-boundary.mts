@@ -32,8 +32,8 @@ const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 74;
-const EXPECTED_DEFAULT_CALLER_COUNT = 65;
+const EXPECTED_UPLOAD_JOB_COUNT = 71;
+const EXPECTED_DEFAULT_CALLER_COUNT = 62;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -60,6 +60,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
         "e2e-artifacts/live/${{ matrix.id }}/logs/",
         "e2e-artifacts/live/${{ matrix.id }}/shell/",

@@ -7,7 +7,7 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { runCurlProbe } from "../adapters/http/probe";
-import { BACK_TO_SELECTION } from "./credential-navigation";
+import { BACK_TO_SELECTION, isBackToSelection } from "./credential-navigation";
 import { createWebSearchFlowHelpers } from "./web-search-flow";
 
 vi.mock("../adapters/http/probe", () => ({
@@ -35,6 +35,36 @@ function helpers(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+describe("Brave key prompt empty-input escape (#6025)", () => {
+  it("surfaces the back/exit hint on empty input and loops instead of dead-ending", async () => {
+    const errors: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
+      errors.push(String(message));
+    });
+    const responses = ["", "back"];
+    let call = 0;
+    const flow = createWebSearchFlowHelpers({
+      prompt: async () => responses[call++] ?? "back",
+      note: () => {},
+      isNonInteractive: () => false,
+      cliName: () => "nemoclaw",
+      runCaptureOpenshell: () => null,
+    });
+
+    const result = await flow.promptBraveSearchApiKey();
+    errSpy.mockRestore();
+
+    expect(isBackToSelection(result)).toBe(true);
+    expect(call).toBe(2);
+    const errorText = errors.join("\n");
+    expect(errorText).toContain("Brave Search API key is required.");
+    // Assert both escape routes independently so the test fails if either the
+    // "back" or the "exit" hint regresses, not just when both disappear (#6025).
+    expect(errorText).toContain("back to choose a different option");
+    expect(errorText).toContain("exit to quit");
+  });
+});
 
 describe("web search provider validation", () => {
   beforeEach(() => {

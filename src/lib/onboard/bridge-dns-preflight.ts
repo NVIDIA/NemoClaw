@@ -75,6 +75,7 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   ].join(" ");
   console.error(`${indent}${sudoPrefix}sh -c '${shBody.replace(/'/g, "'\"'\"'")}'`);
 }
+
 import {
   BUSYBOX_PROBE_IMAGE,
   DEFAULT_HOST_DNS_PROBE_HOSTNAME,
@@ -252,6 +253,10 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     console.error("  ✗ Container DNS probe did not complete.");
   } else if (dns.reason === "image_pull_failed") {
     console.error("  ✗ Docker could not resolve or pull the DNS probe image.");
+  } else if (dns.reason === "resolution_failed") {
+    console.error(
+      "  ✗ Container DNS server is reachable but rejected the query (NXDOMAIN/REFUSED).",
+    );
   } else {
     console.error("  ✗ DNS resolution from inside a docker container failed.");
   }
@@ -261,7 +266,16 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     }
   }
   console.error("");
-  printContainerDnsRemediation(host);
+  // `servers_unreachable` (UDP:53 dropped) and `resolution_failed` (the resolver
+  // answered but returned NXDOMAIN/REFUSED) need different fixes: the former is
+  // the #2101 systemd-resolved/daemon.json remediation, the latter is a resolver
+  // config problem. Routing both to the UDP:53 block sent NXDOMAIN/REFUSED users
+  // down an irrelevant path (#6149).
+  if (dns.reason === "resolution_failed") {
+    printContainerDnsResolutionFailedRemediation(host);
+  } else {
+    printContainerDnsRemediation(host);
+  }
   process.exit(1);
 }
 
@@ -439,6 +453,44 @@ export function printHostDnsRemediation(
     `    node -e "require('node:dns').resolve('${hostname}', (e,a)=>{if(e)throw e;console.log(a)})"`,
   );
   console.error(`    curl -sS https://${hostname}/v1/models -o /dev/null && echo reachable`);
+}
+
+/**
+ * Remediation for the `resolution_failed` container-DNS reason: the docker
+ * DNS server *answered* the probe (so it is reachable) but returned
+ * NXDOMAIN/REFUSED for the name. The sandbox build's `npm ci` would then fail
+ * to resolve registry.npmjs.org. This is a different failure from
+ * `servers_unreachable` (UDP:53 dropped), so it must NOT print the
+ * systemd-resolved / UDP:53 remediation, which recommends changes that are
+ * irrelevant when the resolver is already reachable (#6149).
+ */
+export function printContainerDnsResolutionFailedRemediation(
+  host: Pick<Host, "platform" | "isWsl">,
+): void {
+  console.error("  The DNS server your docker daemon uses is reachable — it answered the probe —");
+  console.error("  but it refused or could not resolve the name (NXDOMAIN/REFUSED). The sandbox");
+  console.error("  build runs `npm ci` inside a container and must resolve registry.npmjs.org, so");
+  console.error("  onboarding cannot continue until that name resolves. See issue #6149.");
+  console.error("");
+  console.error("  This is NOT the UDP:53-blocked case — your resolver is up. Check its config:");
+  console.error("");
+  console.error(
+    "  1. If the docker daemon points at a local/forwarding resolver (dnsmasq, Pi-hole,",
+  );
+  console.error("     unbound, systemd-resolved), make sure it forwards public names and has no");
+  console.error("     blocklist/ACL rejecting registry.npmjs.org (e.g. a dnsmasq");
+  console.error("     `address=/registry.npmjs.org/` or `server=` override, or a REFUSED ACL).");
+  console.error("  2. Confirm the resolver's own upstream is healthy and not returning");
+  console.error("     NXDOMAIN/REFUSED for public names.");
+  const daemonJsonHint =
+    host.platform === "linux" && !host.isWsl
+      ? "/etc/docker/daemon.json, then restart docker"
+      : "your docker daemon.json (Docker Desktop → Settings → Docker Engine on macOS/Windows), then restart it";
+  console.error("  3. Or point the docker daemon at a DNS server that resolves public names — add");
+  console.error(`     { "dns": ["<working-dns-ip>"] } in ${daemonJsonHint}.`);
+  console.error("");
+  console.error("  Verify the fix worked:");
+  console.error(`    docker run --rm ${BUSYBOX_PROBE_IMAGE} nslookup registry.npmjs.org`);
 }
 
 export function printContainerDnsRemediation(host: Host): void {
