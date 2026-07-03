@@ -152,9 +152,10 @@ describe("reapDuplicateHostGatewaysExcept (#5968)", () => {
     expect(captured?.pids).toEqual([111]);
     expect(captured?.usePgrepFallback).toBe(false);
     expect(captured?.gatewayBin).toBe("/usr/local/bin/openshell-gateway");
-    // Sentinel paths keep the reaper away from the live gateway's pid-file/marker.
-    expect(captured?.stateDir).toContain("nemoclaw-gateway-duplicate-reap");
-    expect(captured?.pidFile).toContain("nemoclaw-gateway-duplicate-reap");
+    // The duplicate reap must not read or clear the adopted gateway's live
+    // pid-file/runtime marker.
+    expect(captured?.usePidFile).toBe(false);
+    expect(captured?.clearRuntimeFiles).toBe(false);
   });
 
   it("never calls the stopper when the only known candidate is the reused gateway", () => {

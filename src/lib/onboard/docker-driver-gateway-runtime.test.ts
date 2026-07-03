@@ -240,6 +240,32 @@ describe("docker-driver gateway runtime helpers", () => {
     );
   });
 
+  it("collects every verified gateway listener on the configured port", () => {
+    const gatewayBin = "/opt/openshell/openshell-gateway";
+    const { helpers, runCapture } = makeHelpers({
+      runCapture: vi.fn((args) => (args[0] === "lsof" ? "1234\n2345\n9999\n" : "")),
+    });
+    const isDockerDriverGatewayProcessFn = vi.fn(
+      (pid: number, candidateBin?: string | null) =>
+        (pid === 1234 || pid === 2345) && candidateBin === gatewayBin,
+    );
+
+    expect(
+      helpers.getDockerDriverGatewayPortListenerPids(
+        { ok: false, process: "openshell-gateway", pid: 1234 },
+        {
+          platform: "linux",
+          gatewayBin,
+          isPidAliveFn: () => true,
+          isDockerDriverGatewayProcessFn,
+        },
+      ),
+    ).toEqual([1234, 2345]);
+    expect(runCapture).toHaveBeenCalledWith(["lsof", "-ti", ":18080", "-sTCP:LISTEN"], {
+      ignoreError: true,
+    });
+  });
+
   it("does not match process args that only contain openshell-gateway as a suffix", () => {
     const pid = 12_345;
     const { helpers, runCapture } = makeHelpers({

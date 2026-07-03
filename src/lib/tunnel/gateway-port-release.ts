@@ -41,6 +41,14 @@ import {
 
 const DEFAULT_CONFIRM_TIMEOUT_MS = 2000;
 const DEFAULT_CONFIRM_POLL_INTERVAL_MS = 100;
+const PORT_FREE_PROBE_SCRIPT =
+  "const net=require('node:net');" +
+  "const port=Number(process.argv[1]);" +
+  "const server=net.createServer();" +
+  "let done=false;" +
+  "const finish=(code)=>{if(done)return;done=true;server.close(()=>process.exit(code));};" +
+  "server.once('error',()=>process.exit(1));" +
+  "server.listen(port,'127.0.0.1',()=>finish(0));";
 
 export interface ReleaseGatewayPortDeps extends Partial<HostGatewayProcessDeps> {
   /** Home directory used to derive the per-port gateway state dir. */
@@ -53,6 +61,8 @@ export interface ReleaseGatewayPortDeps extends Partial<HostGatewayProcessDeps> 
   stopHostGatewayProcesses?: typeof stopHostGatewayProcesses;
   /** Registry lookup used to resolve the sandbox's gateway port. */
   getSandbox?: (name: string) => SandboxGatewayBinding | null;
+  /** Fail-closed bind probe used when lsof is unavailable. */
+  probePortFree?: (port: number) => boolean;
 }
 
 export interface ReleaseGatewayPortOptions {
@@ -95,6 +105,25 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
       env,
     }).status === 0
   );
+}
+
+/**
+ * Confirm a loopback port can be rebound without relying on `lsof`.
+ *
+ * The probe runs in a short-lived child because this release flow is
+ * synchronous. Only a successful bind is proof that the port is free; a bind
+ * error, timeout, or subprocess failure all fail closed.
+ */
+function defaultProbePortFree(port: number): boolean {
+  try {
+    const result = spawnSync(process.execPath, ["-e", PORT_FREE_PROBE_SCRIPT, String(port)], {
+      stdio: "ignore",
+      timeout: 2000,
+    });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 function lazyGetSandbox(name: string): SandboxGatewayBinding | null {
@@ -258,6 +287,7 @@ export function releaseManagedGatewayPort(
     depsOverrides.commandExists ?? ((cmd: string) => defaultCommandExists(cmd, env));
   const stopFn = depsOverrides.stopHostGatewayProcesses ?? stopHostGatewayProcesses;
   const getSandbox = depsOverrides.getSandbox ?? lazyGetSandbox;
+  const probePortFree = depsOverrides.probePortFree ?? defaultProbePortFree;
   const debug = makeGatewayDebug(env);
 
   const port = resolveStopGatewayPort(options, getSandbox, debug);
@@ -325,13 +355,22 @@ export function releaseManagedGatewayPort(
   let remaining: number[] = [];
   const attemptedStop = stopResult.stopped.length > 0 || lsofPids.length > 0;
   if (!scanned) {
-    // Could not probe the port. When lsof is simply absent we trust the stopper:
-    // released unless it reported a process it could not kill. Known limitation:
-    // with lsof unavailable we cannot observe a non-pid-file squatter still holding
-    // the port, so `released` may be optimistic in that case. But when lsof was
-    // present and the scan itself errored (`scanFailed`), we confirmed nothing —
-    // fail closed so `stopAll` surfaces its unconfirmed-release warning.
-    released = !scanFailed && stopResult.failed.length === 0;
+    // `lsof` can be absent on minimal hosts. Never infer release solely from a
+    // successful pid-file stop: an unrecorded duplicate or unrelated listener
+    // may still own the port. A successful bind is independent proof that the
+    // port is free. A real lsof scan failure remains fail-closed so an unhealthy
+    // observation tool cannot be silently masked.
+    released =
+      !scanFailed &&
+      stopResult.failed.length === 0 &&
+      waitUntil(() => probePortFree(port), {
+        deadlineMs: now() + confirmTimeoutMs,
+        initialIntervalMs: confirmPollIntervalMs,
+        maxIntervalMs: confirmPollIntervalMs,
+        backoffFactor: 1,
+        now,
+        ...(depsOverrides.sleep ? { sleep: depsOverrides.sleep } : {}),
+      });
   } else if (!attemptedStop) {
     // Nothing was bound to the port to begin with — already free.
     released = true;
@@ -360,7 +399,7 @@ export function releaseManagedGatewayPort(
     if (!released) remaining = listeningPids(port, run, env, warn) ?? [];
   }
 
-  if (stopResult.stopped.length > 0) {
+  if (released && stopResult.stopped.length > 0) {
     log(
       `Released NemoClaw gateway port ${port} (stopped host process ${stopResult.stopped.join(", ")}).`,
     );
@@ -374,7 +413,7 @@ export function releaseManagedGatewayPort(
     warn(
       `NemoClaw gateway port ${port} is still in use after stop ` +
         `(host process ${stopResult.failed.join(", ")} could not be stopped). ` +
-        "Run: sudo pkill -f openshell-gateway",
+        `Run: sudo kill -9 ${stopResult.failed.join(" ")}`,
     );
   }
 

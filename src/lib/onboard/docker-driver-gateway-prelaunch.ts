@@ -30,7 +30,6 @@
  *     adopted port listener) without tearing down the gateway being reused.
  */
 
-import os from "node:os";
 import path from "node:path";
 
 import {
@@ -138,21 +137,15 @@ export function reapHostGatewayBeforeLaunchOrFail(
   return result;
 }
 
-// Sentinel state dir for the reuse-path duplicate reap, used purely as an
-// identifier so the stopper's runtime-file cleanup targets this throwaway path
-// instead of the live gateway's pid-file/runtime marker. Nothing is ever written
-// here: the only access is the stopper's best-effort rmSync(force), which no-ops
-// because this directory is never created.
-const DUPLICATE_REAP_SENTINEL_DIR = path.join(os.tmpdir(), "nemoclaw-gateway-duplicate-reap");
-
 /**
  * Reap KNOWN host gateways (cmdline-gated, no host-wide pgrep sweep) other than
  * the gateway being reused, so a reuse path can enforce a single matching host
  * gateway without tearing down the adopted one. Used when a previously recorded
  * gateway pid differs from the port listener now being adopted — that stale pid
  * is a duplicate orphan and is reaped here. A quiet no-op when the only known
- * candidate is `keepPid`. Uses sentinel paths so the live gateway's pid-file and
- * runtime marker are never cleared.
+ * candidate is `keepPid`. Pid-file discovery and runtime-file cleanup are
+ * disabled so the adopted gateway's live state is never read as a candidate or
+ * cleared.
  */
 export function reapDuplicateHostGatewaysExcept(
   keepPid: number,
@@ -166,10 +159,10 @@ export function reapDuplicateHostGatewaysExcept(
   return stop(
     { env: process.env, ...deps },
     {
+      clearRuntimeFiles: false,
       pids,
-      pidFile: path.join(DUPLICATE_REAP_SENTINEL_DIR, "openshell-gateway.pid"),
-      stateDir: DUPLICATE_REAP_SENTINEL_DIR,
       gatewayBin,
+      usePidFile: false,
       usePgrepFallback: false,
     },
   );

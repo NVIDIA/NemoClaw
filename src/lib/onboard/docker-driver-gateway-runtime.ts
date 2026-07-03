@@ -9,11 +9,11 @@ import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
-import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import * as vmDriverProcess from "./vm-driver-process";
 
@@ -25,6 +25,14 @@ export type DockerDriverGatewayRuntimeDrift = { reason: string };
 
 type RunCapture = (args: string[], opts?: { ignoreError?: boolean }) => string;
 type DockerDriverGatewayEnvModule = typeof import("./docker-driver-gateway-env");
+
+export interface DockerDriverGatewayPortListenerOptions {
+  platform?: NodeJS.Platform;
+  arch?: NodeJS.Architecture;
+  gatewayBin?: string | null;
+  isPidAliveFn?: (pid: number) => boolean;
+  isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
+}
 
 // Source boundary: OpenShell does not currently expose an authoritative local
 // host-gateway identity/drift endpoint for the Docker-driver runtime NemoClaw
@@ -54,15 +62,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string>;
   getDockerDriverGatewayPid(): number | null;
   getDockerDriverGatewayPidFile(): string;
+  getDockerDriverGatewayPortListenerPids(
+    portCheck: PortProbeResult,
+    opts?: DockerDriverGatewayPortListenerOptions,
+  ): number[];
   getDockerDriverGatewayPortListenerPid(
     portCheck: PortProbeResult,
-    opts?: {
-      platform?: NodeJS.Platform;
-      arch?: NodeJS.Architecture;
-      gatewayBin?: string | null;
-      isPidAliveFn?: (pid: number) => boolean;
-      isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-    },
+    opts?: DockerDriverGatewayPortListenerOptions,
   ): number | null;
   getDockerDriverGatewayRuntimeDrift(
     pid: number,
@@ -408,13 +414,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
 
   function getDockerDriverGatewayPortListenerPid(
     portCheck: PortProbeResult,
-    opts: {
-      platform?: NodeJS.Platform;
-      arch?: NodeJS.Architecture;
-      gatewayBin?: string | null;
-      isPidAliveFn?: (pid: number) => boolean;
-      isDockerDriverGatewayProcessFn?: (pid: number, gatewayBin?: string | null) => boolean;
-    } = {},
+    opts: DockerDriverGatewayPortListenerOptions = {},
   ): number | null {
     if (portCheck.ok) return null;
     if (
@@ -440,6 +440,40 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return pid;
   }
 
+  /**
+   * Return every cmdline-verified Docker-driver gateway listening on the
+   * configured port. The diagnostic port probe intentionally reports only one
+   * owner; singleton enforcement must inspect the complete lsof set so reuse
+   * cannot leave a second matching listener alive (#5968).
+   */
+  function getDockerDriverGatewayPortListenerPids(
+    portCheck: PortProbeResult,
+    opts: DockerDriverGatewayPortListenerOptions = {},
+  ): number[] {
+    const candidates = new Set<number>();
+    const primaryPid = getDockerDriverGatewayPortListenerPid(portCheck, opts);
+    if (primaryPid !== null) candidates.add(primaryPid);
+    try {
+      const output = deps.runCapture(["lsof", "-ti", `:${deps.gatewayPort}`, "-sTCP:LISTEN"], {
+        ignoreError: true,
+      });
+      for (const line of output.split(/\r?\n/)) {
+        const pid = Number.parseInt(line.trim(), 10);
+        if (Number.isInteger(pid) && pid > 0) candidates.add(pid);
+      }
+    } catch {
+      // lsof is optional; retain the primary PID when the port probe found one.
+    }
+    const alive = opts.isPidAliveFn ?? isPidAlive;
+    const isGateway =
+      opts.isDockerDriverGatewayProcessFn ??
+      ((pid: number, gatewayBin?: string | null) =>
+        isDockerDriverGatewayProcess(pid, gatewayBin, {
+          requireDockerDriverEnv: shouldRequireDockerDriverEnv(opts.platform ?? process.platform),
+        }));
+    return Array.from(candidates).filter((pid) => alive(pid) && isGateway(pid, opts.gatewayBin));
+  }
+
   function isDockerDriverGatewayPortListener(
     portCheck: PortProbeResult,
     opts: Parameters<typeof getDockerDriverGatewayPortListenerPid>[1] = {},
@@ -452,6 +486,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     getDockerDriverGatewayEnv,
     getDockerDriverGatewayPid,
     getDockerDriverGatewayPidFile,
+    getDockerDriverGatewayPortListenerPids,
     getDockerDriverGatewayPortListenerPid,
     getDockerDriverGatewayRuntimeDrift,
     getDockerDriverGatewayRuntimeDriftFromSnapshot,

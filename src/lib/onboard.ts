@@ -625,6 +625,7 @@ const {
   clearDockerDriverGatewayRuntimeFiles,
   getDockerDriverGatewayEnv,
   getDockerDriverGatewayPid,
+  getDockerDriverGatewayPortListenerPids,
   getDockerDriverGatewayPortListenerPid,
   getDockerDriverGatewayRuntimeDrift,
   getDockerDriverGatewayRuntimeDriftFromSnapshot,
@@ -1248,10 +1249,8 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
   }
 }
 
-function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
+function logDockerDriverGatewayRestart(reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-  terminateDockerDriverGatewayProcess(pid);
-  clearDockerDriverGatewayRuntimeFiles();
 }
 
 async function refreshDockerDriverGatewayReuseState(
@@ -2191,15 +2190,17 @@ async function startDockerDriverGateway({
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(await checkGatewayPortAvailable(), {
-    gatewayBin: identityGatewayBin,
-  });
+  const portListenerPids = getDockerDriverGatewayPortListenerPids(
+    await checkGatewayPortAvailable(),
+    { gatewayBin: identityGatewayBin },
+  );
+  const portListenerPid = portListenerPids[0] ?? null;
   const pidFileGatewayPid = getDockerDriverGatewayPid();
   if (
     pidFileGatewayPid !== null &&
     isDockerDriverGatewayProcessAlive() &&
     isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo) &&
-    (portListenerPid === null || portListenerPid === pidFileGatewayPid) // reuse only as sole binder (#5968)
+    portListenerPids.every((pid) => pid === pidFileGatewayPid) // reuse only as sole binder (#5968)
   ) {
     const drift = getDockerDriverGatewayRuntimeDrift(
       pidFileGatewayPid,
@@ -2207,7 +2208,7 @@ async function startDockerDriverGateway({
       driftGatewayBin,
     );
     if (drift) {
-      restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
+      logDockerDriverGatewayRestart(drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
       await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
         skip: skipSandboxBridgeReachability,
@@ -2228,8 +2229,7 @@ async function startDockerDriverGateway({
       driftGatewayBin,
     );
     if (drift) {
-      rememberDockerDriverGatewayPid(portListenerPid);
-      restartDockerDriverGatewayProcessForDrift(portListenerPid, drift.reason);
+      logDockerDriverGatewayRestart(drift.reason);
     } else {
       rememberDockerDriverGatewayPid(portListenerPid);
     }
@@ -2248,7 +2248,7 @@ async function startDockerDriverGateway({
         reapDuplicateHostGatewaysExceptOrFail(
           portListenerPid,
           identityGatewayBin,
-          [pidFileGatewayPid],
+          [pidFileGatewayPid, ...portListenerPids],
           exitOnFailure,
         );
         await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
@@ -2271,7 +2271,7 @@ async function startDockerDriverGateway({
   reapHostGatewayBeforeLaunchOrFail({
     stateDir,
     gatewayBin: identityGatewayBin,
-    extraPids: [getDockerDriverGatewayPid(), portListenerPid],
+    extraPids: [getDockerDriverGatewayPid(), ...portListenerPids],
     exitOnFailure,
   });
 

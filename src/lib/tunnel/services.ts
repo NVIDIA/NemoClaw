@@ -23,7 +23,7 @@ import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { registerTunnelOrigin } from "./allowed-origins";
-import * as gatewayPortRelease from "./gateway-port-release";
+import * as gatewayStop from "./gateway-stop";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -622,50 +622,7 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // Stop host-side services.
   stopService(pidDir, "cloudflared");
 
-  // Release the NemoClaw-managed OpenShell gateway host port. Without this the
-  // host `openshell-gateway` process (notably on macOS) keeps port 8080 bound
-  // after `nemoclaw stop`, so a fresh onboard / port-conflict recovery cannot
-  // re-bind it (#5968). Best-effort: a stop must never fail because gateway
-  // teardown hit an edge case.
-  //
-  // Only run when a sandbox identity was resolved. With no sandbox name the
-  // port resolver would fall back to the process-wide default gateway port —
-  // which is not tied to the `pidDir` selected above and could tear down a
-  // different worktree's default gateway.
-  if (sandboxName) {
-    try {
-      const release = gatewayPortRelease.releaseManagedGatewayPort({ sandboxName });
-      // Best-effort, but do not imply teardown succeeded when it didn't: when the
-      // destructive path ran yet could not confirm the port is free, warn with the
-      // port and any still-bound PIDs. (`skipped` invalid-binding cases warn inside
-      // the helper, so they are not re-reported here.)
-      if (!release.released && !release.skipped) {
-        const boundBy = release.remaining.length
-          ? ` (still bound by PID ${release.remaining.join(", ")})`
-          : "";
-        // Prefer killing exactly the still-bound PIDs over a host-wide pkill that
-        // could take down another worktree's gateway; fall back to pkill only when
-        // no specific PID is known.
-        const remediation = release.remaining.length
-          ? `sudo kill -9 ${release.remaining.join(" ")}`
-          : "sudo pkill -f openshell-gateway";
-        warn(
-          `NemoClaw gateway port ${release.port ?? "?"} was not confirmed released${boundBy}. ` +
-            `Run: ${remediation}`,
-        );
-      }
-    } catch (error) {
-      warn(
-        `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
-      );
-      // Best-effort by design (a stop must not fail on gateway teardown), so the
-      // user-facing warning carries only the message. The full stack is opt-in
-      // via NODE_DEBUG=nemoclaw:gateway for diagnosing an unexpected throw.
-      if ((process.env.NODE_DEBUG ?? "").includes("nemoclaw:gateway")) {
-        console.error((error as Error).stack ?? String(error));
-      }
-    }
-  }
+  gatewayStop.releaseGatewayPortForStop(sandboxName, { info, warn });
 
   info("All services stopped.");
 }
