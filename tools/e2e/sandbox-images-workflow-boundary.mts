@@ -444,8 +444,14 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   if (secretBoundary.id !== HERMES_SECRET_BOUNDARY_STEP_ID) {
     errors.push("Hermes secret boundary step must expose its outcome to the next probe");
   }
+  if (secretBoundary["timeout-minutes"] !== 60) {
+    errors.push("Hermes secret boundary must retain its 60-minute probe budget");
+  }
   if (rootEntrypoint.if !== HERMES_ROOT_AFTER_SECRET_CONDITION) {
     errors.push("Hermes root entrypoint must run after either secret-boundary outcome");
+  }
+  if (rootEntrypoint["timeout-minutes"] !== 45) {
+    errors.push("Hermes root entrypoint must retain its 45-minute probe budget");
   }
   if (
     build.run !==

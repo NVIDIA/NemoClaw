@@ -88,6 +88,19 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("keeps non-main branch dispatch anonymous and main credentials gated", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    expect(imageWorkflow.on).toHaveProperty("workflow_dispatch");
+    const auth = imageWorkflow.jobs["build-sandbox-images"].steps!.find(
+      (step) => step.name === "Authenticate to Docker Hub",
+    )!;
+    auth.env!.DOCKERHUB_AUTH_REQUIRED = "1";
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(
+      "sandbox image Docker Hub credentials must be gated to trusted main push/manual runs",
+    );
+  });
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];
@@ -156,14 +169,9 @@ describe("sandbox image workflow boundary", () => {
     for (const stepName of ["Set up Node", "Install root dependencies"]) {
       hermes.steps!.push({ ...hermes.steps!.find((step) => step.name === stepName)! });
     }
-    const secretBoundary = hermes.steps!.find(
-      (step) => step.name === "Run Hermes sandbox secret boundary test",
-    )!;
-    delete secretBoundary.id;
     const rootEntrypoint = hermes.steps!.find(
       (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
     )!;
-    delete rootEntrypoint.if;
     rootEntrypoint.env!.NEMOCLAW_HERMES_TEST_IMAGE = "nemoclaw-hermes-rebuilt";
     rootEntrypoint.run = `${rootEntrypoint.run}\ndocker build -f agents/hermes/Dockerfile -t nemoclaw-hermes-rebuilt .`;
 
@@ -172,11 +180,33 @@ describe("sandbox image workflow boundary", () => {
         "Hermes image job timeout must cover both inherited probe budgets",
         "build-hermes-sandbox-image must run 'Set up Node' exactly once",
         "build-hermes-sandbox-image must run 'Install root dependencies' exactly once",
-        "Hermes secret boundary step must expose its outcome to the next probe",
-        "Hermes root entrypoint must run after either secret-boundary outcome",
         "Hermes production image must have exactly one source build",
         "Hermes root entrypoint must consume the prebuilt Hermes production image",
         "Hermes root entrypoint step must not rebuild the prebuilt image",
+      ]),
+    );
+  });
+
+  it("keeps Hermes probes failure-isolated with their inherited budgets", () => {
+    const { imageWorkflow, mainWorkflow } = readWorkflows();
+    const hermes = imageWorkflow.jobs["build-hermes-sandbox-image"];
+    const secretBoundary = hermes.steps!.find(
+      (step) => step.name === "Run Hermes sandbox secret boundary test",
+    )!;
+    delete secretBoundary.id;
+    secretBoundary["timeout-minutes"] = 45;
+    const rootEntrypoint = hermes.steps!.find(
+      (step) => step.name === "Run Hermes root entrypoint smoke Vitest test",
+    )!;
+    delete rootEntrypoint.if;
+    rootEntrypoint["timeout-minutes"] = 30;
+
+    expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toEqual(
+      expect.arrayContaining([
+        "Hermes secret boundary step must expose its outcome to the next probe",
+        "Hermes secret boundary must retain its 60-minute probe budget",
+        "Hermes root entrypoint must run after either secret-boundary outcome",
+        "Hermes root entrypoint must retain its 45-minute probe budget",
       ]),
     );
   });

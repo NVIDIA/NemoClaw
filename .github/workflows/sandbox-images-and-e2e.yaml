@@ -164,6 +164,7 @@ jobs:
 
       - name: Run Hermes sandbox secret boundary test
         id: hermes-secret-boundary
+        timeout-minutes: 60
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-sandbox-secret-boundary
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
@@ -184,6 +185,7 @@ jobs:
 
       - name: Run Hermes root entrypoint smoke Vitest test
         if: ${{ !cancelled() && (steps.hermes-secret-boundary.outcome == 'success' || steps.hermes-secret-boundary.outcome == 'failure') }}
+        timeout-minutes: 45
         env:
           E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
