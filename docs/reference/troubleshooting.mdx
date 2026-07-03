@@ -925,7 +925,22 @@ curl: (56) CONNECT tunnel failed, response 403
 
 This is a network-policy denial, not a tool or certificate problem.
 
-The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this denial signature and the `logs` command below.
+When you run a command through `$$nemoclaw <name> exec -- ...` and it exits non-zero, NemoClaw checks the sandbox audit log for a policy denial recorded after the command started.
+If it finds one, it appends a short breadcrumb to stderr after the tool's own output, naming the denied `host:port` and the commands below:
+
+```text
+curl: (56) CONNECT tunnel failed, response 403
+nemoclaw: recent network policy denial detected for example.com:443 inside sandbox 'oc-fresh'.
+  The sandbox's egress policy blocked this request; the tool above only saw the proxy's 403.
+  See the denied flow:      nemoclaw oc-fresh logs --tail 50
+  Review or allow the host: nemoclaw oc-fresh policy-list
+  Silence this hint:        export NEMOCLAW_NO_POLICY_HINT=1
+```
+
+The tool's own stdout/stderr bytes and its exit code are left unchanged — the breadcrumb is printed by the host CLI after the command finishes, and only for a genuine failure with a fresh denial (a command that succeeds, or one that fails for an unrelated reason, prints no breadcrumb).
+Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+
+The first interactive `$$nemoclaw <name> connect` shell also prints a one-line reminder of this denial signature and the `logs` command below.
 The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
 Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
 On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.

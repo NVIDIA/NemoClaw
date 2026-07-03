@@ -3,6 +3,7 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { spawnExitCode } from "../../core/process-exit";
+import { maybeEmitPolicyDenialHint, type PolicyDenialHintDeps } from "./exec-policy-hint";
 import type {
   MutableConfigPermsInspection,
   MutableConfigRepairResult,
@@ -376,6 +377,11 @@ export type ExecSandboxDeps = {
   resolveBinary?: () => string;
   probeWorkdir?: WorkdirProbeRunner;
   run?: SandboxExecRunner;
+  // Injected so the post-exec policy-denial hint stays hermetic in tests. `now`
+  // stamps the command start time used to reject stale denials; `policyHint`
+  // overrides the log probe and stderr sink.
+  now?: () => number;
+  policyHint?: PolicyDenialHintDeps;
 };
 
 export async function execSandbox(
@@ -400,6 +406,9 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
+  // Stamp the command start BEFORE dispatch so the post-exec hint only reacts to
+  // policy denials logged by THIS command, not a stale one from a prior run.
+  const commandStartedAtMs = (deps.now ?? Date.now)();
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
@@ -423,6 +432,22 @@ export async function execSandbox(
   }
   if (completion.cleanupError) {
     console.error(cleanupFailureMessage(completion.commandCode, completion.cleanupError));
+  }
+  // Denial-adjacent breadcrumb for the reporter's failure path (#5978). Emitted
+  // AFTER the child's own bytes and any invocation/cleanup diagnostics, and only
+  // for a genuine command failure with a fresh policy denial in the audit log.
+  // Wrapped defensively: a hint must never change the exec's outcome.
+  try {
+    await maybeEmitPolicyDenialHint(
+      CLI_NAME,
+      sandboxName,
+      completion.commandCode,
+      Boolean(completion.invocationError),
+      commandStartedAtMs,
+      deps.policyHint,
+    );
+  } catch {
+    // Never let hint generation corrupt the exec result or exit code.
   }
   process.exit(completion.code);
 }
