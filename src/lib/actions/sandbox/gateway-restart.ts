@@ -18,6 +18,7 @@ export type GatewayRestartFailureLayer =
   | "secret-boundary refusal"
   | "unsafe config path"
   | "config hash mismatch"
+  | "MCP reconciliation refusal"
   | "launch failure"
   | "health timeout"
   | "forward recovery failure";
@@ -77,6 +78,9 @@ export type GatewayRestartDeps = {
     sandboxName: string,
     exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
   ) => boolean;
+  inspectHermesMcpRuntimeIntent: (
+    sandboxName: string,
+  ) => { ok: true; state: string } | { ok: false; state: string; detail: string };
 };
 
 export type RestartSandboxGatewayOptions = {
@@ -181,6 +185,12 @@ export function printGatewayRestartFailure(
     .slice(-12);
   for (const line of lines) {
     console.error(`  ${line}`);
+  }
+  if (layer === "MCP reconciliation refusal") {
+    console.error(`  Run \`nemoclaw ${sandboxName} mcp restart\` to restore managed MCP state.`);
+    console.error(
+      `  If the sandbox has an old helper or missing runtime metadata, run \`nemoclaw ${sandboxName} rebuild --yes\` instead.`,
+    );
   }
 }
 
@@ -289,6 +299,18 @@ export function restartSandboxGatewayWithDeps(
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);
     return { ok: false, failureLayer: "health timeout", detail };
+  }
+
+  if (agentName === "hermes") {
+    const reconciliation = deps.inspectHermesMcpRuntimeIntent(sandboxName);
+    if (!reconciliation.ok) {
+      printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", reconciliation.detail);
+      return {
+        ok: false,
+        failureLayer: "MCP reconciliation refusal",
+        detail: reconciliation.detail,
+      };
+    }
   }
 
   const forwardRecovered = deps.ensureSandboxPortForward(sandboxName);

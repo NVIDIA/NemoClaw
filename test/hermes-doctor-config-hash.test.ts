@@ -149,12 +149,14 @@ describe("Hermes doctor and config hash boundary", () => {
       dockerfile,
       "# Pin config hash at build time",
       "# Backward-compatible marker",
-    ).replaceAll("/etc/nemoclaw", etcDir);
+    )
+      .replaceAll("/etc/nemoclaw", etcDir)
+      .replaceAll("/opt/hermes/.venv/bin/python", "python3");
     const compatHashCommand = dockerRunCommandBetween(
       dockerfile,
       "# Backward-compatible marker",
       "# OpenShell's macOS VM backend",
-    );
+    ).replaceAll("/etc/nemoclaw", etcDir);
 
     try {
       const doctorAndGenerate = spawnSync("bash", ["-c", doctorAndGenerateCommand], {

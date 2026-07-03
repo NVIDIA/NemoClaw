@@ -155,6 +155,9 @@ export async function prepareMcpBridgesForDestroy(
         bridges: Object.fromEntries(
           entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
         ),
+        ...(sandbox.mcp?.managedServerNames
+          ? { managedServerNames: sandbox.mcp.managedServerNames }
+          : {}),
         destroyPreparedAt: nowIso(),
       },
     });
@@ -206,6 +209,9 @@ export async function prepareMcpBridgesForDestroy(
             bridges: Object.fromEntries(
               entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
             ),
+            ...(current.mcp.managedServerNames
+              ? { managedServerNames: current.mcp.managedServerNames }
+              : {}),
           },
         });
       } catch (rollbackError) {
@@ -245,6 +251,9 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       bridges: Object.fromEntries(
         preparation.entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
       ),
+      ...(preparedSandbox.mcp?.managedServerNames
+        ? { managedServerNames: preparedSandbox.mcp.managedServerNames }
+        : {}),
     },
   });
   if (!cleared) {
@@ -268,6 +277,9 @@ export async function restoreMcpBridgesAfterDestroyAbort(
           bridges: Object.fromEntries(
             preparation.entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
           ),
+          ...(preparedSandbox.mcp?.managedServerNames
+            ? { managedServerNames: preparedSandbox.mcp.managedServerNames }
+            : {}),
           destroyPreparedAt,
         },
       });
@@ -307,6 +319,9 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
         bridges: Object.fromEntries(
           entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
         ),
+        ...(sandbox.mcp?.managedServerNames
+          ? { managedServerNames: sandbox.mcp.managedServerNames }
+          : {}),
         destroyPendingAt: nowIso(),
       },
     });

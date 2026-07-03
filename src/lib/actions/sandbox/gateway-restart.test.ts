@@ -70,9 +70,39 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       printGatewayWedgeDiagnostics: vi.fn(() => false),
+      inspectHermesMcpRuntimeIntent: vi.fn(() => ({ ok: true as const, state: "matched" })),
       ...overrides,
     };
   }
+
+  it("refuses to report a restarted Hermes gateway with stale MCP intent", () => {
+    const restore = silenceConsole();
+    try {
+      const hermesAgent = {
+        name: "hermes",
+        displayName: "Hermes Agent",
+        runtime: { type: "gateway" },
+      };
+      const deps = baseDeps({
+        getSessionAgent: () => hermesAgent,
+        getSandbox: () => ({ name: "alpha", agent: "hermes" }),
+        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
+          ok: false,
+          state: "mismatch",
+          detail: "Hermes MCP config does not match persisted managed intent",
+        })),
+      });
+
+      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
+        ok: false,
+        failureLayer: "MCP reconciliation refusal",
+        detail: "Hermes MCP config does not match persisted managed intent",
+      });
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
 
   it("refuses supervisor output without a completion marker", () => {
     const deps = baseDeps({

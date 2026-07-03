@@ -78,6 +78,33 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("fails closed on Hermes MCP drift with restart and rebuild guidance", async () => {
+    const harness = createConnectHarness({
+      processCheck: {
+        checked: true,
+        wasRunning: true,
+        recovered: false,
+        forwardRecovered: false,
+        mcpReconciliationRefused: true,
+        mcpReconciliationReason: "Hermes MCP config does not match persisted managed intent",
+      },
+    });
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
+    vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Probe failed: refused to confirm Hermes gateway in 'alpha'");
+    expect(errorOutput).toContain("nemoclaw alpha mcp restart");
+    expect(errorOutput).toContain("nemoclaw alpha rebuild --yes");
+    expect(harness.runAutoPairSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it.each([
     [
       "raw-secret",

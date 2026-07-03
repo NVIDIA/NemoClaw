@@ -27,6 +27,12 @@ export interface McpBridgeEntry {
 
 export interface SandboxMcpState {
   bridges: Record<string, McpBridgeEntry>;
+  /**
+   * Durable ownership history for adapter reconciliation. Names remain after a
+   * bridge is removed so a later startup can prove that the retired managed
+   * entry is absent without claiming unrelated user-managed MCP definitions.
+   */
+  managedServerNames?: string[];
   /** Set after in-sandbox adapter scrub/provider detach and before delete. */
   destroyPreparedAt?: string;
   /**
@@ -63,6 +69,17 @@ export function normalizeSandboxMcpState(value: unknown): SandboxMcpState | unde
     const entry = normalizeMcpBridgeEntry(name, rawEntry);
     if (entry) bridges[entry.server] = entry;
   }
+  const persistedManagedServerNames = Array.isArray(value.managedServerNames)
+    ? value.managedServerNames.filter(
+        (name): name is string => typeof name === "string" && MCP_SERVER_RE.test(name),
+      )
+    : [];
+  const committedServerNames = Object.values(bridges)
+    .filter((entry) => !entry.addState)
+    .map((entry) => entry.server);
+  const managedServerNames = [
+    ...new Set([...persistedManagedServerNames, ...committedServerNames]),
+  ].sort();
   const destroyPendingAt =
     typeof value.destroyPendingAt === "string" && value.destroyPendingAt
       ? value.destroyPendingAt
@@ -71,11 +88,17 @@ export function normalizeSandboxMcpState(value: unknown): SandboxMcpState | unde
     typeof value.destroyPreparedAt === "string" && value.destroyPreparedAt
       ? value.destroyPreparedAt
       : undefined;
-  if (Object.keys(bridges).length === 0 && !destroyPreparedAt && !destroyPendingAt) {
+  if (
+    Object.keys(bridges).length === 0 &&
+    managedServerNames.length === 0 &&
+    !destroyPreparedAt &&
+    !destroyPendingAt
+  ) {
     return undefined;
   }
   return {
     bridges,
+    ...(managedServerNames.length > 0 ? { managedServerNames } : {}),
     ...(destroyPreparedAt ? { destroyPreparedAt } : {}),
     ...(destroyPendingAt ? { destroyPendingAt } : {}),
   };

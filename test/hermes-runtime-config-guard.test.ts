@@ -306,6 +306,8 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "wb") as handle:
         handle.write(b"API_SERVER_PORT=18642\\n")
 
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(hash_path, initial_hash)
     before = os.stat(config_path)
     original_write_hash = guard._write_hash
 
@@ -371,15 +373,17 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "w", encoding="utf-8") as handle:
         handle.write("API_SERVER_PORT=18642\\n")
 
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(strict_hash_path, initial_hash)
     original_hash_text = guard._hash_text
     original_write_hash = guard._write_hash
     hash_text_calls = 0
     writes = []
 
-    def counted_hash_text(config, env):
+    def counted_hash_text(config, env, *args):
         global hash_text_calls
         hash_text_calls += 1
-        return original_hash_text(config, env)
+        return original_hash_text(config, env, *args)
 
     def captured_write_hash(path, text):
         writes.append({"path": path, "text": text})
@@ -435,7 +439,9 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(env_path, "w", encoding="utf-8") as handle:
         handle.write("API_SERVER_PORT=18642\\n")
 
-    guard.refresh_hashes(hermes_dir, strict_hash_path, "both")
+    initial_hash, _config_snapshot, _env_snapshot = guard._hash_text(config_path, env_path)
+    guard._write_hash(strict_hash_path, initial_hash)
+    guard._write_hash(compat_hash_path, initial_hash)
     with open(strict_hash_path, encoding="utf-8") as handle:
         old_strict = handle.read()
     with open(config_path, "w", encoding="utf-8") as handle:

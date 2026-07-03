@@ -97,9 +97,12 @@ bridge.removeMcpBridge("legacy-sandbox", "github").then(
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const jsonStart = result.stdout.indexOf("{");
     const sandbox = JSON.parse(result.stdout.slice(jsonStart)) as {
-      mcp?: unknown;
+      mcp?: { bridges?: Record<string, unknown>; managedServerNames?: string[] };
     };
-    expect(sandbox.mcp).toBeUndefined();
+    expect(sandbox.mcp).toEqual({
+      bridges: {},
+      managedServerNames: ["github"],
+    });
   });
 
   it("preserves the registry entry when force cleanup leaves residual policy state", () => {

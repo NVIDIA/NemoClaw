@@ -35,7 +35,8 @@ function hashInputs(fixture: ReconciliationFixture): string {
     timeout: 5000,
   });
   expect(result.status, result.stderr).toBe(0);
-  return result.stdout;
+  const mcpDigest = createHash("sha256").update("{}").digest("hex");
+  return `${result.stdout}# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`;
 }
 
 function createFixture(hermesMode = 0o3770): ReconciliationFixture {

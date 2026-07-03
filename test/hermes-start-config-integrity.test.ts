@@ -37,6 +37,7 @@ function runHermesConfigIntegrityVerifierAsRoot() {
       "set -euo pipefail",
       'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
       'verify_config_integrity() { printf "verify:%s:%s:stepped=%s\\n" "$1" "$2" "${NEMOCLAW_TEST_STEPPED_DOWN:-0}"; }',
+      "inspect_hermes_mcp_integrity() { return 0; }",
       extractShellFunctionFromSource(src, "verify_hermes_config_integrity"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(hashFile)}`,

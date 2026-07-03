@@ -237,6 +237,29 @@ function exitOnSecretBoundaryRefusal(
   process.exit(1);
 }
 
+function exitOnMcpReconciliationRefusal(
+  sandboxName: string,
+  agentName: string,
+  processCheck: Record<string, unknown>,
+  contextLabel: "Probe" | "Connect",
+): never {
+  const detail =
+    "mcpReconciliationReason" in processCheck
+      ? String(processCheck.mcpReconciliationReason)
+      : "the effective Hermes MCP configuration does not match persisted managed intent";
+  console.error("");
+  console.error(
+    `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — ${detail}.`,
+  );
+  console.error(
+    `  Run \`nemoclaw ${sandboxName} mcp restart\` to restore the managed MCP configuration, then retry.`,
+  );
+  console.error(
+    `  If the sandbox has an old helper or missing runtime metadata, run \`nemoclaw ${sandboxName} rebuild --yes\` instead.`,
+  );
+  process.exit(1);
+}
+
 function exitOnForwardRecoveryFailure(
   sandboxName: string,
   agentName: string,
@@ -276,6 +299,9 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
+  }
+  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
+    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Probe");
   }
   if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
     const detail =
@@ -961,6 +987,10 @@ export async function connectSandbox(
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Connect");
+  }
+  if ("mcpReconciliationRefused" in processCheck && processCheck.mcpReconciliationRefused) {
+    const agentName = agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
+    exitOnMcpReconciliationRefusal(sandboxName, agentName, processCheck, "Connect");
   }
   // Ensure Ollama auth proxy is running (recovers from host reboots)
   ensureOllamaAuthProxy();

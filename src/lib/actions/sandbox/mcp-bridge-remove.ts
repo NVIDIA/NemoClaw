@@ -10,6 +10,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { assertGeneratedPolicyMutationSafe, removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   deleteProvider,
@@ -234,6 +235,14 @@ async function removeMcpBridgeUnlocked(
         entry,
         { force: options.force === true, envValues: adapterEnvValues },
       );
+      if (adapter === "hermes-config") {
+        assertHermesMcpRuntimeIntent(sandboxName, {
+          entries: Object.values(bridgeState(sandbox)).filter(
+            (candidate) => candidate.server !== server,
+          ),
+          managedServerNames: sandbox.mcp?.managedServerNames,
+        });
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       if (!options.force) throw new McpBridgeError(detail);

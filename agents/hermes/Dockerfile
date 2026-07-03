@@ -483,12 +483,14 @@ RUN set -eu; \
 RUN mkdir -p /etc/nemoclaw \
     && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /etc/nemoclaw/hermes.config-hash \
+    && mcp_digest="$(/opt/hermes/.venv/bin/python -c 'import hashlib,json,yaml; data=yaml.safe_load(open("/sandbox/.hermes/config.yaml", encoding="utf-8")) or {}; servers=data.get("mcp_servers") or {}; canonical=json.dumps(servers,allow_nan=False,ensure_ascii=True,separators=(",",":"),sort_keys=True).encode(); print(hashlib.sha256(canonical).hexdigest())')" \
+    && printf '# nemoclaw-hermes-mcp-state-v1 intended=%s applied=%s\n' "$mcp_digest" "$mcp_digest" \
+    >> /etc/nemoclaw/hermes.config-hash \
     && chown root:root /etc/nemoclaw/hermes.config-hash \
     && chmod 444 /etc/nemoclaw/hermes.config-hash
 
 # Backward-compatible marker for host-side shields logic on older sandboxes.
-RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
-    > /sandbox/.hermes/.config-hash \
+RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
     && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 

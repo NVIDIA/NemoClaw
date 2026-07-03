@@ -16,6 +16,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
+import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import {
   applyGeneratedPolicy,
   buildMcpBridgePolicyKey,
@@ -52,6 +53,7 @@ import {
 } from "./mcp-bridge-state";
 import {
   assertAuthenticatedCredentialReference,
+  assertMcpCredentialBoundaryRuntimeVersion,
   buildMcpBridgeProviderName,
   normalizeMcpServerUrl,
   resolveCredentialEnv,
@@ -214,6 +216,9 @@ async function addMcpBridgeUnlocked(
   // prepared manifest is written. The in-sandbox helper repeats the check at
   // the actual config write so a concurrent posture change still fails closed.
   assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+  // Bind the static credential-name deny-list to the OpenShell binary before
+  // persisting ownership or mutating a provider, policy, or adapter.
+  assertMcpCredentialBoundaryRuntimeVersion();
   // This is the durable ownership manifest for every resource created below.
   // It intentionally precedes gateway selection and all OpenShell mutations,
   // so process death can never leave an unowned provider/policy/adapter entry.
@@ -344,6 +349,7 @@ async function addMcpBridgeUnlocked(
       // Replacing it is idempotent and, for Hermes, re-verifies runtime reload.
       replaceExisting: resumingPreflightedAdd && adapterInspection.state === "registered",
     });
+    if (adapter === "hermes-config") assertHermesMcpRuntimeIntent(sandboxName);
     const { addState: _completedAddState, ...committedEntry } = entry;
     writeBridgeEntry(sandboxName, committedEntry);
   } catch (error) {

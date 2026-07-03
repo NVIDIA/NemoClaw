@@ -27,6 +27,8 @@ import tempfile
 import time
 from dataclasses import dataclass
 
+import yaml
+
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -45,6 +47,10 @@ MAX_MUTATION_LOCK_BYTES = 16 * 1024
 MAX_PROC_BYTES = 1024 * 1024
 PROC_ROOT = "/proc"
 MAX_PROC_ENTRIES = 32768
+MCP_HASH_STATE_PREFIX = "# nemoclaw-hermes-mcp-state-v1"
+MCP_HASH_STATE_RE = re.compile(
+    rf"{re.escape(MCP_HASH_STATE_PREFIX)} intended=([0-9a-f]{{64}}) applied=([0-9a-f]{{64}})"
+)
 NEMOCLAW_START_ARGV = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
 OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
@@ -128,6 +134,12 @@ class FileSnapshot:
             mtime_ns=st.st_mtime_ns,
             ctime_ns=st.st_ctime_ns,
         )
+
+
+@dataclass(frozen=True)
+class McpHashState:
+    intended: str
+    applied: str
 
 
 class OpenFile:
@@ -679,6 +691,7 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     except KeyError:
         sandbox_uid = -1
     startup_actions = {
+        "commit-mcp-applied",
         "ensure-api-key",
         "refresh-hashes",
         "provider-placeholders",
@@ -1092,14 +1105,72 @@ def _write_hash(path: str, text: str) -> None:
     _atomic_replace_preserving_flags(path, text.encode("utf-8"), snapshot)
 
 
-def _hash_text(
-    config_path: str, env_path: str
-) -> tuple[str, FileSnapshot, FileSnapshot]:
-    config_entry, config_snapshot = _sha256_entry(
-        config_path, MAX_CONFIG_INPUT_BYTES
-    )
+def _canonical_mcp_servers_digest(config_text: str) -> str:
+    """Hash the effective MCP map without persisting or logging its contents."""
+    try:
+        parsed = yaml.safe_load(config_text)
+    except yaml.YAMLError as exc:
+        raise UnsafePathError("refusing invalid Hermes MCP configuration") from exc
+    if parsed is None:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        raise UnsafePathError("refusing non-object Hermes configuration")
+    servers = parsed.get("mcp_servers", {})
+    if servers is None:
+        servers = {}
+    if not isinstance(servers, dict):
+        raise UnsafePathError("refusing non-object Hermes mcp_servers configuration")
+    try:
+        canonical = json.dumps(
+            servers,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise UnsafePathError(
+            "refusing non-canonical Hermes mcp_servers configuration"
+        ) from exc
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _current_mcp_servers_digest(config_path: str) -> tuple[str, FileSnapshot]:
+    config_text, snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    return _canonical_mcp_servers_digest(config_text), snapshot
+
+
+def _hash_text_and_mcp_digest(
+    config_path: str,
+    env_path: str,
+    mcp_state: McpHashState | None = None,
+) -> tuple[str, FileSnapshot, FileSnapshot, str]:
+    config_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
+    config_digest = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
+    config_entry = f"{config_digest}  {config_path}\n"
     env_entry, env_snapshot = _sha256_entry(env_path, MAX_ENV_BYTES)
-    return config_entry + env_entry, config_snapshot, env_snapshot
+    current_mcp = _canonical_mcp_servers_digest(config_text)
+    state = mcp_state or McpHashState(current_mcp, current_mcp)
+    state_entry = (
+        f"{MCP_HASH_STATE_PREFIX} intended={state.intended} applied={state.applied}\n"
+    )
+    return (
+        config_entry + env_entry + state_entry,
+        config_snapshot,
+        env_snapshot,
+        current_mcp,
+    )
+
+
+def _hash_text(
+    config_path: str,
+    env_path: str,
+    mcp_state: McpHashState | None = None,
+) -> tuple[str, FileSnapshot, FileSnapshot]:
+    text, config_snapshot, env_snapshot, _current_mcp = _hash_text_and_mcp_digest(
+        config_path, env_path, mcp_state
+    )
+    return text, config_snapshot, env_snapshot
 
 
 def _sealed_file_limit(name: str) -> int:
@@ -1127,11 +1198,79 @@ def _decode_bounded_base64(value: str, max_bytes: int, label: str) -> bytes:
     return decoded
 
 
-def refresh_hashes(hermes_dir: str, hash_file: str, mode: str) -> None:
+def _hash_state_from_file(path: str, config_path: str, env_path: str) -> McpHashState:
+    text = _read_hash_file(path)
+    _config_digest, _env_digest, state = _parse_config_hash(text, config_path, env_path)
+    return state
+
+
+def refresh_hashes(
+    hermes_dir: str,
+    hash_file: str,
+    mode: str,
+    mcp_transition: str = "preserve",
+) -> None:
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash = os.path.join(hermes_dir, ".config-hash")
-    hash_text, config_snapshot, env_snapshot = _hash_text(config_path, env_path)
+    if mcp_transition not in {"preserve", "intend", "apply"}:
+        raise UnsafePathError("refusing unsupported Hermes MCP hash transition")
+
+    state_path = hash_file if mode in ("strict", "both") else compat_hash
+    # Runtime refresh is allowed to advance an existing trust anchor, never to
+    # create one from the mutable config it is supposed to authenticate. Image
+    # construction emits the initial intended/applied marker; missing or
+    # malformed metadata must therefore fail closed.
+    source_hash_text = _read_hash_file(state_path)
+    _config_digest, _env_digest, state = _parse_config_hash(
+        source_hash_text, config_path, env_path
+    )
+    current_mcp, _ = _current_mcp_servers_digest(config_path)
+    if mcp_transition == "preserve":
+        if not secrets.compare_digest(current_mcp, state.intended):
+            raise UnsafePathError(
+                "Hermes MCP config differs from persisted intended state"
+            )
+    elif mcp_transition == "intend":
+        if state.intended != state.applied and not secrets.compare_digest(
+            current_mcp, state.intended
+        ):
+            raise UnsafePathError(
+                "Hermes MCP configuration has an incomplete prior transaction"
+            )
+        state = McpHashState(current_mcp, state.applied)
+    else:
+        if not secrets.compare_digest(current_mcp, state.intended):
+            raise UnsafePathError(
+                "Hermes MCP config changed before applied-state commit"
+            )
+        # Applying intent is a metadata-only commit. Require the complete
+        # config/env snapshot to still match the pending trust anchor rather
+        # than re-hashing and blessing unrelated concurrent changes.
+        pending_hash_text, config_snapshot, env_snapshot = _hash_text(
+            config_path, env_path, state
+        )
+        if not secrets.compare_digest(pending_hash_text, source_hash_text):
+            raise UnsafePathError(
+                "Hermes config or env changed before applied-state commit"
+            )
+        if mode == "both" and not secrets.compare_digest(
+            _read_hash_file(compat_hash), source_hash_text
+        ):
+            raise UnsafePathError(
+                "Hermes strict and compatibility MCP state differ before applied-state commit"
+            )
+        state = McpHashState(state.intended, state.intended)
+        lines = pending_hash_text.splitlines(keepends=True)
+        lines[2] = (
+            f"{MCP_HASH_STATE_PREFIX} intended={state.intended} applied={state.applied}\n"
+        )
+        hash_text = "".join(lines)
+
+    if mcp_transition != "apply":
+        hash_text, config_snapshot, env_snapshot = _hash_text(
+            config_path, env_path, state
+        )
 
     def assert_inputs_stable() -> None:
         config = _open_regular(config_path)
@@ -1167,6 +1306,21 @@ def refresh_hashes(hermes_dir: str, hash_file: str, mode: str) -> None:
     # path temporarily makes both inputs root-owned/read-only, so this final
     # check also proves the launched gateway will consume the validated bytes.
     assert_inputs_stable()
+
+
+def inspect_mcp_integrity(hermes_dir: str, hash_file: str) -> str:
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    text = _read_hash_file(hash_file)
+    _config_digest, _env_digest, state = _parse_config_hash(text, config_path, env_path)
+    actual, _config_snapshot, _env_snapshot, current_mcp = _hash_text_and_mcp_digest(
+        config_path, env_path, state
+    )
+    if not secrets.compare_digest(actual, text):
+        raise UnsafePathError("Hermes config hash does not match persisted inputs")
+    if not secrets.compare_digest(current_mcp, state.intended):
+        raise UnsafePathError("Hermes MCP config differs from persisted intended state")
+    return "pending" if state.intended != state.applied else "current"
 
 
 def _inode_metadata(st: os.stat_result) -> dict[str, int]:
@@ -1237,9 +1391,11 @@ def _read_hash_file(path: str) -> str:
 def _verify_strict_hash(hermes_dir: str, hash_file: str) -> None:
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
-    actual, _config_snapshot, _env_snapshot = _hash_text(config_path, env_path)
     strict = _read_hash_file(hash_file)
-    _parse_two_file_hash(strict, config_path, env_path)
+    _config_digest, _env_digest, state = _parse_config_hash(
+        strict, config_path, env_path
+    )
+    actual, _config_snapshot, _env_snapshot = _hash_text(config_path, env_path, state)
     if actual != strict:
         raise StrictHashMismatchError(
             "strict hash verification failed for Hermes restart seal"
@@ -1251,13 +1407,13 @@ def _verify_compat_hash(hash_file: str, compat_hash_file: str) -> None:
         raise UnsafePathError("compat hash verification failed for Hermes restart seal")
 
 
-def _parse_two_file_hash(
+def _parse_config_hash(
     text: str, config_path: str, env_path: str
-) -> tuple[str, str]:
+) -> tuple[str, str, McpHashState]:
     parts = text.split("\n")
-    if len(parts) != 3 or parts[-1] != "":
+    if len(parts) != 4 or parts[-1] != "":
         raise UnsafePathError("refusing malformed Hermes config hash")
-    lines = parts[:-1]
+    lines = parts[:2]
     expected_paths = (config_path, env_path)
     if len(lines) != len(expected_paths):
         raise UnsafePathError("refusing malformed Hermes config hash")
@@ -1267,7 +1423,20 @@ def _parse_two_file_hash(
         if match is None or match.group(2) != expected_path:
             raise UnsafePathError("refusing malformed Hermes config hash")
         digests.append(match.group(1))
-    return digests[0], digests[1]
+    state_match = MCP_HASH_STATE_RE.fullmatch(parts[2])
+    if state_match is None:
+        raise UnsafePathError("refusing malformed Hermes MCP hash state")
+    return (
+        digests[0],
+        digests[1],
+        McpHashState(state_match.group(1), state_match.group(2)),
+    )
+
+
+def _parse_two_file_hash(text: str, config_path: str, env_path: str) -> tuple[str, str]:
+    """Compatibility wrapper for callers that need only input digests."""
+    config_digest, env_digest, _state = _parse_config_hash(text, config_path, env_path)
+    return config_digest, env_digest
 
 
 def _without_single_generated_api_server_key(text: str) -> str:
@@ -1366,10 +1535,12 @@ def _reconcile_nonroot_startup_api_key_hash(
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash_path = os.path.join(hermes_dir, ".config-hash")
     strict_text = _read_hash_file(hash_file)
-    strict_config_sha256, strict_env_sha256 = _parse_two_file_hash(
+    strict_config_sha256, strict_env_sha256, strict_mcp_state = _parse_config_hash(
         strict_text, config_path, env_path
     )
-    actual_text, config_snapshot, env_snapshot = _hash_text(config_path, env_path)
+    actual_text, config_snapshot, env_snapshot = _hash_text(
+        config_path, env_path, strict_mcp_state
+    )
     actual_config_sha256, _actual_env_sha256 = _parse_two_file_hash(
         actual_text, config_path, env_path
     )
@@ -3922,6 +4093,18 @@ def write_config_transaction(
             raise UnsafePathError(
                 "Hermes config changed after the host read it; retry the command"
             )
+        try:
+            replacement_text = config_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise UnsafePathError("refusing non-UTF-8 Hermes config input") from exc
+        current_state = _hash_state_from_file(
+            hash_file, config_path, os.path.join(hermes_dir, ".env")
+        )
+        replacement_mcp = _canonical_mcp_servers_digest(replacement_text)
+        if not secrets.compare_digest(replacement_mcp, current_state.intended):
+            raise UnsafePathError(
+                "non-MCP config transaction cannot change Hermes mcp_servers"
+            )
 
         state_data["phase"] = "config-write-prepared"
         state_data["config_write"] = {
@@ -4328,6 +4511,8 @@ def main() -> int:
         choices=(
             "ensure-api-key",
             "refresh-hashes",
+            "inspect-mcp-integrity",
+            "commit-mcp-applied",
             "provider-placeholders",
             "publish-startup-ready",
             "seal-restart",
@@ -4373,6 +4558,20 @@ def main() -> int:
             if not args.hash_file:
                 raise UnsafePathError("refresh-hashes requires --hash-file")
             refresh_hashes(args.hermes_dir, args.hash_file, args.mode)
+        elif args.action == "inspect-mcp-integrity":
+            if not args.hash_file:
+                raise UnsafePathError("inspect-mcp-integrity requires --hash-file")
+            print(f"mcp_state={inspect_mcp_integrity(args.hermes_dir, args.hash_file)}")
+        elif args.action == "commit-mcp-applied":
+            if not args.hash_file:
+                raise UnsafePathError("commit-mcp-applied requires --hash-file")
+            refresh_hashes(
+                args.hermes_dir,
+                args.hash_file,
+                args.mode,
+                mcp_transition="apply",
+            )
+            print("mcp_applied=1")
         elif args.action == "provider-placeholders":
             if not args.hash_file:
                 raise UnsafePathError("provider-placeholders requires --hash-file")

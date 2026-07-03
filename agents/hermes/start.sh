@@ -242,6 +242,8 @@ HERMES_RESTART_SEALED=0
 HERMES_RESTART_ORIGINAL_LOCKED=0
 HERMES_RESTART_UNSEALING=0
 HERMES_RESTART_SIGNAL_PENDING=0
+HERMES_MCP_RECONCILE_PENDING=0
+HERMES_MCP_INTEGRITY_FAILED=0
 
 # A same-container PID 1 restart can retain /run. Revoke the prior readiness
 # lease before any startup migration or mutable config read; host mutations are
@@ -340,10 +342,18 @@ verify_hermes_config_integrity() {
     # that owns the mutable Hermes home.
     export -f verify_config_integrity
     "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "verify_config_integrity \"\$1\" \"\$2\"" bash \
-      "${HERMES_DIR}" "${HERMES_HASH_FILE}"
-    return $?
+      "${HERMES_DIR}" "${HERMES_HASH_FILE}" || return 1
+    if ! inspect_hermes_mcp_integrity "${HERMES_HASH_FILE}"; then
+      HERMES_RESTART_FAILURE_CODE=mcp-integrity
+      return 1
+    fi
+    return 0
   fi
-  verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+  verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}" || return 1
+  if ! inspect_hermes_mcp_integrity "${HERMES_HASH_FILE}"; then
+    HERMES_RESTART_FAILURE_CODE=mcp-integrity
+    return 1
+  fi
 }
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
@@ -1664,6 +1674,48 @@ refresh_hermes_runtime_config_hashes() {
   "${cmd[@]}"
 }
 
+inspect_hermes_mcp_integrity() {
+  local hash_file="${1:-}"
+  local output
+  [ -n "$hash_file" ] || {
+    if [ "$(id -u)" -eq 0 ]; then
+      hash_file="$HERMES_HASH_FILE"
+    else
+      hash_file="${HERMES_DIR}/.config-hash"
+    fi
+  }
+  if ! output="$("$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
+    --hermes-dir "$HERMES_DIR" \
+    --hash-file "$hash_file" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    HERMES_MCP_INTEGRITY_FAILED=1
+    echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: MCP intent cannot be matched to the persisted gateway state; rebuild the sandbox from its NemoClaw registry state" >&2
+    return 1
+  fi
+  case "$output" in
+    mcp_state=current) HERMES_MCP_RECONCILE_PENDING=0 ;;
+    mcp_state=pending) HERMES_MCP_RECONCILE_PENDING=1 ;;
+    *)
+      HERMES_MCP_INTEGRITY_FAILED=1
+      echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: invalid MCP integrity response; rebuild the sandbox from its NemoClaw registry state" >&2
+      return 1
+      ;;
+  esac
+  HERMES_MCP_INTEGRITY_FAILED=0
+}
+
+commit_hermes_mcp_applied_if_pending() {
+  local mode=compat
+  [ "$HERMES_MCP_RECONCILE_PENDING" -eq 1 ] || return 0
+  [ "$(id -u)" -eq 0 ] && mode=both
+  "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" commit-mcp-applied \
+    --hermes-dir "$HERMES_DIR" \
+    --hash-file "$HERMES_HASH_FILE" \
+    --mode "$mode" \
+    --startup-owner >/dev/null || return 1
+  HERMES_MCP_RECONCILE_PENDING=0
+}
+
 ensure_hermes_runtime_api_server_key() {
   local mode="${1:-strict}"
   local env_file="${HERMES_DIR}/.env"
@@ -1750,6 +1802,13 @@ hermes_gateway_healthy() {
 }
 
 HERMES_RESTART_FAILURE_CODE=internal
+
+hermes_restart_failure_revokes_gateway() {
+  case "${1:-}" in
+    secret-boundary-refusal | mcp-integrity) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 validate_running_hermes_boundary() {
   HERMES_RESTART_FAILURE_CODE=validator-missing
@@ -2285,6 +2344,10 @@ handle_hermes_gateway_control_request() {
       gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
       return 1
     fi
+    if [ "$HERMES_MCP_RECONCILE_PENDING" -eq 1 ]; then
+      gateway_control_fail mcp-reconcile-required "$old_pid"
+      return 1
+    fi
     if ! gateway_control_pid_is_live "$old_pid" \
       || ! hermes_gateway_healthy "$old_pid" \
       || hermes_auxiliaries_need_recovery; then
@@ -2302,60 +2365,62 @@ handle_hermes_gateway_control_request() {
     # Verify the root-owned trust anchor before any auxiliary consumes it; a
     # healthy gateway is not authority to bless direct sandbox config drift.
     if ! prepare_hermes_gateway_restart; then
-      if [ "$HERMES_RESTART_FAILURE_CODE" = "secret-boundary-refusal" ]; then
+      if hermes_restart_failure_revokes_gateway "$HERMES_RESTART_FAILURE_CODE"; then
         stop_hermes_gateway_fail_closed
       fi
       gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
       return 1
     fi
-    if hermes_auxiliaries_need_recovery; then
-      if ! seal_hermes_restart_inputs; then
-        if [ "$HERMES_RESTART_SEALED" -eq 1 ]; then
-          stop_hermes_gateway_fail_closed
-        fi
-        gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
-        return 1
-      fi
-      # Re-run boundary + hash validation against the fresh sealed inodes. A
-      # pre-open attacker fd cannot change these pathnames after this point.
-      if ! prepare_hermes_gateway_restart; then
-        failure_code="$HERMES_RESTART_FAILURE_CODE"
-        if [ "$failure_code" = "secret-boundary-refusal" ]; then
-          # A post-seal boundary refusal means the currently running service no
-          # longer has a boundary we can prove safe. Stop it even if metadata
-          # restoration subsequently fails.
-          stop_hermes_gateway_fail_closed
-        fi
-        if ! unseal_hermes_restart_inputs; then
+    if [ "$HERMES_MCP_RECONCILE_PENDING" -eq 0 ]; then
+      if hermes_auxiliaries_need_recovery; then
+        if ! seal_hermes_restart_inputs; then
+          if [ "$HERMES_RESTART_SEALED" -eq 1 ]; then
+            stop_hermes_gateway_fail_closed
+          fi
           gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
           return 1
         fi
-        gateway_control_fail "$failure_code" "$old_pid"
-        return 1
-      fi
-      if ! ensure_hermes_supervised_auxiliaries; then
+        # Re-run boundary + hash validation against the fresh sealed inodes. A
+        # pre-open attacker fd cannot change these pathnames after this point.
+        if ! prepare_hermes_gateway_restart; then
+          failure_code="$HERMES_RESTART_FAILURE_CODE"
+          if hermes_restart_failure_revokes_gateway "$failure_code"; then
+            # A post-seal boundary refusal means the currently running service no
+            # longer has a boundary we can prove safe. Stop it even if metadata
+            # restoration subsequently fails.
+            stop_hermes_gateway_fail_closed
+          fi
+          if ! unseal_hermes_restart_inputs; then
+            gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
+            return 1
+          fi
+          gateway_control_fail "$failure_code" "$old_pid"
+          return 1
+        fi
+        if ! ensure_hermes_supervised_auxiliaries; then
+          if ! unseal_hermes_restart_inputs; then
+            stop_hermes_gateway_fail_closed
+            gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
+          else
+            gateway_control_fail launch-failed "$old_pid"
+          fi
+          refresh_hermes_supervised_child_pids
+          return 1
+        fi
         if ! unseal_hermes_restart_inputs; then
           stop_hermes_gateway_fail_closed
           gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
-        else
-          gateway_control_fail launch-failed "$old_pid"
+          return 1
         fi
-        refresh_hermes_supervised_child_pids
-        return 1
       fi
-      if ! unseal_hermes_restart_inputs; then
-        stop_hermes_gateway_fail_closed
-        gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
-        return 1
-      fi
+      refresh_hermes_supervised_child_pids
+      gateway_control_complete already-running "$old_pid" "$old_pid"
+      return 0
     fi
-    refresh_hermes_supervised_child_pids
-    gateway_control_complete already-running "$old_pid" "$old_pid"
-    return 0
   fi
 
   if ! prepare_hermes_gateway_restart; then
-    if [ "$HERMES_RESTART_FAILURE_CODE" = "secret-boundary-refusal" ]; then
+    if hermes_restart_failure_revokes_gateway "$HERMES_RESTART_FAILURE_CODE"; then
       stop_hermes_gateway_fail_closed
     fi
     gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
@@ -2373,7 +2438,7 @@ handle_hermes_gateway_control_request() {
   fi
   if ! prepare_hermes_gateway_restart; then
     failure_code="$HERMES_RESTART_FAILURE_CODE"
-    if [ "$failure_code" = "secret-boundary-refusal" ]; then
+    if hermes_restart_failure_revokes_gateway "$failure_code"; then
       # Do not leave the old gateway alive after a boundary refusal merely
       # because restoring the restart seal also fails.
       stop_hermes_gateway_fail_closed
@@ -2429,6 +2494,11 @@ handle_hermes_gateway_control_request() {
     gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
     return 1
   fi
+  if ! commit_hermes_mcp_applied_if_pending; then
+    stop_hermes_gateway_fail_closed
+    gateway_control_fail mcp-integrity "$old_pid"
+    return 1
+  fi
   refresh_hermes_supervised_child_pids
   gateway_control_complete ok "$old_pid" "$GATEWAY_PID"
 }
@@ -2438,12 +2508,14 @@ prepare_hermes_nonroot_runtime() {
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     return 1
   fi
+  inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
   apply_shields_up_runtime_env || return 1
   validate_hermes_env_secret_boundary || return 1
   validate_hermes_runtime_env_secret_boundary || return 1
   refresh_hermes_provider_placeholders compat || return 1
   refresh_hermes_runtime_config_hashes compat || return 1
+  inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   configure_messaging_channels || return 1
   retry_tirith_marker_if_needed || return 1
 }
@@ -2598,6 +2670,11 @@ record_hermes_managed_gateway_exit() {
 recover_hermes_gateway_current_user() {
   while :; do
     until prepare_hermes_nonroot_runtime; do
+      if [ "$HERMES_MCP_INTEGRITY_FAILED" -eq 1 ]; then
+        echo "[SECURITY] Hermes automatic respawn is quarantined until MCP integrity is restored by rebuilding the sandbox" >&2
+        quarantine_hermes_managed_gateway_relaunch
+        return 1
+      fi
       echo "[gateway] Hermes runtime preparation refused automatic respawn; retrying in 5s" >&2
       sleep 5 || true
     done
@@ -2608,6 +2685,12 @@ recover_hermes_gateway_current_user() {
     fi
     if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
       && ensure_hermes_supervised_auxiliaries; then
+      if ! commit_hermes_mcp_applied_if_pending; then
+        echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+        hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
+        mark_hermes_gateway_stopped
+        return 1
+      fi
       refresh_hermes_supervised_child_pids
       return 0
     fi
@@ -2684,6 +2767,12 @@ bootstrap_hermes_gateway_current_user() {
 
   if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
     && ensure_hermes_supervised_auxiliaries; then
+    if ! commit_hermes_mcp_applied_if_pending; then
+      echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+      hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
+      mark_hermes_gateway_stopped
+      return 1
+    fi
     refresh_hermes_supervised_child_pids
     return 0
   fi
@@ -2813,6 +2902,11 @@ launch_hermes_gateway
 start_gateway_log_stream
 wait_for_hermes_gateway_internal "$GATEWAY_PID"
 ensure_hermes_supervised_auxiliaries
+if ! commit_hermes_mcp_applied_if_pending; then
+  echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+  stop_hermes_gateway_fail_closed
+  exit 1
+fi
 restore_hermes_config_permissions_after_dashboard_start
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
