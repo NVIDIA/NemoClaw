@@ -68,6 +68,7 @@ export type RebuildFlowOverrides = {
   dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
   gatewayRecoveryResult?: Record<string, unknown>;
   dcodeImageVerificationResults?: boolean[];
+  dcodeBaseImageIds?: string[];
   dcodeImageResult?:
     | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
     | { ok: false; detail: string };
@@ -248,7 +249,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
-  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockReturnValue("sha256:dcode-base");
+  const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
+    () => dcodeBaseImageIds.shift() ?? "sha256:dcode-base",
+  );
   vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
