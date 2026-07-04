@@ -49,7 +49,7 @@ Do not broad-refactor under the label of "adding tests."
 npm test                          # root tests
 cd nemoclaw && npm test           # plugin tests
 npm run typecheck:cli
-make check
+npm run check
 ```
 
 Narrowest command set that gives confidence.
