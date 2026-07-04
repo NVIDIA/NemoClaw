@@ -15,7 +15,7 @@ import {
 } from "../src/lib/onboard/inference-input-capability.js";
 import { createInferenceRouteHelpers } from "../src/lib/onboard/inference-route.js";
 import { createLocalInferenceRouteApplier } from "../src/lib/onboard/local-inference-route.js";
-import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard.js";
+import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { stageOptimizedSandboxBuildContext } from "../src/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 

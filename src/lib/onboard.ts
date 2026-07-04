@@ -257,6 +257,8 @@ const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference }
 
 const onboardProviders = require("./onboard/providers");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
+const setupInferenceFactory: typeof import("./onboard/setup-inference") =
+  require("./onboard/setup-inference");
 const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
@@ -4216,158 +4218,11 @@ function getSetupInferenceDeps() {
   };
 }
 
-export type SetupInferenceDeps = ReturnType<typeof getSetupInferenceDeps>;
-
-type ProviderInferenceSetupOptions =
-  import("./onboard/machine/handlers/provider-inference").ProviderInferenceSetupOptions;
-
-export type SetupInference = (
-  sandboxName: string | null,
-  model: string,
-  provider: string,
-  endpointUrl?: string | null,
-  credentialEnv?: string | null,
-  hermesAuthMethod?: HermesAuthMethod | string | null,
-  hermesToolGateways?: string[],
-  options?: ProviderInferenceSetupOptions,
-) => Promise<{ ok: true; retry?: undefined } | { retry: "selection" }>;
+export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
+export type SetupInference = import("./onboard/setup-inference").SetupInference;
 
 function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
-  const deps: SetupInferenceDeps = { ...getSetupInferenceDeps(), ...overrides };
-
-  return async function setupInferenceWithDeps(
-    sandboxName: string | null,
-    model: string,
-    provider: string,
-    endpointUrl: string | null = null,
-    credentialEnv: string | null = null,
-    hermesAuthMethod: HermesAuthMethod | string | null = null,
-    hermesToolGateways: string[] = [],
-    options: ProviderInferenceSetupOptions = {},
-  ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
-    deps.step(4, 8, "Setting up inference provider");
-    deps.runOpenshell(["gateway", "select", deps.getGatewayName()], { ignoreError: true });
-
-    const commonDeps = {
-      runOpenshell: deps.runOpenshell,
-      upsertProvider: deps.upsertProvider,
-      verifyInferenceRoute: deps.verifyInferenceRoute,
-      verifyOnboardInferenceSmoke: deps.verifyOnboardInferenceSmoke,
-      isNonInteractive: deps.isNonInteractive,
-      registry: { updateSandbox: deps.updateSandbox },
-    };
-
-    if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
-      return inferenceProviders.setupHermesProviderInference(
-        {
-          sandboxName,
-          model,
-          provider,
-          endpointUrl,
-          credentialEnv,
-          hermesAuthMethod,
-          hermesToolGateways,
-        },
-        {
-          ...commonDeps,
-          hermesProviderAuth: deps.hermesProviderAuth,
-          getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
-          providerExistsInGateway: deps.providerExistsInGateway,
-          normalizeHermesAuthMethod: deps.normalizeHermesAuthMethod,
-          resolveHermesNousApiKey: deps.resolveHermesNousApiKey,
-          checkHermesProviderStoreReachable: deps.checkHermesProviderStoreReachable,
-          hermesAuthMethodLabel: deps.hermesAuthMethodLabel,
-          hermesConstants: deps.hermesConstants,
-          requireValue: deps.requireValue,
-          redact: deps.redact,
-          compactText: deps.compactText,
-        },
-      );
-    }
-
-    if (inferenceProviders.isRemoteProviderName(provider)) {
-      const outcome = await inferenceProviders.setupRemoteProviderInference(
-        {
-          sandboxName,
-          model,
-          provider,
-          endpointUrl,
-          credentialEnv,
-          reuseGatewayCredentialWithoutLocalKey:
-            options.reuseGatewayCredentialWithoutLocalKey === true,
-        },
-        {
-          ...commonDeps,
-          REMOTE_PROVIDER_CONFIG: deps.REMOTE_PROVIDER_CONFIG,
-          hydrateCredentialEnv: deps.hydrateCredentialEnv,
-          promptValidationRecovery: deps.promptValidationRecovery,
-          classifyApplyFailure: deps.classifyApplyFailure,
-          LOCAL_INFERENCE_TIMEOUT_SECS: deps.localInferenceTimeoutSecs,
-          bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
-          redact: deps.redact,
-          compactText: deps.compactText,
-        },
-      );
-      if (outcome.done) return outcome.result;
-    } else if (provider === "vllm-local") {
-      const outcome = await inferenceProviders.setupVllmLocalInference(
-        { model, provider },
-        {
-          ...commonDeps,
-          validateLocalProvider: deps.validateLocalProvider,
-          getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
-          getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: deps.applyLocalInferenceRoute,
-          run: deps.run,
-          VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
-        },
-      );
-      if (outcome.done) return outcome.result;
-    } else if (provider === "ollama-local") {
-      const outcome = await inferenceProviders.setupOllamaLocalInference(
-        { model, provider, allowToolsIncompatible: options.allowToolsIncompatible === true },
-        {
-          ...commonDeps,
-          validateLocalProvider: deps.validateLocalProvider,
-          getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: deps.applyLocalInferenceRoute,
-          getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
-          run: deps.run,
-          shouldFrontOllamaWithProxy: deps.shouldFrontOllamaWithProxy,
-          ensureOllamaAuthProxy: deps.ensureOllamaAuthProxy,
-          isProxyHealthy: deps.isProxyHealthy,
-          getOllamaProxyToken: deps.getOllamaProxyToken,
-          persistAndProbeOllamaProxy: deps.persistAndProbeOllamaProxy,
-          localInference: deps.localInference,
-          OLLAMA_PROXY_CREDENTIAL_ENV: deps.ollamaProxyCredentialEnv,
-        },
-      );
-      if (outcome.done) return outcome.result;
-    } else if (deps.isRoutedInferenceProvider(provider)) {
-      await inferenceProviders.setupRoutedInference(
-        { model, provider, endpointUrl, credentialEnv },
-        {
-          ...commonDeps,
-          reconcileModelRouter: deps.reconcileModelRouter,
-          routedInference: deps.routedInference,
-          hydrateCredentialEnv: deps.hydrateCredentialEnv,
-        },
-      );
-    } else {
-      deps.error(`  Unsupported provider configuration: ${provider}`);
-      deps.exitProcess(1);
-    }
-
-    deps.verifyInferenceRoute(provider, model);
-    if (options.skipHostInferenceSmoke === true)
-      deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
-    else deps.verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
-    if (sandboxName) {
-      deps.updateSandbox(sandboxName, { model, provider });
-    }
-    deps.log(`  ✓ Inference route set: ${provider} / ${model}`);
-    return { ok: true };
-  };
+  return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
 }
 
 const setupInference = createSetupInference();
