@@ -852,6 +852,11 @@ if [ -z "$request_id" ]; then
 fi
 
 approve_request "$request_id" "$paired_device_id"
+proof_output="$(approval_state prove "" "$paired_device_id" 0 3</dev/null 4</dev/null 5</dev/null)"
+case "$proof_output" in
+  "CONVERGED "*) final_device="\${proof_output#CONVERGED }" ;;
+  *) echo "INVALID_FINAL_APPROVAL_PROOF" >&2; exit 9 ;;
+esac
 
 session_id="issue-4462-final-$(date +%s)-$$"
 echo "ISSUE_4462_STAGE=final-gateway-agent"
@@ -867,11 +872,6 @@ if ! contains_integer_42 </tmp/issue4462-final-agent.log; then
   cat /tmp/issue4462-final-agent.log >&2
   exit 8
 fi
-proof_output="$(approval_state prove "" "$paired_device_id" 0 3</dev/null 4</dev/null 5</dev/null)"
-case "$proof_output" in
-  "CONVERGED "*) final_device="\${proof_output#CONVERGED }" ;;
-  *) echo "INVALID_FINAL_APPROVAL_PROOF" >&2; exit 9 ;;
-esac
 echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-consumed}"
 `;
 }
