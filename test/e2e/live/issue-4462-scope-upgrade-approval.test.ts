@@ -615,7 +615,7 @@ def inert_final_pending(state, context, reviewed_target):
         and scope_keys == {'scopes'}
         and request.get('scopes') == []
         and not unexpected_auth_keys
-        and request.get('silent') is not True
+        and request.get('silent') is True
     )
 def verify_inert_final_pending_classifier():
     context={'key': 'reviewed-public-key', 'scopes': final_scopes, 'token': 'rotated-token'}
@@ -640,6 +640,7 @@ def verify_inert_final_pending_classifier():
         'roles': ['operator'],
         'isRepair': True,
         'scopes': [],
+        'silent': True,
     }
     valid={'pending': {'inert-request': request}}
     if not inert_final_pending(valid, context, reviewed):
@@ -667,7 +668,7 @@ def verify_inert_final_pending_classifier():
         (changed_request({'requestedScopes': []}), context, reviewed),
         (changed_request({'unknownScopes': []}), context, reviewed),
         (changed_request({'authToken': 'unexpected'}), context, reviewed),
-        (changed_request({'silent': True}), context, reviewed),
+        (changed_request({'silent': False}), context, reviewed),
         (changed_request({'deviceId': 'other-device'}), context, reviewed),
         (changed_request({'publicKey': 'other-public-key'}), context, reviewed),
         (changed_request({'clientId': 'other-client'}), context, reviewed),
