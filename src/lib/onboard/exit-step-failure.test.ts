@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -172,4 +174,90 @@ describe("incomplete-onboard --resume backstop (#6003)", () => {
     noteOnboardResumeHintShown();
     expect(runExitHandler(1)).not.toContain("--resume");
   });
+
+  it("stays silent when cancel cleanup clears the session before a signal is re-raised", async () => {
+    const signalListeners = new Map<"SIGINT" | "SIGTERM", () => void>();
+    const kill = vi.fn();
+    const processLike = {
+      once: vi.fn(),
+      on: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        signalListeners.set(signal, listener);
+      },
+      removeListener: (signal: "SIGINT" | "SIGTERM", listener: () => void) => {
+        expect(signalListeners.get(signal)).toBe(listener);
+        signalListeners.delete(signal);
+      },
+      kill,
+      pid: 4242,
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+
+    registerIncompleteOnboardExitFailureHandler(
+      session,
+      () => false,
+      "Onboarding exited before the step completed.",
+      processLike,
+    );
+    const onSigterm = signalListeners.get("SIGTERM");
+    expect(onSigterm).toBeDefined();
+    onSigterm?.();
+    session.clearSession();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(kill).toHaveBeenCalledOnce();
+    expect(kill).toHaveBeenCalledWith(4242, "SIGTERM");
+    errorSpy.mockRestore();
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "prints the resume hint before re-raising SIGINT in a real subprocess",
+    async () => {
+      const childDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resume-signal-"));
+      const childScript = path.join(childDir, "signal-resume-hint.cjs");
+      const helperPath = path.resolve("src/lib/onboard/exit-step-failure.ts");
+      fs.writeFileSync(
+        childScript,
+        `
+const { registerIncompleteOnboardExitFailureHandler } = require(${JSON.stringify(helperPath)});
+
+const resumableSession = { lastStepStarted: "inference" };
+registerIncompleteOnboardExitFailureHandler(
+  {
+    loadSession: () => resumableSession,
+    markStepFailed: () => resumableSession,
+  },
+  () => false,
+  "Onboarding exited before the step completed.",
+);
+process.stdout.write("ready\\n");
+setInterval(() => {}, 1_000);
+`,
+      );
+
+      const child = spawn(process.execPath, ["--require", "tsx/cjs", childScript], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+
+      try {
+        const [ready] = await once(child.stdout, "data");
+        expect(String(ready)).toContain("ready");
+        const exited = once(child, "exit");
+        child.kill("SIGINT");
+        const [code, signal] = await exited;
+        expect(code).toBeNull();
+        expect(signal).toBe("SIGINT");
+        expect(stderr).toContain("onboard --resume");
+      } finally {
+        child.kill("SIGKILL");
+        fs.rmSync(childDir, { recursive: true, force: true });
+      }
+    },
+  );
 });
