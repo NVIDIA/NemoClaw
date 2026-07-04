@@ -433,6 +433,63 @@ describe("runSandboxDoctor flow", () => {
     );
   });
 
+  it("probes the inference.local route for cloud providers, not just local ones (#6192)", async () => {
+    const harness = createDoctorHarness();
+    // Cloud provider selected: registry + live `inference get` both report it.
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "nvidia-prod",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+    harness.captureOpenShellSpy.mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args : [];
+      if (argv[0] === "sandbox" && argv[1] === "list") {
+        return { status: 0, output: "alpha Ready" };
+      }
+      if (argv[0] === "inference" && argv[1] === "get") {
+        return { status: 0, output: "Provider: nvidia-prod\nModel: nemotron\n" };
+      }
+      return { status: 0, output: "" };
+    });
+    // The upstream provider endpoint is reachable...
+    harness.healthProbeSpy.mockReturnValue({
+      ok: true,
+      probed: true,
+      providerLabel: "NVIDIA Cloud",
+      endpoint: "https://integrate.api.nvidia.com/v1/models",
+      detail: "reachable",
+    });
+    // ...but the in-sandbox inference.local route the agent actually calls is
+    // broken (harness default: gateway probe resolves ok: false).
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    // Before #6192 this probe was gated to ollama/vllm-local; a cloud route
+    // never had inference.local checked, so a broken route read as healthy.
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha");
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        // Upstream reachability stays green on its own...
+        expect.objectContaining({
+          group: "Inference",
+          label: "Provider health",
+          status: "ok",
+        }),
+        // ...but the broken inference.local route now surfaces as a failure.
+        expect.objectContaining({
+          group: "Inference",
+          label: "Provider health (gateway)",
+          status: "fail",
+        }),
+      ]),
+    );
+    expect(report?.status).toBe("fail");
+  });
+
   it("reports agent definition failures instead of hiding the runtime channel check", async () => {
     const harness = createDoctorHarness();
     harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);

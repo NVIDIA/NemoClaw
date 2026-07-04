@@ -220,11 +220,11 @@ export async function collectSandboxStatusSnapshot(
     currentModel,
     opts.deps?.probeProviderHealthImpl,
   );
-  if (
-    inferenceHealth &&
-    lookup.state === "present" &&
-    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
-  ) {
+  // Probe the `inference.local` route the agent actually calls for every known
+  // provider, not just local ones. Cloud providers route through the same
+  // in-sandbox gateway / auth proxy, so upstream reachability alone must not
+  // report the route as healthy when `inference.local` is broken (#6192).
+  if (inferenceHealth && lookup.state === "present" && currentProvider !== "unknown") {
     const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
     if (gatewayChain) {
       const gatewaySubprobe: ProviderHealthStatus = {

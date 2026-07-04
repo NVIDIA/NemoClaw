@@ -326,10 +326,6 @@ function inferenceRouteCheck(sandboxName: string, route: InferenceRoute): Doctor
   };
 }
 
-function isLocalInferenceProvider(provider: string): boolean {
-  return provider === "ollama-local" || provider === "vllm-local";
-}
-
 function skippedInferenceGatewayProbe(): ProviderHealthStatus {
   return {
     ok: false,
@@ -341,13 +337,18 @@ function skippedInferenceGatewayProbe(): ProviderHealthStatus {
   };
 }
 
+// Probe the `inference.local` route the agent actually calls, regardless of
+// provider. Cloud providers (nvidia-prod, etc.) route through the same
+// in-sandbox openclaw gateway / auth proxy as local ones, so a reachable
+// upstream endpoint does not prove the agent's route works. #3265 added this
+// hop for ollama/vllm-local only; #6192 extends it to every provider so
+// status/doctor stop reporting "healthy" when `inference.local` is broken.
+// Unknown providers never reach here (collectInferenceChecks returns early).
 async function collectInferenceSubprobes(
   sandboxName: string,
-  provider: string,
   sandboxReachable: boolean,
   existing: ProviderHealthStatus[],
 ): Promise<ProviderHealthStatus[]> {
-  if (!isLocalInferenceProvider(provider)) return existing;
   if (!sandboxReachable) return [...existing, skippedInferenceGatewayProbe()];
   const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
   if (!gateway) return existing;
@@ -385,7 +386,6 @@ async function collectInferenceChecks(
 
   const subprobes = await collectInferenceSubprobes(
     sandboxName,
-    route.provider,
     sandboxReachable,
     health.subprobes ?? [],
   );
