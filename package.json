@@ -32,6 +32,7 @@
     "test:imports:check": "tsx scripts/checks/no-test-dist-imports.ts",
     "test:projects:check": "tsx scripts/checks/vitest-project-overlap.ts",
     "test:titles:check": "tsx scripts/checks/test-title-style.ts",
+    "bench": "tsx scripts/bench/run.ts",
     "check": "npx prek run --all-files",
     "checks": "tsx scripts/checks/run.ts",
     "lint": "npx @biomejs/biome lint . && npm run checks",

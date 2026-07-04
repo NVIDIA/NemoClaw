@@ -5,10 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import {
+  createSandboxReadyWaiter,
   formatCreatedSandboxReadinessFailureMessage,
   getSandboxReadyErrorDebouncePolls,
   SANDBOX_READY_ERROR_DEBOUNCE_ENV,
   waitForCreatedSandboxReadyWithTrace,
+  waitForSandboxReadyWithTrace,
 } from "./sandbox-readiness-tracing";
 
 const NAME = "my-sandbox";
@@ -19,6 +21,65 @@ function replay(outputs: readonly string[]) {
   const sleep = vi.fn();
   return { runCaptureOpenshell, sleep, polls: () => i };
 }
+
+describe("createSandboxReadyWaiter", () => {
+  it("uses the bounded Docker-driver polling defaults without a final delay", () => {
+    const runCaptureOpenshell = vi.fn(() => `${NAME}   Provisioning`);
+    const sleep = vi.fn();
+    const waitForSandboxReady = createSandboxReadyWaiter({
+      runCaptureOpenshell,
+      isSandboxReady,
+      isLinuxDockerDriverGatewayEnabled: () => true,
+      sleep,
+    });
+
+    expect(waitForSandboxReady(NAME, 2, 3)).toBe(false);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(3);
+  });
+
+  it("preserves the legacy Kubernetes pod fallback and final delay", () => {
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(`${NAME}   Provisioning`)
+      .mockReturnValueOnce("Pending");
+    const sleep = vi.fn();
+    const waitForSandboxReady = createSandboxReadyWaiter({
+      runCaptureOpenshell,
+      isSandboxReady,
+      isLinuxDockerDriverGatewayEnabled: () => false,
+      sleep,
+    });
+
+    expect(waitForSandboxReady(NAME, 1, 2)).toBe(false);
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    expect(runCaptureOpenshell.mock.calls[1]?.[0]).toContain("kubectl");
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(2);
+  });
+
+  it("keeps the traced waiter free of the legacy final delay", () => {
+    const runCaptureOpenshell = vi
+      .fn()
+      .mockReturnValueOnce(`${NAME}   Provisioning`)
+      .mockReturnValueOnce("Pending");
+    const sleep = vi.fn();
+
+    expect(
+      waitForSandboxReadyWithTrace({
+        sandboxName: NAME,
+        attempts: 1,
+        delaySeconds: 2,
+        runCaptureOpenshell,
+        isSandboxReady,
+        isLinuxDockerDriverGatewayEnabled: () => false,
+        sleep,
+      }),
+    ).toBe(false);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
   it("fast-fails on the first Error poll when the debounce is opted out (K=1)", () => {

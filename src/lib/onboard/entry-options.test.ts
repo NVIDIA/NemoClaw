@@ -3,7 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "./entry-options";
+import {
+  type OnboardEntryOptionsDeps,
+  resolveOnboardEntryOptions,
+  withNonInteractiveEnvironment,
+} from "./entry-options";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -206,5 +210,48 @@ describe("resolveOnboardEntryOptions", () => {
     ).toThrow(ExitError);
     expect(deps.error).toHaveBeenCalledWith("  Invalid sandbox name");
     expect(deps.error).toHaveBeenCalledWith("  Use lowercase letters, numbers, and hyphens.");
+  });
+});
+
+describe("withNonInteractiveEnvironment", () => {
+  it.each([
+    { label: "an unset value", env: {} as NodeJS.ProcessEnv, restored: undefined },
+    {
+      label: "an existing value",
+      env: { NEMOCLAW_NON_INTERACTIVE: "existing" } as NodeJS.ProcessEnv,
+      restored: "existing",
+    },
+  ])("sets the compatibility flag and restores $label", async ({ env, restored }) => {
+    const run = vi.fn(async () => {
+      expect(env.NEMOCLAW_NON_INTERACTIVE).toBe("1");
+    });
+
+    await withNonInteractiveEnvironment(run, env)({ nonInteractive: true });
+
+    expect(run).toHaveBeenCalledOnce();
+    expect(env.NEMOCLAW_NON_INTERACTIVE).toBe(restored);
+  });
+
+  it("restores the compatibility flag when onboarding rejects", async () => {
+    const env = {} as NodeJS.ProcessEnv;
+    const run = vi.fn(async () => {
+      throw new Error("onboarding failed");
+    });
+
+    await expect(withNonInteractiveEnvironment(run, env)({ nonInteractive: true })).rejects.toThrow(
+      "onboarding failed",
+    );
+    expect(env.NEMOCLAW_NON_INTERACTIVE).toBeUndefined();
+  });
+
+  it("passes options through without changing the environment when the flag is absent", async () => {
+    const env = { NEMOCLAW_NON_INTERACTIVE: "existing" } as NodeJS.ProcessEnv;
+    const options = { nonInteractive: false, marker: "unchanged" };
+    const run = vi.fn(async () => {});
+
+    await withNonInteractiveEnvironment(run, env)(options);
+
+    expect(run).toHaveBeenCalledWith(options);
+    expect(env.NEMOCLAW_NON_INTERACTIVE).toBe("existing");
   });
 });
