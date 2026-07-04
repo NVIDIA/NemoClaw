@@ -74,6 +74,26 @@ export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string)
   return pinnedRef;
 }
 
+function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
+  if (agent.name !== "hermes") return null;
+  const finalDockerfile = agent.dockerfilePath;
+  if (!finalDockerfile) return null;
+  let dockerfile: string;
+  try {
+    dockerfile = fs.readFileSync(finalDockerfile, "utf8");
+  } catch {
+    return null;
+  }
+  const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
+    (match) => match[1],
+  );
+  const pinnedRef = declarations.length === 1 ? declarations[0] : null;
+  return pinnedRef &&
+    /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
+    ? pinnedRef
+    : null;
+}
+
 function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: string): boolean {
   if (agent.name !== "hermes") return true;
   if (
@@ -84,25 +104,7 @@ function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: stri
   ) {
     return true;
   }
-  if (!imageRef.startsWith("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:")) return false;
-  const finalDockerfile = agent.dockerfilePath;
-  if (!finalDockerfile) return false;
-  let dockerfile: string;
-  try {
-    dockerfile = fs.readFileSync(finalDockerfile, "utf8");
-  } catch {
-    return false;
-  }
-  const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
-    (match) => match[1],
-  );
-  return (
-    declarations.length === 1 &&
-    /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(
-      declarations[0] ?? "",
-    ) &&
-    imageRef === declarations[0]
-  );
+  return imageRef === getHermesPinnedRemoteBaseRef(agent);
 }
 
 /**
@@ -143,6 +145,7 @@ function createAgentBaseImageResolutionOptions(
     resolutionHint: options.resolutionHint,
     forceRefresh: options.forceBaseImageRefresh,
     rootDir: ROOT,
+    pinnedRemoteRef: getHermesPinnedRemoteBaseRef(agent) ?? undefined,
     validateImage,
     validationDescription:
       agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined,

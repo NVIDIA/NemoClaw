@@ -148,7 +148,9 @@ An offline warm recreate or rebuild can therefore continue when the recorded ima
 When source inputs require a fresh local build, NemoClaw fails the operation if that build cannot be produced and validated instead of substituting an older local tag.
 When the OpenShell sandbox ABI is required, resolution also fails if no ABI-compatible image can be resolved instead of falling back to an unvalidated cached `:latest` image.
 
-For Hermes, warm-hint and candidate validation also reruns a container probe for the MCP SDK and native Streamable HTTP integration.
+For Hermes, warm-hint and candidate validation reruns a container probe for the MCP SDK and native Streamable HTTP integration.
+During normal resolution, NemoClaw tries the exact published digest declared by the final Hermes Dockerfile after release-version and source-commit candidates and after checking whether source changes require a local build, but before mutable `:latest`.
+The digest must also pass any active OpenShell ABI requirement, and a validated result can be recorded for warm-hint reuse.
 The final Hermes image accepts only the official published digest tracked by its Dockerfile or a repository-built local base, so an otherwise reachable or ABI-compatible image is not sufficient.
 
 Bypassing the recorded hint does not clear Docker's local image store or require a network pull.

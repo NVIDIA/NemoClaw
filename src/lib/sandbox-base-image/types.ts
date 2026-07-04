@@ -9,6 +9,7 @@ export const SANDBOX_BASE_RESOLUTION_KEY_LABEL = "com.nvidia.nemoclaw.base-resol
 export const SANDBOX_BASE_RESOLUTION_SCHEMA = 1;
 export const SANDBOX_BASE_IMAGE_RESOLUTION_SOURCES = [
   "override",
+  "pinned",
   "version-tag",
   "source-sha",
   "latest",
@@ -43,6 +44,7 @@ export type ResolveBaseImageOptions = {
   minGlibcVersion?: string;
   rootDir?: string;
   env?: NodeJS.ProcessEnv;
+  pinnedRemoteRef?: string;
   validateImage?: (imageRef: string) => boolean;
   validationDescription?: string;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;

@@ -194,7 +194,9 @@ When the OpenShell sandbox ABI is required, resolution also fails if no ABI-comp
 
 <AgentOnly variant="hermes">
 
-For Hermes, warm-hint and candidate validation also reruns a container probe for the MCP SDK and native Streamable HTTP integration.
+For Hermes, warm-hint and candidate validation reruns a container probe for the MCP SDK and native Streamable HTTP integration.
+During normal resolution, NemoClaw tries the exact published digest declared by the final Hermes Dockerfile after release-version and source-commit candidates and after checking whether source changes require a local build, but before mutable `:latest`.
+The digest must also pass any active OpenShell ABI requirement, and a validated result can be recorded for warm-hint reuse.
 The final Hermes image accepts only the official published digest tracked by its Dockerfile or a repository-built local base, so an otherwise reachable or ABI-compatible image is not sufficient.
 
 </AgentOnly>

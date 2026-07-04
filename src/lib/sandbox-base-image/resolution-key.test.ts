@@ -85,6 +85,22 @@ describe("sandbox base-image resolution key", () => {
     expect(legacyKey).not.toBe(mcpKey);
   });
 
+  it("isolates Dockerfile-pinned remote references (#4680)", () => {
+    const root = fixture();
+    const base = options(root);
+
+    const first = createSandboxBaseImageResolutionKey({
+      ...base,
+      pinnedRemoteRef: "example/base@sha256:first",
+    });
+    const second = createSandboxBaseImageResolutionKey({
+      ...base,
+      pinnedRemoteRef: "example/base@sha256:second",
+    });
+
+    expect(second).not.toBe(first);
+  });
+
   it("bounds Docker platform detection before using the host fallback (#4680)", () => {
     const root = fixture();
     dockerMocks.infoFormat.mockReturnValue("");

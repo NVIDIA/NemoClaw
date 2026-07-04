@@ -276,6 +276,16 @@ export function resolveSandboxBaseImage(
 
     if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
+    if (options.pinnedRemoteRef) {
+      const resolved = resolvePulledCandidate(
+        options.imageName,
+        options.pinnedRemoteRef,
+        "pinned",
+        options,
+      );
+      if (resolved) return finish(resolved);
+    }
+
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;
     const resolved = resolvePulledCandidate(options.imageName, latestRef, "latest", options);
     if (resolved) return finish(resolved);

@@ -340,6 +340,48 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("uses a Dockerfile-pinned remote image before moving published tags (#4680)", () => {
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === REF ? 0 : 1,
+    }));
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+    });
+
+    expect(resolved).toMatchObject({ ref: REF, source: "pinned" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds changed inputs before using a Dockerfile-pinned baseline (#4680)", () => {
+    sourceMocks.inputsChanged.mockReturnValue(true);
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+    dockerMocks.build.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      env: {
+        ...resolutionOptions().env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "1",
+      },
+      pinnedRemoteRef: REF,
+    });
+
+    expect(resolved).toMatchObject({
+      ref: "nemoclaw-sandbox-base-local:test",
+      source: "local",
+    });
+    expect(dockerMocks.imageInspect).not.toHaveBeenCalledWith(REF, expect.anything());
+    expect(dockerMocks.build).toHaveBeenCalledTimes(1);
+  });
+
   it("uses an exact source-SHA image before committed branch divergence (#4680)", () => {
     sourceMocks.inputsChanged.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 0 });

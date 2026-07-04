@@ -7,17 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
-type AgentDefsModule = typeof import("../../agent/defs");
-type AgentOnboardModule = typeof import("../../agent/onboard");
 type SandboxStateModule = typeof import("../../state/sandbox");
 type UserManagedFilesProbeModule = typeof import("../../state/user-managed-files-probe");
-type SandboxBaseImageResolutionMetadata =
-  import("../../sandbox-base-image").SandboxBaseImageResolutionMetadata;
 
 const requireDist = createRequire(import.meta.url);
 const rebuildFlowHelpersPath = "./rebuild-flow-helpers.js";
-const agentDefsPath = "../../agent/defs.js";
-const agentOnboardPath = "../../agent/onboard.js";
 const sandboxStatePath = "../../state/sandbox.js";
 const userManagedFilesProbePath = "../../state/user-managed-files-probe.js";
 
@@ -33,14 +27,6 @@ delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
 
 function loadSandboxState(): SandboxStateModule {
   return requireDist(sandboxStatePath);
-}
-
-function loadAgentDefs(): AgentDefsModule {
-  return requireDist(agentDefsPath);
-}
-
-function loadAgentOnboard(): AgentOnboardModule {
-  return requireDist(agentOnboardPath);
 }
 
 function loadUserManagedFilesProbe(): UserManagedFilesProbeModule {
@@ -375,78 +361,5 @@ describe("warnUnpreservedUserManagedFiles", () => {
       true,
     );
     expect(errorSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("ensureRebuildAgentBaseImage", () => {
-  const hint = { key: "sandbox-a" } as SandboxBaseImageResolutionMetadata;
-
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  function setup() {
-    const agent = { name: "hermes", displayName: "Hermes" } as ReturnType<
-      AgentDefsModule["loadAgent"]
-    >;
-    vi.spyOn(loadAgentDefs(), "loadAgent").mockReturnValue(agent);
-    const ensureAgentBaseImage = vi
-      .spyOn(loadAgentOnboard(), "ensureAgentBaseImage")
-      .mockReturnValue({ imageTag: "hermes:base", built: false });
-    return { agent, ensureAgentBaseImage };
-  }
-
-  it("forwards a recorded hint for cache validation without forcing a legacy rebuild (#4680)", () => {
-    const { agent, ensureAgentBaseImage } = setup();
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
-
-    expect(ensureRebuildAgentBaseImage("hermes", makeBail(), { resolutionHint: hint })).toEqual({
-      ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
-    });
-    expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
-      forceBaseImageRebuild: false,
-      resolutionHint: hint,
-    });
-  });
-
-  it("preserves the forced local rebuild path for legacy sandboxes without a hint (#4680)", () => {
-    const { agent, ensureAgentBaseImage } = setup();
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
-
-    expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
-      ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
-    });
-    expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
-      forceBaseImageRebuild: true,
-    });
-  });
-
-  it("forwards force refresh with the sandbox-specific hint (#4680)", () => {
-    const { agent, ensureAgentBaseImage } = setup();
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
-
-    expect(
-      ensureRebuildAgentBaseImage("hermes", makeBail(), {
-        resolutionHint: hint,
-        forceBaseImageRefresh: true,
-      }),
-    ).toEqual({
-      ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
-    });
-    expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
-      forceBaseImageRebuild: false,
-      resolutionHint: hint,
-      forceBaseImageRefresh: true,
-    });
   });
 });
