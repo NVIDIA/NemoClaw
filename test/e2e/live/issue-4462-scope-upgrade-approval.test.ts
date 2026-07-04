@@ -664,7 +664,19 @@ if mode == 'prepare':
     )
     if (context is None or not auth_matches(state, context)
             or not (is_upgrade or is_final_successor)):
-        fail('request is not the exact canonical operator scope upgrade')
+        def scope_sets_label(views):
+            if views is None: return 'invalid'
+            return '|'.join('+'.join(sorted(view)) for view in views)
+        context_label='missing' if context is None else scope_sets_label([context['scopes']])
+        auth_ok=context is not None and auth_matches(state, context)
+        fail(
+            'request is not the exact canonical operator scope upgrade; '
+            f'context={context_label} auth_match={auth_ok} '
+            f'views={scope_sets_label(requested_views)} '
+            f'closures={scope_sets_label(successor_closures)} '
+            f'target={bool(target)} target_expected_final={set(target_expected) == final_scopes} '
+            f'upgrade={is_upgrade} final_successor={is_final_successor}'
+        )
     candidate_requested=final_scopes if is_final_successor else requested
     candidate={
         'requestId': want,
