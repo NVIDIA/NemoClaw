@@ -56,16 +56,17 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 58 entries", () => {
+    it("should return exactly 59 entries", () => {
       // 50 visible + 8 hidden (shields×3 + config get/set/rotate-token +
       // inference get/set).
       // 50 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, and
       // the download + upload host-side openshell wrappers, plus five MCP
-      // bridge display entries under the `mcp` parent and the gateway restart
-      // command under the `gateway` parent.
-      expect(sandboxCommands()).toHaveLength(58);
+      // bridge display entries under the `mcp` parent, the gateway restart
+      // command under the `gateway` parent, and the policy-simulate dry-run
+      // command under the `policy` parent.
+      expect(sandboxCommands()).toHaveLength(59);
     });
 
     it("every entry has scope sandbox", () => {
@@ -224,9 +225,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 33 unique action tokens including empty string", () => {
+    it("returns exactly 34 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(33);
+      expect(tokens).toHaveLength(34);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -244,6 +245,7 @@ describe("command-registry", () => {
         "policy-get",
         "policy-remove",
         "policy-list",
+        "policy-simulate",
         "hosts-add",
         "hosts-list",
         "hosts-remove",

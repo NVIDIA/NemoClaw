@@ -1674,6 +1674,38 @@ The classifications are `blocked-by-policy`, `missing-approval`, `unsupported`, 
 | `--write` | Refresh `/sandbox/.openclaw/workspace/POLICY.md` inside the sandbox in addition to printing |
 </AgentOnly>
 
+### `$$nemoclaw <name> policy-simulate`
+
+Dry-run a policy against a recorded agent execution trace without changing the sandbox.
+The command evaluates each request in the trace against the sandbox's active policy presets, or against a candidate policy file, and reports which requests would be allowed, blocked, or not covered by any preset.
+It exits non-zero when any request would be blocked or uncovered, so automation can gate a policy change on the result.
+
+Trace files are JSONL with one JSON object per line.
+Only the `host` field is required; missing `port`, `method`, and `path` fields match any endpoint rule for that host.
+
+```bash
+$$nemoclaw my-assistant policy-simulate --from-file ./agent-trace.jsonl
+```
+
+Preview a candidate policy file before applying it with `policy-add`:
+
+```bash
+$$nemoclaw my-assistant policy-simulate --policy-file ./presets/my-api.yaml --from-file ./agent-trace.jsonl
+```
+
+Pipe requests from another process by passing `-` as the trace file:
+
+```bash
+cat trace.jsonl | $$nemoclaw my-assistant policy-simulate --from-file -
+```
+
+| Flag | Description |
+|------|-------------|
+| `--from-file` | Path to a JSONL trace file, or `-` to read the trace from stdin |
+| `--policy-file` | Simulate a candidate policy YAML file instead of the active sandbox policy |
+| `--preset-name` | Name to assign to the candidate presets when `--policy-file` is used |
+| `--json` | Emit the simulation results as a structured JSON object |
+
 ### `$$nemoclaw <name> hosts-add`
 
 Add a host alias to the sandbox pod template.

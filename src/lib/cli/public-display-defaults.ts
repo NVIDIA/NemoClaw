@@ -386,6 +386,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "(--yes, -y, --dry-run)",
     },
   ],
+  "sandbox:policy:simulate": [
+    {
+      group: "Policy Presets",
+      order: 21,
+      description: "Dry-run the active or a candidate policy against a recorded trace",
+      flags: "--from-file <trace.jsonl> [--policy-file <policy.yaml>] [--json]",
+    },
+  ],
   "sandbox:rebuild": [
     {
       group: "Sandbox Management",

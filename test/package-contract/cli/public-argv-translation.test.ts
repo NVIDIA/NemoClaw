@@ -93,6 +93,7 @@ describe("public route/display separation", () => {
       "sandbox:policy:get",
       "sandbox:policy:list",
       "sandbox:policy:remove",
+      "sandbox:policy:simulate",
     ]);
     expect(sandboxRouteTokens("sandbox:gateway:token")).toEqual(["gateway-token"]);
     expect(sandboxRouteTokens("sandbox:config:rotate-token")).toEqual(["config", "rotate-token"]);

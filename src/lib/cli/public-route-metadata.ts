@@ -30,6 +30,7 @@ export const SANDBOX_ROUTE_OVERRIDES: Record<string, readonly string[]> = {
   "sandbox:policy:get": ["policy-get"],
   "sandbox:policy:list": ["policy-list"],
   "sandbox:policy:remove": ["policy-remove"],
+  "sandbox:policy:simulate": ["policy-simulate"],
 };
 
 function commandIdTokens(commandId: string): string[] {
