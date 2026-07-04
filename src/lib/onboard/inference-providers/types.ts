@@ -91,6 +91,8 @@ export type CommonDeps = {
 };
 
 export type RemoteProviderDeps = CommonDeps & {
+  error: (message: string) => void;
+  log: (message: string) => void;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
   promptValidationRecovery: PromptValidationRecovery;
@@ -111,6 +113,9 @@ export type RemoteProviderDeps = CommonDeps & {
       verifyInferenceRoute: VerifyInferenceRoute;
       verifyOnboardInferenceSmoke: any;
       updateSandbox: Registry["updateSandbox"];
+      exitProcess: CommonDeps["exitProcess"];
+      error: (message: string) => void;
+      log: (message: string) => void;
     }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
   };
 };

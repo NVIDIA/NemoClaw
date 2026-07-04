@@ -15,6 +15,8 @@ function clearBedrockAuthEnv(): void {
   delete process.env.AWS_SECRET_ACCESS_KEY;
   delete process.env.AWS_SESSION_TOKEN;
   delete process.env.AWS_WEB_IDENTITY_TOKEN_FILE;
+  delete process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI;
+  delete process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI;
   delete process.env.COMPATIBLE_ANTHROPIC_API_KEY;
 }
 
@@ -24,6 +26,44 @@ afterEach(() => {
 });
 
 describe("Bedrock Runtime onboarding helper", () => {
+  it("uses the injected exit boundary when non-interactive selection has no auth", async () => {
+    clearBedrockAuthEnv();
+    const error = vi.fn();
+    const log = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`EXIT_CALLED:${code}`);
+    });
+    const promptInputModel = vi.fn(async () => "unused-model");
+    const replaceNamedCredential = vi.fn(async () => "unused-credential");
+
+    await expect(
+      selectBedrockRuntimeCustomAnthropic({
+        selectedKey: "anthropicCompatible",
+        endpointUrl: BEDROCK_URL,
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        label: "Other Anthropic-compatible endpoint",
+        helpUrl: null,
+        defaultModel: "anthropic.claude",
+        backToSelection: BACK_TO_SELECTION,
+        isNonInteractive: () => true,
+        promptInputModel,
+        replaceNamedCredential,
+        error,
+        exitProcess,
+        log,
+      }),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(error).toHaveBeenCalledWith(
+      "  AWS_BEARER_TOKEN_BEDROCK, AWS_PROFILE, IAM environment credentials, or an explicitly exported Bedrock-compatible endpoint key is required for a Bedrock Runtime endpoint.",
+    );
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(log).not.toHaveBeenCalled();
+    expect(promptInputModel).not.toHaveBeenCalled();
+    expect(replaceNamedCredential).not.toHaveBeenCalled();
+  });
+
   it("prompts for a Bedrock-compatible credential when no explicit AWS auth source exists", async () => {
     clearBedrockAuthEnv();
     const replaceNamedCredential = vi.fn(async () => "bedrock-bearer");

@@ -30,6 +30,16 @@ type UpsertProvider = (
 
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
+type BedrockRuntimeDependencies = {
+  exitProcess?: (code: number) => never;
+  error?: (message: string) => void;
+  log?: (message: string) => void;
+};
+
+const defaultExitProcess = (code: number): never => process.exit(code);
+const defaultError = (message: string): void => console.error(message);
+const defaultLog = (message: string): void => console.log(message);
+
 function normalizeCredentialValue(value: unknown): string {
   return String(value ?? "").trim();
 }
@@ -39,8 +49,8 @@ function getExplicitCompatibleCredential(credentialEnv: string | null | undefine
   return normalizeCredentialValue(process.env[credentialEnv]) || null;
 }
 
-function printMissingBedrockAuth(): void {
-  console.error(
+function printMissingBedrockAuth(error: (message: string) => void): void {
+  error(
     `  ${BEDROCK_RUNTIME_AWS_BEARER_TOKEN_ENV}, AWS_PROFILE, IAM environment credentials, or an explicitly exported Bedrock-compatible endpoint key is required for a Bedrock Runtime endpoint.`,
   );
 }
@@ -55,30 +65,34 @@ export function needsBedrockRuntimeAdapter(endpointUrl: string | null | undefine
   return Boolean(endpointUrl && isBedrockRuntimeEndpoint(endpointUrl));
 }
 
-export async function selectBedrockRuntimeCustomAnthropic(options: {
-  selectedKey: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  label: string;
-  helpUrl: string | null;
-  defaultModel: string;
-  backToSelection: BackToSelection;
-  isNonInteractive: () => boolean;
-  promptInputModel: (
-    label: string,
-    defaultModel: string,
-    validator: null,
-  ) => Promise<string | BackToSelection>;
-  replaceNamedCredential: (
-    envName: string,
-    label: string,
-    helpUrl: string | null,
-  ) => Promise<string | BackToSelection>;
-}): Promise<
+export async function selectBedrockRuntimeCustomAnthropic(
+  options: {
+    selectedKey: string;
+    endpointUrl: string | null;
+    credentialEnv: string | null;
+    label: string;
+    helpUrl: string | null;
+    defaultModel: string;
+    backToSelection: BackToSelection;
+    isNonInteractive: () => boolean;
+    promptInputModel: (
+      label: string,
+      defaultModel: string,
+      validator: null,
+    ) => Promise<string | BackToSelection>;
+    replaceNamedCredential: (
+      envName: string,
+      label: string,
+      helpUrl: string | null,
+    ) => Promise<string | BackToSelection>;
+  } & BedrockRuntimeDependencies,
+): Promise<
   | { action: "not-bedrock" }
   | { action: "retry-selection" }
   | { action: "selected"; model: string; preferredInferenceApi: "openai-completions" }
 > {
+  const error = options.error ?? defaultError;
+  const exitProcess = options.exitProcess ?? defaultExitProcess;
   if (options.selectedKey !== "anthropicCompatible" || !options.endpointUrl) {
     return { action: "not-bedrock" };
   }
@@ -88,8 +102,8 @@ export async function selectBedrockRuntimeCustomAnthropic(options: {
   const credentialEnv = options.credentialEnv || BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV;
   if (!hasBedrockRuntimeAwsAuthEnv() && !getExplicitCompatibleCredential(credentialEnv)) {
     if (options.isNonInteractive()) {
-      printMissingBedrockAuth();
-      process.exit(1);
+      printMissingBedrockAuth(error);
+      return exitProcess(1);
     }
     const credentialResult = await options.replaceNamedCredential(
       credentialEnv,
@@ -113,26 +127,31 @@ export async function selectBedrockRuntimeCustomAnthropic(options: {
   return { action: "selected", model, preferredInferenceApi: "openai-completions" };
 }
 
-export async function setupBedrockRuntimeInference(options: {
-  sandboxName: string | null;
-  provider: string;
-  model: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  isNonInteractive: () => boolean;
-  runOpenshell: RunOpenshell;
-  upsertProvider: UpsertProvider;
-  verifyInferenceRoute: (provider: string, model: string) => void;
-  verifyOnboardInferenceSmoke: (options: {
+export async function setupBedrockRuntimeInference(
+  options: {
+    sandboxName: string | null;
     provider: string;
     model: string;
-    endpointUrl?: string | null;
-    credentialEnv?: string | null;
-    forceOpenAiLike?: boolean;
-  }) => void;
-  ensureAdapter?: typeof ensureBedrockRuntimeAdapter;
-  updateSandbox?: typeof registry.updateSandbox;
-}): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
+    endpointUrl: string | null;
+    credentialEnv: string | null;
+    isNonInteractive: () => boolean;
+    runOpenshell: RunOpenshell;
+    upsertProvider: UpsertProvider;
+    verifyInferenceRoute: (provider: string, model: string) => void;
+    verifyOnboardInferenceSmoke: (options: {
+      provider: string;
+      model: string;
+      endpointUrl?: string | null;
+      credentialEnv?: string | null;
+      forceOpenAiLike?: boolean;
+    }) => void;
+    ensureAdapter?: typeof ensureBedrockRuntimeAdapter;
+    updateSandbox?: typeof registry.updateSandbox;
+  } & BedrockRuntimeDependencies,
+): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
+  const error = options.error ?? defaultError;
+  const exitProcess = options.exitProcess ?? defaultExitProcess;
+  const log = options.log ?? defaultLog;
   const classification =
     options.provider === "compatible-anthropic-endpoint" && options.endpointUrl
       ? classifyCustomAnthropicEndpoint(options.endpointUrl)
@@ -142,8 +161,8 @@ export async function setupBedrockRuntimeInference(options: {
   const credentialEnv = options.credentialEnv || BEDROCK_RUNTIME_COMPATIBLE_CREDENTIAL_ENV;
   const compatibleCredential = getExplicitCompatibleCredential(credentialEnv);
   if (!hasBedrockRuntimeAwsAuthEnv() && !compatibleCredential) {
-    printMissingBedrockAuth();
-    if (options.isNonInteractive()) process.exit(1);
+    printMissingBedrockAuth(error);
+    if (options.isNonInteractive()) return exitProcess(1);
     return { handled: true, result: { retry: "selection" } };
   }
 
@@ -154,10 +173,10 @@ export async function setupBedrockRuntimeInference(options: {
       compatibleCredential,
     });
   } catch (err) {
-    console.error(
+    error(
       `  Failed to start Bedrock Runtime adapter: ${err instanceof Error ? err.message : String(err)}`,
     );
-    if (options.isNonInteractive()) process.exit(1);
+    if (options.isNonInteractive()) return exitProcess(1);
     return { handled: true, result: { retry: "selection" } };
   }
 
@@ -169,11 +188,11 @@ export async function setupBedrockRuntimeInference(options: {
     { [adapter.credentialEnv]: adapter.token },
   );
   if (!providerResult.ok) {
-    console.error(`  ${providerResult.message}`);
-    if (options.isNonInteractive()) process.exit(providerResult.status || 1);
+    error(`  ${providerResult.message}`);
+    if (options.isNonInteractive()) return exitProcess(providerResult.status || 1);
     return { handled: true, result: { retry: "selection" } };
   }
-  console.log(
+  log(
     `  Bedrock Runtime adapter ready: region ${adapter.region}, sandbox route ${adapter.baseUrl}, host log ${adapter.logPath}`,
   );
 
@@ -195,8 +214,8 @@ export async function setupBedrockRuntimeInference(options: {
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${options.provider}'.`;
-    console.error(`  ${message}`);
-    if (options.isNonInteractive()) process.exit(applyResult.status || 1);
+    error(`  ${message}`);
+    if (options.isNonInteractive()) return exitProcess(applyResult.status || 1);
     return { handled: true, result: { retry: "selection" } };
   }
 
@@ -214,6 +233,6 @@ export async function setupBedrockRuntimeInference(options: {
       provider: options.provider,
     });
   }
-  console.log(`  ✓ Inference route set: ${options.provider} / ${options.model}`);
+  log(`  ✓ Inference route set: ${options.provider} / ${options.model}`);
   return { handled: true, result: { ok: true } };
 }

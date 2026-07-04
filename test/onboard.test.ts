@@ -793,7 +793,6 @@ startGateway(null).catch(() => {});
         credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
         token: "adapter-token",
         region: "us-east-1",
-        compatibleCredential: "bedrock-bearer",
         logPath: "/tmp/bedrock-adapter.log",
       }));
       const setupBedrockRuntimeInference = bedrockRuntimeOnboard.setupBedrockRuntimeInference;
@@ -805,7 +804,6 @@ startGateway(null).catch(() => {});
         overrides: {
           updateSandbox,
           bedrockRuntimeOnboard: {
-            ...bedrockRuntimeOnboard,
             setupBedrockRuntimeInference: (
               input: Parameters<typeof setupBedrockRuntimeInference>[0],
             ) => setupBedrockRuntimeInference({ ...input, ensureAdapter }),
@@ -813,9 +811,7 @@ startGateway(null).catch(() => {});
         },
       });
       const consoleOutput: string[] = [];
-      const captureConsole = (...args: unknown[]) => {
-        consoleOutput.push(args.map((arg) => String(arg)).join(" "));
-      };
+      const captureConsole = (...args: unknown[]) => consoleOutput.push(args.map(String).join(" "));
       const error = vi.spyOn(console, "error").mockImplementation(captureConsole);
       const log = vi.spyOn(console, "log").mockImplementation(captureConsole);
       try {
@@ -846,8 +842,13 @@ startGateway(null).catch(() => {});
         !JSON.stringify(commands).includes("bedrock-bearer"),
         "Bedrock bearer token must not appear in OpenShell argv or env",
       );
+      assert.deepEqual(harness.errors, []);
+      assert.deepEqual(harness.logs, [
+        "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
+        "  ✓ Inference route set: compatible-anthropic-endpoint / anthropic.claude-3-5-sonnet-20240620-v1:0",
+      ]);
       assert.doesNotMatch(
-        consoleOutput.join("\n"),
+        [...harness.logs, ...harness.errors, ...consoleOutput].join("\n"),
         /bedrock-bearer|adapter-token/,
         "Bedrock tokens must not appear in onboarding console output",
       );
@@ -866,7 +867,6 @@ startGateway(null).catch(() => {});
         commands.at(-1)?.command || "",
         /inference set --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
       );
-      expect(ensureAdapter).toHaveBeenCalled();
       expect(updateSandbox).toHaveBeenCalledWith("test-box", {
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
         provider: "compatible-anthropic-endpoint",

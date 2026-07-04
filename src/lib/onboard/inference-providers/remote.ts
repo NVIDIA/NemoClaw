@@ -41,6 +41,8 @@ export async function setupRemoteProviderInference(
     isNonInteractive,
     registry,
     exitProcess,
+    error,
+    log,
     REMOTE_PROVIDER_CONFIG,
     hydrateCredentialEnv,
     promptValidationRecovery,
@@ -71,6 +73,9 @@ export async function setupRemoteProviderInference(
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     updateSandbox: registry.updateSandbox,
+    exitProcess,
+    error,
+    log,
   });
   if (bedrockSetup.handled) return { done: true, result: bedrockSetup.result };
   while (true) {
