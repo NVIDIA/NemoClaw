@@ -155,6 +155,43 @@ describe("authenticated MCP live fixtures", () => {
     }
   });
 
+  it("redacts proxy userinfo from failed cloudflared diagnostics", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        "printf '%s\\n' 'proxy https://proxy-user:proxy-password@proxy.example.test:8443 failed' >&2",
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "redaction fixture",
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("proxy.example.test:8443");
+      expect(message).not.toContain("proxy-user");
+      expect(message).not.toContain("proxy-password");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("implements stateless Streamable HTTP and validates the tool challenge", async () => {
     const secret = "fixture-secret";
     const challenge = "fixture-challenge";

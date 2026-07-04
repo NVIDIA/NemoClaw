@@ -8,6 +8,7 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 
+import { redact } from "../../../src/lib/security/redact.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 type TestServer = http.Server | https.Server;
@@ -308,7 +309,7 @@ export async function startPublicMcpHttpsTunnel(options: {
 
     await close();
     const diagnostic = output.trim().split("\n").slice(-12).join("\n");
-    if (diagnostic) lastFailure = `${lastFailure}\n${diagnostic}`;
+    if (diagnostic) lastFailure = `${lastFailure}\n${redact(diagnostic)}`;
     if (attempt < QUICK_TUNNEL_ATTEMPTS) await delay(attempt * 1_000);
   }
 
