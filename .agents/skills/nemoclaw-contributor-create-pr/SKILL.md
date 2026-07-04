@@ -22,19 +22,25 @@ Follow the shared [Git and GitHub Access Hard Stop](../_shared/git-github-hard-s
 
 Before creating a PR, verify the branch.
 
-1. **Not on main.** Never create PRs from main.
+1. **Refresh the trusted base ref.**
+
+   ```bash
+   git fetch --prune origin main
+   ```
+
+2. **Not on main.** Never create PRs from main.
 
    ```bash
    git branch --show-current
    ```
 
-2. **Branch has commits ahead of main.**
+3. **Branch has commits ahead of `origin/main`.**
 
    ```bash
-   git log main..HEAD --oneline
+   git log origin/main..HEAD --oneline
    ```
 
-3. **Working tree is clean.** Stage or stash any uncommitted changes first.
+4. **Working tree is clean.** Stage or stash any uncommitted changes first.
 
    ```bash
    git status
@@ -49,21 +55,22 @@ Use the checks that match the diff and the verification you already have.
 
 If the commits were created normally and the branch was pushed normally, count the installed hooks as verification:
 
-- `pre-commit` runs file fixers, formatters, linters, skill frontmatter validation, and changed-surface Vitest hooks.
+- `pre-commit` runs cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation.
 - `commit-msg` runs commitlint.
-- `pre-push` runs TypeScript build and type-check gates.
+- `pre-push` runs path-scoped incremental type checks for affected CLI and plugin surfaces plus checked-JavaScript checks.
 
-If hooks were skipped with `--no-verify`, were not installed, failed, or you cannot tell whether they ran, run a manual diff-scoped fallback before creating the PR:
+If hooks were skipped with `--no-verify`, were not installed, failed, or you cannot tell whether they ran, use the single diff-scoped fallback that reproduces `pre-commit`, `commit-msg`, and `pre-push` checks:
 
 ```bash
-npx prek run --from-ref main --to-ref HEAD
+npm run check:diff
 ```
 
-Use `npx prek run --all-files` only when you need a whole-repository baseline, such as changing hook configuration, formatter configuration, generated-check scripts, or other repo-wide validation behavior.
+The fallback compares with the refreshed `origin/main` ref from Step 1.
+Reserve `npm run check` for the whole-repository pre-commit and full CLI/plugin coverage baseline, such as when changing hook configuration, formatter configuration, generated-check scripts, or other repo-wide validation behavior.
 
 ### Targeted Tests
 
-Run the smallest meaningful tests for changed behavior:
+Run the smallest meaningful tests for changed behavior once per relevant change set, and record the command and result for the PR body:
 
 - CLI or root `src/`, `bin/`, `scripts/`, or `test/` changes: `npx vitest run --project cli` or the directly affected test file.
 - Plugin changes under `nemoclaw/src/`: `npx vitest run --project plugin` or the directly affected plugin test file.
@@ -71,7 +78,9 @@ Run the smallest meaningful tests for changed behavior:
 - E2E workflow, artifact upload, trace timing, or fixture environment-boundary changes: run the directly affected `test/e2e/support/*workflow*.test.ts`, `test/e2e/support/upload-e2e-artifacts-workflow-boundary.test.ts`, `test/e2e/support/sanitize-trace-timing.test.ts`, and fixture boundary tests instead of relying on unrelated live target runs.
 - Installer behavior changes: run the relevant installer integration project only when the local environment supports it.
 
-Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
+Do not rerun targeted tests solely because the normal hooks passed; rerun them after later edits or hook autofixes that can affect the tested behavior.
+Reserve `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
+Reserve `npm run check` for repo-wide hook, formatter, generated-check, or coverage-baseline changes.
 Do not run the full test suite for doc-only changes unless the docs change code samples or generated behavior in a way that needs runtime validation.
 
 For doc-only changes, run the docs build before opening the PR:
@@ -95,7 +104,7 @@ If the push fails because of SSH, authentication, remote access, authorization, 
 
 ## Step 4: Prepare DCO Declaration and Verify GitHub Commits
 
-Before creating the PR, prepare the DCO declaration for the PR body and verify every commit in `main..HEAD`.
+Before creating the PR, prepare the DCO declaration for the PR body and verify every commit in `origin/main..HEAD`.
 This is a hard contributor self-serve gate.
 Do not run `gh pr create` until the PR body will include the DCO declaration and every commit passes GitHub verification.
 
@@ -108,10 +117,10 @@ Do not run `gh pr create` until the PR body will include the DCO declaration and
    ```
 
 2. **GitHub verification.** Each pushed commit must appear as verified in GitHub.
-   Check the commit SHAs from `main..HEAD` with the GitHub API before opening the PR.
+   Check the commit SHAs from `origin/main..HEAD` with the GitHub API before opening the PR.
 
    ```bash
-   for sha in $(git rev-list main..HEAD); do
+   for sha in $(git rev-list origin/main..HEAD); do
      gh api "/repos/NVIDIA/NemoClaw/commits/$sha" --jq '.sha + " verified=" + (.commit.verification.verified | tostring) + " reason=" + .commit.verification.reason'
    done
    ```
@@ -193,8 +202,8 @@ Follow these rules when filling in the template:
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
-- **Quality Gates:** Check every line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
-- **Verification:** Check only the boxes for steps you actually ran and confirmed passing, or for Git hooks that passed during normal commit and push. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
+- **Quality Gates:** Check exactly one tests line and one docs line, then check every other line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
+- **Verification:** Check only the boxes backed by the requested command/result, justification, normal hook evidence, or fallback evidence. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For focused changes, leave the broad-gate line unchecked unless you actually ran the applicable command.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
 ## Step 7: Create the PR
@@ -245,8 +254,9 @@ Automated review: no actionable findings / addressed findings / waiting on user
 - **Do not invent your own PR body format.** Use `.github/PULL_REQUEST_TEMPLATE.md` exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
 - **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
-- **Do not rerun hook-covered checks by default.** Normal commit and push hooks are valid verification. Use `npx prek run --from-ref main --to-ref HEAD` as the fallback when hooks were skipped, missing, or uncertain.
-- **Do not run the full test suite for doc-only changes by default.** Run the docs build instead, and leave `npm test` unchecked unless you actually ran it.
+- **Do not rerun hook-covered checks by default.** Normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification. Use `npm run check:diff` once as the fallback when hooks were skipped, missing, or uncertain.
+- **Do not run targeted tests more than once per unchanged relevant change set.** Record the passing command and result; rerun when subsequent edits or hook autofixes can affect that behavior.
+- **Do not run broad gates for doc-only changes by default.** Run the docs build instead, and leave the broad-gate verification item unchecked unless you actually ran the applicable command.
 - **Do not forget the DCO sign-off declaration in the PR body.** CI will reject the PR without it.
 - **Do not create PRs with unverified commits.** GitHub must report every PR commit as `Verified` before the PR is opened.
 - **Do not rely on maintainers to repair contributor signature history.** If force-push is not allowed and the branch contains an unverified commit, use a fresh branch and fresh PR.
