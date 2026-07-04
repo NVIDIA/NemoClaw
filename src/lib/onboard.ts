@@ -1658,6 +1658,7 @@ async function preflight(
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
     log: console.log,
+    warn: console.warn,
     runOpenshell,
     destroyGateway,
     destroyGatewayForReuse,
