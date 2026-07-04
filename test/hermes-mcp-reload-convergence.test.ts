@@ -392,11 +392,8 @@ print(json.dumps({name: run_case(name) for name in (
       },
       public: {
         error:
-          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health-on-8642; re-kick attempted: yes; re-kick sent: yes)",
-        signals: [
-          [4242, "SIGUSR1"],
-          [4243, "SIGUSR1"],
-        ],
+          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health-on-8642; re-kick attempted: no; re-kick sent: no)",
+        signals: [[4242, "SIGUSR1"]],
       },
       stable: {
         error:

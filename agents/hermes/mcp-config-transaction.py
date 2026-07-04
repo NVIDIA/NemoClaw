@@ -975,6 +975,7 @@ def reload_gateway() -> bool:
         if now >= deadline:
             break
         current = _gateway_identity()
+        observed_phase = "waiting-for-replacement-identity"
         if (
             current is not None
             and current != previous
@@ -1002,6 +1003,10 @@ def reload_gateway() -> bool:
             not re_kick_attempted
             and now >= re_kick_not_before
             and now < deadline
+            # The managed supervisor owns the public socat relay. Once the
+            # replacement gateway is internally healthy, another gateway
+            # signal cannot repair that relay and only creates crash churn.
+            and observed_phase != "waiting-for-public-relay-health-on-8642"
             and current is not None
             and _gateway_has_managed_parent(current[0])
             and _gateway_identity() == current

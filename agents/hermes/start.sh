@@ -2695,16 +2695,33 @@ recover_hermes_gateway_current_user() {
       sleep 5 || true
       continue
     fi
-    if wait_for_hermes_gateway_internal "$GATEWAY_PID" \
-      && ensure_hermes_supervised_auxiliaries; then
-      if ! commit_hermes_mcp_applied_if_pending; then
-        echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
-        hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
-        mark_hermes_gateway_stopped
-        return 1
-      fi
-      refresh_hermes_supervised_child_pids
-      return 0
+    if wait_for_hermes_gateway_internal "$GATEWAY_PID"; then
+      # The gateway and its socat relay are separate supervised children. A
+      # transient relay repair failure must not churn an internally healthy,
+      # identity-pinned replacement or charge that churn against the gateway
+      # crash budget. Retry only while the exact gateway remains healthy, and
+      # re-prove it after auxiliary repair before committing applied MCP state.
+      while hermes_tracked_role_is_current \
+        gateway "$GATEWAY_PID" current "$INTERNAL_PORT" \
+        && hermes_gateway_healthy "$GATEWAY_PID"; do
+        if ensure_hermes_supervised_auxiliaries; then
+          if ! hermes_tracked_role_is_current \
+            gateway "$GATEWAY_PID" current "$INTERNAL_PORT" \
+            || ! hermes_gateway_healthy "$GATEWAY_PID"; then
+            break
+          fi
+          if ! commit_hermes_mcp_applied_if_pending; then
+            echo "[SECURITY] HERMES_MCP_APPLIED_COMMIT_FAILED: stopping the uncommitted Hermes gateway" >&2
+            hermes_stop_tracked_role gateway "$GATEWAY_PID" current "$INTERNAL_PORT" || return 1
+            mark_hermes_gateway_stopped
+            return 1
+          fi
+          refresh_hermes_supervised_child_pids
+          return 0
+        fi
+        echo "[gateway] Hermes auxiliary repair failed; retrying while the exact gateway remains healthy" >&2
+        sleep 1 || true
+      done
     fi
 
     echo "[gateway] Hermes replacement failed health or auxiliary validation; stopping the exact child" >&2
