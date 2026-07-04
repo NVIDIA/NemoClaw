@@ -926,4 +926,101 @@ describe("setupInference dependency failures", () => {
     expect(harness.errors).toEqual(["  routed provider registration rejected"]);
     expectNoPostFailureSideEffects(harness);
   });
+
+  it("redacts a routed inference-set failure and preserves its status at the exit boundary", async () => {
+    const exitProcess = createInjectedExit();
+    const reconcileModelRouter = vi.fn(async () => {});
+    const upsertRoutedProvider = vi.fn(() => ({ ok: true, result: {} }));
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "routed-inference-set",
+        matches: (command) => command.startsWith("inference set"),
+        results: [{ status: 41, stdout: "", stderr: "routed apply failed nvapi-1234567890abcdef" }],
+      },
+    ]);
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
+      overrides: {
+        isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+        exitProcess,
+        reconcileModelRouter,
+        routedInference: { upsertRoutedProvider },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "router/model",
+        "nvidia-router",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).rejects.toThrow("EXIT_CALLED:41");
+
+    expect(reconcileModelRouter).toHaveBeenCalledOnce();
+    expect(upsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(commandRouter.callCount("routed-inference-set")).toBe(1);
+    expect(harness.commands.at(-1)).toMatchObject({ ignoreError: true });
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(41);
+    expect(harness.errors.join("\n")).toContain("routed apply failed");
+    expect(harness.errors.join("\n")).not.toContain("nvapi-1234567890abcdef");
+    expectNoPostFailureSideEffects(harness, [
+      "gateway select nemoclaw",
+      "inference set --no-verify --provider nvidia-router --model router/model",
+    ]);
+  });
+
+  it("runs shared finalization after routed inference setup succeeds", async () => {
+    const exitProcess = createInjectedExit();
+    const reconcileModelRouter = vi.fn(async () => {});
+    const upsertRoutedProvider = vi.fn(() => ({ ok: true, result: {} }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+        exitProcess,
+        reconcileModelRouter,
+        routedInference: { upsertRoutedProvider },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "router/model",
+        "nvidia-router",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(reconcileModelRouter).toHaveBeenCalledOnce();
+    expect(upsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(harness.commands).toEqual([
+      { command: "gateway select nemoclaw", ignoreError: true, env: undefined },
+      {
+        command: "inference set --no-verify --provider nvidia-router --model router/model",
+        ignoreError: true,
+        env: undefined,
+      },
+    ]);
+    expect(harness.verifyInferenceRoute).toHaveBeenCalledOnce();
+    expect(harness.verifyInferenceRoute).toHaveBeenCalledWith("nvidia-router", "router/model");
+    expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledOnce();
+    expect(harness.verifyOnboardInferenceSmoke).toHaveBeenCalledWith({
+      provider: "nvidia-router",
+      model: "router/model",
+      endpointUrl: "http://host.openshell.internal:4000/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    expect(harness.updateSandbox).toHaveBeenCalledOnce();
+    expect(harness.updateSandbox).toHaveBeenCalledWith("test-box", {
+      model: "router/model",
+      provider: "nvidia-router",
+    });
+    expect(harness.logs).toEqual(["  ✓ Inference route set: nvidia-router / router/model"]);
+    expect(harness.errors).toEqual([]);
+    expect(exitProcess).not.toHaveBeenCalled();
+  });
 });

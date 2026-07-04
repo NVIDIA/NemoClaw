@@ -24,6 +24,8 @@ export async function setupRoutedInference(
     hydrateCredentialEnv,
     exitProcess,
     error,
+    redact,
+    compactText,
   } = deps;
 
   // Blueprint profile provider (e.g., nvidia-router for the routed profile).
@@ -42,6 +44,16 @@ export async function setupRoutedInference(
     error(`  ${routed.result.message}`);
     return exitProcess(routed.result.status || 1);
   }
-  runOpenshell(["inference", "set", "--no-verify", "--provider", provider, "--model", model]);
+  const applyResult = runOpenshell(
+    ["inference", "set", "--no-verify", "--provider", provider, "--model", model],
+    { ignoreError: true },
+  );
+  if (applyResult.status !== 0) {
+    const message =
+      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
+      `Failed to configure inference provider '${provider}'.`;
+    error(`  ${message}`);
+    return exitProcess(applyResult.status || 1);
+  }
   return { done: false };
 }

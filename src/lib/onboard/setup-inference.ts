@@ -15,16 +15,54 @@ import * as inferenceProviders from "./inference-providers";
 import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 
-type ProviderBranchDeps = Omit<
-  HermesDeps & RemoteProviderDeps & VllmDeps & OllamaDeps & RoutedDeps,
-  | "registry"
-  | "run"
-  | "runOpenshell"
-  | "applyLocalInferenceRoute"
-  | "LOCAL_INFERENCE_TIMEOUT_SECS"
-  | "VLLM_LOCAL_CREDENTIAL_ENV"
-  | "OLLAMA_PROXY_CREDENTIAL_ENV"
->;
+type ProviderBranchDeps = Pick<
+  CommonDeps,
+  | "upsertProvider"
+  | "verifyInferenceRoute"
+  | "verifyOnboardInferenceSmoke"
+  | "isNonInteractive"
+  | "exitProcess"
+  | "error"
+  | "log"
+> &
+  Pick<
+    HermesDeps,
+    | "lookup"
+    | "hermesProviderAuth"
+    | "getHermesToolGatewayBroker"
+    | "providerExistsInGateway"
+    | "normalizeHermesAuthMethod"
+    | "resolveHermesNousApiKey"
+    | "checkHermesProviderStoreReachable"
+    | "hermesAuthMethodLabel"
+    | "hermesConstants"
+    | "requireValue"
+    | "redact"
+    | "compactText"
+  > &
+  Pick<
+    RemoteProviderDeps,
+    | "REMOTE_PROVIDER_CONFIG"
+    | "hydrateCredentialEnv"
+    | "promptValidationRecovery"
+    | "classifyApplyFailure"
+    | "bedrockRuntimeOnboard"
+  > &
+  Pick<
+    VllmDeps,
+    "validateLocalProvider" | "getLocalProviderHealthCheck" | "getLocalProviderBaseUrl"
+  > &
+  Pick<
+    OllamaDeps,
+    | "getOllamaWarmupCommand"
+    | "shouldFrontOllamaWithProxy"
+    | "ensureOllamaAuthProxy"
+    | "isProxyHealthy"
+    | "getOllamaProxyToken"
+    | "persistAndProbeOllamaProxy"
+    | "localInference"
+  > &
+  Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
   step: (current: number, total: number, label: string) => void;
@@ -99,7 +137,7 @@ export function createSetupInference(
       exitProcess: deps.exitProcess,
       error: deps.error,
       log: deps.log,
-    };
+    } satisfies CommonDeps;
 
     if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
       return inferenceProviders.setupHermesProviderInference(
@@ -196,6 +234,8 @@ export function createSetupInference(
           reconcileModelRouter: deps.reconcileModelRouter,
           routedInference: deps.routedInference,
           hydrateCredentialEnv: deps.hydrateCredentialEnv,
+          redact: deps.redact,
+          compactText: deps.compactText,
         },
       );
     } else {

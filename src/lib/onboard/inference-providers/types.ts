@@ -224,6 +224,8 @@ export type RoutedDeps = CommonDeps & {
     ): { ok: boolean; result: { message?: string; status?: number } };
   };
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
+  redact: (input: string) => string;
+  compactText: (input: string) => string;
 };
 
 export const REMOTE_PROVIDER_NAMES = [

@@ -4153,7 +4153,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
 
 // ── Step 4: Inference provider ───────────────────────────────────
 
-function getSetupInferenceDeps() {
+function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
     step,
     getGatewayName: () => GATEWAY_NAME,
