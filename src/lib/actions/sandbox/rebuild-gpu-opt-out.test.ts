@@ -171,7 +171,17 @@ describe("buildRebuildRecreateOnboardOpts", () => {
       sandboxGpu: "disable",
       sandboxGpuDevice: null,
       autoYes: true,
+      toolDisclosure: "progressive",
     });
+  });
+
+  it("carries an explicit direct tool-disclosure selection into inner onboard", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, toolDisclosure: "direct" },
+    });
+
+    expect(opts.toolDisclosure).toBe("direct");
   });
 
   it("forwards noGpu:true for legacy entries with gpuEnabled:false and no sandboxGpuMode", () => {

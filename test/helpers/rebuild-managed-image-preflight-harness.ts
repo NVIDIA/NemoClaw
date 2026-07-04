@@ -36,6 +36,7 @@ export function dcodeInput(
     provider: "compatible-endpoint",
     preferredInferenceApi: "openai-completions",
     compatibleEndpointReasoning: "false",
+    toolDisclosure: "progressive",
     webSearchConfig: null,
     sandboxGpuConfig: {
       mode: "0",
@@ -49,7 +50,9 @@ export function dcodeInput(
   };
 }
 
-export async function createPreparedDcodeImageFixture() {
+export async function createPreparedDcodeImageFixture(
+  overrides: Partial<ManagedDcodeRebuildImageInput> = {},
+) {
   const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "dcode-rebuild-context-"));
   const buildCtx = path.join(testRoot, "context");
   fs.mkdirSync(buildCtx);
@@ -57,7 +60,10 @@ export async function createPreparedDcodeImageFixture() {
   const originalDockerfile = path.join(testRoot, "Dockerfile.original");
   const replacementDockerfile = path.join(testRoot, "Dockerfile.replacement");
   fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+  const stableDockerfileTime = new Date("2026-01-01T00:00:00.000Z");
+  fs.utimesSync(stagedDockerfile, stableDockerfileTime, stableDockerfileTime);
   fs.writeFileSync(replacementDockerfile, "FROM attacker-controlled\n");
+  fs.utimesSync(buildCtx, stableDockerfileTime, stableDockerfileTime);
   const cleanupBuildCtx = vi.fn(() => {
     fs.rmSync(testRoot, { recursive: true, force: true });
     return true;
@@ -74,7 +80,7 @@ export async function createPreparedDcodeImageFixture() {
   }));
   const buildImage = vi.fn(() => ({ status: 0 }) as never);
   const removeImage = vi.fn(() => ({ status: 0 }) as never);
-  const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
+  const result = await prepareManagedDcodeRebuildImage(dcodeInput(overrides), {
     stageBuildContext,
     prepareDockerfilePatch,
     buildImage,
@@ -87,6 +93,7 @@ export async function createPreparedDcodeImageFixture() {
     stagedDockerfile,
     originalDockerfile,
     replacementDockerfile,
+    stableDockerfileTime,
     cleanupBuildCtx,
     stageBuildContext,
     prepareDockerfilePatch,

@@ -13,6 +13,7 @@
 //   NEMOCLAW_INFERENCE_BASE_URL, NEMOCLAW_INFERENCE_API,
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
+//   NEMOCLAW_TOOL_DISCLOSURE,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
 //   NEMOCLAW_INFERENCE_COMPAT_B64,
 //   NEMOCLAW_DISABLE_DEVICE_AUTH,
@@ -34,6 +35,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -402,8 +404,14 @@ function validateSelectedAgentEffects(
           `${manifestPath}: unknown effects.openclawTools keys: ${unknownToolKeys.join(", ")}`,
         );
       }
+      // Source: openclaw@2026.5.27 ToolSearchSchema and resolveToolSearchConfig
+      // (`src/config/zod-schema.agent-runtime.ts`, `src/agents/tool-search.ts`).
+      // Keep the registry override narrower than the runtime config: false
+      // disables Tool Search, while true selects its default code bridge.
       if ("toolSearch" in tools && typeof tools.toolSearch !== "boolean") {
-        throw new Error(`${manifestPath}: effects.openclawTools.toolSearch must be a boolean`);
+        throw new Error(
+          `${manifestPath}: effects.openclawTools.toolSearch must be a boolean override`,
+        );
       }
     }
 
@@ -1031,6 +1039,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
+  const toolDisclosure = readToolDisclosureEnv(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")
@@ -1088,7 +1097,27 @@ export function buildConfig(env: Env = process.env): JsonObject {
       openclawToolOverrides,
     );
   }
-  const openclawTools: JsonObject = { toolSearch: true, ...openclawToolOverrides };
+  // OpenClaw v2026.5.27 accepts either a boolean shorthand or this object form.
+  // Model-specific manifests intentionally remain boolean-only and replace this
+  // value wholesale: false disables Tool Search; true restores upstream code
+  // mode. Do not shallow-merge a boolean override into the structured object.
+  const structuredToolSearch: JsonObject = {
+    mode: "tools",
+    searchDefaultLimit: 8,
+    maxSearchLimit: 20,
+  };
+  const openclawTools: JsonObject = {
+    ...openclawToolOverrides,
+    // An explicit direct request is authoritative. Compatibility manifests may
+    // downgrade progressive mode to false, but may never re-enable search over
+    // a user's direct selection.
+    toolSearch:
+      toolDisclosure === "direct"
+        ? false
+        : "toolSearch" in openclawToolOverrides
+          ? openclawToolOverrides.toolSearch
+          : structuredToolSearch,
+  };
 
   if (providerKey === "ollama" || providerKey === "ollama-local") {
     inferenceCompat.supportsUsageInStreaming ??= true;

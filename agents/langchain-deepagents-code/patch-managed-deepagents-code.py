@@ -24,6 +24,8 @@ from pathlib import Path
 
 EXPECTED_DCODE_VERSION = "0.1.30"
 PATCH_MARKER = "NemoClaw-managed Deep Agents Code hardening v2."
+TOOL_DISCLOSURE_PATCH_MARKER = "NemoClaw-managed progressive tool disclosure."
+MIDDLEWARE_MODULE = "progressive_tool_disclosure.py"
 MANAGED_RUNTIME_SOURCE_PATH = Path(__file__).with_name("managed-dcode-runtime.py")
 
 MAIN_MARKER = "    args = parser.parse_args()\n"
@@ -396,19 +398,89 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
+# supported managed progressive-disclosure middleware hook in its agent factory
+# API, and this repository cannot change that third-party package source.
+# Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
+# fail-closed integration. Remove it once upstream provides a supported hook
+# preserving managed MCP, credentials, approvals, executor, sandbox, and private
+# checkpoint-state boundaries.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
+# NemoClaw-managed progressive tool disclosure.
+from contextvars import ContextVar as _NemoClawContextVar
+
 _nemoclaw_original_create_cli_agent = create_cli_agent
+_nemoclaw_original_create_deep_agent = globals().get("create_deep_agent")
+_nemoclaw_progressive_disclosure_active = _NemoClawContextVar(
+    "nemoclaw_progressive_disclosure_active", default=False
+)
+
+
+def _nemoclaw_create_deep_agent(*args, **kwargs):
+    """Install distinct disclosure middleware in the main and local subagent graphs."""
+    if _nemoclaw_original_create_deep_agent is None:
+        raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
+    if not _nemoclaw_progressive_disclosure_active.get():
+        return _nemoclaw_original_create_deep_agent(*args, **kwargs)
+    from deepagents_code.progressive_tool_disclosure import (
+        ProgressiveToolDisclosureMiddleware,
+    )
+
+    middleware = list(kwargs.get("middleware") or ())
+    middleware.append(ProgressiveToolDisclosureMiddleware())
+    kwargs["middleware"] = middleware
+
+    subagents = kwargs.get("subagents")
+    if subagents:
+        patched_subagents = []
+        for subagent in subagents:
+            if isinstance(subagent, dict):
+                subagent_middleware = list(subagent.get("middleware") or ())
+                subagent_middleware.append(ProgressiveToolDisclosureMiddleware())
+                subagent = {**subagent, "middleware": subagent_middleware}
+            patched_subagents.append(subagent)
+        kwargs["subagents"] = patched_subagents
+
+    return _nemoclaw_original_create_deep_agent(*args, **kwargs)
+
+
+if _nemoclaw_original_create_deep_agent is not None:
+    create_deep_agent = _nemoclaw_create_deep_agent
 
 
 def create_cli_agent(model, assistant_id, *args, **kwargs):
-    """Keep secondary model and remote-agent paths on the managed graph."""
+    """Keep managed graph posture and progressively disclose loaded MCP tools."""
     kwargs["rubric_model"] = None
     kwargs["async_subagents"] = None
-    return _nemoclaw_original_create_cli_agent(
-        model, assistant_id, *args, **kwargs
+    from deepagents_code.progressive_tool_disclosure import (
+        assert_unique_callable_tool_names,
     )
+
+    assert_unique_callable_tool_names(
+        kwargs.get("tools"), kwargs.get("mcp_server_info")
+    )
+    has_loaded_mcp_tools = any(
+        getattr(info, "tools", ()) for info in kwargs.get("mcp_server_info") or ()
+    )
+    if has_loaded_mcp_tools:
+        from deepagents_code.progressive_tool_disclosure import (
+            progressive_tool_disclosure_enabled,
+        )
+
+        progressive_active = progressive_tool_disclosure_enabled()
+    else:
+        progressive_active = False
+    if progressive_active and _nemoclaw_original_create_deep_agent is None:
+        raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
+    token = _nemoclaw_progressive_disclosure_active.set(progressive_active)
+    try:
+        return _nemoclaw_original_create_cli_agent(
+            model, assistant_id, *args, **kwargs
+        )
+    finally:
+        _nemoclaw_progressive_disclosure_active.reset(token)
 
 
 def _resolve_ptc_option(*args, **kwargs):
@@ -891,6 +963,24 @@ def main() -> None:
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
+    module_source_path = Path(__file__).with_name(MIDDLEWARE_MODULE)
+    module_destination_path = root / MIDDLEWARE_MODULE
+    if not module_source_path.is_file():
+        raise RuntimeError(
+            f"NemoClaw middleware source not found at {module_source_path}"
+        )
+    module_source = module_source_path.read_text(encoding="utf-8")
+    compile(module_source, str(module_destination_path), "exec")
+    if module_destination_path.exists() or module_destination_path.is_symlink():
+        if (
+            not module_destination_path.is_file()
+            or module_destination_path.is_symlink()
+            or module_destination_path.read_text(encoding="utf-8") != module_source
+        ):
+            raise RuntimeError(
+                f"Refusing to overwrite unexpected middleware at {module_destination_path}"
+            )
+
     marker_states = {PATCH_MARKER in text for text in texts.values()}
     helper_path = root / "_nemoclaw_managed.py"
     if marker_states == {True}:
@@ -898,9 +988,20 @@ def main() -> None:
             encoding="utf-8"
         ):
             raise RuntimeError("Managed package patch is partial: helper is missing")
+        if not module_destination_path.is_file():
+            raise RuntimeError("Managed package patch is partial: middleware is missing")
+        if texts["agent"].count(AGENT_PATCH.lstrip()) != 1:
+            raise RuntimeError(
+                f"Managed package progressive-disclosure patch is incomplete in {paths['agent']}"
+            )
         return
     if marker_states != {False} or helper_path.exists():
         raise RuntimeError("Managed package patch is partial; refusing mixed source state")
+    if TOOL_DISCLOSURE_PATCH_MARKER in texts["agent"]:
+        raise RuntimeError(
+            "Managed package progressive-disclosure patch is partial; "
+            "refusing mixed source state"
+        )
 
     _require_functions(paths["main"], texts["main"], {"parse_args"})
     _require_methods(
@@ -1124,6 +1225,8 @@ def main() -> None:
     for name, text in transformed.items():
         paths[name].write_text(text, encoding="utf-8")
     helper_path.write_text(managed_runtime_source, encoding="utf-8")
+    if not module_destination_path.exists():
+        module_destination_path.write_text(module_source, encoding="utf-8")
 
 
 if __name__ == "__main__":

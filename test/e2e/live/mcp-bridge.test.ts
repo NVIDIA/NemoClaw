@@ -1381,7 +1381,7 @@ liveAgentMatrixTest(
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: deepAgentsResult,
-      toolNames: ["fake_fake_echo"],
+      progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
       compatibleMock.close(),

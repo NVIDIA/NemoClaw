@@ -10,6 +10,7 @@ import {
   type RebuildBail,
   type RebuildLog,
 } from "./rebuild-credential-preflight";
+import type { PreparedRebuildImage } from "./rebuild-custom-image-preflight";
 import {
   createDcodeRebuildOrchestrator,
   type DcodeRebuildOrchestrator,
@@ -37,6 +38,7 @@ import {
   isSingleAgentRebuildSupported,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
+import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   type RebuildSandboxExecutionOptions,
   validatePreparedRecoveryManifest,
@@ -55,6 +57,7 @@ export interface RebuildPreflightPhaseResult {
   liveState: RebuildLiveState;
   recoveryManifest: RebuildManifest | null;
   dcodePreflight: DcodeRebuildOrchestrator;
+  preparedImage: PreparedRebuildImage | null;
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;
@@ -72,7 +75,10 @@ export async function runRebuildPreflightPhase(
   options: string[] | RebuildSandboxOptions = {},
   opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
-  const { log, bail, skipConfirm } = createRebuildCommandContext(options, opts);
+  const { log, bail, requestedToolDisclosure, skipConfirm } = createRebuildCommandContext(
+    options,
+    opts,
+  );
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
@@ -104,6 +110,8 @@ export async function runRebuildPreflightPhase(
     },
   });
   let retainDcodePreflight = false;
+  let preparedImage: PreparedRebuildImage | null = null;
+  let retainPreparedImage = false;
   try {
     if (
       !isDcodeRebuildAgent(rebuildAgent) &&
@@ -131,10 +139,12 @@ export async function runRebuildPreflightPhase(
         // Reaching this point means either --yes was supplied or confirmation
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
+        requestedToolDisclosure,
         log,
         bail,
       });
       if (!preparedTarget) return null;
+      preparedImage = preparedTarget.preparedImage;
 
       const liveState = await resolveRebuildLiveState(sandboxName, sandboxEntry, log, bail);
       if (!liveState) return null;
@@ -143,6 +153,7 @@ export async function runRebuildPreflightPhase(
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
           preparedTarget.targetConfig.durableConfig.webSearchConfig,
+          preparedTarget.targetConfig.durableConfig.toolDisclosure,
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );
@@ -168,6 +179,7 @@ export async function runRebuildPreflightPhase(
       }
       retainOnboardLock = true;
       retainDcodePreflight = true;
+      retainPreparedImage = true;
       return {
         sandboxEntry,
         rebuildAgent,
@@ -188,5 +200,6 @@ export async function runRebuildPreflightPhase(
     }
   } finally {
     if (!retainDcodePreflight) dcodePreflight.cleanup();
+    if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
   }
 }

@@ -9,6 +9,42 @@ import { describe, expect, it } from "vitest";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
+const progressiveDisclosureHarness = path.join(
+  process.cwd(),
+  "test",
+  "fixtures",
+  "deepagents-progressive-disclosure-harness.py",
+);
+const DARWIN_FCNTL_FIXTURE_MARKER = "# NemoClaw test-only Darwin fcntl seal constants.";
+
+function addDarwinFcntlSealConstants(
+  helper: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const shouldPatch = platform === "darwin" && !helper.includes(DARWIN_FCNTL_FIXTURE_MARKER);
+  const patched = helper.replace(
+    "import fcntl\n",
+    `import fcntl
+
+${DARWIN_FCNTL_FIXTURE_MARKER}
+for _name, _value in (
+    ("F_ADD_SEALS", 1033),
+    ("F_GET_SEALS", 1034),
+    ("F_SEAL_SEAL", 0x0001),
+    ("F_SEAL_SHRINK", 0x0002),
+    ("F_SEAL_GROW", 0x0004),
+    ("F_SEAL_WRITE", 0x0008),
+):
+    if not hasattr(fcntl, _name):
+        setattr(fcntl, _name, _value)
+`,
+  );
+  expect(
+    !shouldPatch || patched !== helper,
+    "Darwin fcntl seal shim injection point not found in helper module",
+  ).toBe(true);
+  return shouldPatch ? patched : helper;
+}
 
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
@@ -556,8 +592,7 @@ function patchFixture(tempDir: string): void {
   });
   const managedBaseUrlFile = path.join(tempDir, "managed-inference-base-url");
   const helperPath = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
-  const helper = fs
-    .readFileSync(helperPath, "utf8")
+  const helper = addDarwinFcntlSealConstants(fs.readFileSync(helperPath, "utf8"))
     .replace(
       '"/usr/local/share/nemoclaw/dcode-inference-base-url"',
       JSON.stringify(managedBaseUrlFile),
@@ -567,6 +602,12 @@ function patchFixture(tempDir: string): void {
 }
 
 describe("LangChain Deep Agents Code managed package patch", () => {
+  it("fails fast when the Darwin fcntl seal injection anchor is missing", () => {
+    expect(() => addDarwinFcntlSealConstants("from pathlib import Path\n", "darwin")).toThrow(
+      "Darwin fcntl seal shim injection point not found in helper module",
+    );
+  });
+
   it("patches every 0.1.30 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -761,8 +802,9 @@ describe("LangChain Deep Agents Code managed package patch", () => {
             "from pathlib import Path",
             "from deepagents_code import _nemoclaw_managed as managed",
             "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
-            "snapshot = managed.managed_mcp_config_path()",
-            "print(managed.managed_mcp_config_bytes(snapshot).decode() if snapshot else 'absent', end='')",
+            "snapshot = managed.managed_mcp_config_path() if sys.platform == 'linux' else None",
+            "canonical = managed.managed_mcp_config_bytes(snapshot) if snapshot else managed._canonicalize_managed_mcp_config(managed._read_managed_mcp_config() or b'')",
+            "print(canonical.decode() if canonical else 'absent', end='')",
           ].join("; "),
           configPath,
         ],
@@ -900,29 +942,31 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(symlinked.status).not.toBe(0);
   });
 
-  it("passes sealed and anonymous MCP snapshots through ServerProcess restart", () => {
-    const tempDir = createPackageFixture();
-    patchFixture(tempDir);
-    const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
-    const managedConfig = {
-      mcpServers: {
-        github: {
-          type: "http",
-          url: "https://api.githubcopilot.com/mcp/",
-          headers: {
-            Authorization: "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN",
+  it.runIf(process.platform === "linux")(
+    "passes sealed and anonymous MCP snapshots through ServerProcess restart",
+    () => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
+      const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+      const managedConfig = {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN",
+            },
           },
         },
-      },
-    };
-    for (const snapshotKind of ["sealed-memfd", "anonymous-otmpfile"] as const) {
-      fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+      };
+      for (const snapshotKind of ["sealed-memfd", "anonymous-otmpfile"] as const) {
+        fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
 
-      const result = spawnSync(
-        "python3",
-        [
-          "-c",
-          `
+        const result = spawnSync(
+          "python3",
+          [
+            "-c",
+            `
 import asyncio
 import errno
 import fcntl
@@ -1038,28 +1082,29 @@ print(json.dumps({
     "outputs": [json.loads(output) for output in server.outputs],
 }))
 `,
-          configPath,
-          snapshotKind,
-        ],
-        {
-          cwd: tempDir,
-          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
-          encoding: "utf8",
-        },
-      );
+            configPath,
+            snapshotKind,
+          ],
+          {
+            cwd: tempDir,
+            env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+            encoding: "utf8",
+          },
+        );
 
-      expect(result.status, result.stderr).toBe(0);
-      const proof = JSON.parse(result.stdout) as {
-        path: string;
-        kind: string;
-        outputs: unknown[];
-      };
-      expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
-      expect(proof.kind).toBe(snapshotKind);
-      expect(proof.outputs).toEqual([managedConfig, managedConfig]);
-      expect(result.stdout).not.toContain("attacker");
-    }
-  });
+        expect(result.status, result.stderr).toBe(0);
+        const proof = JSON.parse(result.stdout) as {
+          path: string;
+          kind: string;
+          outputs: unknown[];
+        };
+        expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
+        expect(proof.kind).toBe(snapshotKind);
+        expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+        expect(result.stdout).not.toContain("attacker");
+      }
+    },
+  );
 
   it("blocks TUI commands, credential screens, dotenv, OAuth, and install backends", () => {
     const tempDir = createPackageFixture();
@@ -1082,8 +1127,19 @@ print(json.dumps({
     );
     const validation = `
 import asyncio
+import importlib.util
 import os
+import sys
 from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "progressive_disclosure_harness",
+    ${JSON.stringify(progressiveDisclosureHarness)},
+)
+assert spec is not None and spec.loader is not None
+progressive_disclosure_harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(progressive_disclosure_harness)
+progressive_disclosure_harness._install_stubs()
 
 from deepagents_code import agent, app, auth_store, config, hooks, main as dcode_main, model_config, non_interactive, server, subagents, update_check
 from deepagents_code import _nemoclaw_managed
@@ -1265,17 +1321,26 @@ async def validate():
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
     assert non_interactive.settings.shell_allow_list is None
-    _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    if sys.platform == "linux":
+        _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    else:
+        _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(
+          path.join(tempDir, "absent-managed-mcp.json"),
+        )})
     _nemoclaw_managed._MANAGED_MCP_FD = _nemoclaw_managed._MANAGED_MCP_BINDING = None
     _nemoclaw_managed._MANAGED_MCP_READY = False
     managed_args = dcode_main.parse_args()
     snapshot_mcp_path = managed_args.mcp_config
-    assert snapshot_mcp_path.startswith("/proc/self/fd/")
-    assert Path(snapshot_mcp_path).is_file()
-    assert instance._absolutize_launch_relative_path(
-        snapshot_mcp_path, Path.cwd()
-    ) == snapshot_mcp_path
-    assert managed_args.no_mcp is False
+    if sys.platform == "linux":
+        assert snapshot_mcp_path.startswith("/proc/self/fd/")
+        assert Path(snapshot_mcp_path).is_file()
+        assert instance._absolutize_launch_relative_path(
+            snapshot_mcp_path, Path.cwd()
+        ) == snapshot_mcp_path
+        assert managed_args.no_mcp is False
+    else:
+        assert snapshot_mcp_path is None
+        assert managed_args.no_mcp is True
     assert managed_args.trust_project_mcp is False
     managed_headless_kwargs = await non_interactive.run_non_interactive(
         "message",
@@ -1285,7 +1350,7 @@ async def validate():
         trust_project_mcp=True,
     )
     assert managed_headless_kwargs["mcp_config_path"] == snapshot_mcp_path
-    assert managed_headless_kwargs["no_mcp"] is False
+    assert managed_headless_kwargs["no_mcp"] is (sys.platform != "linux")
     assert managed_headless_kwargs["trust_project_mcp"] is False
     assert model_config.ModelConfig().get_class_path("openai") is None
     managed_kwargs = config._get_provider_kwargs("openai")

@@ -31,7 +31,9 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     configureDcodeSession(harness);
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      harness.rebuildSandbox("alpha", ["--yes", "--tool-disclosure", "direct"], {
+        throwOnError: true,
+      }),
     ).resolves.toBeUndefined();
 
     expect(harness.preflightDcodeRouteSpy).toHaveBeenCalledTimes(4);
@@ -39,12 +41,14 @@ describe("rebuildSandbox DCode flow: mutation edge", () => {
     expect(harness.prepareManagedDcodeRebuildImageSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         compatibleEndpointReasoning: null,
+        toolDisclosure: "direct",
         webSearchConfig: null,
       }),
     );
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         agent: "langchain-deepagents-code",
+        toolDisclosure: "direct",
         preparedDcodeRebuild: expect.objectContaining({
           buildContext: harness.preparedDcodeBuildContext,
           gatewayName: "nemoclaw",

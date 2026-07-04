@@ -6,6 +6,7 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import {
   applyAddExtraProvider,
@@ -97,6 +98,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
   webSearchEnabled?: boolean;
+  /** Selected disclosure preference; model compatibility safeguards may downgrade runtime behavior. */
+  toolDisclosure?: ToolDisclosure;
   /** Durable provider identity for enabled managed web search. */
   webSearchProvider?: WebSearchProvider | null;
   agent?: string | null;
@@ -472,6 +475,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       policyTier: entry.policyTier || null,
       webSearchEnabled:
         typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
+      // Preserve absence on reconstructed legacy rows. Only a freshly built
+      // sandbox registration may claim the new progressive default.
+      toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
         (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")

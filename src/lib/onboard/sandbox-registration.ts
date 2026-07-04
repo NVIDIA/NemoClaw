@@ -8,6 +8,7 @@ import { type WebSearchConfig, webSearchProviderForConfig } from "../inference/w
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMcpState, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import {
   getHermesDashboardRegistryFields,
   type HermesDashboardOnboardState,
@@ -34,6 +35,7 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   appliedPolicies: string[];
+  toolDisclosure?: ToolDisclosure;
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
@@ -110,6 +112,7 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
+    toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:
       input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,

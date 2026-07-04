@@ -3,6 +3,7 @@
 
 import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createDcodeRebuildPreflightScope,
   type DcodeRebuildPreflightBail,
@@ -48,17 +49,20 @@ export type DcodeRebuildOrchestrator = {
   prepareImage(
     resumeConfig: RebuildResumeConfig,
     webSearchConfig: WebSearchConfig | null,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
     baseImageOptions?: RebuildAgentBaseImageOptions,
   ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<boolean>;
   checkAtDeleteEdge(
     resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<{ ok: true } | { ok: false; message: string; code?: number }>;
@@ -129,7 +133,14 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, webSearchConfig, skipLiveRoute, gatewayPort, baseImageOptions) =>
+    prepareImage: (
+      resumeConfig,
+      webSearchConfig,
+      toolDisclosure,
+      skipLiveRoute,
+      gatewayPort,
+      baseImageOptions,
+    ) =>
       run(async () => {
         if (!scope.enabled) {
           return deps.ensureAgentBaseImage(rebuildAgent, scope.bail, baseImageOptions);
@@ -139,6 +150,7 @@ export function createDcodeRebuildOrchestrator(
           entry,
           resumeConfig,
           webSearchConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -152,7 +164,7 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, skipLiveRoute, gatewayPort) =>
+    revalidateBeforeDelete: (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -161,6 +173,7 @@ export function createDcodeRebuildOrchestrator(
           sandboxName,
           entry,
           resumeConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -169,7 +182,7 @@ export function createDcodeRebuildOrchestrator(
           replacement,
         });
       }),
-    checkAtDeleteEdge: async (resumeConfig, skipLiveRoute, gatewayPort) => {
+    checkAtDeleteEdge: async (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) => {
       if (!scope.enabled) return { ok: true };
       const replacement = scope.preparedReplacement;
       if (!replacement) {
@@ -183,6 +196,7 @@ export function createDcodeRebuildOrchestrator(
           sandboxName,
           entry,
           resumeConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,

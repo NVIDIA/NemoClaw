@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session } from "../state/onboard-session";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { ResumeConfigConflict } from "./resume-config";
 
 export interface OnboardSessionBootstrapInput {
@@ -14,6 +15,7 @@ export interface OnboardSessionBootstrapInput {
   authoritativeResumeConfig?: boolean;
   agentFlag?: string | null;
   envAgent?: string | null;
+  requestedToolDisclosure?: ToolDisclosure | null;
 }
 
 export interface OnboardSessionBootstrapDeps {
@@ -31,6 +33,7 @@ export interface OnboardSessionBootstrapDeps {
       fromDockerfile?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
+      toolDisclosure?: ToolDisclosure | null;
       authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
@@ -154,6 +157,7 @@ async function prepareResumeSession(
     fromDockerfile: input.requestedFromDockerfile,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
+    toolDisclosure: input.requestedToolDisclosure ?? null,
     authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
@@ -185,6 +189,7 @@ function prepareFreshSession(
   const session = deps.saveSession(
     deps.createSession({
       mode: mode(input.nonInteractive),
+      toolDisclosure: input.requestedToolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile || null },
     }),
   );

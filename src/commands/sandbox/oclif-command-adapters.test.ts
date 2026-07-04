@@ -118,13 +118,17 @@ describe("sandbox oclif command adapters", () => {
     try {
       await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
       await DestroyCliCommand.run(["alpha", "--yes"], rootDir);
-      await RebuildCliCommand.run(["alpha", "--force", "--verbose"], rootDir);
+      await RebuildCliCommand.run(
+        ["alpha", "--force", "--verbose", "--tool-disclosure", "direct"],
+        rootDir,
+      );
       await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
       expect(mocks.rebuildSandbox).toHaveBeenCalledWith("alpha", {
         force: true,
+        toolDisclosure: "direct",
         verbose: true,
         yes: false,
       });
@@ -203,6 +207,7 @@ describe("sandbox oclif command adapters", () => {
     expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);
     expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
     expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
+    expect(usage(RebuildCliCommand)).toContain("[--tool-disclosure <progressive|direct>]");
     expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
     expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
     expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");

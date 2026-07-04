@@ -341,6 +341,18 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code",
     );
+    expect(dockerfile).toContain(
+      "COPY agents/langchain-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain(
+      "python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain(
+      "rm -f /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
+    expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
+    expect(dockerfile).toContain("progressive|direct)");
     expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");

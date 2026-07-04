@@ -76,6 +76,10 @@ function stageLegacySandboxBuildContext(
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
     recursive: true,
@@ -183,6 +187,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
     path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "validate-openclaw-tool-search.mts"),
+    path.join(stagedScriptsDir, "validate-openclaw-tool-search.mts"),
+  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(
@@ -214,6 +222,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(

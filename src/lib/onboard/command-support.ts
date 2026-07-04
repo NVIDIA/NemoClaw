@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
-
+import { TOOL_DISCLOSURE_VALUES, type ToolDisclosure } from "../tool-disclosure";
 import { describeAgentFlag } from "./agent-flag-help";
 import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
@@ -46,7 +46,7 @@ function agentFlagDescription(): string {
 }
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--tool-disclosure <progressive|direct>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -74,6 +74,7 @@ export type OnboardFlags = {
   "sandbox-gpu-device"?: string;
   agent?: string;
   agents?: string;
+  "tool-disclosure"?: ToolDisclosure;
   "control-ui-port"?: number;
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
@@ -120,6 +121,11 @@ export function buildOnboardFlags(): Record<string, any> {
     agents: Flags.string({
       description:
         "Path to a YAML manifest declaring secondary OpenClaw agents, agents.defaults, and main-agent overrides; baked into the sandbox image",
+    }),
+    "tool-disclosure": Flags.string({
+      description:
+        "Choose progressive tool discovery or direct exposure of all session-authorized tools",
+      options: [...TOOL_DISCLOSURE_VALUES],
     }),
     "control-ui-port": Flags.integer({
       description: "Host port for the local control UI",

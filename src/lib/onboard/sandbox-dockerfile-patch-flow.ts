@@ -7,6 +7,7 @@ import {
   SandboxBaseImageResolutionError,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
+import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 type DockerRunResult = { status: number | null };
@@ -38,6 +39,7 @@ export type PrepareSandboxDockerfilePatchInput = {
   provider: string | null;
   preferredInferenceApi: string | null;
   webSearchConfig: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
   resolutionHint?: SandboxBaseImageResolutionMetadata | null;
@@ -101,6 +103,7 @@ export async function prepareSandboxDockerfilePatch({
   provider,
   preferredInferenceApi,
   webSearchConfig,
+  toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
   hermesToolGateways,
   sandboxGpuConfig,
   resolutionHint = null,
@@ -184,6 +187,8 @@ export async function prepareSandboxDockerfilePatch({
       const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
       return {
         buildIdPolicy,
+        toolDisclosure,
+        requireToolDisclosureContract: Boolean(fromDockerfile),
         ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),
       };
     })(),

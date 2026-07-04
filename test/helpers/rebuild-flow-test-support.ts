@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
 
 export type RebuildSandbox =
@@ -32,7 +34,11 @@ export type RebuildFlowOverrides = {
     overrideEnvVar: string | null;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
-  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
+  onboard?: (
+    session: RebuildFlowSession,
+    options: RebuildRecreateOnboardOpts,
+  ) => Promise<void> | void;
+  beforeBackup?: () => void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
@@ -74,7 +80,7 @@ export type RebuildFlowOverrides = {
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
-  customImagePreflight?: { ok: true; imageTag: string | null } | { ok: false; detail: string };
+  customImagePreflight?: RebuildImagePreflightResult;
   defaultSelectionRevision?: number;
   preDeleteDefaultSelectionRevision?: number;
   removalReceipt?: SandboxRemovalReceipt | null;

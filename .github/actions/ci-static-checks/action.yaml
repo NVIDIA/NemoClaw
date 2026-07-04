@@ -42,8 +42,6 @@ runs:
       shell: bash
       run: |
         npx prek run --all-files --stage pre-commit \
-          --skip test-cli \
-          --skip test-plugin \
           --skip source-shape-test-budget \
           --skip test-file-size-budget \
           --skip test-skills-yaml

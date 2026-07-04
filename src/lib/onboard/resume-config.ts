@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import path from "node:path";
-
+import { hasInvalidSessionToolDisclosure } from "../state/onboard-session";
+import { normalizeToolDisclosure, type ToolDisclosure } from "../tool-disclosure";
 import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
 
 const onboardProviders = require("./providers");
@@ -12,6 +13,7 @@ export interface ResumeSessionLike {
   provider?: string | null;
   model?: string | null;
   agent?: string | null;
+  toolDisclosure?: ToolDisclosure;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
 }
@@ -105,6 +107,7 @@ export function getResumeConfigConflicts(
     fromDockerfile?: string | null;
     sandboxName?: string | null;
     agent?: string | null;
+    toolDisclosure?: ToolDisclosure | null;
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
      * validated registry state, so credential aliases must not synthesize a new
@@ -158,6 +161,26 @@ export function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
+    });
+  }
+
+  const requestedToolDisclosure = normalizeToolDisclosure(opts.toolDisclosure);
+  const recordedToolDisclosure = normalizeToolDisclosure(session?.toolDisclosure);
+  if (hasInvalidSessionToolDisclosure(session)) {
+    conflicts.push({
+      field: "tool disclosure",
+      requested: requestedToolDisclosure,
+      recorded: "invalid",
+    });
+  } else if (
+    requestedToolDisclosure &&
+    recordedToolDisclosure &&
+    requestedToolDisclosure !== recordedToolDisclosure
+  ) {
+    conflicts.push({
+      field: "tool disclosure",
+      requested: requestedToolDisclosure,
+      recorded: recordedToolDisclosure,
     });
   }
 

@@ -21,7 +21,7 @@ import {
 
 describe("managed DCode rebuild image preparation", () => {
   it("prebuilds the recorded DCode replacement and transfers one disposable context (#6195)", async () => {
-    const fixture = await createPreparedDcodeImageFixture();
+    const fixture = await createPreparedDcodeImageFixture({ toolDisclosure: "direct" });
     try {
       expect(fixture.result).toMatchObject({
         ok: true,
@@ -46,6 +46,7 @@ describe("managed DCode rebuild image preparation", () => {
           provider: "compatible-endpoint",
           model: "nvidia/nemotron-3-super-120b-a12b",
           preferredInferenceApi: "openai-completions",
+          toolDisclosure: "direct",
           chatUiUrl: "",
         }),
       );

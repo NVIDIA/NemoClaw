@@ -159,12 +159,15 @@ describe("managed DCode rebuild image verification", () => {
       fixture.stagedDockerfile,
       fs.constants.O_WRONLY | fs.constants.O_APPEND,
     );
+    const originalMutationStat = fs.fstatSync(mutationFd);
     try {
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(true);
       fs.writeSync(mutationFd, "# temporary drift\n", null, "utf8");
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(false);
       fs.ftruncateSync(mutationFd, 0);
       fs.writeSync(mutationFd, "FROM scratch\n", 0, "utf8");
+      fs.futimesSync(mutationFd, originalMutationStat.atime, originalMutationStat.mtime);
+      fs.utimesSync(fixture.buildCtx, fixture.stableDockerfileTime, fixture.stableDockerfileTime);
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(true);
       fs.writeSync(mutationFd, "# changed after preflight\n", 0, "utf8");
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(false);

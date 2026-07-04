@@ -43,6 +43,7 @@ describe("onboard command options", () => {
           "sandbox-gpu": true,
           "sandbox-gpu-device": "nvidia.com/gpu=0",
           agent: "dcode",
+          "tool-disclosure": "direct",
           "control-ui-port": 18790,
           gpu: true,
           yes: true,
@@ -63,6 +64,7 @@ describe("onboard command options", () => {
       acceptThirdPartySoftware: true,
       agent: "langchain-deepagents-code",
       agentsManifest: null,
+      toolDisclosure: "direct",
       controlUiPort: 18790,
       gpu: true,
       noGpu: false,
@@ -84,6 +86,7 @@ describe("onboard command options", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       agentsManifest: null,
+      toolDisclosure: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -96,6 +99,23 @@ describe("onboard command options", () => {
     expect(
       resolve({}, { env: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" } }).acceptThirdPartySoftware,
     ).toBe(true);
+  });
+
+  it("uses the agent-neutral tool-disclosure env and rejects unknown values", () => {
+    expect(resolve({}, { env: { NEMOCLAW_TOOL_DISCLOSURE: " DIRECT " } }).toolDisclosure).toBe(
+      "direct",
+    );
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {},
+        {
+          env: { NEMOCLAW_TOOL_DISCLOSURE: "sometimes" },
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("must be one of: progressive, direct");
   });
 
   it("preserves the requested Dockerfile path after validating the resolved file", () => {

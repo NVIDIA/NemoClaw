@@ -34,4 +34,6 @@ Use this guide when editing files under `fern/`.
 - Run `npm run docs` after Fern configuration changes.
 - Run `npm run docs:live` when layout, component, CSS, or asset changes need visual review.
 - Run `npm run docs:preview:watch` only when you need to verify branch preview publication behavior.
-- For doc-only or Fern-only PRs, run `npx prek run --all-files` unless the user asks for a narrower draft.
+- For doc-only or Fern-only PRs, rely on normal `pre-commit`, `commit-msg`, and `pre-push` hooks when they pass.
+- If hooks were skipped or unavailable, refresh `origin/main` and run `npm run check:diff` once to reproduce those checks.
+- Do not run `npm run check` or an all-files hook baseline routinely for focused docs changes.
