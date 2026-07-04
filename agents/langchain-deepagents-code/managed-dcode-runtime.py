@@ -98,6 +98,15 @@ _MANAGED_MCP_FD: int | None = None
 _MANAGED_MCP_BINDING: dict[str, int | str] | None = None
 _MANAGED_MCP_CHILD_BINDING: dict[str, int | str] | None = None
 _MANAGED_MCP_READY = False
+# SECURITY -- Source boundary: this isolated Python runtime cannot import the
+# canonical TypeScript groups in src/lib/security/secret-patterns.ts, so these
+# expressions deliberately mirror their secret-shape behavior.
+# Regression gate: test/langchain-deepagents-code-secret-pattern-parity.test.ts
+# fingerprints all canonical groups and runs one shared positive corpus through
+# both those groups and _contains_secret_shape; the Bash wrapper consumes the
+# same corpus in test/langchain-deepagents-code-image.test.ts.
+# Removal condition: delete this mirror only when the managed runtime can consume
+# the canonical patterns directly or upstream rejects these shapes before boot.
 _SECRET_PATTERNS = tuple(
     (platform, re.compile(pattern, flags))
     for platform, pattern, flags in (
@@ -110,7 +119,11 @@ _SECRET_PATTERNS = tuple(
         (None, r"A(?:K|S)IA[A-Z0-9]{16}", 0),
         ("telegram", r"(?:bot)?[0-9]{8,10}:[A-Za-z0-9_-]{35}", 0),
         ("discord", r"[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}", 0),
-        (None, r"Bearer\s+[A-Za-z0-9_.+/=-]{10,}", re.IGNORECASE),
+        (
+            None,
+            r"Bearer[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[A-Za-z0-9_.+/=-]{10,}",
+            re.IGNORECASE,
+        ),
         (None, r"(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:\s]['\"]?[A-Za-z0-9_.+/=-]{10,}", re.IGNORECASE),
         (None, r"lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*", 0),
         (None, r"-----BEGIN [^-\r\n]*PRIVATE KEY-----[\s\S]*-----END [^-\r\n]*PRIVATE KEY-----", 0),

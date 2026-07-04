@@ -241,6 +241,52 @@ managed = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(managed)
 raw = b'{"mcpServers":{"github":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_TOKEN"}}}}'
 managed._read_managed_mcp_config = lambda: raw
+payload = managed._canonicalize_managed_mcp_config(raw)
+assert payload is not None
+
+real_sealed_snapshot = managed._sealed_managed_mcp_snapshot
+real_anonymous_snapshot = managed._anonymous_managed_mcp_snapshot
+anonymous_calls = []
+
+def tracked_anonymous_snapshot(snapshot_payload):
+    anonymous_calls.append(snapshot_payload)
+    return real_anonymous_snapshot(snapshot_payload)
+
+def wrapped_eperm(_payload):
+    try:
+        raise PermissionError(errno.EPERM, "blocked by seccomp")
+    except PermissionError as cause:
+        raise RuntimeError("sealed snapshot unavailable") from cause
+
+managed._sealed_managed_mcp_snapshot = wrapped_eperm
+managed._anonymous_managed_mcp_snapshot = tracked_anonymous_snapshot
+descriptor, binding = managed._managed_mcp_snapshot(payload)
+try:
+    assert binding["kind"] == managed._MCP_ANONYMOUS_KIND
+    assert anonymous_calls == [payload]
+    assert managed._read_bound_managed_mcp_descriptor(descriptor, binding) == payload
+finally:
+    os.close(descriptor)
+
+def wrapped_emfile(_payload):
+    try:
+        raise OSError(errno.EMFILE, "too many open files")
+    except OSError as cause:
+        raise RuntimeError("sealed snapshot unavailable") from cause
+
+managed._sealed_managed_mcp_snapshot = wrapped_emfile
+try:
+    managed._managed_mcp_snapshot(payload)
+except RuntimeError as exc:
+    assert str(exc) == "sealed snapshot unavailable"
+    assert isinstance(exc.__cause__, OSError)
+    assert exc.__cause__.errno == errno.EMFILE
+    assert managed._managed_mcp_fallback_allowed(exc) is False
+else:
+    raise AssertionError("nested unrelated errno was masked by fallback")
+assert anonymous_calls == [payload]
+managed._sealed_managed_mcp_snapshot = real_sealed_snapshot
+managed._anonymous_managed_mcp_snapshot = real_anonymous_snapshot
 
 def blocked_memfd(*_args, **_kwargs):
     raise PermissionError(errno.EPERM, "blocked by seccomp")
