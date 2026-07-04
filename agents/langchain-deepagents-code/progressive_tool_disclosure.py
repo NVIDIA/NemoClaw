@@ -240,20 +240,27 @@ class _ToolCatalogEntry:
         self.tool = tool
 
 
-def _tool_name(tool: BaseTool | dict[str, Any]) -> str | None:
+def _tool_name(tool: object) -> str | None:
     """Return a registered tool name without changing the tool object."""
     if isinstance(tool, BaseTool):
         return tool.name if isinstance(tool.name, str) and tool.name else None
-    name = tool.get("name")
+    if isinstance(tool, dict):
+        name = tool.get("name")
+        if isinstance(name, str) and name:
+            return name
+        function = tool.get("function")
+        if (
+            isinstance(function, dict)
+            and isinstance(function.get("name"), str)
+            and function["name"]
+        ):
+            return cast("str", function["name"])
+    name = getattr(tool, "name", None)
     if isinstance(name, str) and name:
         return name
-    function = tool.get("function")
-    if (
-        isinstance(function, dict)
-        and isinstance(function.get("name"), str)
-        and function["name"]
-    ):
-        return cast("str", function["name"])
+    callable_name = getattr(tool, "__name__", None)
+    if isinstance(callable_name, str) and callable_name:
+        return callable_name
     return None
 
 
@@ -268,6 +275,49 @@ def _tool_description(tool: BaseTool | dict[str, Any]) -> str:
     if isinstance(function, dict) and isinstance(function.get("description"), str):
         return cast("str", function["description"])
     return ""
+
+
+def assert_no_reserved_tool_name_collisions(
+    tools: Sequence[object] | None,
+    mcp_server_info: Sequence[object] | None,
+) -> None:
+    """Reject untrusted registrations that can replace managed core tools.
+
+    The pinned runtime combines middleware and regular tools into one executor
+    registry keyed by name. Keep provenance from both the registered tool list
+    and MCP metadata so reserved names are rejected before ``create_deep_agent``
+    instead of being trusted merely because they spell like a core tool.
+    """
+    collisions: set[str] = set()
+    for index, tool in enumerate(tools or ()):
+        name = _tool_name(tool)
+        if name in CORE_TOOL_NAMES:
+            collisions.add(f"registered tool[{index}] uses reserved name {name!r}")
+
+    for server in mcp_server_info or ():
+        raw_server_name = getattr(server, "name", None)
+        server_name = raw_server_name if isinstance(raw_server_name, str) else "<unknown>"
+        for tool_info in getattr(server, "tools", ()) or ():
+            declared_name = (
+                tool_info if isinstance(tool_info, str) else _tool_name(tool_info)
+            )
+            if declared_name is None:
+                continue
+            runtime_names = {declared_name}
+            prefix = f"{server_name}_"
+            if server_name != "<unknown>" and not declared_name.startswith(prefix):
+                runtime_names.add(f"{prefix}{declared_name}")
+            for runtime_name in runtime_names & CORE_TOOL_NAMES:
+                collisions.add(
+                    f"MCP server {server_name!r} tool {declared_name!r} "
+                    f"resolves to reserved name {runtime_name!r}"
+                )
+
+    if collisions:
+        detail = "; ".join(sorted(collisions))
+        raise RuntimeError(
+            "reserved core tool name collision before create_deep_agent: " + detail
+        )
 
 
 class ProgressiveToolDisclosureMiddleware(
@@ -547,5 +597,6 @@ __all__ = [
     "ProgressiveToolDisclosureMiddleware",
     "ProgressiveToolDisclosureState",
     "SearchToolsInput",
+    "assert_no_reserved_tool_name_collisions",
     "progressive_tool_disclosure_enabled",
 ]

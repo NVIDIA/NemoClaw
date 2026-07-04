@@ -376,9 +376,13 @@ class SandboxStateFlow<
       : null;
     const recordedToolDisclosure = normalizeToolDisclosure(registryEntry?.toolDisclosure);
     const desiredToolDisclosure = toolDisclosureOrDefault(state.session?.toolDisclosure);
+    const toolDisclosureMigrationNeeded = Boolean(
+      registryEntry && registryEntry.toolDisclosure === undefined,
+    );
     const toolDisclosureChanged = Boolean(
       registryEntry &&
-        (recordedToolDisclosure ? recordedToolDisclosure !== desiredToolDisclosure : true),
+        !toolDisclosureMigrationNeeded &&
+        recordedToolDisclosure !== desiredToolDisclosure,
     );
     return decideSandboxResume({
       resume: this.options.resume,
@@ -397,6 +401,7 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      toolDisclosureMigrationNeeded,
       toolDisclosureChanged,
     });
   }

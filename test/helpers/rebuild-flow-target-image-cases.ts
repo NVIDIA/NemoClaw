@@ -6,10 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import {
-  createBuildContextVerifier,
-  fingerprintBuildContext,
-} from "../../src/lib/actions/sandbox/rebuild-prepared-image-context";
+import { createBuildContextVerifier } from "../../src/lib/actions/sandbox/rebuild-prepared-image-context";
+import { fingerprintBuildContext } from "../../src/lib/adapters/fs/build-context-fingerprint";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -158,6 +156,58 @@ export function registerRebuildFlowTargetImageTests(): void {
         fs.rmSync(preparedDir, { recursive: true, force: true });
       }
     });
+
+    it.runIf(process.platform !== "win32")(
+      "aborts before delete when retained file special bits change after preflight",
+      async () => {
+        const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-mode-source-"));
+        const preparedDir = fs.mkdtempSync(
+          path.join(os.tmpdir(), "nemoclaw-rebuild-mode-prepared-"),
+        );
+        const sourceDockerfile = path.join(sourceDir, "Dockerfile");
+        const preparedDockerfile = path.join(preparedDir, "Dockerfile");
+        fs.writeFileSync(sourceDockerfile, "FROM scratch\n# source\n");
+        fs.writeFileSync(preparedDockerfile, "FROM scratch\n# prepared\n", { mode: 0o755 });
+        const cleanupBuildCtx = vi.fn(() => {
+          fs.rmSync(preparedDir, { recursive: true, force: true });
+          return true;
+        });
+        const contextFingerprint = fingerprintBuildContext(preparedDir);
+        const prepared = {
+          buildCtx: preparedDir,
+          stagedDockerfile: preparedDockerfile,
+          cleanupBuildCtx,
+          buildId: "special-mode-mutated-prepared",
+          contextFingerprint,
+          verifyBuildCtx: createBuildContextVerifier(preparedDir, contextFingerprint),
+          rebuildTarget: { agentName: null, fromDockerfile: sourceDockerfile },
+        };
+        const harness = createRebuildFlowHarness({
+          sandboxEntry: { fromDockerfile: sourceDockerfile },
+          customImagePreflight: {
+            ok: true,
+            imageTag: "nemoclaw-rebuild-preflight:special-mode-mutated",
+            prepared,
+          },
+          beforeBackup: () => fs.chmodSync(preparedDockerfile, 0o4755),
+        });
+
+        try {
+          await expect(
+            harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+          ).rejects.toThrow("Replacement sandbox image context changed before delete");
+          expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+            ["sandbox", "delete", "alpha"],
+            expect.anything(),
+          );
+          expect(harness.onboardSpy).not.toHaveBeenCalled();
+          expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+        } finally {
+          fs.rmSync(sourceDir, { recursive: true, force: true });
+          fs.rmSync(preparedDir, { recursive: true, force: true });
+        }
+      },
+    );
 
     it("rebuilds a known-remote target even when the session belongs to another sandbox (#5735)", async () => {
       const restoreEnv = snapshotEnv(["NVIDIA_INFERENCE_API_KEY"]);

@@ -51,6 +51,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
   const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
   const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
+  const buildContextFingerprint = requireDist("../../adapters/fs/build-context-fingerprint.js");
   const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
   const rebuildShields = requireDist("./rebuild-shields.js");
   const nim = requireDist("../../inference/nim.js");
@@ -108,10 +109,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         return true;
       },
       buildId: "rebuild-flow-prepared",
-      contextFingerprint: rebuildPreparedImageContext.fingerprintBuildContext(preparedBuildCtx),
+      contextFingerprint: buildContextFingerprint.fingerprintBuildContext(preparedBuildCtx),
       verifyBuildCtx: rebuildPreparedImageContext.createBuildContextVerifier(
         preparedBuildCtx,
-        rebuildPreparedImageContext.fingerprintBuildContext(preparedBuildCtx),
+        buildContextFingerprint.fingerprintBuildContext(preparedBuildCtx),
       ),
       rebuildTarget: {
         agentName: rebuildAgent && rebuildAgent !== "openclaw" ? rebuildAgent : null,

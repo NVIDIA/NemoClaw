@@ -10,7 +10,6 @@ import importlib
 import importlib.util
 import inspect
 import json
-import os
 import sys
 import types
 from pathlib import Path
@@ -666,70 +665,14 @@ def _run_isolation(module: types.ModuleType) -> dict[str, Any]:
     return {"thread_a": _visible_names(thread_a), "thread_b": _visible_names(thread_b)}
 
 
-def _run_wiring(agent_path: Path) -> dict[str, Any]:
-    _install_stubs()
-    package_root = agent_path.parent.parent
-    sys.path.insert(0, str(package_root))
-    try:
-        agent = importlib.import_module("deepagents_code.agent")
-    finally:
-        sys.path.pop(0)
-
-    class Info:
-        def __init__(self, tools: tuple[str, ...]) -> None:
-            self.tools = tools
-
-    no_info = agent.create_cli_agent(None)
-    empty_info = agent.create_cli_agent([Info(())])
-    active = agent.create_cli_agent([Info(("mcp_echo",))])
-    os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
-    direct = agent.create_cli_agent([Info(("mcp_echo",))])
-    os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "progressive"
-
-    middleware_type = agent.ProgressiveToolDisclosureMiddleware
-    for main_stack, subagent_stacks in (no_info, empty_info):
-        assert not any(isinstance(item, middleware_type) for item in main_stack)
-        assert all(
-            not any(isinstance(item, middleware_type) for item in stack)
-            for stack in subagent_stacks
-        )
-
-    main_stack, subagent_stacks = active
-    main_instances = [item for item in main_stack if isinstance(item, middleware_type)]
-    subagent_instances = [
-        item
-        for stack in subagent_stacks
-        for item in stack
-        if isinstance(item, middleware_type)
-    ]
-    assert len(main_instances) == 1
-    assert len(subagent_instances) == 2
-    assert len({id(*main_instances), *(id(item) for item in subagent_instances)}) == 3
-    direct_main, direct_subagents = direct
-    assert not any(isinstance(item, middleware_type) for item in direct_main)
-    assert all(
-        not any(isinstance(item, middleware_type) for item in stack)
-        for stack in direct_subagents
-    )
-    return {
-        "main": len(main_instances),
-        "subagents": len(subagent_instances),
-        "direct_main": 0,
-        "direct_subagents": 0,
-    }
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "scenario",
-        choices=("behavior", "overflow", "persistence", "isolation", "wiring"),
+        choices=("behavior", "overflow", "persistence", "isolation"),
     )
     parser.add_argument("module", type=Path)
     args = parser.parse_args()
-    if args.scenario == "wiring":
-        print(json.dumps(_run_wiring(args.module), sort_keys=True))
-        return
     module = _load_module(args.module)
     runners = {
         "behavior": _run_behavior,

@@ -294,8 +294,13 @@ agent = importlib.import_module("deepagents_code.agent")
 middleware = importlib.import_module("deepagents_code.progressive_tool_disclosure")
 
 class Info:
-    def __init__(self, tools):
+    def __init__(self, tools, name="fixture"):
         self.tools = tools
+        self.name = name
+
+class NamedTool:
+    def __init__(self, name):
+        self.name = name
 
 def counts(result):
     main, subagents = result
@@ -310,6 +315,27 @@ os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
 active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+try:
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        mcp_server_info=[Info(("tools",), name="search")],
+    )
+except RuntimeError as exc:
+    mcp_collision = str(exc)
+else:
+    raise AssertionError("MCP reserved-name collision was accepted")
+try:
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        tools=[NamedTool("read_file")],
+        mcp_server_info=[Info(("safe_echo",), name="safe")],
+    )
+except RuntimeError as exc:
+    regular_collision = str(exc)
+else:
+    raise AssertionError("regular reserved-name collision was accepted")
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
 direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "invalid"
@@ -324,6 +350,8 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
+    "mcp_collision": mcp_collision,
+    "regular_collision": regular_collision,
     "direct": direct,
     "invalid": invalid,
 }))
@@ -435,6 +463,10 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
       no_mcp: [0, 0],
       empty_mcp: [0, 0],
       active: [3, 3],
+      mcp_collision:
+        "reserved core tool name collision before create_deep_agent: MCP server 'search' tool 'tools' resolves to reserved name 'search_tools'",
+      regular_collision:
+        "reserved core tool name collision before create_deep_agent: registered tool[0] uses reserved name 'read_file'",
       direct: [0, 0],
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
     });

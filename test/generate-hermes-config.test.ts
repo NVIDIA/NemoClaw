@@ -165,6 +165,10 @@ function copyConfigGeneratorFixture(fixtureRoot: string): string {
     path.join(fixtureRoot, "src", "lib", "messaging"),
     { recursive: true },
   );
+  fs.copyFileSync(
+    path.join(import.meta.dirname, "..", "src", "lib", "tool-disclosure.ts"),
+    path.join(fixtureRoot, "src", "lib", "tool-disclosure.ts"),
+  );
   return fixtureScriptPath;
 }
 

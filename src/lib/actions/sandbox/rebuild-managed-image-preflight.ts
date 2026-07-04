@@ -4,6 +4,7 @@
 import crypto from "node:crypto";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
 import { GATEWAY_PORT } from "../../core/ports";
@@ -23,7 +24,6 @@ import {
   createIdempotentBuildContextCleanup,
   disposePreparedBuildContext,
   type FingerprintedPreparedBuildContext,
-  fingerprintBuildContext,
   verifyPreparedBuildContext,
 } from "./rebuild-prepared-image-context";
 

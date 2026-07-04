@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_TOOL_DISCLOSURE,
+  readToolDisclosureEnv,
   resolveSandboxToolDisclosure,
   resolveToolDisclosureRequest,
   toolDisclosureOrDefault,
@@ -27,6 +28,14 @@ describe("tool disclosure", () => {
     expect(() =>
       resolveToolDisclosureRequest(undefined, { NEMOCLAW_TOOL_DISCLOSURE: "sometimes" }),
     ).toThrow(/progressive, direct/);
+  });
+
+  it("shares the build-time environment parser across agent generators", () => {
+    expect(readToolDisclosureEnv({})).toBe("progressive");
+    expect(readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: " DIRECT " })).toBe("direct");
+    expect(() => readToolDisclosureEnv({ NEMOCLAW_TOOL_DISCLOSURE: "sometimes" })).toThrow(
+      "NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct",
+    );
   });
 
   it("preserves recorded behavior on reuse and lets recreation override it", () => {
@@ -67,6 +76,18 @@ describe("tool disclosure", () => {
         session: "direct",
         sandboxExists: false,
         recreate: true,
+      }),
+    ).toBe("direct");
+  });
+
+  it("preserves an explicit mode while migrating missing live sandbox state", () => {
+    expect(
+      resolveSandboxToolDisclosure({
+        requested: "direct",
+        recorded: undefined,
+        session: "progressive",
+        sandboxExists: true,
+        recreate: false,
       }),
     ).toBe("direct");
   });

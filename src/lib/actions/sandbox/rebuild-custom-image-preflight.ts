@@ -4,6 +4,7 @@
 import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
 import type { WebSearchConfig } from "../../inference/web-search";
@@ -17,7 +18,6 @@ import {
   createBuildContextVerifier,
   createIdempotentBuildContextCleanup,
   type FingerprintedPreparedBuildContext,
-  fingerprintBuildContext,
 } from "./rebuild-prepared-image-context";
 
 type PreflightInput = {

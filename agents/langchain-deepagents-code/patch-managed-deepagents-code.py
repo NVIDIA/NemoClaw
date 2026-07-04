@@ -426,10 +426,15 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     )
     if has_loaded_mcp_tools:
         from deepagents_code.progressive_tool_disclosure import (
+            assert_no_reserved_tool_name_collisions,
             progressive_tool_disclosure_enabled,
         )
 
         progressive_active = progressive_tool_disclosure_enabled()
+        if progressive_active:
+            assert_no_reserved_tool_name_collisions(
+                kwargs.get("tools"), kwargs.get("mcp_server_info")
+            )
     else:
         progressive_active = False
     if progressive_active and _nemoclaw_original_create_deep_agent is None:

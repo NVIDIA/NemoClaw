@@ -59,6 +59,10 @@ export function prepareSandboxToolDisclosure(
       process.exit(1);
     }
   }
+
+  // Keep inspection and validation ahead of every mutation. Splitting these
+  // steps across lifecycle callbacks would require a transaction object to
+  // preserve this fail-closed ordering for registry and session state.
   if (existingEntry && !liveExists && !preservedMcpState) registry.removeSandbox(sandboxName);
   onboardSession.updateSession((session) => {
     session.toolDisclosure = mode;

@@ -15,6 +15,18 @@ export function normalizeToolDisclosure(value: unknown): ToolDisclosure | null {
   return normalized === "progressive" || normalized === "direct" ? normalized : null;
 }
 
+/** Read the build-time environment contract with the shared closed-enum policy. */
+export function readToolDisclosureEnv(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+): ToolDisclosure {
+  const raw = env[TOOL_DISCLOSURE_ENV] || DEFAULT_TOOL_DISCLOSURE;
+  const normalized = normalizeToolDisclosure(raw);
+  if (!normalized) {
+    throw new Error(`${TOOL_DISCLOSURE_ENV} must be progressive or direct`);
+  }
+  return normalized;
+}
+
 /** Resolve an explicit CLI/env request. Blank values are treated as unset. */
 export function resolveToolDisclosureRequest(
   cliValue: unknown,
@@ -60,12 +72,17 @@ export function resolveSandboxToolDisclosure(input: {
 
   // Reusing a live sandbox must keep the behavior already baked into it.
   if (input.sandboxExists && !input.recreate) {
-    if (input.requested && recorded && input.requested !== recorded) {
-      throw new Error(
-        `sandbox records tool disclosure '${recorded}', but '${input.requested}' was requested; recreate the sandbox to change it`,
-      );
+    if (recorded) {
+      if (input.requested && input.requested !== recorded) {
+        throw new Error(
+          `sandbox records tool disclosure '${recorded}', but '${input.requested}' was requested; recreate the sandbox to change it`,
+        );
+      }
+      return recorded;
     }
-    return recorded ?? session ?? DEFAULT_TOOL_DISCLOSURE;
+    // Missing durable state marks a legacy sandbox that the caller will
+    // recreate. Preserve an explicit requested mode for that migration.
+    return input.requested ?? session ?? DEFAULT_TOOL_DISCLOSURE;
   }
 
   // A deliberate recreation may override recorded state. With no explicit

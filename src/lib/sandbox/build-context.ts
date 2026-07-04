@@ -73,6 +73,10 @@ function stageLegacySandboxBuildContext(
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
   );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
+  );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), {
     recursive: true,
@@ -215,6 +219,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "src", "lib", "messaging"),
     path.join(buildCtx, "src", "lib", "messaging"),
     { recursive: true },
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "src", "lib", "tool-disclosure.ts"),
+    path.join(buildCtx, "src", "lib", "tool-disclosure.ts"),
   );
   normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(

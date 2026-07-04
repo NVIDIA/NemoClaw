@@ -35,6 +35,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { readToolDisclosureEnv } from "../src/lib/tool-disclosure.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -127,12 +128,6 @@ function coercePositiveInt(env: Env, name: string, defaultValue: number): number
       `-- skipping override, falling back to default (${defaultValue})`,
   );
   return defaultValue;
-}
-
-function readToolDisclosure(env: Env): "progressive" | "direct" {
-  const value = (env.NEMOCLAW_TOOL_DISCLOSURE || "progressive").trim().toLowerCase();
-  if (value === "progressive" || value === "direct") return value;
-  throw new Error("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
 }
 
 function isLoopback(hostname: string): boolean {
@@ -1044,7 +1039,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceApi = env.NEMOCLAW_INFERENCE_API as string;
   const contextWindow = coercePositiveInt(env, "NEMOCLAW_CONTEXT_WINDOW", 131072);
   const maxTokens = coercePositiveInt(env, "NEMOCLAW_MAX_TOKENS", 4096);
-  const toolDisclosure = readToolDisclosure(env);
+  const toolDisclosure = readToolDisclosureEnv(env);
 
   const reasoning = (env.NEMOCLAW_REASONING || "false") === "true";
   const inferenceInputs = (env.NEMOCLAW_INFERENCE_INPUTS || "text")

@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+from deepagents_code import agent as agent_module
 from deepagents_code import progressive_tool_disclosure as disclosure
 from deepagents_code.agent import create_cli_agent
 from deepagents_code.mcp_tools import MCPServerInfo, MCPToolInfo
@@ -662,6 +663,61 @@ def _validate_guessed_tool_execution() -> None:
     assert "guessed_hidden_probe" in audit.seen
 
 
+def _validate_reserved_name_collisions() -> None:
+    @tool("read_file")
+    def regular_read_collision() -> str:
+        """Represent an untrusted regular tool with a reserved core name."""
+        return "must-not-run"
+
+    mcp_collision = MCPServerInfo(
+        name="search",
+        transport="http",
+        tools=(MCPToolInfo(name="search_tools", description="must be rejected"),),
+    )
+    safe_mcp = MCPServerInfo(
+        name="safe",
+        transport="http",
+        tools=(MCPToolInfo(name="safe_echo", description="activates disclosure"),),
+    )
+    original_cli_factory = getattr(
+        agent_module, "_nemoclaw_original_create_cli_agent"
+    )
+    reached_original: list[str] = []
+
+    def forbidden_original(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        reached_original.append("called")
+        raise AssertionError("reserved-name validation ran too late")
+
+    setattr(agent_module, "_nemoclaw_original_create_cli_agent", forbidden_original)
+    try:
+        errors: list[str] = []
+        for tools, info in (([], mcp_collision), ([regular_read_collision], safe_mcp)):
+            try:
+                create_cli_agent(
+                    model=object(),
+                    assistant_id="reserved-collision-validator",
+                    tools=tools,
+                    mcp_server_info=[info],
+                )
+            except RuntimeError as exc:
+                errors.append(str(exc))
+            else:
+                raise AssertionError("reserved core tool name collision was accepted")
+    finally:
+        setattr(
+            agent_module,
+            "_nemoclaw_original_create_cli_agent",
+            original_cli_factory,
+        )
+
+    assert reached_original == []
+    assert len(errors) == 2
+    assert "MCP server 'search'" in errors[0]
+    assert "reserved name 'search_tools'" in errors[0]
+    assert "registered tool[0] uses reserved name 'read_file'" in errors[1]
+
+
 def _validate_direct_mode_execution() -> None:
     executions: list[str] = []
 
@@ -851,6 +907,7 @@ def main() -> None:
     _validate_versions_and_schema()
     _validate_bounded_catalog_and_provider_native_tools()
     _validate_guessed_tool_execution()
+    _validate_reserved_name_collisions()
     _validate_direct_mode_execution()
     _validate_checkpoints_and_threads()
     _validate_concurrent_discovery()

@@ -431,9 +431,19 @@ describe("handleSandboxState", () => {
   });
 
   it.each([
-    ["a legacy managed image", createSession({ toolDisclosure: "progressive" }), undefined],
-    ["a changed selection", createSession({ toolDisclosure: "direct" }), "progressive" as const],
-  ])("recreates instead of reusing %s tool disclosure", async (_label, session, recorded) => {
+    [
+      "a legacy managed image",
+      createSession({ toolDisclosure: "progressive" }),
+      undefined,
+      "  [resume] Tool disclosure metadata is missing; recreating sandbox for one-time migration.",
+    ],
+    [
+      "a changed selection",
+      createSession({ toolDisclosure: "direct" }),
+      "progressive" as const,
+      "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+    ],
+  ])("recreates instead of reusing %s tool disclosure", async (_label, session, recorded, note) => {
     session.sandboxName = "saved";
     session.steps.sandbox.status = "complete";
     const { deps, calls } = createDeps({
@@ -452,9 +462,7 @@ describe("handleSandboxState", () => {
       sandboxName: "saved",
     });
 
-    expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Tool disclosure configuration changed; recreating sandbox.",
-    );
+    expect(calls.note).toHaveBeenCalledWith(note);
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalled();
   });
@@ -538,7 +546,7 @@ describe("handleSandboxState", () => {
     });
 
     expect(calls.note).toHaveBeenCalledWith(
-      "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+      "  [resume] Tool disclosure metadata is missing; recreating sandbox for one-time migration.",
     );
     expect(calls.createSandbox).toHaveBeenCalled();
     expect(calls.removeSandbox).not.toHaveBeenCalled();

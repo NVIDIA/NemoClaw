@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
+import { createBuildContextVerifier } from "../actions/sandbox/rebuild-prepared-image-context";
+import { fingerprintBuildContext } from "../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../agent/defs";
 import type { PreparedSandboxBuildContext } from "./build-context-stage";
 import {
@@ -155,6 +161,41 @@ describe("prepared DCode rebuild adapter", () => {
     expect(verifyBuildCtx).toHaveBeenCalledOnce();
     expect(create).not.toHaveBeenCalled();
   });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects special-bit mutation at the post-delete one-shot boundary",
+    async () => {
+      const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-one-shot-mode-"));
+      const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+      fs.writeFileSync(stagedDockerfile, "FROM scratch\n", { mode: 0o755 });
+      const contextFingerprint = fingerprintBuildContext(buildCtx);
+      const create = vi.fn(async (_context: PreparedSandboxBuildContext | null) => true);
+      const buildContext: PreparedSandboxBuildContext = {
+        ...preparedImageBuildContext,
+        buildCtx,
+        stagedDockerfile,
+        verifyBuildCtx: createBuildContextVerifier(buildCtx, contextFingerprint),
+      };
+      const bound = createPreparedDcodeRebuildRuntime(
+        {
+          ...preparedImageOptions,
+          preparedImageRebuild: {
+            ...preparedImageOptions.preparedImageRebuild!,
+            buildContext,
+          },
+        },
+        "nemoclaw",
+      ).bindCreateSandbox(create);
+
+      try {
+        fs.chmodSync(stagedDockerfile, 0o4755);
+        await expect(bound()).rejects.toThrow("context changed before use");
+        expect(create).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(buildCtx, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("treats explicit OpenClaw and the legacy null agent as the same prepared target", () => {
     const runtime = createPreparedDcodeRebuildRuntime(
