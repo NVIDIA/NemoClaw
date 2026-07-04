@@ -5,6 +5,12 @@
 # Managed Deep Agents Code launcher for NemoClaw/OpenShell sandboxes.
 
 set -euo pipefail
+
+if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2'
+  exit 0
+fi
+
 unset BASH_ENV ENV OPENAI_PROXY
 
 export HOME=/sandbox
@@ -74,12 +80,12 @@ run_dcode() {
 #     * OpenShell credential placeholders are allowed only when the complete
 #       value names the same valid env key, either canonically or with an
 #       OpenShell `v<digits>_` revision prefix. Any other occurrence is refused.
-# - Regression: the parity tests in
-#   test/langchain-deepagents-code-image.test.ts pin the canonical
-#   TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and SECRET_BLOCK_PATTERNS
-#   fingerprints (source + flags) and feed representative samples through the
-#   wrapper; any canonical change trips the fingerprint test and forces this
-#   matcher (and its samples) to update.
+# - Regression: test/langchain-deepagents-code-secret-pattern-parity.test.ts
+#   pins the canonical TOKEN_PREFIX_PATTERNS, CONTEXT_PATTERNS, and
+#   SECRET_BLOCK_PATTERNS fingerprints (source + flags), while
+#   test/langchain-deepagents-code-image.test.ts feeds the shared positive
+#   corpus through this wrapper. Any canonical change trips the parity gate and
+#   forces this matcher (and its samples) to update.
 #   The live no-network acceptance clause is covered by
 #   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
 #   which exercises a real sandbox launch under `nemoclaw exec` and inspects
@@ -94,6 +100,20 @@ has_context_secret_shape() {
   # The outer class accepts '=', ':', or whitespace; [:space:] is the nested
   # POSIX character class understood by Bash's [[ string =~ regex ]] operator.
   [[ "$upper" =~ (_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=:[:space:]][\'\"]?[A-Z0-9_.+/=-]{10,} ]]
+}
+
+has_bearer_secret_shape() {
+  # Spell out ECMAScript `\s` so matching does not depend on the host locale's
+  # POSIX `[:space:]` definition (notably for NBSP, narrow NBSP, and BOM).
+  local ecmascript_whitespace
+  # Use UTF-8 byte escapes so the expression is identical in C and UTF-8
+  # locales; Bash leaves `\u` escapes literal in the C locale.
+  ecmascript_whitespace=$'([\t\n\v\f\r ]|\xC2\xA0|\xE1\x9A\x80'
+  ecmascript_whitespace+=$'|\xE2\x80\x80|\xE2\x80\x81|\xE2\x80\x82|\xE2\x80\x83'
+  ecmascript_whitespace+=$'|\xE2\x80\x84|\xE2\x80\x85|\xE2\x80\x86|\xE2\x80\x87'
+  ecmascript_whitespace+=$'|\xE2\x80\x88|\xE2\x80\x89|\xE2\x80\x8A|\xE2\x80\xA8'
+  ecmascript_whitespace+=$'|\xE2\x80\xA9|\xE2\x80\xAF|\xE2\x81\x9F|\xE3\x80\x80|\xEF\xBB\xBF)'
+  [[ "$1" =~ [Bb][Ee][Aa][Rr][Ee][Rr]${ecmascript_whitespace}+[A-Za-z0-9_.+/=-]{10,} ]]
 }
 
 has_private_key_block_shape() {
@@ -150,7 +170,7 @@ has_non_slack_secret_shape() {
   if [[ "$value" =~ [A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+  if has_bearer_secret_shape "$value"; then
     return 0
   fi
   if has_context_secret_shape "$value"; then
@@ -247,7 +267,7 @@ is_secret_shaped_value() {
   if [[ "$value" =~ [A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+  if has_bearer_secret_shape "$value"; then
     return 0
   fi
   if has_context_secret_shape "$value"; then
@@ -502,11 +522,6 @@ assert_no_secret_runtime_env
 assert_no_secret_env_file
 assert_no_auth_store_credentials
 assert_no_codex_auth_credentials
-
-if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
-  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1'
-  exit 0
-fi
 
 # SECURITY: managed identity/status display boundary.
 # - Invalid state: config.toml and runtime environment values are mutable inside
@@ -830,17 +845,13 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
   arg_index=$((arg_index + 1))
 done
 
-extra_args=(--sandbox none)
-# The root-owned package helper validates the complete sandbox-user-owned file
-# as strict HTTPS-only NemoClaw config before any upstream parser sees it.
-managed_mcp_config="$(
-  /opt/venv/bin/python3 -I -c \
-    'from deepagents_code._nemoclaw_managed import managed_mcp_config_path; print(managed_mcp_config_path() or "")'
-)"
-if [ -n "$managed_mcp_config" ]; then
-  extra_args+=(--mcp-config "$managed_mcp_config")
-else
-  extra_args+=(--no-mcp)
-fi
+extra_args=(--sandbox none --no-mcp)
+# The patched Python entrypoint opens, validates, canonicalizes, and snapshots
+# the dedicated NemoClaw MCP projection inside this long-lived process. A shell
+# command substitution cannot own that descriptor: its subprocess would close
+# the process-local snapshot before Deep Agents Code or its LangGraph child
+# could consume it.
+# `--no-mcp` also keeps upstream auto-discovery fail-closed until the managed
+# entrypoint replaces it with the integrity-bound /proc/self/fd path.
 
 run_dcode "${extra_args[@]}" "$@"

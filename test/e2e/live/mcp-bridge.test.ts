@@ -702,7 +702,7 @@ async function assertDeepAgentsConfig(
     "set -eu",
     "python3 - <<'PY'",
     "import json, pathlib",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
+    "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
@@ -1381,7 +1381,7 @@ liveAgentMatrixTest(
       model: COMPATIBLE_MODEL,
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: deepAgentsResult,
-      toolNames: ["fake_fake_echo"],
+      progressiveToolSearch: { toolName: "fake_fake_echo", query: "AuThEnTiCaTeD McP" },
     });
     cleanup.add("stop Deep Agents MCP bridge compatible endpoint mock", () =>
       compatibleMock.close(),

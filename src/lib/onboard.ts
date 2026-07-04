@@ -33,6 +33,8 @@ const {
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
+const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
+const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
@@ -688,8 +690,8 @@ function isNonInteractive(): boolean {
   return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
-function isRecreateSandbox(): boolean {
-  return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+function isRecreateSandbox(requested = false): boolean {
+  return requested || RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
 function isAutoYes(): boolean {
@@ -1013,23 +1015,11 @@ function upsertMessagingProviders(
 const providerExistsInGateway = (name: string) =>
   onboardProviders.providerExistsInGateway(name, runOpenshell);
 
-function verifyInferenceRoute(_provider: string, _model: string): void {
-  const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
-  if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
-    console.error("  OpenShell inference route was not configured.");
-    process.exit(1);
-  }
-}
-
-function isInferenceRouteReady(provider: string, model: string): boolean {
-  const live = parseGatewayInference(
-    runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
-  );
-  return Boolean(live && live.provider === provider && live.model === model);
-}
+const { verifyInferenceRoute, isInferenceRouteReady } =
+  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
 
 const {
-  reconcileSandboxForCreate,
+  inspectSandboxForCreate,
   pruneStaleSandboxEntry,
   confirmRecreateForSelectionDrift,
   isOpenclawReady,
@@ -2391,6 +2381,7 @@ async function createSandboxWithBaseImageResolution(
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
   hermesAuthMethod: HermesAuthMethod | null = null,
+  createIntent: import("./onboard/types").SandboxCreateIntent | null = null,
   preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
@@ -2399,6 +2390,7 @@ async function createSandboxWithBaseImageResolution(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
   );
+  preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
@@ -2465,12 +2457,11 @@ async function createSandboxWithBaseImageResolution(
     },
   );
 
-  const { existingEntry, preservedMcpState, liveExists } = reconcileSandboxForCreate(sandboxName);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
-  // Declared outside the liveExists block so it is accessible during
-  // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
   let notReadyRecreateInProgress = false;
@@ -2486,9 +2477,9 @@ async function createSandboxWithBaseImageResolution(
     const existingSandboxState = getSandboxReuseState(sandboxName);
     const requestedAgentName = getRequestedSandboxAgentName(agent);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
-    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox();
+    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
-    if (agentDrift.changed && !isRecreateSandbox()) {
+    if (agentDrift.changed && !isRecreateSandbox(createIntent?.recreate)) {
       console.log(
         `  Sandbox '${sandboxName}' already exists as ${formatSandboxAgentName(agentDrift.existingAgentName)}.`,
       );
@@ -2550,13 +2541,14 @@ async function createSandboxWithBaseImageResolution(
       : { changed: false, changedProviders: [] };
 
     if (
-      !isRecreateSandbox() &&
+      !isRecreateSandbox(createIntent?.recreate) &&
       !recreateForAgentDrift &&
       !needsProviderMigration &&
       !sandboxGpuDrift &&
       !credentialRotation.changed &&
       !hermesToolGatewayDrift &&
-      !hermesDashboardDrift
+      !hermesDashboardDrift &&
+      !toolDisclosureMigrationNeeded
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2707,6 +2699,8 @@ async function createSandboxWithBaseImageResolution(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (hermesDashboardDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
+    } else if (toolDisclosureMigrationNote) {
+      note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -2720,7 +2714,7 @@ async function createSandboxWithBaseImageResolution(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
@@ -2771,7 +2765,7 @@ async function createSandboxWithBaseImageResolution(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
+  const { buildCtx, stagedDockerfile, origin, cleanupBuildCtx } =
     preparedDcodeRebuild.resolveSandboxBuildContext(
       {
         preparedBuildContext,
@@ -2798,6 +2792,7 @@ async function createSandboxWithBaseImageResolution(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
@@ -2818,7 +2813,7 @@ async function createSandboxWithBaseImageResolution(
     extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    dockerDriverGateway,
     appendResourceFlags: (args) =>
       appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
         isNonInteractive,
@@ -2866,6 +2861,7 @@ async function createSandboxWithBaseImageResolution(
     provider,
     preferredInferenceApi,
     webSearchConfig,
+    toolDisclosure: effectiveToolDisclosure,
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
@@ -2884,8 +2880,7 @@ async function createSandboxWithBaseImageResolution(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
-      // Transitional BuildKit handoff removal is tracked by #6258.
-      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3007,7 +3002,7 @@ async function createSandboxWithBaseImageResolution(
     // when applicable, then gates host-network local inference reachability (#4509).
     dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
       sandboxName,
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      dockerDriverGateway,
       useDockerGpuPatch,
       verifyDirectSandboxGpu,
       verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
@@ -3046,6 +3041,7 @@ async function createSandboxWithBaseImageResolution(
     agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
+    toolDisclosure: effectiveToolDisclosure,
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
     plannedMessagingState,
@@ -4550,6 +4546,9 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const requestedToolDisclosure = toolDisclosureFlow.applyOnboardToolDisclosureRequest(
+    opts.toolDisclosure,
+  );
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
@@ -4695,6 +4694,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedToolDisclosure,
       },
       {
         loadSession: onboardSession.loadSession,
@@ -4986,7 +4986,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           rootDir: ROOT,
         },
         sandboxDeps: {
-          resolvePath: path.resolve,
+          resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
           agentSupportsWebSearch,
           agentSupportsWebSearchProvider,
           note,

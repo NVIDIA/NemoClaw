@@ -14,7 +14,7 @@ export interface SandboxLifecycleDeps {
 }
 
 export interface SandboxLifecycleHelpers {
-  reconcileSandboxForCreate(sandboxName: string): {
+  inspectSandboxForCreate(sandboxName: string): {
     existingEntry: SandboxEntry | null;
     preservedMcpState: SandboxMcpState | undefined;
     liveExists: boolean;
@@ -45,7 +45,7 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
     return liveExists;
   }
 
-  function reconcileSandboxForCreate(sandboxName: string) {
+  function inspectSandboxForCreate(sandboxName: string) {
     const existingEntry = registry.getSandbox(sandboxName);
     if (existingEntry?.mcp?.destroyPreparedAt || existingEntry?.mcp?.destroyPendingAt) {
       throw new Error(
@@ -58,9 +58,7 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
         : undefined;
     // MCP state is the rebuild transaction manifest. Preserve it while the
     // sandbox is absent; registration carries the validated state forward.
-    const liveExists = preservedMcpState
-      ? sandboxExistsInGateway(sandboxName)
-      : pruneStaleSandboxEntry(sandboxName);
+    const liveExists = sandboxExistsInGateway(sandboxName);
     return { existingEntry, preservedMcpState, liveExists };
   }
 
@@ -95,7 +93,7 @@ export function createSandboxLifecycleHelpers(deps: SandboxLifecycleDeps): Sandb
   }
 
   return {
-    reconcileSandboxForCreate,
+    inspectSandboxForCreate,
     pruneStaleSandboxEntry,
     shouldRestoreLatestBackupOnRecreate,
     confirmRecreateForSelectionDrift,

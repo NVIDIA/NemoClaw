@@ -103,6 +103,41 @@ export function registerRebuildFlowLifecycleTests(): void {
       );
     });
 
+    it("changes tool disclosure through the MCP-preserving rebuild transaction", async () => {
+      const mcpEntry = {
+        server: "github",
+        providerName: "nemoclaw-mcp-alpha-github",
+      };
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          toolDisclosure: "progressive",
+          mcp: { bridges: { github: mcpEntry } },
+        },
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [mcpEntry],
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox(
+          "alpha",
+          { yes: true, toolDisclosure: "direct" },
+          { throwOnError: true },
+        ),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ toolDisclosure: "direct" }),
+      );
+      expect(harness.session.toolDisclosure).toBe("direct");
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+      for (const [, update] of harness.registryUpdateSpy.mock.calls) {
+        expect(update).not.toHaveProperty("toolDisclosure");
+      }
+    });
+
     it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
       const harness = createRebuildFlowHarness({
         removeSandboxRegistryEntry: () => {

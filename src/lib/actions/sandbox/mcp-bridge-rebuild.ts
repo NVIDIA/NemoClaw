@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { McpBridgeEntry } from "../../state/registry";
-import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
-import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import {
+  rollbackScrubbedMcpAdapters,
+  scrubManagedMcpAdapterOrThrow,
+} from "./mcp-bridge-adapter-teardown";
+import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   cloneMcpBridgeEntry,
   discardSafeIncompleteMcpAdds,
@@ -30,8 +33,6 @@ import {
   assertMcpDestroyNotPending,
   bridgeState,
   ensureSandboxGatewaySelected,
-  getBridgeAdapter,
-  getSandboxAgent,
   getSandboxOrThrow,
   setBridgeState,
 } from "./mcp-bridge-state";
@@ -126,13 +127,10 @@ export async function prepareMcpBridgesForRebuild(
   const scrubbedAdapters: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
-      const adapter = isAgentMcpAdapter(entry.adapter)
-        ? entry.adapter
-        : getBridgeAdapter(getSandboxAgent(sandbox));
       // `/sandbox` may be a retained PVC. Scrub before delete so a replacement
       // Hermes/agent cannot boot with a stale placeholder while its provider
       // is intentionally detached during recreate.
-      unregisterAgentAdapter(sandboxName, adapter, entry, { envValues: {} });
+      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
@@ -166,26 +164,7 @@ export async function prepareMcpBridgesForRebuild(
         );
       }
     }
-    for (const entry of scrubbedAdapters) {
-      try {
-        const adapter = isAgentMcpAdapter(entry.adapter)
-          ? entry.adapter
-          : getBridgeAdapter(getSandboxAgent(sandbox));
-        registerAgentAdapter(
-          sandboxName,
-          adapter,
-          entry,
-          {},
-          {
-            replaceExisting: true,
-          },
-        );
-      } catch (rollbackError) {
-        rollbackFailures.push(
-          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        );
-      }
-    }
+    rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
       rollbackFailures.length > 0
@@ -226,24 +205,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
-  for (const entry of scrubbedAdapterEntries) {
-    try {
-      const adapter = isAgentMcpAdapter(entry.adapter)
-        ? entry.adapter
-        : getBridgeAdapter(getSandboxAgent(sandbox));
-      registerAgentAdapter(
-        sandboxName,
-        adapter,
-        entry,
-        {},
-        {
-          replaceExisting: true,
-        },
-      );
-    } catch (error) {
-      failures.push(error instanceof Error ? error.message : String(error));
-    }
-  }
+  failures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapterEntries));
   if (failures.length > 0) {
     throw new McpBridgeError(failures.join("; "));
   }

@@ -80,6 +80,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
+    writeFixture(path.join("scripts", "validate-openclaw-tool-search.mts"));
     writeFixture(
       path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
     );
@@ -95,6 +96,7 @@ describe("sandbox build context staging", () => {
     writeFixture(
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
+    writeFixture(path.join("src", "lib", "tool-disclosure.ts"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
   }
@@ -156,6 +158,10 @@ describe("sandbox build context staging", () => {
     );
   }
 
+  function expectStagedToolDisclosureContract(buildCtx: string) {
+    expect(fs.existsSync(path.join(buildCtx, "src", "lib", "tool-disclosure.ts"))).toBe(true);
+  }
+
   it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
@@ -197,6 +203,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedMcporterRuntime(buildCtx);
+      expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -226,6 +233,7 @@ describe("sandbox build context staging", () => {
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
       expectStagedMcporterRuntime(buildCtx);
+      expectStagedToolDisclosureContract(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -300,6 +308,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.mts"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "validate-openclaw-tool-search.mts")),
+      ).toBe(true);
       expect(
         fs.existsSync(
           path.join(

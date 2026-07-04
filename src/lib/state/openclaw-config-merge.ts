@@ -34,6 +34,8 @@ export const OPENCLAW_CONFIG_RESTORE_OWNERSHIP = {
   modelRuntimeOwnedFields: ["id", "name"],
   /** Durable user-owned top-level sections are inherited from the backup. */
   backupDurableSections: ["mcp", "mcpServers", "customAgents", "agents"],
+  /** NemoClaw's cross-agent disclosure selection owns this generated key. */
+  currentGeneratedToolFields: ["toolSearch"],
 } as const;
 
 const MANAGED_OPENCLAW_CHANNELS = new Set<string>(
@@ -129,6 +131,9 @@ function mergeOpenClawEntryMap(
 
 function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknown {
   if (!isPlainJsonObject(backupTools)) return cloneJson(currentTools);
+  if (!isPlainJsonObject(currentTools) && currentTools !== undefined && currentTools !== null) {
+    return cloneJson(currentTools);
+  }
   const current = isPlainJsonObject(currentTools) ? currentTools : {};
 
   const merged = mergeJsonObjects(current, backupTools);
@@ -143,6 +148,13 @@ function mergeOpenClawTools(backupTools: unknown, currentTools: unknown): unknow
 
   if (Object.keys(mergedWeb).length > 0) merged.web = mergedWeb;
   else delete merged.web;
+
+  // Tool Search is generated from NemoClaw's current disclosure selection.
+  // Its absence is authoritative, just like omission of web.search above.
+  for (const field of OPENCLAW_CONFIG_RESTORE_OWNERSHIP.currentGeneratedToolFields) {
+    if (field in current) merged[field] = cloneJson(current[field]);
+    else delete merged[field];
+  }
   return merged;
 }
 

@@ -2,17 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 
 import { dockerBuild, dockerRmi } from "../../adapters/docker";
+import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerprint";
 import type { AgentDefinition } from "../../agent/defs";
-import { GATEWAY_PORT } from "../../core/ports";
 import { createAgentSandbox } from "../../agent/onboard";
-import {
-  type PreparedSandboxBuildContext,
-  stageCreateSandboxBuildContext,
-} from "../../onboard/build-context-stage";
+import { GATEWAY_PORT } from "../../core/ports";
+import type { WebSearchConfig } from "../../inference/web-search";
+import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { ROOT, redact } from "../../runner";
@@ -21,13 +18,24 @@ import {
   OPENCLAW_SANDBOX_BASE_IMAGE,
   SANDBOX_BASE_TAG,
 } from "../../sandbox-base-image";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
+import {
+  createBuildContextVerifier,
+  createIdempotentBuildContextCleanup,
+  disposePreparedBuildContext,
+  type FingerprintedPreparedBuildContext,
+  verifyPreparedBuildContext,
+} from "./rebuild-prepared-image-context";
 
 export type ManagedDcodeRebuildImageInput = {
   agent: AgentDefinition;
   model: string;
   provider: string;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: "true" | "false" | null;
+  webSearchConfig: WebSearchConfig | null;
+  toolDisclosure: ToolDisclosure;
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
 };
@@ -40,8 +48,7 @@ export type ManagedDcodeRebuildImageDeps = {
   createImageTag?: () => string;
 };
 
-export type PreparedDcodeRebuildImage = PreparedSandboxBuildContext & {
-  contextFingerprint: string;
+export type PreparedDcodeRebuildImage = FingerprintedPreparedBuildContext & {
   dockerGpuPatchNetwork: string | null;
 };
 
@@ -70,137 +77,14 @@ function defaultImageTag(): string {
   return `nemoclaw-rebuild-preflight:${String(process.pid)}-${crypto.randomUUID()}`;
 }
 
-type EntrySnapshot = fs.BigIntStats;
-const FINGERPRINT_OPEN_FLAGS =
-  fs.constants.O_RDONLY |
-  (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0) |
-  (typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0);
-
-function lstatEntry(absolutePath: string): EntrySnapshot {
-  return fs.lstatSync(absolutePath, { bigint: true });
-}
-
-function fstatEntry(fd: number): EntrySnapshot {
-  return fs.fstatSync(fd, { bigint: true });
-}
-
-function sameEntrySnapshot(left: EntrySnapshot, right: EntrySnapshot): boolean {
-  return (
-    left.dev === right.dev &&
-    left.ino === right.ino &&
-    left.mode === right.mode &&
-    left.size === right.size &&
-    left.mtimeNs === right.mtimeNs &&
-    left.ctimeNs === right.ctimeNs
-  );
-}
-
-function requireStableEntry(
-  relativePath: string,
-  expected: EntrySnapshot,
-  actual: EntrySnapshot,
-): void {
-  if (!sameEntrySnapshot(expected, actual)) {
-    throw new Error(`build-context entry changed during fingerprint: ${relativePath || "."}`);
-  }
-}
-
-function readPinnedRegularFile(
-  absolutePath: string,
-  relativePath: string,
-): { contents: Buffer; stat: EntrySnapshot } | null {
-  let fd: number;
-  try {
-    // Open before inspecting the path so CodeQL and the implementation agree on
-    // the security boundary. O_NONBLOCK also prevents a file-to-FIFO swap from
-    // hanging before fstat can reject the descriptor.
-    fd = fs.openSync(absolutePath, FINGERPRINT_OPEN_FLAGS);
-  } catch (openError) {
-    // O_NOFOLLOW rejects symlinks where it is available, and some platforms do
-    // not allow directories through openSync. Both remain path-fingerprinted;
-    // a regular file that could not be pinned must fail closed.
-    if (lstatEntry(absolutePath).isFile()) throw openError;
-    return null;
-  }
-
-  try {
-    const descriptorBefore = fstatEntry(fd);
-    const pathBefore = lstatEntry(absolutePath);
-    // Without O_NOFOLLOW, openSync can follow a symlink. Never consume that
-    // descriptor as a regular build input; the caller fingerprints the link.
-    if (pathBefore.isSymbolicLink() || !descriptorBefore.isFile()) return null;
-    requireStableEntry(relativePath, pathBefore, descriptorBefore);
-    const contents = fs.readFileSync(fd);
-    requireStableEntry(relativePath, descriptorBefore, fstatEntry(fd));
-    requireStableEntry(relativePath, pathBefore, lstatEntry(absolutePath));
-    return { contents, stat: descriptorBefore };
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function fingerprintBuildContext(buildCtx: string): string {
-  const hash = crypto.createHash("sha256");
-  const updateEntry = (kind: string, relativePath: string, stat: EntrySnapshot): void => {
-    hash.update(`${kind}\0${relativePath}\0${String(stat.mode & 0o777n)}\0${String(stat.size)}\0`);
-  };
-  const visit = (relativePath: string): void => {
-    const absolutePath = path.join(buildCtx, relativePath);
-    const pinnedFile = readPinnedRegularFile(absolutePath, relativePath);
-    if (pinnedFile) {
-      updateEntry("file", relativePath, pinnedFile.stat);
-      hash.update(pinnedFile.contents);
-    } else {
-      const stat = lstatEntry(absolutePath);
-      if (stat.isDirectory()) {
-        updateEntry("dir", relativePath, stat);
-        for (const name of fs.readdirSync(absolutePath).sort()) {
-          visit(relativePath ? path.join(relativePath, name) : name);
-        }
-        requireStableEntry(relativePath, stat, lstatEntry(absolutePath));
-      } else if (stat.isSymbolicLink()) {
-        const target = fs.readlinkSync(absolutePath);
-        requireStableEntry(relativePath, stat, lstatEntry(absolutePath));
-        updateEntry("link", relativePath, stat);
-        hash.update(target);
-      } else {
-        throw new Error(`unsupported build-context entry: ${relativePath || "."}`);
-      }
-    }
-    hash.update("\0");
-  };
-
-  visit("");
-  return hash.digest("hex");
-}
-
 /** Confirm that the retained, private build context still matches the prebuilt input. */
 export function verifyPreparedDcodeRebuildImage(prepared: PreparedDcodeRebuildImage): boolean {
-  try {
-    return fingerprintBuildContext(prepared.buildCtx) === prepared.contextFingerprint;
-  } catch {
-    return false;
-  }
-}
-
-function createIdempotentBuildContextCleanup(cleanup: () => boolean): () => boolean {
-  let cleaned = false;
-  const dispose = () => {
-    if (cleaned) return true;
-    const succeeded = cleanup();
-    if (succeeded) {
-      cleaned = true;
-      process.removeListener("exit", dispose);
-    }
-    return succeeded;
-  };
-  process.on("exit", dispose);
-  return dispose;
+  return verifyPreparedBuildContext(prepared);
 }
 
 /** Dispose the retained context after onboard consumes it or rebuild aborts. */
 export function disposePreparedDcodeRebuildImage(prepared: PreparedDcodeRebuildImage): boolean {
-  return prepared.cleanupBuildCtx();
+  return disposePreparedBuildContext(prepared);
 }
 
 /**
@@ -222,6 +106,7 @@ export async function prepareManagedDcodeRebuildImage(
   const removeImage = deps.removeImage ?? dockerRmi;
   const imageTag = (deps.createImageTag ?? defaultImageTag)();
   const previousDockerGpuPatchNetwork = process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+  const previousReasoning = process.env.NEMOCLAW_REASONING;
   let cleanupBuildContext: (() => boolean) | null = null;
   let imageBuilt = false;
   let retainBuildContext = false;
@@ -230,6 +115,11 @@ export async function prepareManagedDcodeRebuildImage(
     // Recompute the patch decision from the recorded target rather than a
     // caller's unrelated ambient rebuild environment.
     delete process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+    if (input.provider === "compatible-endpoint") {
+      process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
+    } else {
+      delete process.env.NEMOCLAW_REASONING;
+    }
 
     const staged = stage({
       root: ROOT,
@@ -255,7 +145,8 @@ export async function prepareManagedDcodeRebuildImage(
       chatUiUrl: "",
       provider: input.provider,
       preferredInferenceApi: input.preferredInferenceApi,
-      webSearchConfig: null,
+      webSearchConfig: input.webSearchConfig,
+      toolDisclosure: input.toolDisclosure,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
       gatewayPort: input.gatewayPort ?? GATEWAY_PORT,
@@ -283,6 +174,7 @@ export async function prepareManagedDcodeRebuildImage(
         cleanupBuildCtx: cleanupBuildContext,
         buildId,
         contextFingerprint,
+        verifyBuildCtx: createBuildContextVerifier(staged.buildCtx, contextFingerprint),
         dockerGpuPatchNetwork: process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK || null,
       },
     };
@@ -318,5 +210,7 @@ export async function prepareManagedDcodeRebuildImage(
     } else {
       process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = previousDockerGpuPatchNetwork;
     }
+    if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
+    else process.env.NEMOCLAW_REASONING = previousReasoning;
   }
 }

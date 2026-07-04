@@ -107,6 +107,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         mode: "non-interactive",
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
+        toolDisclosure: rebuildDurableConfig.toolDisclosure,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
         migratedLegacyValueHashes: sessionMatchesSandbox
@@ -145,6 +146,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.endpointUrl = resumeConfig.endpointUrl;
+    s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();
@@ -230,7 +232,11 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     console.error("");
     console.error("  To recover manually:");
     console.error("    1. Fix the issue above (missing credential, Docker problem, etc.)");
-    printMcpRebuildRetryCommand(sandboxName, rebuildMcpEntries);
+    printMcpRebuildRetryCommand(
+      sandboxName,
+      rebuildMcpEntries,
+      rebuildDurableConfig.toolDisclosure,
+    );
     if (backupManifest) {
       console.error("    3. Then restore your workspace state:");
       console.error(

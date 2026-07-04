@@ -28,6 +28,7 @@
 //                           → src/lib/onboard/policy-tier-env.ts / policy selection
 //   - NEMOCLAW_SANDBOX_GPU / NEMOCLAW_SANDBOX_GPU_DEVICE
 //                           → src/lib/onboard/sandbox-gpu-mode.ts
+//   - NEMOCLAW_TOOL_DISCLOSURE → src/lib/tool-disclosure.ts
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
 // onboard-selection env var forces a conscious update here.
@@ -54,6 +55,7 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_POLICY_PRESETS",
   "NEMOCLAW_SANDBOX_GPU",
   "NEMOCLAW_SANDBOX_GPU_DEVICE",
+  "NEMOCLAW_TOOL_DISCLOSURE",
 ] as const;
 
 /**

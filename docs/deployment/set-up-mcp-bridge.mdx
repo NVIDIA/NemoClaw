@@ -53,8 +53,10 @@ The accepted design record is tracked in [NVIDIA/NemoClaw#566](https://github.co
 
 Use the same workflow for OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
 NemoClaw selects the agent-specific adapter from the sandbox registry.
-Rebuild sandboxes created before this release onto a current image before the first managed MCP change.
-Hermes and Deep Agents probe their managed MCP runtime before an active add or restart changes a live provider or policy; OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
+Deep Agents Code `mcp add` and `mcp restart` require managed MCP capability v2.
+A v1 image stops with rebuild guidance before it changes a live provider, policy, or adapter.
+The early capability check identifies the managed image version only; NemoClaw still verifies config ownership and content at the mutation boundary.
+Hermes performs its managed runtime probe before an active add or restart changes a live provider or policy, while OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
 When recovery finds that a provider was already deleted, NemoClaw may first remove only that dangling sandbox-spec reference because OpenShell cannot start the capability-probe child while a missing provider name remains attached.
 That prerequisite does not delete or replace a live provider, credential, or policy, and the durable bridge manifest remains retryable if the later capability probe fails.
 
@@ -82,6 +84,10 @@ NemoClaw requires exactly one `--env` bearer credential per server.
 Every endpoint must use HTTPS.
 The full URL, including its path, is persisted and displayed, so never put a credential in the URL path.
 NemoClaw rejects userinfo, query strings, fragments, and known secret-shaped path material; put the bearer value in `--env KEY`.
+Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores.
+Endpoint hostnames must use lowercase RFC-style DNS labels with no empty, leading-hyphen, trailing-hyphen, or overlong labels.
+NemoClaw rejects invalid names and hostnames before it writes lifecycle state or changes OpenShell resources.
+Deep Agents Code supports at most 64 managed MCP servers in one sandbox and rejects an over-limit add or restart before mutation.
 Use a distinct environment variable name for each managed MCP server in the same sandbox.
 OpenShell static credential keys are sandbox-wide and cannot be attached twice.
 Endpoint paths must be literal and canonical, so NemoClaw rejects percent escapes, backslashes, semicolons, OpenShell glob metacharacters, and explicit port zero.
@@ -164,8 +170,10 @@ Success still requires a replacement gateway identity, healthy loopback endpoint
 There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
-LangChain Deep Agents Code writes an HTTP entry under its user-level discovery path, `/sandbox/.deepagents/.mcp.json`.
-Deep Agents Code `0.1.12` treats the sandbox-root `.mcp.json` as project configuration and gates it on project trust, so NemoClaw does not use that path for managed MCP definitions.
+The managed image pins Deep Agents Code `0.1.30` and keeps NemoClaw definitions in `/sandbox/.deepagents/.nemoclaw-mcp.json`.
+The launcher validates canonical HTTPS endpoints and exact OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.
+It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
+NemoClaw never auto-loads the user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
 
 ```json
 {
@@ -225,14 +233,17 @@ Export only the variables whose credentials you intend to replace.
 `rebuild` preserves each provider that matches the recorded ID, type, and credential-key metadata at inspection time.
 It removes the agent adapter entry and detaches the provider before replacing the sandbox.
 It then reattaches the provider, waits for credential readiness, reapplies the generated policy, and restores the adapter.
-Removing the old adapter entry does not require the current Deep Agents launcher marker, so an MCP entry created by a compatible older image cannot block its own removal or upgrade.
-The replacement image must expose the exact managed launcher marker before NemoClaw reattaches any provider or reapplies policy and reports rebuild restoration as successful.
+For Deep Agents Code, NemoClaw revalidates the prepared replacement after MCP preparation and before stopping inference or deleting the old sandbox.
+If that check fails, it restores the previous MCP attachment and adapter state and keeps the old sandbox.
+For a Deep Agents Code v1 image, `mcp remove`, rebuild, and destroy inspect the legacy `.deepagents/.mcp.json` and scrub only the matching registry-owned server entry.
+Other user servers and unrelated top-level content remain unchanged; if NemoClaw cannot prove ownership, it fails closed and preserves retryable registry, provider, and policy state.
+The replacement image must expose managed MCP capability v2 before NemoClaw reattaches any provider or reapplies policy and reports rebuild restoration as successful.
 If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state.
-A rollback targets the same old image and restores its previously compatible entry without imposing the new-image marker.
+A rollback restores and verifies the entry at the legacy or v2 path used by the surviving old image without imposing the new-image requirement.
 A later `mcp restart` can retry an incomplete post-rebuild restore.
 
 `destroy` removes the adapter entry and detaches providers that match the recorded metadata before asking OpenShell to delete the sandbox.
-Like remove and rebuild teardown, this scrub does not require the new Deep Agents launcher marker from an older image.
+Like remove and rebuild teardown, this scrub does not require Deep Agents managed MCP capability v2 from an older image.
 If deletion is refused, NemoClaw attempts to restore the previous MCP state, reports any rollback failure, and preserves recovery state.
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
@@ -255,8 +266,8 @@ Re-export the value if the provider still needs to be created.
 To abandon the transaction, run `mcp remove <server> --force`.
 NemoClaw cleans only resources whose ownership it can prove and keeps the registry entry when residual cleanup remains.
 
-If MCP add or restart reports that `mcporter`, the Hermes transaction helper, or the managed Deep Agents MCP-aware launcher is unavailable, rebuild the sandbox onto a current image before retrying.
-An existing Deep Agents MCP entry remains removable, destroyable, and eligible for rebuild teardown on an older image; the rebuilt image must pass the launcher probe before its MCP runtime is restored.
+If MCP add or restart reports that `mcporter`, the Hermes transaction helper, or Deep Agents managed MCP capability v2 is unavailable, rebuild the sandbox onto a current image before retrying.
+An existing Deep Agents v1 entry remains removable, destroyable, and eligible for rebuild teardown when NemoClaw can identify the exact registry-owned legacy entry; the rebuilt image must pass the v2 capability check before its MCP runtime is restored.
 
 If the generated policy or provider has drifted, `restart` fails closed instead of overwriting same-name state.
 Resolve the reported OpenShell ownership or content mismatch, then retry.

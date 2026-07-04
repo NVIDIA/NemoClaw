@@ -1226,6 +1226,10 @@ describe("Deep Agents Code durable state files", () => {
       fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
+      fs.writeFileSync(
+        path.join(deepAgentsDir, ".nemoclaw-mcp.json"),
+        '{"mcpServers":{"reconstructable":{}}}\n',
+      );
 
       const openshell = path.join(binDir, "openshell");
       writeExecutable(
@@ -1309,9 +1313,13 @@ process.exit(0);
       );
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".env"))).toBe(false);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".mcp.json"))).toBe(false);
+      expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".nemoclaw-mcp.json"))).toBe(
+        false,
+      );
       const loggedCommands = fs.readFileSync(sshLog, "utf-8");
       expect(loggedCommands).not.toContain(".env");
       expect(loggedCommands).not.toContain(".mcp.json");
+      expect(loggedCommands).not.toContain(".nemoclaw-mcp.json");
 
       // #5753 is "lost after rebuild" (backup + recreate + restore): restore
       // must list agent/skills among the dirs it brings back into the sandbox.

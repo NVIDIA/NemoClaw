@@ -185,7 +185,15 @@ Some corporate networks block outbound UDP port 53 to public DNS servers and for
 
 NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before starting the sandbox build. The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
 
-The fix depends on your platform and runtime. Pick the matching path from the preflight output, apply it, then re-run `$$nemoclaw onboard`.
+Use the preflight headline to choose the recovery path:
+
+- If no DNS servers could be reached, Docker could not reach its configured resolver.
+  Follow the platform-specific UDP port 53 and Docker DNS steps below.
+- If the DNS server was reachable but rejected the query with `NXDOMAIN` or `REFUSED`, the resolver answered, so the UDP port 53 fix is not relevant.
+  Check the resolver used by Docker, such as dnsmasq, Pi-hole, unbound, or systemd-resolved, and remove any forwarding rule, blocklist entry, or ACL that rejects `registry.npmjs.org`.
+  If needed, configure Docker to use an organization-approved resolver that can resolve public names, restart Docker, and retry onboarding.
+
+For an unreachable resolver, pick the matching platform path below, apply it, then re-run `$$nemoclaw onboard`.
 
 - **Linux with systemd-resolved.** Add a `DNSStubListenerExtra` drop-in pointing at the docker bridge gateway IP (the preflight prints the detected IP), then add the same IP to `/etc/docker/daemon.json` under `dns`. Restart `systemd-resolved` and `docker`.
 - **macOS with Colima.** Restart Colima with the corporate DNS address, for example `colima stop && colima start --dns <corp-dns-ip>`.
@@ -195,7 +203,7 @@ The fix depends on your platform and runtime. Pick the matching path from the pr
 Verify the fix worked:
 
 ```bash
-docker run --rm busybox nslookup example.com
+docker run --rm busybox nslookup registry.npmjs.org
 ```
 
 When the lookup returns an answer, retry onboarding.

@@ -48,6 +48,7 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_REASONING: "false",
   NEMOCLAW_AGENT_TIMEOUT: "600",
 };
+const STRUCTURED_TOOL_SEARCH = { mode: "tools", searchDefaultLimit: 8, maxSearchLimit: 20 };
 
 let tmpDir: string;
 
@@ -782,9 +783,9 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
   });
 
-  it("enables native OpenClaw Tool Search by default", () => {
+  it("enables structured OpenClaw Tool Search by default", () => {
     const config = runConfigScript();
-    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
   });
 
   it("enables keyless web_fetch through the trusted env proxy by default", () => {
@@ -798,7 +799,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("defaults enabled web search to Brave using the current plugin schema", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
-    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
     // #5266: apiKey lives under plugins.entries.brave.config (not inline on
     // tools.web.search) so build-time `openclaw plugins install` validates.
     expect(config.tools?.web?.search).toEqual({ enabled: true, provider: "brave" });
@@ -811,7 +812,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
 
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
-    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
     expect(config.tools?.web?.search).toBeUndefined();
   });
 
@@ -1371,15 +1372,16 @@ describe("generate-openclaw-config.mts: config generation", () => {
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
-      expect(config.tools?.toolSearch).toBe(true);
+      expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
     }
   }, 20_000);
-
-  // #4780: Nemotron can generate invalid JS for OpenClaw's native
-  // `tool_search_code`. The Super and Ultra managed-inference manifests disable
-  // it so both models use the structured tool-calling surface they handle.
-  it("disables native OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
-    for (const model of ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nvidia/nemotron-3-ultra"]) {
+  // #4780: keep false safeguards until live search can replace the direct-tool fallback.
+  it("keeps Tool Search disabled for Nemotron managed inference (#4780)", () => {
+    for (const model of [
+      "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-ultra-550b-a55b",
+      "nvidia/nvidia/nemotron-3-ultra",
+    ]) {
       const config = runConfigScript({
         NEMOCLAW_MODEL: model,
         NEMOCLAW_PROVIDER_KEY: "inference",
@@ -1387,12 +1389,10 @@ describe("generate-openclaw-config.mts: config generation", () => {
         NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
         NEMOCLAW_INFERENCE_API: "openai-completions",
       });
-
       expect(config.tools?.toolSearch, model).toBe(false);
     }
   });
-
-  it("does not disable native Tool Search for Nemotron on non-matching routes (#4780)", () => {
+  it("keeps structured Tool Search for non-matching Nemotron routes (#4780)", () => {
     const cases = [
       { NEMOCLAW_MODEL: "nvidia/nemotron-3-nano:30b" },
       { NEMOCLAW_PROVIDER_KEY: "nvidia" },
@@ -1410,7 +1410,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
         ...envCase,
       });
 
-      expect(config.tools?.toolSearch).toBe(true);
+      expect(config.tools?.toolSearch).toEqual(STRUCTURED_TOOL_SEARCH);
     }
   }, 20_000);
 
@@ -1653,13 +1653,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
         agent: "openclaw",
         description: "Invalid tool override",
         match: { modelIds: ["test-model"] },
-        effects: { openclawTools: { toolSearch: "false" } },
+        effects: { openclawTools: { toolSearch: { mode: "tools" } } },
       },
     );
 
     expectBuildConfigError(
       { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: badToolRegistryDir },
-      "effects.openclawTools.toolSearch must be a boolean",
+      "effects.openclawTools.toolSearch must be a boolean override",
     );
 
     fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "bad-tool-effect.json"));

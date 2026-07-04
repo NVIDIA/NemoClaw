@@ -26,6 +26,12 @@ import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
+  assignSafeToolDisclosureUpdate,
+  normalizeSessionToolDisclosure,
+  preserveInvalidSessionToolDisclosure,
+  type ToolDisclosure,
+} from "./onboard-session-tool-disclosure";
+import {
   LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
@@ -53,6 +59,8 @@ const STEP_STATES: readonly StepStatus[] = [
   "skipped",
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
+
+export { hasInvalidSessionToolDisclosure } from "./onboard-session-tool-disclosure";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -105,6 +113,8 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  /** Selected preference, retained even when a model-specific safeguard downgrades it. */
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -175,6 +185,7 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
+  toolDisclosure?: ToolDisclosure;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -202,6 +213,7 @@ export interface DebugSessionSummary {
   preferredInferenceApi: string | null;
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
+  toolDisclosure: ToolDisclosure;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -456,6 +468,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -474,6 +487,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       createMachineSnapshot("init", startedAt),
     steps,
   };
+  preserveInvalidSessionToolDisclosure(overrides, session);
   return session;
 }
 
@@ -498,6 +512,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -523,6 +538,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
+  preserveInvalidSessionToolDisclosure(data, normalized);
 
   return normalized;
 }
@@ -993,6 +1009,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
+  assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1286,6 +1303,7 @@ export function summarizeForDebug(
     preferredInferenceApi: session.preferredInferenceApi,
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
+    toolDisclosure: session.toolDisclosure,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

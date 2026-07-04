@@ -53,6 +53,11 @@ export interface ModelValidationFailure extends ValidationFailureLike {
 
 export type ModelValidationResult = ModelValidationSuccess | ModelValidationFailure;
 
+export interface SandboxCreateIntent {
+  readonly recreate: boolean;
+  readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+}
+
 export type OnboardOptions = {
   nonInteractive?: boolean;
   recreateSandbox?: boolean;
@@ -65,6 +70,8 @@ export type OnboardOptions = {
   onboardLockAlreadyHeld?: boolean;
   /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
   preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
+  /** Internal one-shot handoff for the exact image context validated before rebuild deletion. */
+  preparedImageRebuild?: import("./prepared-dcode-rebuild").PreparedImageRebuildHandoff;
   resume?: boolean;
   fresh?: boolean;
   fromDockerfile?: string | null;
@@ -73,6 +80,7 @@ export type OnboardOptions = {
   sandboxGpuDevice?: string | null;
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
+  toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

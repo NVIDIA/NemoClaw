@@ -9,6 +9,8 @@ import type { AgentDefinition } from "../agent/defs";
 import { isErrnoException } from "../core/errno";
 import {
   collectBuildContextStats,
+  SANDBOX_BUILD_CONTEXT_PREFIX,
+  type SandboxBuildContextOrigin,
   type StagedBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../sandbox/build-context";
@@ -31,12 +33,20 @@ export interface CreateSandboxBuildContextInput {
 }
 
 export interface CreateSandboxBuildContextResult extends StagedBuildContext {
+  origin: SandboxBuildContextOrigin;
   cleanupBuildCtx(): boolean;
 }
 
 /** Exact staged and patched context transferred from rebuild preflight to create. */
 export interface PreparedSandboxBuildContext extends CreateSandboxBuildContextResult {
   buildId: string;
+  /** Recheck retained bytes at the final one-shot consumption boundary. */
+  verifyBuildCtx?(): boolean;
+  /** Exact recorded target authorized to consume a generic rebuild handoff. */
+  rebuildTarget?: {
+    agentName: string | null;
+    fromDockerfile: string | null;
+  };
 }
 
 function createCleanupBuildContext(buildCtx: string): () => boolean {
@@ -57,6 +67,7 @@ export function stageCreateSandboxBuildContext(
   const warn = input.warn ?? console.warn;
   const error = input.error ?? console.error;
   const exit = input.exit ?? ((code?: number): never => process.exit(code));
+  const origin = input.fromDockerfile ? "custom" : "generated";
 
   let build: StagedBuildContext;
 
@@ -92,7 +103,7 @@ export function stageCreateSandboxBuildContext(
         "  The --from flag sends the Dockerfile's parent directory to Docker; use a dedicated directory if this is not intentional.",
       );
     }
-    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
     const stagedDockerfile = path.join(buildCtx, "Dockerfile");
     const cleanupCustomBuildCtx = (): void => {
       try {
@@ -106,9 +117,11 @@ export function stageCreateSandboxBuildContext(
         recursive: true,
         filter: shouldIncludeCustomContextPath,
       });
-      if (path.basename(fromResolved) !== "Dockerfile") {
-        fs.copyFileSync(fromResolved, stagedDockerfile);
-      }
+      // Always materialize the selected Dockerfile as a regular file. cpSync
+      // preserves symlinks, which would otherwise leave a retained rebuild
+      // context dependent on a mutable source path after preflight succeeds.
+      fs.rmSync(stagedDockerfile, { force: true });
+      fs.copyFileSync(fromResolved, stagedDockerfile);
     } catch (err) {
       cleanupCustomBuildCtx();
       const errorObject = typeof err === "object" && err !== null ? err : null;
@@ -133,6 +146,7 @@ export function stageCreateSandboxBuildContext(
 
   return {
     ...build,
+    origin,
     cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
   };
 }

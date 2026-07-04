@@ -4,11 +4,13 @@
 /** Keep local inference available until MCP preservation has fully succeeded. */
 export async function prepareMcpBeforeBestEffortNimStop<T>(options: {
   prepareMcp(): Promise<T | null>;
+  afterPrepare?(preparation: T): Promise<void>;
   stopNim(): void;
   log(message: string): void;
 }): Promise<T | null> {
   const preparation = await options.prepareMcp();
   if (preparation === null) return null;
+  await options.afterPrepare?.(preparation);
 
   try {
     options.stopNim();

@@ -71,4 +71,17 @@ should inspect the timing table before acting on a warning.
 For PRs, E2E Advisor deterministically recommends the `cloud-onboard` target
 when changes affect onboard behavior, trace timing, scorecard analysis, budget
 configuration, or the unified E2E workflow. The scorecard remains the source
-of truth for threshold evaluation.
+of truth for advisory warm-system trend evaluation.
+
+The `full-e2e` target enforces a separate hard acceptance contract for the
+first fresh onboarding path in that job. It measures from the onboard root span
+(a conservative anchor before wizard step `[1/8]`) through the first non-empty
+agent response, requires the local BuildKit prebuild for the NemoClaw-generated
+context without a gateway-builder fallback, limits the total to 180 seconds,
+and limits the longest onboard output gap to 60 seconds. A violation fails
+`full-e2e`, and the target writes its evidence to `onboard-progress-budget.json`.
+
+These assertions run inside the existing `full-e2e` lifecycle instead of a
+second standalone onboarding run. This keeps the measurement on the job's first
+sandbox build, avoids warming Docker layers before a duplicate performance
+test, and makes `full-e2e` the source of truth for the hard cold-path contract.

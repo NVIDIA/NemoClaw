@@ -9,6 +9,7 @@ import { loadAgent } from "../../agent/defs";
 import { RD as _RD, R } from "../../cli/terminal-style";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import * as nim from "../../inference/nim";
+import type { WebSearchConfig } from "../../inference/web-search";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   getResumeSandboxGpuOverrides,
@@ -19,6 +20,7 @@ import { redact } from "../../security/redact";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   DCODE_AGENT_NAME,
   type ResolvedDcodeRebuildTarget,
@@ -45,6 +47,7 @@ type PinnedDcodeBaseImage = {
 export type PreparedDcodeReplacement = {
   readonly buildContext: PreparedDcodeRebuildImage;
   readonly gatewayName: string;
+  readonly toolDisclosure: ToolDisclosure;
   dispose(): boolean;
   verify(): boolean;
 };
@@ -53,12 +56,17 @@ export type DcodeReplacementPreflightInput = {
   sandboxName: string;
   entry: RebuildSandboxEntry;
   resumeConfig: RebuildResumeConfig;
+  toolDisclosure: ToolDisclosure;
   skipLiveRoute: boolean;
   /** Authoritative persisted gateway port carried by the rebuild target. */
   gatewayPort?: number;
   log(message: string): void;
   bail: DcodeRebuildPreflightBail;
   checkGatewaySchema(): boolean;
+};
+
+export type DcodeReplacementPreparationInput = DcodeReplacementPreflightInput & {
+  webSearchConfig: WebSearchConfig | null;
 };
 
 export type DcodeRebuildPreflightScope = {
@@ -204,19 +212,11 @@ function requireInferenceRoute(
   }
 }
 
-function requireManagedDcodeSession(
+function loadMatchingDcodeSession(
   sandboxName: string,
-  bail: DcodeRebuildPreflightBail,
 ): ReturnType<typeof onboardSession.loadSession> {
   const session = onboardSession.loadSession();
-  if (session?.sandboxName === sandboxName && session.metadata?.fromDockerfile) {
-    fail(
-      "the managed DCode registry entry conflicts with a recorded custom Dockerfile",
-      bail,
-      "Managed DCode rebuild cannot use a recorded custom Dockerfile",
-    );
-  }
-  return session;
+  return session?.sandboxName === sandboxName ? session : null;
 }
 
 function requireCurrentTarget(
@@ -235,7 +235,6 @@ function requireCurrentTarget(
   if (!isDeepStrictEqual(currentTarget, target)) {
     fail("the resolved DCode target changed during preflight", bail);
   }
-  requireManagedDcodeSession(sandboxName, bail);
 }
 
 function getRecordedGpuConfig(
@@ -352,9 +351,18 @@ function disposePreparation(
 
 /** Prebuild and revalidate the managed DCode replacement inputs before mutation. */
 export async function prepareDcodeReplacementBeforeMutation(
-  input: DcodeReplacementPreflightInput,
+  input: DcodeReplacementPreparationInput,
 ): Promise<PreparedDcodeReplacement | null> {
-  const { sandboxName, entry, resumeConfig, skipLiveRoute, gatewayPort, log, bail } = input;
+  const {
+    sandboxName,
+    entry,
+    resumeConfig,
+    webSearchConfig,
+    skipLiveRoute,
+    gatewayPort,
+    log,
+    bail,
+  } = input;
   let buildContext: PreparedDcodeRebuildImage | null = null;
   let pinnedBase: PinnedDcodeBaseImage | null = null;
   let transferred = false;
@@ -366,7 +374,7 @@ export async function prepareDcodeReplacementBeforeMutation(
       );
     }
 
-    const session = requireManagedDcodeSession(sandboxName, bail);
+    const session = loadMatchingDcodeSession(sandboxName);
     const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
     if (!skipLiveRoute) requireInferenceRoute(sandboxName, target, bail);
 
@@ -379,6 +387,9 @@ export async function prepareDcodeReplacementBeforeMutation(
         provider: target.provider,
         model: target.model,
         preferredInferenceApi: target.preferredInferenceApi,
+        compatibleEndpointReasoning: resumeConfig.compatibleEndpointReasoning,
+        webSearchConfig,
+        toolDisclosure: input.toolDisclosure,
         sandboxGpuConfig,
         gatewayPort,
       }),
@@ -401,6 +412,7 @@ export async function prepareDcodeReplacementBeforeMutation(
     const replacement: PreparedDcodeReplacement = {
       buildContext: preparedBuildContext,
       gatewayName: target.gatewayName,
+      toolDisclosure: input.toolDisclosure,
       dispose: () => disposePreparation(preparedBuildContext, preparedBase),
       verify: () => verifyPreparedDcodeRebuildImage(preparedBuildContext) && preparedBase.verify(),
     };
@@ -420,6 +432,9 @@ export async function revalidateDcodeReplacementAtMutationEdge(
   const target = resolveTarget(entry, resumeConfig, bail, gatewayPort);
   if (replacement.gatewayName !== target.gatewayName) {
     fail("the prepared DCode gateway changed before deletion", bail);
+  }
+  if (replacement.toolDisclosure !== input.toolDisclosure) {
+    fail("the prepared DCode tool-disclosure mode changed before deletion", bail);
   }
   if (!(await ensureDcodeRebuildTargetGatewaySelected(sandboxName, entry, log, bail))) {
     return false;
