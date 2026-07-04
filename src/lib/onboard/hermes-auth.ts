@@ -46,10 +46,7 @@ export interface HermesAuthFailureBoundary {
 }
 
 export function getRequestedHermesAuthMethod(
-  boundary: HermesAuthFailureBoundary = {
-    error: (message) => console.error(message),
-    exitProcess: (code) => process.exit(code),
-  },
+  boundary: HermesAuthFailureBoundary,
 ): HermesAuthMethod | null {
   const raw =
     process.env.NEMOCLAW_HERMES_AUTH_METHOD ||

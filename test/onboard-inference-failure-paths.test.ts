@@ -26,6 +26,7 @@ type EnsureBedrockRuntimeAdapter = NonNullable<
 const BEDROCK_ENDPOINT = "https://bedrock-runtime.us-east-1.amazonaws.com";
 const BEDROCK_CREDENTIAL_ENV = "COMPATIBLE_ANTHROPIC_API_KEY";
 const BEDROCK_MODEL = "anthropic.claude-3-5-sonnet-20240620-v1:0";
+const NVIDIA_REDACTION_CANARY = ["nv", "api-", "TEST-NOT-A-REAL-VALUE"].join("");
 
 function createInjectedExit() {
   return vi.fn((code: number): never => {
@@ -194,7 +195,7 @@ describe("setupInference dependency failures", () => {
       {
         name: "remote-inference-set",
         matches: (command) => command.startsWith("inference set"),
-        results: [{ status: 37, stdout: "", stderr: "route failed nvapi-1234567890abcdef" }],
+        results: [{ status: 37, stdout: "", stderr: `route failed ${NVIDIA_REDACTION_CANARY}` }],
       },
     ]);
     const harness = createDirectSetupInferenceHarness({
@@ -220,7 +221,7 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(37);
     expect(harness.errors.join("\n")).toContain("route failed");
-    expect(harness.errors.join("\n")).not.toContain("nvapi-1234567890abcdef");
+    expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
       "gateway select nemoclaw",
       "inference set --no-verify --provider openai-api --model gpt-test",
@@ -935,7 +936,9 @@ describe("setupInference dependency failures", () => {
       {
         name: "routed-inference-set",
         matches: (command) => command.startsWith("inference set"),
-        results: [{ status: 41, stdout: "", stderr: "routed apply failed nvapi-1234567890abcdef" }],
+        results: [
+          { status: 41, stdout: "", stderr: `routed apply failed ${NVIDIA_REDACTION_CANARY}` },
+        ],
       },
     ]);
     const harness = createDirectSetupInferenceHarness({
@@ -965,7 +968,7 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(41);
     expect(harness.errors.join("\n")).toContain("routed apply failed");
-    expect(harness.errors.join("\n")).not.toContain("nvapi-1234567890abcdef");
+    expect(harness.errors.join("\n")).not.toContain(NVIDIA_REDACTION_CANARY);
     expectNoPostFailureSideEffects(harness, [
       "gateway select nemoclaw",
       "inference set --no-verify --provider nvidia-router --model router/model",

@@ -8,6 +8,16 @@ import { BACK_TO_SELECTION } from "./credential-navigation";
 
 const BEDROCK_URL = "https://bedrock-runtime.us-east-1.amazonaws.com";
 
+function createBedrockRuntimeDependencies() {
+  return {
+    exitProcess: vi.fn((code: number): never => {
+      throw new Error(`EXIT_CALLED:${code}`);
+    }),
+    error: vi.fn(),
+    log: vi.fn(),
+  };
+}
+
 function clearBedrockAuthEnv(): void {
   delete process.env.AWS_BEARER_TOKEN_BEDROCK;
   delete process.env.AWS_PROFILE;
@@ -70,6 +80,7 @@ describe("Bedrock Runtime onboarding helper", () => {
     const promptInputModel = vi.fn(async () => "anthropic.claude");
 
     const result = await selectBedrockRuntimeCustomAnthropic({
+      ...createBedrockRuntimeDependencies(),
       selectedKey: "anthropicCompatible",
       endpointUrl: BEDROCK_URL,
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -102,6 +113,7 @@ describe("Bedrock Runtime onboarding helper", () => {
     });
 
     const result = await selectBedrockRuntimeCustomAnthropic({
+      ...createBedrockRuntimeDependencies(),
       selectedKey: "anthropicCompatible",
       endpointUrl: BEDROCK_URL,
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
@@ -129,6 +141,7 @@ describe("Bedrock Runtime onboarding helper", () => {
     const replaceNamedCredential = vi.fn(async () => "unused");
 
     const result = await selectBedrockRuntimeCustomAnthropic({
+      ...createBedrockRuntimeDependencies(),
       selectedKey: "anthropicCompatible",
       endpointUrl: BEDROCK_URL,
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",

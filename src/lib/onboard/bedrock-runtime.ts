@@ -31,14 +31,10 @@ type UpsertProvider = (
 type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
 type BedrockRuntimeDependencies = {
-  exitProcess?: (code: number) => never;
-  error?: (message: string) => void;
-  log?: (message: string) => void;
+  exitProcess: (code: number) => never;
+  error: (message: string) => void;
+  log: (message: string) => void;
 };
-
-const defaultExitProcess = (code: number): never => process.exit(code);
-const defaultError = (message: string): void => console.error(message);
-const defaultLog = (message: string): void => console.log(message);
 
 function normalizeCredentialValue(value: unknown): string {
   return String(value ?? "").trim();
@@ -91,8 +87,7 @@ export async function selectBedrockRuntimeCustomAnthropic(
   | { action: "retry-selection" }
   | { action: "selected"; model: string; preferredInferenceApi: "openai-completions" }
 > {
-  const error = options.error ?? defaultError;
-  const exitProcess = options.exitProcess ?? defaultExitProcess;
+  const { error, exitProcess } = options;
   if (options.selectedKey !== "anthropicCompatible" || !options.endpointUrl) {
     return { action: "not-bedrock" };
   }
@@ -149,9 +144,7 @@ export async function setupBedrockRuntimeInference(
     updateSandbox?: typeof registry.updateSandbox;
   } & BedrockRuntimeDependencies,
 ): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
-  const error = options.error ?? defaultError;
-  const exitProcess = options.exitProcess ?? defaultExitProcess;
-  const log = options.log ?? defaultLog;
+  const { error, exitProcess, log } = options;
   const classification =
     options.provider === "compatible-anthropic-endpoint" && options.endpointUrl
       ? classifyCustomAnthropicEndpoint(options.endpointUrl)

@@ -3648,6 +3648,9 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       isNonInteractive,
       promptInputModel,
       replaceNamedCredential,
+      exitProcess: (code) => process.exit(code),
+      error: (message) => console.error(message),
+      log: (message) => console.log(message),
     });
     if (bedrockSelection.action === "retry-selection") {
       console.log("  Returning to provider selection.");
