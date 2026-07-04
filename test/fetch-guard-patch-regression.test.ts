@@ -219,6 +219,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     `real_node=${JSON.stringify(process.execPath)}`,
     `postinstall_path=${JSON.stringify(path.join(openclawInstall, "scripts/postinstall-bundled-plugins.mjs"))}`,
     `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
+    `BASE_IMAGE=${JSON.stringify("registry.example/nemoclaw-test-base:latest")}`,
     `MCPORTER_VERSION=${JSON.stringify(expectedMcporterVersion)}`,
     `OPENCLAW_2026_6_10_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `OPENCLAW_2026_6_10_TARBALL=${JSON.stringify(openclawTarball)}`,
@@ -390,7 +391,7 @@ describe("fetch-guard patch regression guard", () => {
     const stale = runOpenClawUpgradeBlock("2026.3.11");
     expect(stale.result.status).toBe(0);
     expect(stale.result.stdout).toContain(
-      `upgrading to ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
+      `Base image OpenClaw 2026.3.11 lacks exact reviewed provenance; installing ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
     );
     expect(stale.calls).toContain(
       `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
@@ -406,7 +407,7 @@ describe("fetch-guard patch regression guard", () => {
     const current = runOpenClawUpgradeBlock(CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION);
     expect(current.result.status).toBe(0);
     expect(current.result.stdout).toContain(
-      `matches reviewed target ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
+      `Base image OpenClaw ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION} lacks exact reviewed provenance; installing ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
     );
     expect(current.calls).toContain(
       `npm pack https://registry.npmjs.org/openclaw/-/openclaw-${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}.tgz --pack-destination`,
