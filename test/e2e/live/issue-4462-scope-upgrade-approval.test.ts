@@ -546,11 +546,155 @@ def auth_matches(state, context):
         and operator.get('token') == context['token']
         and scopes(operator, ('scopes',)) == context['scopes']
     )
+def inert_final_pending(state, context, reviewed_target):
+    pending=same_device_pending(state)
+    if len(pending) != 1 or not reviewed_target or context['scopes'] != final_scopes:
+        return False
+    request=pending[0]
+    request_id=request.get('requestId')
+    target_request_id=reviewed_target.get('requestId')
+    target_baseline=reviewed_target.get('baselineScopes')
+    target_requested=reviewed_target.get('requestedScopes')
+    target_expected=(reviewed_target.get('expectedScopes')
+        if isinstance(reviewed_target.get('expectedScopes'), list) else [])
+    target_hash=reviewed_target.get('baselineTokenHash')
+    target_requested_set=(
+        {norm(scope) for scope in target_requested if norm(scope)}
+        if isinstance(target_requested, list) else set()
+    )
+    scope_keys={
+        key for key in request
+        if isinstance(key, str) and key.lower().endswith('scopes')
+    }
+    unexpected_auth_keys={
+        key for key in request
+        if isinstance(key, str)
+        and any(marker in key.lower()
+            for marker in ('auth', 'credential', 'permission', 'secret', 'token'))
+    }
+    request_id_matches=[
+        value for value in state['pending'].values()
+        if isinstance(value, dict) and value.get('requestId') == request_id
+    ]
+    # OpenClaw can publish this no-capability metadata repair after the reviewed
+    # scope upgrade. Leave it untouched; the final real agent call proves that
+    # it is irrelevant to this scope gate rather than treating it as paired.
+    return (
+        isinstance(target_request_id, str)
+        and target_request_id == target_request_id.strip()
+        and bool(target_request_id)
+        and not any(character.isspace() for character in target_request_id)
+        and reviewed_target.get('deviceId') == expected_device_id
+        and reviewed_target.get('publicKey') == context['key']
+        and reviewed_target.get('clientId') == 'cli'
+        and reviewed_target.get('clientMode') == 'cli'
+        and target_baseline == ['operator.pairing']
+        and isinstance(target_requested, list)
+        and target_requested == sorted(target_requested_set)
+        and bool({'operator.read','operator.write'}.intersection(target_requested_set))
+        and target_requested_set.issubset(final_scopes)
+        and {'operator.pairing'} | target_requested_set == final_scopes
+        and target_expected == sorted(final_scopes)
+        and isinstance(target_hash, str)
+        and re.fullmatch(r'[0-9a-f]{64}', target_hash) is not None
+        and hashlib.sha256(context['token'].encode()).hexdigest() != target_hash
+        and isinstance(request_id, str)
+        and request_id == request_id.strip()
+        and bool(request_id)
+        and not any(character.isspace() for character in request_id)
+        and request_id != target_request_id
+        and len(request_id_matches) == 1
+        and state['pending'].get(request_id) is request
+        and request.get('deviceId') == expected_device_id
+        and request.get('publicKey') == context['key']
+        and request.get('clientId') == 'cli'
+        and request.get('clientMode') == 'cli'
+        and request.get('isRepair') is True
+        and request.get('role') == 'operator'
+        and request.get('roles') == ['operator']
+        and scope_keys == {'scopes'}
+        and request.get('scopes') == []
+        and not unexpected_auth_keys
+        and request.get('silent') is not True
+    )
+def verify_inert_final_pending_classifier():
+    context={'key': 'reviewed-public-key', 'scopes': final_scopes, 'token': 'rotated-token'}
+    reviewed={
+        'requestId': 'reviewed-upgrade',
+        'deviceId': expected_device_id,
+        'publicKey': context['key'],
+        'clientId': 'cli',
+        'clientMode': 'cli',
+        'baselineScopes': ['operator.pairing'],
+        'baselineTokenHash': 'a' * 64,
+        'requestedScopes': ['operator.read', 'operator.write'],
+        'expectedScopes': sorted(final_scopes),
+    }
+    request={
+        'requestId': 'inert-request',
+        'deviceId': expected_device_id,
+        'publicKey': context['key'],
+        'clientId': 'cli',
+        'clientMode': 'cli',
+        'role': 'operator',
+        'roles': ['operator'],
+        'isRepair': True,
+        'scopes': [],
+    }
+    valid={'pending': {'inert-request': request}}
+    if not inert_final_pending(valid, context, reviewed):
+        fail('inert final-state classifier rejected its reviewed shape')
+    with_unrelated={'pending': {**valid['pending'], 'unrelated-request': {
+        **request, 'requestId': 'unrelated-request', 'deviceId': 'other-device',
+    }}}
+    if not inert_final_pending(with_unrelated, context, reviewed):
+        fail('inert final-state classifier rejected an unrelated pending device')
+    def changed_request(changes):
+        return {'pending': {'inert-request': {**request, **changes}}}
+    missing_scopes={key: value for key, value in request.items() if key != 'scopes'}
+    rejected=[
+        ({'pending': {}}, context, reviewed),
+        ({'pending': {'wrong-key': request}}, context, reviewed),
+        ({'pending': {**valid['pending'], 'extra-request': {
+            **request, 'requestId': 'extra-request',
+        }}}, context, reviewed),
+        ({'pending': {**valid['pending'], 'unrelated-key': {
+            **request, 'deviceId': 'other-device',
+        }}}, context, reviewed),
+        ({'pending': {'inert-request': missing_scopes}}, context, reviewed),
+        (changed_request({'scopes': ['operator.read']}), context, reviewed),
+        (changed_request({'scopes': 'operator.read'}), context, reviewed),
+        (changed_request({'requestedScopes': []}), context, reviewed),
+        (changed_request({'unknownScopes': []}), context, reviewed),
+        (changed_request({'authToken': 'unexpected'}), context, reviewed),
+        (changed_request({'silent': True}), context, reviewed),
+        (changed_request({'deviceId': 'other-device'}), context, reviewed),
+        (changed_request({'publicKey': 'other-public-key'}), context, reviewed),
+        (changed_request({'clientId': 'other-client'}), context, reviewed),
+        (changed_request({'roles': ['operator', 'node']}), context, reviewed),
+        (changed_request({'role': 'node'}), context, reviewed),
+        (changed_request({'isRepair': False}), context, reviewed),
+        (valid, context, {}),
+        (valid, context, {**reviewed, 'requestId': 'inert-request'}),
+        (valid, context, {**reviewed, 'baselineScopes': []}),
+        (valid, context, {**reviewed, 'requestedScopes': ['operator.read']}),
+        (valid, context, {**reviewed, 'expectedScopes': ['operator.pairing']}),
+        (valid, context, {**reviewed,
+            'baselineTokenHash': hashlib.sha256(context['token'].encode()).hexdigest()}),
+        (valid, context, {**reviewed, 'publicKey': 'other-public-key'}),
+        (valid, {**context, 'scopes': {'operator.pairing'}}, reviewed),
+    ]
+    if any(inert_final_pending(state, candidate_context, candidate_target)
+            for state, candidate_context, candidate_target in rejected):
+        fail('inert final-state classifier accepted a drifted shape')
+verify_inert_final_pending_classifier()
 def converged(state):
     expected_key=target.get('publicKey') if target else ''
     context=paired_context(state, expected_key)
-    if (context is None or context['scopes'] != final_scopes
-            or same_device_pending(state) or not auth_matches(state, context)):
+    if (context is None or context['scopes'] != final_scopes or not auth_matches(state, context)):
+        return None
+    pending=same_device_pending(state)
+    if pending and not inert_final_pending(state, context, target):
         return None
     return context
 def sync_auth(context):
@@ -595,7 +739,7 @@ def safe_state_summary(state):
     else:
         paired_label='final' if context['scopes'] == final_scopes else 'baseline-or-other'
         auth_label='match' if auth_matches(state, context) else 'mismatch'
-    return f'paired={paired_label} auth={auth_label} same_device_pending={len(same_device_pending(state))}'
+    return f'paired={paired_label} auth={auth_label} pending={len(state["pending"])} same_device_pending={len(same_device_pending(state))}'
 
 state=load_state()
 complete=converge_after_sync(state)
@@ -757,6 +901,7 @@ fail('approval did not settle: ' + safe_state_summary(last_state))
 PY
 }
 
+approval_target_json=
 approve_request() {
   local request_id="$1" expected_device_id="$2" approve_output approve_rc prepare_output post_output prepared snapshot_json
   local attempt=1 id_count=0 original_request_id seen_request_ids= target_json=
@@ -767,6 +912,7 @@ approve_request() {
     fi
     case "$prepare_output" in
       "CONVERGED "*)
+        approval_target_json="$target_json"
         echo "ISSUE_4462_APPROVAL_CONVERGED attempt=$attempt request=\${request_id:-consumed} device=\${prepare_output#CONVERGED }"
         return 0
         ;;
@@ -818,6 +964,7 @@ approve_request() {
     if [ "$post_rc" -ne 0 ]; then return 1; fi
     case "$post_output" in
       "CONVERGED "*)
+        approval_target_json="$target_json"
         echo "ISSUE_4462_APPROVAL_CONVERGED attempt=$attempt request=$request_id device=\${post_output#CONVERGED }"
         return 0
         ;;
@@ -873,7 +1020,7 @@ if [ -z "$request_id" ]; then
 fi
 
 approve_request "$request_id" "$paired_device_id"
-proof_output="$(approval_state prove "" "$paired_device_id" 0 3</dev/null 4</dev/null 5</dev/null)"
+proof_output="$(approval_state prove "" "$paired_device_id" 0 3<<<"$approval_target_json" 4</dev/null 5</dev/null)"
 case "$proof_output" in
   "CONVERGED "*) final_device="\${proof_output#CONVERGED }" ;;
   *) echo "INVALID_FINAL_APPROVAL_PROOF" >&2; exit 9 ;;
