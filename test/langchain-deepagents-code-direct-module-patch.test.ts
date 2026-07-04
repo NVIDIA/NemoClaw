@@ -18,12 +18,11 @@ const progressiveDisclosureHarness = path.join(
 const DARWIN_FCNTL_FIXTURE_MARKER = "# NemoClaw test-only Darwin fcntl seal constants.";
 
 function addDarwinFcntlSealConstants(helper: string): string {
-  if (process.platform !== "darwin" || helper.includes(DARWIN_FCNTL_FIXTURE_MARKER)) {
-    return helper;
-  }
-  return helper.replace(
-    "import fcntl\n",
-    `import fcntl
+  return process.platform !== "darwin" || helper.includes(DARWIN_FCNTL_FIXTURE_MARKER)
+    ? helper
+    : helper.replace(
+        "import fcntl\n",
+        `import fcntl
 
 ${DARWIN_FCNTL_FIXTURE_MARKER}
 for _name, _value in (
@@ -37,7 +36,7 @@ for _name, _value in (
     if not hasattr(fcntl, _name):
         setattr(fcntl, _name, _value)
 `,
-  );
+      );
 }
 
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
