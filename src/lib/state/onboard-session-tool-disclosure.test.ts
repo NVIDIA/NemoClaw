@@ -21,16 +21,14 @@ function requireLoadedSession(
   loaded: ReturnType<OnboardSessionModule["loadSession"]>,
 ): LoadedSession {
   expect(loaded).not.toBeNull();
-  if (!loaded) throw new Error("Expected onboard session to be present");
-  return loaded;
+  return loaded as LoadedSession;
 }
 
 function requireDebugSummary(
   summary: ReturnType<OnboardSessionModule["summarizeForDebug"]>,
 ): DebugSummary {
   expect(summary).not.toBeNull();
-  if (!summary) throw new Error("Expected debug session summary to be present");
-  return summary;
+  return summary as DebugSummary;
 }
 
 beforeEach(() => {
@@ -45,11 +43,8 @@ beforeEach(() => {
 afterEach(() => {
   delete require.cache[modulePath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  if (originalHome === undefined) {
-    delete process.env.HOME;
-  } else {
-    process.env.HOME = originalHome;
-  }
+  Reflect.deleteProperty(process.env, "HOME");
+  Object.assign(process.env, originalHome === undefined ? {} : { HOME: originalHome });
 });
 
 describe("onboard session tool disclosure", () => {
