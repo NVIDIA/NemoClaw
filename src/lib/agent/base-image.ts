@@ -77,21 +77,30 @@ export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string)
 function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
   if (agent.name !== "hermes") return null;
   const finalDockerfile = agent.dockerfilePath;
-  if (!finalDockerfile) return null;
+  if (!finalDockerfile) {
+    throw new Error("Hermes is missing its final sandbox Dockerfile");
+  }
   let dockerfile: string;
   try {
     dockerfile = fs.readFileSync(finalDockerfile, "utf8");
-  } catch {
-    return null;
+  } catch (error) {
+    throw new Error(`Failed to read Hermes final Dockerfile: ${finalDockerfile}`, {
+      cause: error,
+    });
   }
   const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
     (match) => match[1],
   );
   const pinnedRef = declarations.length === 1 ? declarations[0] : null;
-  return pinnedRef &&
-    /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
-    ? pinnedRef
-    : null;
+  if (
+    !pinnedRef ||
+    !/^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
+  ) {
+    throw new Error(
+      "Hermes final Dockerfile must declare exactly one immutable official sandbox base image",
+    );
+  }
+  return pinnedRef;
 }
 
 function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: string): boolean {

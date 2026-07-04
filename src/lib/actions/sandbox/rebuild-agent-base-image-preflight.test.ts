@@ -15,6 +15,7 @@ const requireDist = createRequire(import.meta.url);
 const rebuildFlowHelpersPath = "./rebuild-flow-helpers.js";
 const agentDefsPath = "../../agent/defs.js";
 const agentOnboardPath = "../../agent/onboard.js";
+const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
 
 function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
   delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
@@ -45,10 +46,12 @@ describe("ensureRebuildAgentBaseImage", () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.stubEnv(overrideEnvVar, "");
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   function setup() {
@@ -58,7 +61,14 @@ describe("ensureRebuildAgentBaseImage", () => {
     vi.spyOn(loadAgentDefs(), "loadAgent").mockReturnValue(agent);
     const ensureAgentBaseImage = vi
       .spyOn(loadAgentOnboard(), "ensureAgentBaseImage")
-      .mockReturnValue({ imageTag: "hermes:base", built: false });
+      .mockImplementation((_agent, options = {}) => ({
+        imageTag: options.forceBaseImageRefresh
+          ? "hermes:refreshed"
+          : options.resolutionHint
+            ? "hermes:cached"
+            : "hermes:rebuilt",
+        built: !options.resolutionHint,
+      }));
     return { agent, ensureAgentBaseImage };
   }
 
@@ -68,8 +78,8 @@ describe("ensureRebuildAgentBaseImage", () => {
 
     expect(ensureRebuildAgentBaseImage("hermes", makeBail(), { resolutionHint: hint })).toEqual({
       ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      imageRef: "hermes:cached",
+      overrideEnvVar,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
       forceBaseImageRebuild: false,
@@ -83,8 +93,8 @@ describe("ensureRebuildAgentBaseImage", () => {
 
     expect(ensureRebuildAgentBaseImage("hermes", makeBail())).toEqual({
       ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      imageRef: "hermes:rebuilt",
+      overrideEnvVar,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
       forceBaseImageRebuild: true,
@@ -102,8 +112,8 @@ describe("ensureRebuildAgentBaseImage", () => {
       }),
     ).toEqual({
       ok: true,
-      imageRef: "hermes:base",
-      overrideEnvVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
+      imageRef: "hermes:refreshed",
+      overrideEnvVar,
     });
     expect(ensureAgentBaseImage).toHaveBeenCalledWith(agent, {
       forceBaseImageRebuild: false,

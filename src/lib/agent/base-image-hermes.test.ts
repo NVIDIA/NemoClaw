@@ -76,6 +76,15 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  it("fails before candidate resolution when the Hermes final Dockerfile is unreadable", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      expect(() =>
+        ensureAgentBaseImage(makeAgent({ dockerfilePath: "/missing/hermes/Dockerfile" })),
+      ).toThrow("Failed to read Hermes final Dockerfile");
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("fails a forced rebuild before deletion when the built base fails validation", () => {
     withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
       resolveSandboxBaseImageMock.mockReturnValue(null);
