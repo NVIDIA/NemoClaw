@@ -3054,11 +3054,20 @@ def _seal_shields_locked(
         )
         unavailable = bool(unavailable_reasons)
         file_mode = 0o400 if unavailable else 0o444
+        try:
+            mcp_digest = _canonical_mcp_servers_digest(
+                inputs["config.yaml"].decode("utf-8")
+            )
+        except (UnicodeDecodeError, UnsafePathError):
+            # Containment cannot let a malformed mutable input veto shields-up.
+            # Semantic MCP inspection still rejects those frozen config bytes.
+            mcp_digest = hashlib.sha256(b"{}").hexdigest()
         hash_text = (
             f"{hashlib.sha256(inputs['config.yaml']).hexdigest()}  "
             f"{os.path.join(hermes_dir, 'config.yaml')}\n"
             f"{hashlib.sha256(inputs['.env']).hexdigest()}  "
             f"{os.path.join(hermes_dir, '.env')}\n"
+            f"{MCP_HASH_STATE_PREFIX} intended={mcp_digest} applied={mcp_digest}\n"
         )
         if len(hash_text.encode("utf-8")) > MAX_HASH_BYTES:
             raise UnsafePathError("refusing oversized synthesized Hermes hash")
