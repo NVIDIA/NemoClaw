@@ -304,6 +304,12 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`src/lib/state/sandbox.ts` is 100 lines smaller");
     expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
     expect(review).toContain("Deferred #5896 Archive Consolidation Contract");
+    expect(review).toContain("protected exact-version/SRI/tarball/lifecycle provenance marker");
+    expect(review).toContain("removes the marker before applying NemoClaw patches");
+    expect(review).toContain("ten fallback states");
+    expect(readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf-8")).toContain(
+      `stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH"`,
+    );
     expect(review).toContain("issue #5896 section 2");
     expect(review).toContain("issue #5896 section 9");
     expect(review).toContain("direct source- and target-traversal vectors");
@@ -366,7 +372,12 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'reported unsafe archive filename' "$dockerfile unsafe filename guard"
   check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(mktemp -d)"' "$dockerfile fresh pack directory"
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
+  check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
+  check_contains "$openclaw_block" 'recipe=ignore-scripts+reviewed-lifecycle-v1' "$dockerfile base provenance recipe"
 done
+
+check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
+check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
 check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.integrity' "optional plugin registry integrity"

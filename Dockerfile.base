@@ -296,6 +296,23 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         *) echo "Error: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy"; exit 1 ;; \
     esac \
     && rm -rf "$OPENCLAW_PACK_DIR" \
+    && OPENCLAW_INSTALLED_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}')" \
+    && if [ "$OPENCLAW_INSTALLED_VERSION" != "$OPENCLAW_VERSION" ]; then \
+        echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
+    fi \
+    && OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1 \
+    && OPENCLAW_PROVENANCE_DIR="$(dirname "$OPENCLAW_PROVENANCE_PATH")" \
+    && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \
+    && OPENCLAW_PROVENANCE_TMP="$(mktemp "${OPENCLAW_PROVENANCE_PATH}.tmp.XXXXXX")" \
+    && printf '%s\n' \
+        'schema=1' \
+        "package=openclaw@${OPENCLAW_VERSION}" \
+        "integrity=${EXPECTED_INTEGRITY}" \
+        "tarball=${EXPECTED_TARBALL}" \
+        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        > "$OPENCLAW_PROVENANCE_TMP" \
+    && chmod 0444 "$OPENCLAW_PROVENANCE_TMP" \
+    && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi \
     && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \

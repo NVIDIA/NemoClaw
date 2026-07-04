@@ -41,6 +41,7 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 # Stage 3: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+ARG BASE_IMAGE
 # Dependency review evidence for this runtime pin lives in
 # docs/security/openclaw-2026.6.10-dependency-review.md.
 ARG OPENCLAW_VERSION=2026.6.10
@@ -204,12 +205,15 @@ RUN set -eu; \
     command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
-# Reinstall from the reviewed archive even when the base reports the target.
+# Reuse an exact reviewed base install only when its protected provenance marker
+# matches this build target; otherwise reinstall from the reviewed archive.
 #
 # The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
-# Dockerfile.base, or a mutable/stale base may report the target version while
-# carrying different package bytes. Reinstalling from the locally verified
-# archive gives every production build the exact runtime the patches expect.
+# Dockerfile.base, and legacy/custom bases may report the target version without
+# proving which archive and lifecycle produced it. Current official/local bases
+# emit the marker only after installing the verified archive. The final image
+# consumes it before applying NemoClaw patches so it cannot masquerade as a
+# pristine base when reused as a custom BASE_IMAGE.
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
@@ -253,40 +257,65 @@ RUN set -eu; \
         if ! pack_archive="$(node -e 'const path = require("node:path"); const [dir, filename, label] = process.argv.slice(1); const parts = filename.split(/[\\/]+/); const unsafe = !filename || path.isAbsolute(filename) || filename === "." || filename === ".." || filename.includes("/") || filename.includes("\\") || parts.includes("..") || parts.includes(""); if (unsafe) { console.error("ERROR: " + label + " npm pack reported unsafe archive filename: " + filename); process.exit(1); } const root = path.resolve(dir); const archive = path.resolve(root, filename); if (!archive.startsWith(root + path.sep)) { console.error("ERROR: " + label + " npm pack archive escaped pack directory: " + filename); process.exit(1); } process.stdout.write(archive);' "$pack_dir" "$pack_filename" "$label")"; then exit 1; fi; \
         printf '%s\n' "$pack_archive"; \
     }; \
-    REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
-    if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
-        echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch" >&2; \
-        echo "Expected: ${EXPECTED_INTEGRITY}" >&2; \
-        echo "Actual:   ${REGISTRY_INTEGRITY}" >&2; exit 1; \
-    fi; \
-    REGISTRY_TARBALL=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.tarball); \
-    if [ "$REGISTRY_TARBALL" != "$EXPECTED_TARBALL" ]; then \
-        echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm tarball URL mismatch" >&2; \
-        echo "Expected: ${EXPECTED_TARBALL}" >&2; \
-        echo "Actual:   ${REGISTRY_TARBALL}" >&2; exit 1; \
-    fi; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || true); \
     CUR_VER="${CUR_VER:-0.0.0}"; \
-    if [ "$CUR_VER" = "$OPENCLAW_VERSION" ]; then \
-        echo "INFO: Base image OpenClaw $CUR_VER matches reviewed target $OPENCLAW_VERSION; reinstalling reviewed archive"; \
-    elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
+    OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1; \
+    OPENCLAW_EXPECTED_PROVENANCE="$(mktemp)"; \
+    printf '%s\n' \
+        'schema=1' \
+        "package=openclaw@${OPENCLAW_VERSION}" \
+        "integrity=${EXPECTED_INTEGRITY}" \
+        "tarball=${EXPECTED_TARBALL}" \
+        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        > "$OPENCLAW_EXPECTED_PROVENANCE"; \
+    TRUSTED_BASE_IMAGE=0; \
+    case "$BASE_IMAGE" in \
+        ghcr.io/nvidia/nemoclaw/sandbox-base:*|ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*|nemoclaw-sandbox-base-local|nemoclaw-sandbox-base-local:*) TRUSTED_BASE_IMAGE=1 ;; \
+    esac; \
+    USE_REVIEWED_BASE_OPENCLAW=0; \
+    if [ "$TRUSTED_BASE_IMAGE" = "1" ] \
+        && [ -f "$OPENCLAW_PROVENANCE_PATH" ] \
+        && [ ! -L "$OPENCLAW_PROVENANCE_PATH" ] \
+        && [ "$(stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH" 2>/dev/null || true)" = "0:0:444" ] \
+        && cmp -s "$OPENCLAW_EXPECTED_PROVENANCE" "$OPENCLAW_PROVENANCE_PATH" \
+        && [ "$CUR_VER" = "$OPENCLAW_VERSION" ]; then \
+        USE_REVIEWED_BASE_OPENCLAW=1; \
+    fi; \
+    rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
+    rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
+    if [ "$USE_REVIEWED_BASE_OPENCLAW" = "1" ]; then \
+        echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with exact provenance"; \
+    elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
+        && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
         echo "ERROR: Base image has OpenClaw $CUR_VER, which is newer than reviewed target $OPENCLAW_VERSION" >&2; exit 1; \
     else \
-        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $OPENCLAW_VERSION"; \
+        echo "INFO: Base image OpenClaw $CUR_VER lacks exact reviewed provenance; installing $OPENCLAW_VERSION"; \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch" >&2; \
+            echo "Expected: ${EXPECTED_INTEGRITY}" >&2; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}" >&2; exit 1; \
+        fi; \
+        REGISTRY_TARBALL=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.tarball); \
+        if [ "$REGISTRY_TARBALL" != "$EXPECTED_TARBALL" ]; then \
+            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm tarball URL mismatch" >&2; \
+            echo "Expected: ${EXPECTED_TARBALL}" >&2; \
+            echo "Actual:   ${REGISTRY_TARBALL}" >&2; exit 1; \
+        fi; \
+        OPENCLAW_PACK_DIR="$(mktemp -d)"; \
+        OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
+        # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
+        # install spans image layers. Removing it first also prevents unreviewed
+        # files from surviving a same-version reinstall.
+        rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
+        npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
+        case "$OPENCLAW_VERSION" in \
+            2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
+            2026.3.11) ;; \
+            *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
+        esac; \
+        rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
-    OPENCLAW_PACK_DIR="$(mktemp -d)"; \
-    OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR" "OpenClaw ${OPENCLAW_VERSION}")"; \
-    # npm 10's atomic-move install can hit EROFS on overlayfs when the prior
-    # install spans image layers. Removing it first also prevents unreviewed
-    # files from surviving a same-version reinstall.
-    rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-    npm install -g --no-audit --no-fund --no-progress --ignore-scripts "$OPENCLAW_PACK_PATH"; \
-    case "$OPENCLAW_VERSION" in \
-        2026.4.24|2026.6.10) node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs ;; \
-        2026.3.11) ;; \
-        *) echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no reviewed lifecycle policy" >&2; exit 1 ;; \
-    esac; \
-    rm -rf "$OPENCLAW_PACK_DIR"; \
     MCPORTER_EXPECTED_INTEGRITY=""; \
     if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
     if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
