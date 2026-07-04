@@ -18,7 +18,7 @@ type OnboardPerformanceBudget = {
 };
 type BudgetLoadResult =
   | { status: "loaded"; budget: OnboardPerformanceBudget }
-  | { status: "unavailable"; reason: "missing" | "invalid" | "path_traversal" };
+  | { status: "unavailable"; reason: "missing" | "invalid" };
 type PhaseDurations = Record<string, number>;
 type OnboardTrace = { artifact?: unknown; totalMs: number; phases: PhaseDurations };
 type PhaseRow = {
@@ -46,6 +46,17 @@ type TraceTimingResult = {
   budgetWarningMessage: string | null;
   budgetStatus: string;
 };
+type ZipSummaryEntry = {
+  creatorSystem: number;
+  flags: number;
+  compressionMethod: number;
+  expectedCrc: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  diskStart: number;
+  externalAttributes: number;
+  localHeaderOffset: number;
+};
 type GitHubDeps = { github: any; context: any; core?: { warning?: (message: string) => void } };
 type TraceTimingServices = {
   findLatestCompletedE2eRunForReleaseTag: (deps: GitHubDeps, tag: SemverTag) => Promise<any | null>;
@@ -57,6 +68,9 @@ const WORKFLOW_FILE = "e2e.yaml";
 const TRACE_ARTIFACT_NAME = "e2e-cloud-onboard";
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const MAX_TRACE_SUMMARY_BYTES = 1024 * 1024;
+const MAX_TRACE_ARCHIVE_ENTRIES = 1000;
+const TRACE_ARCHIVE_REJECTION_WARNING =
+  "Trace timing artifact ZIP validation failed; ignoring the malformed or unsupported archive.";
 const ZIP_CENTRAL_DIRECTORY_SIGNATURE = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY_SIGNATURE = 0x06054b50;
 const ZIP_LOCAL_FILE_SIGNATURE = 0x04034b50;
@@ -151,6 +165,11 @@ function normalizeThreshold(value: unknown): Threshold | null {
   };
 }
 
+/**
+ * Runtime defense in depth for the scorecard's repository-owned config. CI
+ * performs the primary JSON Schema validation, but the analyzer must still fail
+ * closed if that gate is bypassed or the checked-out config is malformed.
+ */
 function normalizeOnboardPerformanceBudget(value: unknown): OnboardPerformanceBudget | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
   const object = value as Record<string, unknown>;
@@ -310,9 +329,7 @@ function evaluateOnboardPerformanceBudget({
       const reason =
         budget.reason === "missing"
           ? "the budget config was not found"
-          : budget.reason === "path_traversal"
-            ? "the budget config path resolved outside the repository"
-            : "the budget config is invalid or unreadable";
+          : "the budget config is invalid or unreadable";
       return {
         exceeded: false,
         status: "config_unavailable",
@@ -538,8 +555,12 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-// GitHub returns workflow artifacts as ZIP archives. Parse the one-file timing
-// artifact in-process so scorecard trust does not depend on a runner binary.
+// GitHub creates the workflow artifact ZIP outside this repository, and the
+// cloud-onboard artifact intentionally contains diagnostics beside the trusted
+// timing summary. Parse only the exact root-level summary in-process so the
+// scorecard never extracts archive paths or depends on a runner binary. The
+// production-shape multi-entry regression test is the removal guard; retire
+// this parser if GitHub provides a verified single-file artifact API.
 function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
   const endOffset = findZipEndOfCentralDirectory(archive);
   if (endOffset < 0) return null;
@@ -553,46 +574,70 @@ function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
   if (
     diskNumber !== 0 ||
     centralDirectoryDisk !== 0 ||
-    entriesOnDisk !== 1 ||
-    totalEntries !== 1 ||
-    centralDirectoryOffset + centralDirectorySize !== endOffset ||
-    centralDirectoryOffset + 46 > endOffset ||
-    archive.readUInt32LE(centralDirectoryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
+    entriesOnDisk !== totalEntries ||
+    totalEntries < 1 ||
+    totalEntries > MAX_TRACE_ARCHIVE_ENTRIES ||
+    centralDirectoryOffset + centralDirectorySize !== endOffset
   ) {
     return null;
   }
 
-  const creatorSystem = archive.readUInt8(centralDirectoryOffset + 5);
-  const flags = archive.readUInt16LE(centralDirectoryOffset + 8);
-  const compressionMethod = archive.readUInt16LE(centralDirectoryOffset + 10);
-  const expectedCrc = archive.readUInt32LE(centralDirectoryOffset + 16);
-  const compressedSize = archive.readUInt32LE(centralDirectoryOffset + 20);
-  const uncompressedSize = archive.readUInt32LE(centralDirectoryOffset + 24);
-  const fileNameLength = archive.readUInt16LE(centralDirectoryOffset + 28);
-  const extraLength = archive.readUInt16LE(centralDirectoryOffset + 30);
-  const commentLength = archive.readUInt16LE(centralDirectoryOffset + 32);
-  const diskStart = archive.readUInt16LE(centralDirectoryOffset + 34);
-  const externalAttributes = archive.readUInt32LE(centralDirectoryOffset + 38);
-  const localHeaderOffset = archive.readUInt32LE(centralDirectoryOffset + 42);
-  const centralEntryEnd =
-    centralDirectoryOffset + 46 + fileNameLength + extraLength + commentLength;
-  const fileName = archive.subarray(
-    centralDirectoryOffset + 46,
-    centralDirectoryOffset + 46 + fileNameLength,
-  );
   const expectedFileName = Buffer.from(TRACE_SUMMARY_FILE, "utf8");
+  let centralEntryOffset = centralDirectoryOffset;
+  let target: ZipSummaryEntry | null = null;
+  for (let entryIndex = 0; entryIndex < totalEntries; entryIndex += 1) {
+    if (
+      centralEntryOffset + 46 > endOffset ||
+      archive.readUInt32LE(centralEntryOffset) !== ZIP_CENTRAL_DIRECTORY_SIGNATURE
+    ) {
+      return null;
+    }
+    const fileNameLength = archive.readUInt16LE(centralEntryOffset + 28);
+    const extraLength = archive.readUInt16LE(centralEntryOffset + 30);
+    const commentLength = archive.readUInt16LE(centralEntryOffset + 32);
+    const centralEntryEnd = centralEntryOffset + 46 + fileNameLength + extraLength + commentLength;
+    if (centralEntryEnd > endOffset) return null;
+    const fileName = archive.subarray(
+      centralEntryOffset + 46,
+      centralEntryOffset + 46 + fileNameLength,
+    );
+    if (fileName.equals(expectedFileName)) {
+      if (target !== null) return null;
+      target = {
+        creatorSystem: archive.readUInt8(centralEntryOffset + 5),
+        flags: archive.readUInt16LE(centralEntryOffset + 8),
+        compressionMethod: archive.readUInt16LE(centralEntryOffset + 10),
+        expectedCrc: archive.readUInt32LE(centralEntryOffset + 16),
+        compressedSize: archive.readUInt32LE(centralEntryOffset + 20),
+        uncompressedSize: archive.readUInt32LE(centralEntryOffset + 24),
+        diskStart: archive.readUInt16LE(centralEntryOffset + 34),
+        externalAttributes: archive.readUInt32LE(centralEntryOffset + 38),
+        localHeaderOffset: archive.readUInt32LE(centralEntryOffset + 42),
+      };
+    }
+    centralEntryOffset = centralEntryEnd;
+  }
+  if (centralEntryOffset !== endOffset || target === null) return null;
+
+  const {
+    creatorSystem,
+    flags,
+    compressionMethod,
+    expectedCrc,
+    compressedSize,
+    uncompressedSize,
+    diskStart,
+    externalAttributes,
+    localHeaderOffset,
+  } = target;
   const unixFileType = (externalAttributes >>> 16) & 0xf000;
   if (
-    centralEntryEnd !== endOffset ||
-    !fileName.equals(expectedFileName) ||
-    fileName.includes(0x2f) ||
-    fileName.includes(0x5c) ||
-    fileName.toString("utf8").includes("..") ||
     diskStart !== 0 ||
     (flags & 0x1) !== 0 ||
     (compressionMethod !== 0 && compressionMethod !== 8) ||
     compressedSize > MAX_TRACE_SUMMARY_BYTES ||
     uncompressedSize > MAX_TRACE_SUMMARY_BYTES ||
+    (creatorSystem !== 0 && creatorSystem !== 3) ||
     (creatorSystem === 3 && unixFileType !== 0 && unixFileType !== 0x8000) ||
     localHeaderOffset + 30 > centralDirectoryOffset ||
     archive.readUInt32LE(localHeaderOffset) !== ZIP_LOCAL_FILE_SIGNATURE
@@ -628,16 +673,23 @@ function readValidatedTraceSummaryArchive(archive: Buffer): string | null {
   return summary.toString("utf8");
 }
 
-function readValidatedTraceSummaryZip(zipPath: string): string | null {
+function readValidatedTraceSummaryZip(
+  zipPath: string,
+  warn?: (message: string) => void,
+): string | null {
+  let summary: string | null = null;
   try {
-    return readValidatedTraceSummaryArchive(fs.readFileSync(zipPath));
+    summary = readValidatedTraceSummaryArchive(fs.readFileSync(zipPath));
   } catch {
-    return null;
+    // Treat parser and filesystem failures identically so untrusted archive
+    // details never cross into the workflow log.
   }
+  if (summary === null) warn?.(TRACE_ARCHIVE_REJECTION_WARNING);
+  return summary;
 }
 
 async function readTraceSummaryFromRun(
-  { github, context }: GitHubDeps,
+  { github, context, core }: GitHubDeps,
   runId: number,
 ): Promise<OnboardTrace | null> {
   const artifacts = (await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
@@ -662,7 +714,9 @@ async function readTraceSummaryFromRun(
     const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
     fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
 
-    const summaryText = readValidatedTraceSummaryZip(zipPath);
+    const summaryText = readValidatedTraceSummaryZip(zipPath, (message) =>
+      core?.warning?.(message),
+    );
     return summaryText === null ? null : selectOnboardTrace([summaryText]);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

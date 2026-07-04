@@ -250,6 +250,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   for (const fragment of [
     "scripts/scorecard/analyze-trace-timing.ts",
     "traceTiming.buildTraceTimingResult",
+    "buildTraceTimingResult({ github, context, core })",
     "budgetWarningMessage",
     "core.warning(budgetWarningMessage)",
     "scripts/scorecard/summarize-jobs.ts",
@@ -339,9 +340,7 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
     if (!script.includes(fragment))
       errors.push(`cloud-onboard trace sanitizer must retain ${fragment}`);
   }
-  const sourceGuardIndex = script.indexOf(
-    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
-  );
+  const sourceGuardIndex = script.indexOf('[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]');
   const sanitizeCommandIndex = script.indexOf("python3 scripts/e2e/sanitize-trace-timing.py");
   if (
     sourceGuardIndex === -1 ||

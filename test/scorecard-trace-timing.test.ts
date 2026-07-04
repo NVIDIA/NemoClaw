@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { ONBOARD_TRACE_PHASE_NAMES } from "../src/lib/onboard/tracing";
 
 type TraceTimingAnalyzer = {
   ONBOARD_PHASE_ORDER: readonly string[];
@@ -25,7 +26,10 @@ type TraceTimingAnalyzer = {
   exceedsThreshold: (...args: any[]) => boolean;
   formatTopPhaseChanges: (...args: any[]) => string;
   readOnboardPerformanceBudget: () => unknown;
-  readValidatedTraceSummaryZip: (zipPath: string) => string | null;
+  readValidatedTraceSummaryZip: (
+    zipPath: string,
+    warn?: (message: string) => void,
+  ) => string | null;
   redactSensitiveTraceText: (value: string) => string;
   selectOnboardTrace: (
     ...args: any[]
@@ -95,6 +99,23 @@ function zipSymlink(entryName: string, target: string): string {
       zipPath,
       entryName,
       target,
+    ],
+    { encoding: "utf8" },
+  );
+  return zipPath;
+}
+
+function zipDuplicateEntry(entryName: string, text: string): string {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-duplicate-"));
+  const zipPath = path.join(tempDir, "artifact.zip");
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      "import sys, warnings, zipfile; warnings.filterwarnings('ignore'); z=zipfile.ZipFile(sys.argv[1], 'w'); z.writestr(sys.argv[2], sys.argv[3]); z.writestr(sys.argv[2], sys.argv[3]); z.close()",
+      zipPath,
+      entryName,
+      text,
     ],
     { encoding: "utf8" },
   );
@@ -353,6 +374,8 @@ describe("cloud onboard scorecard trace timing", () => {
         : () => {
             process.env.GITHUB_WORKSPACE = previousWorkspace;
           };
+    mkdirSync(path.join(outsideRepo, "ci"));
+    writeFileSync(path.join(outsideRepo, "ci", "onboard-performance-budget.json"), "{invalid");
     process.env.GITHUB_WORKSPACE = outsideRepo;
     try {
       expect(traceTiming.readOnboardPerformanceBudget()).toMatchObject({ status: "loaded" });
@@ -411,6 +434,54 @@ describe("cloud onboard scorecard trace timing", () => {
     expect(traceTiming.selectOnboardTrace([negativeDurationSummary])).toBeNull();
   });
 
+  it("keeps onboard phase names aligned across emitter sanitizer and scorecard", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-phase-contract-"));
+    const tracePath = path.join(tempDir, "trace.json");
+    const outputDir = path.join(tempDir, "trusted");
+    const emitted = Object.values(ONBOARD_TRACE_PHASE_NAMES).sort();
+    writeFileSync(
+      tracePath,
+      JSON.stringify({
+        resource_spans: [
+          {
+            scope_spans: [
+              {
+                spans: [
+                  { name: "nemoclaw.onboard", duration_ms: emitted.length },
+                  ...emitted.map((name) => ({ name, duration_ms: 1 })),
+                ],
+              },
+            ],
+          },
+        ],
+        summary: {
+          trace_id: "0123456789abcdef0123456789abcdef",
+          total_duration_ms: emitted.length,
+          slowest_spans: [],
+        },
+      }),
+    );
+    try {
+      execFileSync(
+        "python3",
+        [
+          path.resolve(import.meta.dirname, "../scripts/e2e/sanitize-trace-timing.py"),
+          tracePath,
+          outputDir,
+        ],
+        { encoding: "utf8" },
+      );
+      const sanitized = JSON.parse(
+        readFileSync(path.join(outputDir, TRACE_SUMMARY_FILE), "utf8"),
+      ) as { phases: Record<string, number> };
+
+      expect([...traceTiming.ONBOARD_PHASE_ORDER].sort()).toEqual(emitted);
+      expect(Object.keys(sanitized.phases).sort()).toEqual(emitted);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("logs sanitized comparison errors without exposing secrets", async () => {
     const warnings: string[] = [];
     const listWorkflowRunArtifacts = Symbol("listWorkflowRunArtifacts");
@@ -437,29 +508,56 @@ describe("cloud onboard scorecard trace timing", () => {
 
   it("validates trace summary zip entries before extraction", () => {
     const validZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
-    const extraEntryZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary(), "extra.txt": "x" });
+    const productionShapeEntries = Object.fromEntries(
+      Array.from({ length: 61 }, (_value, index) => [`logs/diagnostic-${index}.txt`, "x"]),
+    );
+    productionShapeEntries[TRACE_SUMMARY_FILE] = timingSummary();
+    const productionShapeZip = zipEntries(productionShapeEntries);
     const traversalZip = zipEntries({ [`../${TRACE_SUMMARY_FILE}`]: timingSummary() });
     const symlinkZip = zipSymlink(TRACE_SUMMARY_FILE, "/etc/passwd");
+    const duplicateZip = zipDuplicateEntry(TRACE_SUMMARY_FILE, timingSummary());
     const corruptCrcZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
+    const unsupportedCreatorZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
     const corruptCrcArchive = readFileSync(corruptCrcZip);
     const centralDirectoryOffset = corruptCrcArchive.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
     expect(centralDirectoryOffset).toBeGreaterThanOrEqual(0);
     corruptCrcArchive[centralDirectoryOffset + 16] ^= 0xff;
     writeFileSync(corruptCrcZip, corruptCrcArchive);
+    const unsupportedCreatorArchive = readFileSync(unsupportedCreatorZip);
+    const unsupportedCreatorOffset = unsupportedCreatorArchive.indexOf(
+      Buffer.from([0x50, 0x4b, 0x01, 0x02]),
+    );
+    expect(unsupportedCreatorOffset).toBeGreaterThanOrEqual(0);
+    unsupportedCreatorArchive[unsupportedCreatorOffset + 5] = 10;
+    writeFileSync(unsupportedCreatorZip, unsupportedCreatorArchive);
+    const warnings: string[] = [];
     try {
       expect(traceTiming.readValidatedTraceSummaryZip(validZip)).toContain(
         "nemoclaw.trace_timing.v1",
       );
-      expect(traceTiming.readValidatedTraceSummaryZip(extraEntryZip)).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(productionShapeZip)).toContain(
+        "nemoclaw.trace_timing.v1",
+      );
       expect(traceTiming.readValidatedTraceSummaryZip(traversalZip)).toBeNull();
       expect(traceTiming.readValidatedTraceSummaryZip(symlinkZip)).toBeNull();
-      expect(traceTiming.readValidatedTraceSummaryZip(corruptCrcZip)).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(duplicateZip)).toBeNull();
+      expect(
+        traceTiming.readValidatedTraceSummaryZip(corruptCrcZip, (message) =>
+          warnings.push(message),
+        ),
+      ).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(unsupportedCreatorZip)).toBeNull();
+      expect(warnings).toEqual([
+        "Trace timing artifact ZIP validation failed; ignoring the malformed or unsupported archive.",
+      ]);
     } finally {
       rmSync(path.dirname(validZip), { recursive: true, force: true });
-      rmSync(path.dirname(extraEntryZip), { recursive: true, force: true });
+      rmSync(path.dirname(productionShapeZip), { recursive: true, force: true });
       rmSync(path.dirname(traversalZip), { recursive: true, force: true });
       rmSync(path.dirname(symlinkZip), { recursive: true, force: true });
+      rmSync(path.dirname(duplicateZip), { recursive: true, force: true });
       rmSync(path.dirname(corruptCrcZip), { recursive: true, force: true });
+      rmSync(path.dirname(unsupportedCreatorZip), { recursive: true, force: true });
     }
   });
 

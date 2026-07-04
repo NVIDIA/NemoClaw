@@ -4932,7 +4932,7 @@ jobs:
               day: 'numeric',
             });
             const { budgetWarningMessage, traceTimingLine, traceSummaryLines } =
-              await traceTiming.buildTraceTimingResult({ github, context });
+              await traceTiming.buildTraceTimingResult({ github, context, core });
             if (budgetWarningMessage) core.warning(budgetWarningMessage);
             const lines = [
               `## 🌅 NemoClaw E2E Scorecard — ${today}`,

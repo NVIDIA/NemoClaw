@@ -300,6 +300,7 @@ describe("E2E operations workflow boundary", () => {
       core,
     );
 
+    expect(traceTiming.buildTraceTimingResult).toHaveBeenCalledWith({ github: {}, context, core });
     expect(warning).toHaveBeenCalledWith("Cloud onboard advisory performance budget exceeded");
     expect(summary.addRaw).toHaveBeenCalledWith(
       expect.stringContaining("### Onboard Performance Budget"),
