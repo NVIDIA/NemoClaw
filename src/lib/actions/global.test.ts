@@ -78,7 +78,10 @@ describe("global cli action facade", () => {
     await runUpgradeSandboxesAction({ check: true });
 
     expect(recoverHook).toHaveBeenCalledWith();
-    expect(runOpenshellHook).toHaveBeenCalledWith(["provider", "list"], { timeout: 100 });
+    expect(runOpenshellHook).toHaveBeenCalledWith(
+      ["provider", "list"],
+      expect.objectContaining({ timeout: 100, replaceEnv: true, env: expect.any(Object) }),
+    );
     expect(upgradeHook).toHaveBeenCalledWith({ check: true });
   });
 
@@ -87,6 +90,9 @@ describe("global cli action facade", () => {
     runOpenshellProviderCommand(["provider", "list"]);
 
     expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith();
-    expect(mocks.runOpenshell).toHaveBeenCalledWith(["provider", "list"], undefined);
+    expect(mocks.runOpenshell).toHaveBeenCalledWith(
+      ["provider", "list"],
+      expect.objectContaining({ replaceEnv: true, env: expect.any(Object) }),
+    );
   });
 });

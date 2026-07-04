@@ -143,6 +143,97 @@ describe("runUpdateAction", () => {
     }
   });
 
+  it("does not run the installer when already up to date without --fresh", async () => {
+    const spawnSyncImpl = vi.fn();
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(false);
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("already up to date"));
+  });
+
+  it("reinstalls even when already up to date with --fresh (#5960)", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.updateAvailable).toBe(false);
+    expect(result.ranInstaller).toBe(true);
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "bash",
+      ["-o", "pipefail", "-lc", NEMOCLAW_UPDATE_COMMAND],
+      expect.objectContaining({ stdio: "inherit" }),
+    );
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway (--fresh)"));
+  });
+
+  it("does not announce a --fresh reinstall when the user declines the prompt (#5960)", async () => {
+    const spawnSyncImpl = vi.fn();
+    const log = vi.fn();
+    const prompt = vi.fn(async () => "n");
+
+    const result = await runUpdateAction(
+      { fresh: true },
+      {
+        currentVersion: () => "0.2.0",
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        prompt,
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    // The reinstall claim must not print before/without confirmation.
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("reinstalling anyway"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Update cancelled"));
+  });
+
+  it("still refuses --fresh from a developer source checkout (no reinstall)", async () => {
+    const spawnSyncImpl = vi.fn();
+
+    const result = await runUpdateAction(
+      { fresh: true, yes: true },
+      {
+        currentVersion: () => "0.2.0",
+        error: vi.fn(),
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => true,
+        log: vi.fn(),
+        spawnSyncImpl,
+      },
+    );
+
+    expect(result.ranInstaller).toBe(false);
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+  });
+
   it("prompts before running the maintained installer", async () => {
     const prompt = vi.fn(async () => "yes");
     const spawnSyncImpl = vi.fn(
@@ -232,6 +323,7 @@ describe("runUpdateAction", () => {
           ...process.env,
           BASH_ENV: "/tmp/review-bash-env",
           ENV: "/tmp/review-env",
+          NEMOCLAW_FRESH: "1",
           NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
           NEMOCLAW_INSTALL_TAG: "not-maintained",
         },
@@ -248,6 +340,7 @@ describe("runUpdateAction", () => {
     const options = calls[0]?.[2];
     expect(options?.env?.BASH_ENV).toBeUndefined();
     expect(options?.env?.ENV).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_FRESH).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });

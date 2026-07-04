@@ -322,6 +322,7 @@ describe("sandbox provisioning: non-messaging OpenClaw plugins", () => {
         {
           NEMOCLAW_OPENCLAW_OTEL: "0",
           NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+          NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
           OPENCLAW_VERSION: "2026.5.22",
         },
       );
@@ -1187,6 +1188,11 @@ describe("Hermes sandbox provisioning", () => {
     const bashrcPath = path.join(etcDir, "bash.bashrc");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
+    const mcpCredentialBoundaryPath = path.join(
+      localLib,
+      "openshell-child-visible-credentials.v0.0.72.json",
+    );
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -1196,6 +1202,8 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
+      mcpConfigTransactionPath,
+      mcpCredentialBoundaryPath,
       gatewaySupervisorPath,
       stateDirGuardPath,
       managedGatewayControlPath,
@@ -1224,9 +1232,11 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${mcpCredentialBoundaryPath}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
+      expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(mcpCredentialBoundaryPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
@@ -1356,6 +1366,8 @@ describe("Hermes sandbox provisioning", () => {
         "web",
         "--extra",
         "pty",
+        "--extra",
+        "mcp",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

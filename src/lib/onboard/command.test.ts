@@ -43,6 +43,7 @@ describe("onboard command options", () => {
           "sandbox-gpu": true,
           "sandbox-gpu-device": "nvidia.com/gpu=0",
           agent: "dcode",
+          "tool-disclosure": "direct",
           "control-ui-port": 18790,
           gpu: true,
           yes: true,
@@ -63,6 +64,7 @@ describe("onboard command options", () => {
       acceptThirdPartySoftware: true,
       agent: "langchain-deepagents-code",
       agentsManifest: null,
+      toolDisclosure: "direct",
       controlUiPort: 18790,
       gpu: true,
       noGpu: false,
@@ -84,6 +86,7 @@ describe("onboard command options", () => {
       acceptThirdPartySoftware: false,
       agent: null,
       agentsManifest: null,
+      toolDisclosure: null,
       controlUiPort: null,
       gpu: false,
       noGpu: false,
@@ -96,6 +99,23 @@ describe("onboard command options", () => {
     expect(
       resolve({}, { env: { NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1" } }).acceptThirdPartySoftware,
     ).toBe(true);
+  });
+
+  it("uses the agent-neutral tool-disclosure env and rejects unknown values", () => {
+    expect(resolve({}, { env: { NEMOCLAW_TOOL_DISCLOSURE: " DIRECT " } }).toolDisclosure).toBe(
+      "direct",
+    );
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {},
+        {
+          env: { NEMOCLAW_TOOL_DISCLOSURE: "sometimes" },
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("must be one of: progressive, direct");
   });
 
   it("preserves the requested Dockerfile path after validating the resolved file", () => {
@@ -139,6 +159,40 @@ describe("onboard command options", () => {
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("Unknown agent 'bogus'");
     expect(errors.join("\n")).toContain("aliases: nemohermes → hermes");
+  });
+
+  it("rejects an unknown NEMOCLAW_AGENT cleanly instead of throwing uncaught (#5972)", () => {
+    // #5972: an unknown NEMOCLAW_AGENT must fail via the clean error/exit path,
+    // matching --agent, not by throwing uncaught deep in runOnboard.
+    const errors: string[] = [];
+    expect(() =>
+      resolve(
+        {},
+        {
+          env: { NEMOCLAW_AGENT: "bogus-agent" },
+          listAgents: () => ["openclaw", "hermes"],
+          error: (message = "") => errors.push(message),
+        },
+      ),
+    ).toThrow("exit:1");
+    expect(errors.join("\n")).toContain("Unknown agent 'bogus-agent' (from NEMOCLAW_AGENT)");
+    expect(errors.join("\n")).toContain("aliases: nemohermes → hermes");
+  });
+
+  it("accepts a valid NEMOCLAW_AGENT (and its aliases) without forcing the flag value", () => {
+    const listAgents = () => ["openclaw", "hermes", "langchain-deepagents-code"];
+    // Valid env agents resolve downstream, so resolveAgent leaves `agent` null.
+    expect(resolve({}, { env: { NEMOCLAW_AGENT: "hermes" }, listAgents }).agent).toBeNull();
+    expect(resolve({}, { env: { NEMOCLAW_AGENT: "nemohermes" }, listAgents }).agent).toBeNull();
+    expect(resolve({}, { env: {}, listAgents }).agent).toBeNull();
+  });
+
+  it("prefers the --agent flag over NEMOCLAW_AGENT for validation", () => {
+    const listAgents = () => ["openclaw", "hermes"];
+    // Flag is valid even when the env var is bogus — flag takes precedence.
+    expect(
+      resolve({ agent: "hermes" }, { env: { NEMOCLAW_AGENT: "bogus" }, listAgents }).agent,
+    ).toBe("hermes");
   });
 
   it("runs onboard with resolved options", async () => {

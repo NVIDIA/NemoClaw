@@ -1,0 +1,15 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0\n\nInitial advisory budget for the cloud-onboard-e2e warm-system trace signal. Profiling traces from #3769 were not available in durable CI artifacts when #3776 was implemented. The latest three release tags only exposed one tag-matching trace artifact, from a failed v0.0.66 nightly run, so this cap is calibrated from the latest ten distinct successful main full-trace samples available on 2026-06-23. Those samples had total durations of 298250 ms, 296926 ms, 304190 ms, 294859 ms, 305013 ms, 316147 ms, 300843 ms, 292702 ms, 201332 ms, and 206250 ms; the cap uses p95 via linear interpolation (index 8.55 between samples 8 and 9) plus 25 percent, rounded up to the nearest 30 seconds.",
+  "schemaVersion": 1,
+  "mode": "advisory",
+  "scope": "cloud-onboard-e2e warm-system",
+  "totalBudgetMs": 390000,
+  "regressionWarning": {
+    "minDeltaMs": 60000,
+    "minPercent": 20
+  },
+  "phaseRegressionWarning": {
+    "minDeltaMs": 30000,
+    "minPercent": 30
+  }
+}

@@ -10,7 +10,7 @@ import {
   createBuiltInMessagingHookRegistry,
   createBuiltInRenderTemplateResolver,
   getMessagingManifestAvailabilityContext,
-  hasMessagingManifestRequiredInputs,
+  hasMessagingManifestConfiguredInputs,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -59,11 +59,13 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
 };
 
 /**
- * Detect which built-in messaging channels currently have complete required
- * inputs in the process environment, using the same manifest input rules as
- * {@link setupMessagingChannels}. Pure and side-effect free: it only reads env
- * via the manifest input resolvers so callers can compare current env inputs
- * against a reused/stale sandbox messaging plan before treating that plan as
+ * Detect which built-in messaging channels are explicitly configured in the
+ * process environment, using the same manifest input rules as
+ * {@link setupMessagingChannels}. Credentialed channels require all required
+ * inputs; credentialless channels are explicitly selected by any configured
+ * optional input. Pure and side-effect free: it only reads env via the manifest
+ * input resolvers so callers can compare current env inputs against a
+ * reused/stale sandbox messaging plan before treating that plan as
  * authoritative. NEMOCLAW_POLICY_PRESETS is intentionally ignored — policy
  * presets are not messaging channel selection.
  */
@@ -75,7 +77,7 @@ export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = n
   );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
   return availableChannels
-    .filter((manifest) => hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue))
+    .filter((manifest) => hasMessagingManifestConfiguredInputs(manifest, getMessagingInputValue))
     .map((manifest) => manifest.id);
 }
 
@@ -105,10 +107,10 @@ export async function setupMessagingChannels(
     manifestRegistry.list(),
   );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
-  const hasManifestRequiredInputs = (manifest: ChannelManifest) =>
-    hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue);
+  const hasManifestConfiguredInputs = (manifest: ChannelManifest) =>
+    hasMessagingManifestConfiguredInputs(manifest, getMessagingInputValue);
   const seedFromState = (includeAllExisting = false): string[] =>
-    resolveMessagingManifestSeed(availableChannels, existingChannels, hasManifestRequiredInputs, {
+    resolveMessagingManifestSeed(availableChannels, existingChannels, hasManifestConfiguredInputs, {
       includeAllExisting,
     });
 
@@ -133,7 +135,7 @@ export async function setupMessagingChannels(
   const input = process.stdin as MessagingSelectorInput;
   const output = process.stderr as MessagingSelectorOutput;
   const statusForChannel = (manifest: ChannelManifest): string =>
-    hasManifestRequiredInputs(manifest) ? " (configured)" : "";
+    hasManifestConfiguredInputs(manifest) ? " (configured)" : "";
 
   if (availableChannels.length > 0) {
     if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {

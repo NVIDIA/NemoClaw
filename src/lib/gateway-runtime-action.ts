@@ -1,13 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const { startGatewayForRecovery } = require("./onboard") as {
-  startGatewayForRecovery: (options?: {
-    gatewayName?: string;
-    gatewayPort?: number;
-  }) => Promise<void>;
-};
-
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 import {
@@ -148,6 +141,15 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
   );
 
   if (shouldStartGateway) {
+    // Keep this lazy to avoid the deliberate onboard -> runner -> gateway
+    // recovery cycle at module-import time. Lifecycle helpers do not need to
+    // load the full onboarding graph until recovery actually starts.
+    const { startGatewayForRecovery } = (await import("./onboard")) as unknown as {
+      startGatewayForRecovery: (startOptions?: {
+        gatewayName?: string;
+        gatewayPort?: number;
+      }) => Promise<void>;
+    };
     try {
       await startGatewayForRecovery({
         gatewayName,

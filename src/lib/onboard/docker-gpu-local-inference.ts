@@ -32,6 +32,7 @@ const SANDBOX_RUNTIME_INFERENCE_ENDPOINT = "https://inference.local/v1/models";
 type DockerGpuLocalInferenceConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
+  hostGpuPlatform?: string | null;
   // Written back by `verifyGpuSandboxAfterReady` with the CUDA-usability proof
   // result so the registry/`status` can distinguish a configured GPU from a
   // proven-usable one (#4231).
@@ -40,6 +41,7 @@ type DockerGpuLocalInferenceConfig = {
 
 type DockerGpuLocalInferenceOptions = {
   dockerDriverGateway: boolean;
+  gatewayPort?: number;
   dockerDesktopWsl?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -52,6 +54,20 @@ function resolveDockerDesktopWsl(options: DockerGpuLocalInferenceOptions): boole
 
 function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
+}
+
+export function shouldSkipGpuBridgeProbe(
+  gpuPassthrough: boolean,
+  hostGpuPlatform?: string | null,
+  options: Partial<DockerGpuLocalInferenceOptions> = {},
+): boolean {
+  return (
+    gpuPassthrough &&
+    shouldUseDockerGpuPatchHostNetwork(
+      { sandboxGpuEnabled: true, hostGpuPlatform },
+      { ...options, dockerDriverGateway: true },
+    )
+  );
 }
 
 /**
@@ -122,15 +138,21 @@ export async function enforceDockerGpuPatchPreserveNetwork(
       "loopback is not reachable from the sandbox network namespace, so OpenClaw routes through " +
       "the OpenShell-managed inference path (host networking is not needed for GPU device access).",
   );
-  await (options.reverifyBridgeReachability ?? defaultReverifyBridgeReachability)();
+  await (
+    options.reverifyBridgeReachability ??
+    (() => defaultReverifyBridgeReachability(options.gatewayPort))
+  )();
   return true;
 }
 
 /** Re-run the sandbox→gateway bridge reachability probe (with UFW auto-fix). */
-function defaultReverifyBridgeReachability(): Promise<void> {
+function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> {
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
-  return verifySandboxBridgeGatewayReachableOrExit(true, { skip: false });
+  return verifySandboxBridgeGatewayReachableOrExit(true, {
+    skip: false,
+    ...(gatewayPort === undefined ? {} : { port: gatewayPort }),
+  });
 }
 
 export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;

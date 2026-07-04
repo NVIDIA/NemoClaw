@@ -5,6 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
+import {
+  resolveToolDisclosureRequest,
+  TOOL_DISCLOSURE_ENV,
+  type ToolDisclosure,
+} from "../tool-disclosure";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import type { OnboardFlags } from "./command-support";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -22,6 +27,7 @@ export interface OnboardCommandOptions {
   acceptThirdPartySoftware: boolean;
   agent: string | null;
   agentsManifest: string | null;
+  toolDisclosure: ToolDisclosure | null;
   controlUiPort: number | null;
   gpu: boolean;
   noGpu: boolean;
@@ -64,19 +70,41 @@ function resolveFileOption(
   return preserveInput ? value : resolved;
 }
 
+// Validate the effective agent from the --agent flag, else the NEMOCLAW_AGENT
+// env var. Both feed the same downstream resolver, so validating the env var
+// here makes an unknown value fail with the clean flag-style message instead of
+// throwing uncaught deep inside runOnboard (a raw Node `throw new Error(...)`
+// source frame on stderr) (#5972). For a valid env value we return null and let
+// downstream resolution canonicalize it, leaving existing behavior unchanged.
+function failUnknownAgent(
+  deps: ResolveOnboardOptionsDeps,
+  value: string,
+  fromEnv: boolean,
+  knownAgents: readonly string[],
+): never {
+  const source = fromEnv ? " (from NEMOCLAW_AGENT)" : "";
+  return fail(
+    deps,
+    `  Unknown agent '${value}'${source}. Available: ${knownAgents.join(", ")}${formatAgentAliasSuffix(knownAgents)}`,
+  );
+}
+
 function resolveAgent(
   requestedAgent: string | undefined,
   deps: ResolveOnboardOptionsDeps,
 ): string | null {
-  if (requestedAgent === undefined) return null;
+  const fromEnv = requestedAgent === undefined;
+  const candidate = ((fromEnv ? deps.env.NEMOCLAW_AGENT : requestedAgent) ?? "").trim();
+  if (candidate === "") return null;
+
   const knownAgents = deps.listAgents?.() ?? [];
-  if (knownAgents.length === 0) return requestedAgent;
-  const resolvedAgent = resolveAgentNameAlias(requestedAgent, knownAgents);
-  if (resolvedAgent) return resolvedAgent;
-  return fail(
-    deps,
-    `  Unknown agent '${requestedAgent}'. Available: ${knownAgents.join(", ")}${formatAgentAliasSuffix(knownAgents)}`,
-  );
+  const resolved =
+    knownAgents.length === 0 ? candidate : resolveAgentNameAlias(candidate, knownAgents);
+  if (!resolved) failUnknownAgent(deps, candidate, fromEnv, knownAgents);
+
+  // The env path leaves canonicalization to downstream resolution (returns
+  // null); the flag path returns the canonical name as before.
+  return fromEnv ? null : resolved;
 }
 
 function resolveAgentsManifest(
@@ -105,6 +133,12 @@ export function resolveOnboardOptions(
   deps: ResolveOnboardOptionsDeps,
 ): OnboardCommandOptions {
   const agent = resolveAgent(flags.agent, deps);
+  let toolDisclosure: ToolDisclosure | null;
+  try {
+    toolDisclosure = resolveToolDisclosureRequest(flags["tool-disclosure"], deps.env);
+  } catch (error) {
+    fail(deps, `  ${error instanceof Error ? error.message : String(error)}`);
+  }
   return {
     nonInteractive: flags["non-interactive"] === true,
     resume: flags.resume === true,
@@ -118,6 +152,7 @@ export function resolveOnboardOptions(
       flags[NOTICE_ACCEPT_FLAG_NAME] === true || String(deps.env[NOTICE_ACCEPT_ENV] || "") === "1",
     agent,
     agentsManifest: resolveAgentsManifest(flags.agents, agent, deps),
+    toolDisclosure,
     controlUiPort: flags["control-ui-port"] ?? null,
     gpu: flags.gpu === true,
     noGpu: flags["no-gpu"] === true,
@@ -137,6 +172,10 @@ function isPromptCancellation(error: unknown): boolean {
 export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<void> {
   const options = resolveOnboardOptions(deps.flags, deps);
   if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
+  // Keep direct callers and the legacy monolithic onboard path on the same
+  // canonical source. No value is written for the default so resume/rebuild
+  // can distinguish an explicit request from an unset environment.
+  if (options.toolDisclosure) process.env[TOOL_DISCLOSURE_ENV] = options.toolDisclosure;
   if (options.agentsManifest) applyAgentsManifestEnv(options.agentsManifest);
   try {
     await deps.runOnboard(options);

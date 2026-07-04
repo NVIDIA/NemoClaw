@@ -29,6 +29,9 @@ const {
   withTimerBoundShieldsMutationLock,
 }: typeof import("../shields/timer-bound-lock") = require("../shields/timer-bound-lock");
 const {
+  withSandboxMutationLock,
+}: typeof import("../state/mcp-lifecycle-lock") = require("../state/mcp-lifecycle-lock");
+const {
   runOpenClawConfigGuard,
 }: typeof import("../shields/openclaw-config-lock") = require("../shields/openclaw-config-lock");
 const { isPrivateHostname, isPrivateIp } = require("../private-networks");
@@ -760,9 +763,18 @@ async function rewriteConfigUrlsWithDnsPinning(
       const validated = await validateUrlValueWithDnsResult(trimmed, lookup);
       if (!validated) return value;
       // HTTP has no TLS hostname binding, so persist the DNS-pinned URL to avoid
-      // a config-time/public → runtime/private DNS-rebinding window. For HTTPS,
-      // preserve the original hostname so normal certificate validation still
-      // protects the connection.
+      // a config-time/public → runtime/private DNS-rebinding window. DNS-backed
+      // HTTPS endpoints fail closed for generic persisted config because the
+      // downstream consumer would otherwise perform a second DNS lookup while
+      // NemoClaw cannot pin the peer IP and preserve TLS SNI/Host across the
+      // OpenShell runtime boundary.
+      if (validated.protocol === "https:" && validated.pinnedUrl !== validated.originalUrl) {
+        throw new Error(
+          "DNS-backed HTTPS URLs are not supported for persisted sandbox config yet. " +
+            "Use an HTTPS IP-literal endpoint, an HTTP endpoint that can be DNS-pinned, " +
+            "or wait for the runtime-aware HTTPS pinning transport.",
+        );
+      }
       return validated.protocol === "http:" ? validated.pinnedUrl : validated.originalUrl;
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -985,42 +997,44 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
-  // Serialize only the authoritative re-read/CAS write. Interactive approval
-  // and DNS validation above must not hold the shields transition lock across
-  // the auto-restore deadline. If anything changed while the user was
-  // deciding, fail closed and ask them to retry against the new baseline.
-  withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
-    const { isShieldsDown }: typeof import("../shields") = require("../shields");
-    if (
-      (target.agentName === "openclaw" || target.agentName === "hermes") &&
-      !isShieldsDown(sandboxName, true)
-    ) {
-      configFail(
-        `  ${target.agentName} config changes are unavailable while shields are up for '${sandboxName}'. Run 'nemoclaw ${sandboxName} shields down' first.`,
-      );
-    }
-    const currentConfig = readSandboxConfig(sandboxName, target);
-    const currentConfigSha256 = (
-      currentConfig as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string }
-    )[CONFIG_SOURCE_SHA256];
-    if (currentConfigSha256 !== initialConfigSha256) {
-      configFail(
-        `  ${target.agentName} config changed while this update was being validated. Re-run config set against the current value.`,
-      );
-    }
-    setDotpath(currentConfig, opts.key!, safeValue);
+  // Serialize only the authoritative re-read/CAS write under the shared
+  // sandbox lock and then the shields transition lock. Interactive approval
+  // and DNS validation above must not hold either lock across the auto-restore
+  // deadline. If anything changed while the user was deciding, fail closed.
+  await withSandboxMutationLock(sandboxName, () =>
+    withTimerBoundShieldsMutationLock(sandboxName, "config set write", () => {
+      const { isShieldsDown }: typeof import("../shields") = require("../shields");
+      if (
+        (target.agentName === "openclaw" || target.agentName === "hermes") &&
+        !isShieldsDown(sandboxName, true)
+      ) {
+        configFail(
+          `  ${target.agentName} config changes are unavailable while shields are up for '${sandboxName}'. Run 'nemoclaw ${sandboxName} shields down' first.`,
+        );
+      }
+      const currentConfig = readSandboxConfig(sandboxName, target);
+      const currentConfigSha256 = (
+        currentConfig as ConfigObject & { [CONFIG_SOURCE_SHA256]?: string }
+      )[CONFIG_SOURCE_SHA256];
+      if (currentConfigSha256 !== initialConfigSha256) {
+        configFail(
+          `  ${target.agentName} config changed while this update was being validated. Re-run config set against the current value.`,
+        );
+      }
+      setDotpath(currentConfig, opts.key!, safeValue);
 
-    console.log(`  Writing config to sandbox (${target.configPath})...`);
-    writeSandboxConfig(sandboxName, target, currentConfig);
-    recomputeSandboxConfigHash(sandboxName, target);
+      console.log(`  Writing config to sandbox (${target.configPath})...`);
+      writeSandboxConfig(sandboxName, target, currentConfig);
+      recomputeSandboxConfigHash(sandboxName, target);
 
-    appendAuditEntry({
-      action: "config_set",
-      sandbox: sandboxName,
-      timestamp: new Date().toISOString(),
-      reason: `config set ${target.agentName}:${opts.key}`,
-    });
-  });
+      appendAuditEntry({
+        action: "config_set",
+        sandbox: sandboxName,
+        timestamp: new Date().toISOString(),
+        reason: `config set ${target.agentName}:${opts.key}`,
+      });
+    }),
+  );
 
   console.log(`  ${target.agentName} config updated.`);
 

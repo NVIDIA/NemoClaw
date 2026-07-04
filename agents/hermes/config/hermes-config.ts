@@ -2,7 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
-import { applyManagedToolConfig, loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
+import {
+  applyManagedToolConfig,
+  effectiveManagedToolGatewayPresets,
+  loadManagedToolGatewayMatrix,
+} from "./managed-tool-gateway.ts";
 
 const REMOTE_PLATFORM_TOOLSETS = [
   "web",
@@ -98,6 +102,17 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       max_turns: 60,
       reasoning_effort: "medium",
     },
+    tools: {
+      tool_search: {
+        // Deliberately defer every MCP and non-core plugin tool, even for a
+        // small catalog. Hermes keeps its built-in core tools directly visible.
+        // Keep Hermes' native snake_case keys and 5/20 limits distinct from
+        // OpenClaw's camelCase Tool Search contract and 8-result default.
+        enabled: settings.toolDisclosure === "direct" ? "off" : "on",
+        search_default_limit: 5,
+        max_search_limit: 20,
+      },
+    },
     memory: {
       memory_enabled: true,
       user_profile_enabled: true,
@@ -150,15 +165,23 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     },
   };
 
-  if (settings.managedToolGateways.brokerEnabled) {
+  const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);
+  if (managedToolGatewayPresets.length > 0) {
     const matrix = loadManagedToolGatewayMatrix();
-    for (const preset of settings.managedToolGateways.presets) {
+    for (const preset of managedToolGatewayPresets) {
       const entry = matrix[preset];
       if (!entry) {
         throw new Error(`Unknown Hermes managed-tool gateway preset: ${preset}`);
       }
       applyManagedToolConfig(config, entry.config);
     }
+  }
+
+  // An explicitly selected Tavily credential takes precedence over the
+  // Nous-managed Firecrawl gateway. Replacing the whole section also removes
+  // `use_gateway: true`, which would otherwise keep Hermes on Firecrawl.
+  if (settings.webSearchProvider === "tavily") {
+    config.web = { backend: "tavily" };
   }
 
   return config;

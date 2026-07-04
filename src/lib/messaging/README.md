@@ -467,7 +467,7 @@ Add the channel through the manifest-first path.
 5. Register template resolution in `channels/template-resolver.ts`.
 6. Register hook handlers in `channels/<channel>/hooks/index.ts` and `hooks/builtins.ts`.
 7. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot or connect-time shims.
-8. Add `nemoclaw-blueprint/policies/presets/<channel>.yaml` when `policyPresets` declares a new policy preset.
+8. Add `src/lib/messaging/channels/<channel>/policy/<agent>.yaml` when `policyPresets` declares a new policy preset.
 9. Add manifest, compiler, applier, lifecycle, build-applier, and policy tests for the behavior you changed.
 
 ## Invariants

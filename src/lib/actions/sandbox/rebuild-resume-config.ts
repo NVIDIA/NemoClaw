@@ -182,11 +182,12 @@ function getExplicitTargetEndpointFromEnv(
  */
 export interface RebuildResumeConfig {
   readonly agent: string | null;
-  readonly provider: string | null;
-  readonly model: string | null;
+  readonly provider: string;
+  readonly model: string;
   readonly nimContainer: string | null;
   readonly credentialEnv: string | null;
   readonly preferredInferenceApi: string | null;
+  readonly compatibleEndpointReasoning: "true" | "false" | null;
   /**
    * Whether this endpoint was derived without trusting the matching onboard
    * session. Kept for preflight/tests; rebuild writes `endpointUrl`
@@ -243,16 +244,67 @@ export function prepareRebuildResumeConfig(
   const session = onboardSession.loadSession();
   const sessionMatchesSandbox = session?.sandboxName === sandboxName;
   const registrySelection = normalizeInferenceSelection(sb);
+  const matchingSessionSelection = sessionMatchesSandbox
+    ? normalizeInferenceSelection(session)
+    : null;
+  const sessionSelectionMatchesRegistry = Boolean(
+    matchingSessionSelection &&
+      (!registrySelection.provider ||
+        matchingSessionSelection.provider === registrySelection.provider) &&
+      (!registrySelection.model || matchingSessionSelection.model === registrySelection.model),
+  );
+  const legacySelection = sessionSelectionMatchesRegistry ? matchingSessionSelection : null;
+  const trustedSelection = normalizeInferenceSelection({
+    provider: registrySelection.provider ?? legacySelection?.provider,
+    model: registrySelection.model ?? legacySelection?.model,
+    endpointUrl: registrySelection.endpointUrl,
+    credentialEnv: registrySelection.credentialEnv ?? legacySelection?.credentialEnv,
+    preferredInferenceApi:
+      registrySelection.preferredInferenceApi ?? legacySelection?.preferredInferenceApi,
+    compatibleEndpointReasoning:
+      registrySelection.compatibleEndpointReasoning ?? legacySelection?.compatibleEndpointReasoning,
+    nimContainer: registrySelection.nimContainer ?? legacySelection?.nimContainer,
+  });
+  if (!trustedSelection.provider || !trustedSelection.model) {
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} cannot determine the recorded inference provider and model.`,
+    );
+    console.error(
+      `  Neither the '${sandboxName}' registry entry nor its own matching onboard session contains a complete selection.`,
+    );
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail("Cannot determine recorded inference provider and model for recreate");
+    return null;
+  }
+  // Compatibility boundary for GH #2519: pre-fix local-provider sessions
+  // could persist credentialEnv="OPENAI_API_KEY" even though local inference
+  // never required a host credential. Only recognize the target sandbox's own
+  // matching selection; a stale session for another provider or sandbox must
+  // not influence the authoritative recreate config.
+  if (
+    legacySelection?.credentialEnv === "OPENAI_API_KEY" &&
+    isLocalInferenceProvider(trustedSelection.provider)
+  ) {
+    console.log(
+      `  ${D}Note: migrating ${trustedSelection.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
+        `Local inference does not require a host API key.${R}`,
+    );
+    log(
+      `Preflight: legacy ${trustedSelection.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
+    );
+  }
+  const compatibleEndpointReasoning = trustedSelection.compatibleEndpointReasoning;
   const rebuildEndpoint = getRebuildEndpointFromRegistry(
-    registrySelection.provider,
+    trustedSelection.provider,
     registrySelection.endpointUrl,
   );
   const explicitTargetEndpoint =
     !sessionMatchesSandbox && !rebuildEndpoint.known
       ? getExplicitTargetEndpointFromEnv(
           sandboxName,
-          registrySelection.provider,
-          registrySelection.model,
+          trustedSelection.provider,
+          trustedSelection.model,
         )
       : null;
 
@@ -271,15 +323,14 @@ export function prepareRebuildResumeConfig(
   // sandbox stays live.
   if (
     !sessionMatchesSandbox &&
-    registrySelection.provider &&
-    !isLocalInferenceProvider(registrySelection.provider) &&
-    registrySelection.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
+    !isLocalInferenceProvider(trustedSelection.provider) &&
+    trustedSelection.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
     !rebuildEndpoint.known &&
     !explicitTargetEndpoint
   ) {
     console.error("");
     console.error(
-      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${registrySelection.provider}'.`,
+      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${trustedSelection.provider}'.`,
     );
     console.error(
       `  The custom endpoint for '${sandboxName}' is recorded only in its own onboard session,`,
@@ -290,7 +341,7 @@ export function prepareRebuildResumeConfig(
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(
-      `Cannot determine recreate endpoint for provider '${registrySelection.provider}' without a matching session`,
+      `Cannot determine recreate endpoint for provider '${trustedSelection.provider}' without a matching session`,
     );
     return null;
   }
@@ -302,34 +353,40 @@ export function prepareRebuildResumeConfig(
   //    canonicalization.
   // 3. The target sandbox's own matching session endpoint, validated below.
   let endpointUrl = rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : explicitTargetEndpoint;
-  if (!endpointUrl && !rebuildEndpoint.known && sessionMatchesSandbox) {
+  if (
+    !endpointUrl &&
+    !rebuildEndpoint.known &&
+    sessionMatchesSandbox &&
+    sessionSelectionMatchesRegistry
+  ) {
     endpointUrl = canonicalCustomEndpointUrl(session?.endpointUrl);
-    if (!endpointUrl) {
-      console.error("");
-      console.error(
-        `  ${_RD}Rebuild preflight failed:${R} cannot validate the inference endpoint for provider '${registrySelection.provider}'.`,
-      );
-      console.error(
-        `  The custom endpoint for '${sandboxName}' is missing or invalid in its onboard session.`,
-      );
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(
-        `Cannot validate recreate endpoint for provider '${registrySelection.provider}' from matching session`,
-      );
-      return null;
-    }
+  }
+  if (!endpointUrl && !rebuildEndpoint.known) {
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} cannot validate the inference endpoint for provider '${trustedSelection.provider}'.`,
+    );
+    console.error(
+      `  The custom endpoint for '${sandboxName}' is missing, invalid, or belongs to a conflicting onboard selection.`,
+    );
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(
+      `Cannot validate recreate endpoint for provider '${trustedSelection.provider}' from matching session`,
+    );
+    return null;
   }
 
   return {
     agent: rebuildAgent,
-    provider: registrySelection.provider,
-    model: registrySelection.model,
-    nimContainer: registrySelection.nimContainer,
+    provider: trustedSelection.provider,
+    model: trustedSelection.model,
+    nimContainer: trustedSelection.nimContainer,
     credentialEnv: getRebuildCredentialEnvFromRegistry(
-      registrySelection.provider,
-      registrySelection.credentialEnv,
+      trustedSelection.provider,
+      trustedSelection.credentialEnv,
     ),
-    preferredInferenceApi: registrySelection.preferredInferenceApi,
+    preferredInferenceApi: trustedSelection.preferredInferenceApi,
+    compatibleEndpointReasoning,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     ambient,

@@ -31,7 +31,7 @@
       "status": "tested",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-launch.ts:10` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
+      "notes": "Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-compat.ts:11` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated."
     },
     {
       "name": "macOS (Apple Silicon)",
@@ -39,7 +39,7 @@
       "status": "caveated",
       "prd_priority": "P0",
       "ci_tested": true,
-      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
+      "notes": "Start the container runtime (Colima or Docker Desktop) before running the installer. Homebrew Colima users must install both Colima and the Docker CLI (`brew install colima docker`) before `docker info` can work. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight."
     },
     {
       "name": "DGX Spark",
@@ -93,7 +93,7 @@
       "name": "Other OpenAI-compatible endpoint",
       "status": "caveated",
       "endpoint_type": "Custom OpenAI-compatible",
-      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is at `src/lib/onboard.ts:3661`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
+      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is in `handleRemoteProviderSelection` in `src/lib/onboard.ts`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
     },
     {
       "name": "Anthropic",
@@ -129,7 +129,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1632`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard/fatal-runtime-preflight.ts`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",
@@ -210,7 +210,7 @@
     {
       "name": "Web search backend",
       "status": "caveated",
-      "notes": "Runtime-configurable web-search backend plumbed through the OpenShell gateway. Brave is the currently-implemented backend. See `src/lib/onboard/brave-provider-profile.ts` and `src/lib/onboard/web-search-flow.ts`. Users supply backend credentials during an onboard prompt. NemoClaw does not bundle a key."
+      "notes": "Onboarding supports Brave and Tavily for OpenClaw and Tavily for Hermes. Provider selection, agent configuration, and credential attachment are build-time inputs, so changing the provider recreates the sandbox. OpenShell replaces resolver placeholders at egress, including JSON request-body rewriting for Hermes Tavily. Users supply the backend credential; NemoClaw does not bundle a key."
     }
   ],
 
@@ -218,12 +218,12 @@
     {
       "name": "Podman / other container runtimes",
       "status": "unsupported",
-      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard.ts:1599` prints the rejection; `src/lib/onboard/preflight.ts:586` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
+      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard/fatal-runtime-preflight.ts` prints the rejection; `src/lib/onboard/preflight.ts` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
     },
     {
       "name": "Intel Mac (macOS x86_64)",
       "status": "unsupported",
-      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:315`). See issue #954 (closed)."
+      "notes": "OpenShell does not publish macOS x86_64 standalone gateway assets. Install hard-fails on x86_64 macOS (`scripts/install-openshell.sh:663`). See issue #954 (closed)."
     },
     {
       "name": "Non-Ubuntu/Debian Linux distros",
@@ -248,7 +248,7 @@
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
       "status": "unsupported",
-      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1632`). NemoClaw does not install non-NVIDIA accelerator drivers."
+      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard/fatal-runtime-preflight.ts`). NemoClaw does not install non-NVIDIA accelerator drivers."
     },
     {
       "name": "Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses",
@@ -301,7 +301,7 @@
     {
       "name": "WhatsApp",
       "status": "caveated",
-      "notes": "Supported by both OpenClaw and Hermes through the channel manifest `supportedAgents` declaration in `src/lib/messaging/channels/whatsapp/manifest.ts`. Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `nemoclaw-blueprint/policies/presets/whatsapp.yaml`. No Meta Business API integration today; that path is out of scope for this matrix."
+      "notes": "Supported by both OpenClaw and Hermes through the channel manifest `supportedAgents` declaration in `src/lib/messaging/channels/whatsapp/manifest.ts`. Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `src/lib/messaging/channels/whatsapp/policy/openclaw.yaml` and `src/lib/messaging/channels/whatsapp/policy/hermes.yaml`. No Meta Business API integration today; that path is out of scope for this matrix."
     },
     {
       "name": "Microsoft Teams",

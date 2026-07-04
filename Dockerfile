@@ -22,8 +22,13 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY scripts/checks/verify-openshell-policy-boundary-dependencies.mts /opt/nemoclaw-build-checks/
 WORKDIR /opt/nemoclaw
-RUN npm ci && npm run build
+RUN npm ci \
+    && npm run build \
+    && node --experimental-strip-types \
+        /opt/nemoclaw-build-checks/verify-openshell-policy-boundary-dependencies.mts \
+        /opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -38,6 +43,12 @@ RUN ln -s /opt/nemoclaw/node_modules /opt/nemoclaw-root/node_modules \
 FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.27
 ARG OPENCLAW_2026_5_27_INTEGRITY=sha512-2N93zhdAo88KAbHt6T7KvYXf4s7XIkYXBgv1npYpn7e1Y9FvrtgtpsA38my9rtFW+70uXEojRPX5/OqnuDqJPw==
+# Keep the version, integrity, runtime lock, license, and advisory baseline
+# synchronized with agents/openclaw/dependency-review.md.
+ARG MCPORTER_VERSION=0.7.3
+ARG MCPORTER_0_7_3_INTEGRITY=sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==
+COPY agents/openclaw/mcporter-runtime/package.json /usr/local/lib/nemoclaw/mcporter-runtime/package.json
+COPY agents/openclaw/mcporter-runtime/package-lock.json /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json
 
 # OpenShell blocks the link-local EC2 Instance Metadata Service. Keep AWS SDK
 # credential chains from attempting an impossible metadata discovery path.
@@ -101,9 +112,15 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
+# the primary security gate: it enforces the generated boundary's strict module
+# dependency allowlist before this stage copies it. The node check below is
+# defense in depth only and proves the copied runtime still exports the complete
+# audited interface; function availability does not replace dependency lockdown.
 RUN npm ci --omit=dev \
     && test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/dist/shared/openshell-policy-boundary.cjs"); for (const name of ["parseOpenShellPolicy", "stripProviderComposedPolicies", "withoutProviderComposedPolicies"]) { if (typeof boundary[name] !== "function") throw new Error("OpenShell policy boundary export is unavailable: " + name); }' \
     && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
@@ -155,6 +172,26 @@ RUN set -eu; \
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
         npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}"; \
     fi; \
+    MCPORTER_EXPECTED_INTEGRITY=""; \
+    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
+    if [ -n "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
+        if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+            echo "ERROR: mcporter ${MCPORTER_VERSION} npm integrity mismatch" >&2; \
+            echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}" >&2; \
+            echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}" >&2; exit 1; \
+        fi; \
+    fi; \
+    # Always reinstall from the committed lock. Matching top-level versions can
+    # otherwise hide drift in mcporter's ranged transitive dependencies.
+    echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
+    rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
+    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
+        --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
+    ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
+    test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \
+    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \
     # Pre-install the codex-acp package so the embedded ACPx runtime can
     # call the local binary instead of `npx @zed-industries/codex-acp`.
     # The sandbox's L7 proxy denies @zed-industries/* package URLs
@@ -558,12 +595,16 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
+        /scripts/validate-openclaw-tool-search.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
+    && chmod 444 /src/lib/tool-disclosure.ts \
     && chmod -R a+rX /src/lib/messaging \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
@@ -608,6 +649,7 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # Comma-separated list of input modalities accepted by the primary model
 # (e.g. "text" or "text,image" for vision-capable models). OpenClaw's
 # model schema currently accepts "text" and "image". See #2421.
@@ -655,11 +697,10 @@ ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 # before running `nemoclaw onboard`. See #1409.
 ARG NEMOCLAW_PROXY_HOST=10.200.0.1
 ARG NEMOCLAW_PROXY_PORT=3128
-# Non-secret flag: set to "1" when the user configured Brave Search during
-# onboard. Controls whether the web search block is written to openclaw.json.
-# The actual API key is injected at runtime via openshell:resolve:env, never
-# baked into the image.
+# Non-secret web-search selection from onboard. The actual API key is injected
+# at runtime via openshell:resolve:env, never baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 ARG NEMOCLAW_OPENCLAW_OTEL=0
 ARG NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=http://host.openshell.internal:4318
 ARG NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=openclaw-gateway
@@ -678,6 +719,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
+    NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
@@ -689,6 +731,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
     NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_OPENCLAW_OTEL=${NEMOCLAW_OPENCLAW_OTEL} \
     NEMOCLAW_OPENCLAW_OTEL_ENDPOINT=${NEMOCLAW_OPENCLAW_OTEL_ENDPOINT} \
     NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME=${NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME} \
@@ -725,6 +768,31 @@ USER sandbox
 # block until after build-time OpenClaw doctor/plugin commands complete.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
 
+# Validate the patched OpenClaw tool-search contract against real generated
+# configs for both supported disclosure modes. This runs at image build time so
+# OpenClaw dist drift or a generator/schema mismatch fails the build closed.
+# hadolint ignore=DL3059
+RUN set -eu; \
+    validation_root="$(mktemp -d /tmp/nemoclaw-openclaw-tool-search.XXXXXX)"; \
+    trap 'rm -rf "$validation_root"' EXIT; \
+    for mode in progressive direct; do \
+        validation_home="$validation_root/$mode"; \
+        mkdir -p "$validation_home"; \
+        HOME="$validation_home" \
+            NEMOCLAW_MODEL=test-model \
+            NEMOCLAW_PRIMARY_MODEL_REF=inference/test-model \
+            NEMOCLAW_TOOL_DISCLOSURE="$mode" \
+            NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+            node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
+        node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
+            /usr/local/lib/node_modules/openclaw/dist \
+            "$validation_home/.openclaw/openclaw.json" \
+            "$mode" \
+            "$OPENCLAW_VERSION"; \
+    done; \
+    rm -rf "$validation_root"; \
+    trap - EXIT
+
 # Install non-messaging OpenClaw plugins that need to match the runtime.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
@@ -735,8 +803,20 @@ RUN set -eu; \
         openclaw plugins install "npm:@openclaw/diagnostics-otel@${OPENCLAW_VERSION}" --pin; \
     fi; \
     if [ "$NEMOCLAW_WEB_SEARCH_ENABLED" = "1" ]; then \
-        openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
-        BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive; \
+        case "$NEMOCLAW_WEB_SEARCH_PROVIDER" in \
+            brave) \
+                openclaw plugins install "npm:@openclaw/brave-plugin@${OPENCLAW_VERSION}" --pin; \
+                BRAVE_API_KEY=openshell:resolve:env:BRAVE_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            tavily) \
+                openclaw plugins inspect tavily --json > /dev/null; \
+                TAVILY_API_KEY=openshell:resolve:env:TAVILY_API_KEY openclaw doctor --fix --non-interactive \
+                ;; \
+            *) \
+                echo "ERROR: unsupported web-search provider: $NEMOCLAW_WEB_SEARCH_PROVIDER" >&2; \
+                exit 1 \
+                ;; \
+        esac; \
     elif [ "$NEMOCLAW_OPENCLAW_OTEL" = "1" ]; then \
         openclaw doctor --fix --non-interactive; \
     fi
@@ -764,7 +844,6 @@ ENV NPM_CONFIG_OFFLINE=true \
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
 RUN openclaw plugins install /opt/nemoclaw \
-    && openclaw plugins enable nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \

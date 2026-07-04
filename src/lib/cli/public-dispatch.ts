@@ -320,6 +320,7 @@ async function runPublicTranslationResult(
     case "unknownPublicAction":
       console.error(`  Unknown action: ${result.action}`);
       console.error(`  Valid actions: ${validSandboxActionsText()}`);
+      console.error(`  Example: ${CLI_NAME} ${opts.sandboxName ?? "<name>"} connect`);
       process.exit(1);
   }
 }
