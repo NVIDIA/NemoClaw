@@ -26,8 +26,20 @@ const KNOWN_NON_ADMIN_OPERATOR_SCOPES = new Set(["operator.pairing", "operator.r
 function normalizeDeviceRoles(request) {
   return [...new Set([...(request.roles ?? []), ...(request.role ? [request.role] : [])])];
 }
-function normalizeDeviceAuthScopes(scopes) { return [...new Set(scopes ?? [])]; }
-function resolvePairedOperatorScopes(paired) { return paired?.tokenScopes ?? paired?.scopes ?? []; }
+function normalizeDeviceAuthScopes(scopes) {
+  const normalized = new Set(scopes ?? []);
+  if (normalized.has("operator.admin")) {
+    normalized.add("operator.read");
+    normalized.add("operator.write");
+  } else if (normalized.has("operator.write")) {
+    normalized.add("operator.read");
+  }
+  return [...normalized].sort();
+}
+function resolvePairedOperatorScopes(paired) {
+  const operatorToken = paired?.tokens?.find((token) => token.role === OPERATOR_ROLE && !token.revokedAtMs);
+  return normalizeDeviceAuthScopes(operatorToken?.scopes ?? paired?.scopes);
+}
 function resolvePendingOperatorApprovalScopes(request, paired) {
   const requestedScopes = normalizeDeviceAuthScopes(request.scopes);
   return requestedScopes.length > 0 ? requestedScopes : resolvePairedOperatorScopes(paired);

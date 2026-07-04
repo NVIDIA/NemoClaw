@@ -184,6 +184,16 @@ export function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptions): v
     }
   }
 
+  const cliSource = requireExactlyOneDistSource(sources, "patched devices CLI approval runtime", [
+    "function resolveApprovePairingScopesForRequest(request, paired)",
+    "nemoclaw: reach gateway for bounded same-device scope approval",
+  ]);
+  const cliProofFile = path.join(options.dist, ".nemoclaw-device-cli-proof.mjs");
+  fs.writeFileSync(
+    cliProofFile,
+    `${cliSource.source}\nexport { resolveApprovePairingScopesForRequest as nemoclawResolveApprovePairingScopesForRequest };\n`,
+  );
+  const cliProofUrl = pathToFileURL(cliProofFile).href;
   const deviceHandlerUrl = pathToFileURL(requireRealDeviceTokenAuthLinkage(sources)).href;
 
   // The tarball harness ordinarily needs only generated-file patching. This
@@ -293,6 +303,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 const { approveDevicePairing } = await import(${JSON.stringify(deviceBootstrapUrl)});
 const { deviceHandlers } = await import(${JSON.stringify(deviceHandlerUrl)});
+const { nemoclawResolveApprovePairingScopesForRequest } = await import(${JSON.stringify(cliProofUrl)});
 const stateDir = process.env.NEMOCLAW_DEVICE_APPROVAL_STATE;
 const distDir = process.env.NEMOCLAW_OPENCLAW_DIST;
 const pairingFiles = fs.readdirSync(distDir).filter((name) => /^device-pairing-.*[.]js$/.test(name));
@@ -306,6 +317,29 @@ const identity = (suffix) => ({
   clientId: "cli",
   clientMode: "cli",
 });
+const repairRequest = {
+  requestId: "cli-scope-repair",
+  deviceId: "device-1",
+  publicKey: "public-key-1",
+  clientId: "cli",
+  clientMode: "cli",
+  role: "operator",
+  roles: ["operator"],
+  scopes: ["operator.write"],
+  isRepair: true,
+};
+const pairingOnly = ["operator.pairing"];
+const missingPairedViewScopes = nemoclawResolveApprovePairingScopesForRequest(repairRequest, undefined);
+if (JSON.stringify(missingPairedViewScopes) !== JSON.stringify(pairingOnly)) throw new Error("missing paired CLI view requested read/write before canonical approval");
+const roleKeyedTokenScopes = nemoclawResolveApprovePairingScopesForRequest(repairRequest, {
+  scopes: ["operator.pairing"],
+  tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
+});
+if (JSON.stringify(roleKeyedTokenScopes) !== JSON.stringify(pairingOnly)) throw new Error("role-keyed paired CLI view requested read/write before canonical approval");
+const visibleNonPairingBaseline = nemoclawResolveApprovePairingScopesForRequest(repairRequest, {
+  tokens: [{ role: "operator", scopes: ["operator.read"] }],
+});
+if (visibleNonPairingBaseline?.length === 1 && visibleNonPairingBaseline[0] === "operator.pairing") throw new Error("visible non-pairing baseline received pairing-only approval transport");
 const approveHandler = deviceHandlers?.["device.pair.approve"];
 if (typeof approveHandler !== "function") throw new Error("reviewed device approval handler export missing");
 const handlerResponses = [];
@@ -403,5 +437,9 @@ if (!["operator.pairing", "operator.read", "operator.write"].every((scope) => sc
       timeout: options.timeoutMs,
     },
   );
-  requireSuccess(runtimeProof, "run real-dist canonical device approval proof");
+  try {
+    requireSuccess(runtimeProof, "run real-dist canonical device approval proof");
+  } finally {
+    fs.rmSync(cliProofFile, { force: true });
+  }
 }

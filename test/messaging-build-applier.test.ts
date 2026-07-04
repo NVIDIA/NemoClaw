@@ -41,6 +41,16 @@ const TEST_PATH = process.env.PATH || "/usr/bin:/bin";
 
 function fakeOpenClawPluginNpmPackScriptLines(): string[] {
   return [
+    'if [ "${1:-}" = "view" ] && [ "${3:-}" = "dist.tarball" ]; then',
+    '  case "${2:-}" in',
+    '    "@openclaw/discord@2026.6.10") printf "%s\\n" "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.6.10.tgz"; exit 0 ;;',
+    '    "@tencent-weixin/openclaw-weixin@2.4.3") printf "%s\\n" "https://registry.npmjs.org/@tencent-weixin/openclaw-weixin/-/openclaw-weixin-2.4.3.tgz"; exit 0 ;;',
+    '    "@openclaw/slack@2026.6.10") printf "%s\\n" "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz"; exit 0 ;;',
+    '    "@openclaw/whatsapp@2026.6.10") printf "%s\\n" "https://registry.npmjs.org/@openclaw/whatsapp/-/whatsapp-2026.6.10.tgz"; exit 0 ;;',
+    '    "@openclaw/msteams@2026.6.10") printf "%s\\n" "https://registry.npmjs.org/@openclaw/msteams/-/msteams-2026.6.10.tgz"; exit 0 ;;',
+    "    *) exit 1 ;;",
+    "  esac",
+    "fi",
     'if [ "${1:-}" = "pack" ]; then',
     '  pack_dir="${4:-}";',
     '  case "${2:-}" in',
@@ -841,6 +851,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           ["@openclaw/msteams@2026.6.10", "msteams-2026.6.10.tgz"],
         ] as const) {
           expect(trace).toContain(`npm|view|${packageSpec}|dist.integrity`);
+          expect(trace).toContain(`npm|view|${packageSpec}|dist.tarball`);
           expect(trace).toContain(`npm|pack|${packageSpec}|--pack-destination`);
           expect(trace).toContain(`${archiveName}|--pin|||`);
         }
@@ -909,6 +920,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(result.status, result.stderr).toBe(0);
       const trace = fs.readFileSync(tracePath, "utf-8");
       expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
+      expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.tarball");
       expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
       expect(trace).toContain("openclaw|plugins|install|");
       expect(trace).toContain("slack-2026.6.10.tgz|--pin");

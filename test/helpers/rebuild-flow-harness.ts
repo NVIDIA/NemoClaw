@@ -303,6 +303,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     policies: ["npm"],
     agent: null,
     agentVersion: "0.1.0",
+    // A current managed-image registry row carries positive NemoClaw provenance.
+    // Tests that exercise the legacy ambiguous-image path override this explicitly.
+    nemoclawVersion: "0.0.71",
     nimContainer: null,
     ...(overrides.sandboxEntry ?? {}),
   };

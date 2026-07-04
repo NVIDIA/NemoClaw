@@ -214,7 +214,9 @@ describe("unreachable inference TUI behavior (#4434)", () => {
       "earlier probe returned HTTP 503",
       "earlier note mentioned the upstream API",
       "earlier suggestion said retry",
-      "",
+      "run error: HTTP 503 from upstream API; retry after restoring the provider",
+      "running | error",
+      "user: try once more",
       "run error: TypeError: fetch failed",
       "running | error",
     ].join("\n");

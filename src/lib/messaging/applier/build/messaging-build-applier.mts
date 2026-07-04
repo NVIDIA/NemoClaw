@@ -122,20 +122,20 @@ type OpenClawPluginInstall = {
   readonly spec: string;
   readonly npmPackageSpec?: string;
   readonly integrity?: string;
+  readonly tarballUrl?: string;
   readonly pin: boolean;
 };
 
-// Accepted residual for this reviewed dependency bump: exact package identity,
-// registry SRI, and packed-byte SRI reject byte drift, while registry tarball
-// origin/path drift remains permitted because channel manifests do not yet own
-// those URLs. Remove this boundary only when #5896 provides one reviewed URL
-// authority for every messaging plugin and keeps the existing byte checks.
+// Every trusted messaging plugin binds exact package identity, registry SRI,
+// registry tarball URL, and packed-byte SRI before local archive installation.
+// Keep these checks together when #5896 consolidates the archive installers.
 export const OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY = Object.freeze({
   schemaVersion: 1,
   packageIdentity: "exact-npm-package-spec",
   registryIntegrityField: "dist.integrity",
   packedArchiveIntegrity: "must-match-committed-sri",
-  registryTarballUrl: "not-pinned",
+  registryTarballField: "dist.tarball",
+  registryTarballUrl: "must-match-committed-url",
 } as const);
 
 type HermesUvPackageInstall = {
@@ -175,6 +175,26 @@ export function reviewedOpenClawPluginIntegrityByPackageSpec(
       const integrity =
         packageSpec.integrity ?? packageSpec.integrityByVersion?.[npmPackage.version];
       if (integrity) entries.push([npmPackage.packageSpec, integrity]);
+    }
+  }
+  return Object.freeze(
+    Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right))),
+  );
+}
+
+export function reviewedOpenClawPluginTarballUrlByPackageSpec(
+  env: Env = process.env,
+  manifests: readonly ChannelManifest[] = TRUSTED_CHANNEL_MANIFESTS,
+): Readonly<Record<string, string>> {
+  const entries: [string, string][] = [];
+  for (const manifest of manifests) {
+    for (const packageSpec of manifest.agentPackages ?? []) {
+      if (packageSpec.agent !== "openclaw" || packageSpec.manager !== "openclaw-plugin") continue;
+      const resolvedSpec = resolveOpenClawPackageSpec(packageSpec.spec, env);
+      const npmPackage = requireExactNpmPackageSpec(resolvedSpec, manifest.id);
+      const tarballUrl =
+        packageSpec.tarballUrl ?? packageSpec.tarballUrlByVersion?.[npmPackage.version];
+      if (tarballUrl) entries.push([npmPackage.packageSpec, tarballUrl]);
     }
   }
   return Object.freeze(
@@ -485,6 +505,7 @@ function collectOpenClawMessagingPluginInstalls(
   const trustedManifests = trustedChannelManifestsForActivePlan(plan);
   const trustedSpecs = trustedOpenClawPluginSpecsForManifests(trustedManifests, env);
   const reviewedIntegrity = reviewedOpenClawPluginIntegrityByPackageSpec(env, trustedManifests);
+  const reviewedTarballUrls = reviewedOpenClawPluginTarballUrlByPackageSpec(env, trustedManifests);
   for (const step of enabledBuildStepsForPhase(plan, "agent-install")) {
     if (step.kind !== "package-install") continue;
     if (step.value === undefined) {
@@ -504,10 +525,12 @@ function collectOpenClawMessagingPluginInstalls(
       );
     }
     const integrity = npmPackage ? reviewedIntegrity[npmPackage.packageSpec] : undefined;
+    const tarballUrl = npmPackage ? reviewedTarballUrls[npmPackage.packageSpec] : undefined;
     const resolvedInstall: OpenClawPluginInstall = {
       spec: resolvedSpec,
       ...(npmPackage ? { npmPackageSpec: npmPackage.packageSpec } : {}),
       ...(integrity ? { integrity } : {}),
+      ...(tarballUrl ? { tarballUrl } : {}),
       pin: integrity !== undefined,
     };
     const key = JSON.stringify(resolvedInstall);
@@ -1249,6 +1272,11 @@ function packVerifiedOpenClawPluginArchive(
       `OpenClaw plugin ${install.npmPackageSpec} has no committed npm integrity pin`,
     );
   }
+  if (!install.tarballUrl) {
+    throw new MessagingBuildApplierError(
+      `OpenClaw plugin ${install.npmPackageSpec} has no committed npm tarball URL`,
+    );
+  }
   const actual = npmViewString(
     install.npmPackageSpec,
     OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryIntegrityField,
@@ -1257,6 +1285,16 @@ function packVerifiedOpenClawPluginArchive(
   if (actual !== install.integrity) {
     throw new MessagingBuildApplierError(
       `OpenClaw plugin ${install.npmPackageSpec} npm integrity mismatch. Expected: ${install.integrity}. Actual: ${actual}`,
+    );
+  }
+  const actualTarballUrl = npmViewString(
+    install.npmPackageSpec,
+    OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY.registryTarballField,
+    env,
+  );
+  if (actualTarballUrl !== install.tarballUrl) {
+    throw new MessagingBuildApplierError(
+      `OpenClaw plugin ${install.npmPackageSpec} npm tarball URL mismatch. Expected: ${install.tarballUrl}. Actual: ${actualTarballUrl}`,
     );
   }
   return packNpmArchive(install.npmPackageSpec, install.integrity, env);

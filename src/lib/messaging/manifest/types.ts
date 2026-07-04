@@ -212,6 +212,8 @@ export interface ChannelAgentPackageSpec {
   readonly pin?: boolean;
   readonly integrity?: string;
   readonly integrityByVersion?: Readonly<Record<string, string>>;
+  readonly tarballUrl?: string;
+  readonly tarballUrlByVersion?: Readonly<Record<string, string>>;
   readonly required?: boolean;
 }
 

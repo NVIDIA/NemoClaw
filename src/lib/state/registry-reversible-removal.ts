@@ -32,6 +32,12 @@ type RegistryRestoreResult<Entry extends NamedRegistryEntry> = {
   restored: boolean;
 };
 
+export type RegistryDefaultTransition = {
+  readonly from: string | null;
+  readonly to: string;
+  readonly expectedRevision: number;
+};
+
 /** Migrate registries written before the default-selection revision existed. */
 export function normalizeDefaultSelectionRevision(revision: unknown): number {
   if (revision === undefined) return 0;
@@ -50,6 +56,67 @@ export function incrementDefaultSelectionRevision(revision: number | undefined):
     throw new Error("Sandbox registry default-selection revision is exhausted");
   }
   return current + 1;
+}
+
+/** Claim the default pointer when registering the first sandbox. */
+export function claimInitialDefaultInRegistry<Entry extends NamedRegistryEntry>(
+  registry: RegistryState<Entry>,
+  name: string,
+): RegistryState<Entry> {
+  if (registry.defaultSandbox) return registry;
+  return {
+    ...registry,
+    defaultSandbox: name,
+    defaultSelectionRevision: incrementDefaultSelectionRevision(registry.defaultSelectionRevision),
+  };
+}
+
+/** Apply an explicit default selection, including a same-value ownership revision. */
+export function setDefaultInRegistry<Entry extends NamedRegistryEntry>(
+  registry: RegistryState<Entry>,
+  name: string,
+): RegistryState<Entry> | null {
+  if (!registry.sandboxes[name]) return null;
+  return {
+    ...registry,
+    defaultSandbox: name,
+    defaultSelectionRevision: incrementDefaultSelectionRevision(registry.defaultSelectionRevision),
+  };
+}
+
+/** Clear every row while advancing the revision only when the pointer moves. */
+export function clearRegistry<Entry extends NamedRegistryEntry>(
+  registry: RegistryState<Entry>,
+): RegistryState<Entry> {
+  const defaultSelectionRevision =
+    registry.defaultSandbox === null
+      ? normalizeDefaultSelectionRevision(registry.defaultSelectionRevision)
+      : incrementDefaultSelectionRevision(registry.defaultSelectionRevision);
+  return { sandboxes: {}, defaultSandbox: null, defaultSelectionRevision };
+}
+
+/** Restore a row and reclaim its prior default only for the captured transition. */
+export function restoreSandboxEntryInRegistry<Entry extends NamedRegistryEntry>(
+  registry: RegistryState<Entry>,
+  entry: Entry,
+  defaultTransition?: RegistryDefaultTransition,
+): RegistryState<Entry> {
+  const sandboxes = { ...registry.sandboxes, [entry.name]: entry };
+  if (
+    !defaultTransition ||
+    registry.defaultSandbox !== defaultTransition.from ||
+    normalizeDefaultSelectionRevision(registry.defaultSelectionRevision) !==
+      defaultTransition.expectedRevision ||
+    !sandboxes[defaultTransition.to]
+  ) {
+    return { ...registry, sandboxes };
+  }
+  return {
+    ...registry,
+    sandboxes,
+    defaultSandbox: defaultTransition.to,
+    defaultSelectionRevision: incrementDefaultSelectionRevision(registry.defaultSelectionRevision),
+  };
 }
 
 /** Derive the registry state and receipt for one atomic sandbox removal. */

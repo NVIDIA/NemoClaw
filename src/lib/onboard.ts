@@ -3869,6 +3869,8 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
+  // biome-ignore format: keep the monolithic entrypoint net-neutral; route logic lives in rebuild-route-handoff.ts.
+  const recoveredRegistryRoute = rebuildRegistryInferenceRoute?.sandboxName === sandboxName && rebuildRegistryInferenceRoute.route.source === "registry" ? rebuildRegistryInferenceRoute.route : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
   const blueprintRouterCfg = loadBlueprintProfile("routed");
@@ -3925,9 +3927,11 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          // biome-ignore format: the pre-delete route remains authoritative after its registry row is removed.
+          readRecordedProvider: recoverProvider ? (name) => recoveredRegistryRoute?.provider ?? readRecordedProvider(name) : () => null,
           readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
-          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
+          // biome-ignore format: provider and model must come from the same validated rebuild handoff.
+          readRecordedModel: recoverProvider ? (name) => recoveredRegistryRoute?.model ?? readRecordedModel(name) : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -3977,8 +3981,6 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
           allowToolsIncompatible,
           nvidiaFeaturedModels,
         };
-        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-        const recoveredRegistryRoute = rebuildRegistryInferenceRoute?.sandboxName === sandboxName && rebuildRegistryInferenceRoute.route.source === "registry" ? rebuildRegistryInferenceRoute.route : null;
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },

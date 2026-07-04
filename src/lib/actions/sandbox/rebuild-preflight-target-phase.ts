@@ -60,9 +60,11 @@ export async function prepareRebuildTargetPreflights(args: {
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
   const recreateOptions = prepareRebuildRecreateOptions(
+    sandboxName,
     sandboxEntry,
     rebuildAgent,
     fromDockerfile,
+    resumeConfig.registryInferenceRoute,
     autoYes,
     bail,
   );

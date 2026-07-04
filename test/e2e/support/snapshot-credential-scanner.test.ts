@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { CREDENTIAL_ENV_EXPLICIT_DENY } from "../../../src/lib/security/credential-env.ts";
+import { SUPPORTED_CREDENTIAL_ENV_NAMES } from "../../../src/lib/security/credential-env.ts";
 
 import {
   MODELS_JSON_CREDENTIAL_ENV_REFERENCES,
@@ -16,6 +16,18 @@ import {
 } from "../live/snapshot-credential-scanner.ts";
 
 describe("snapshot credential scanner", () => {
+  it("keeps required provider aliases in the shared credential inventory", () => {
+    for (const name of [
+      "NVIDIA_API_KEY",
+      "GEMINI_API_KEY",
+      "GOOGLE_API_KEY",
+      "AWS_BEARER_TOKEN_BEDROCK",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ]) {
+      expect(SUPPORTED_CREDENTIAL_ENV_NAMES.has(name), name).toBe(true);
+    }
+  });
+
   it("accepts only non-secret environment and secret-reference markers in models.json", () => {
     const body = JSON.stringify({
       providers: {
@@ -30,6 +42,19 @@ describe("snapshot credential scanner", () => {
     });
 
     expect(modelsJsonContainsCredentialLeak(body)).toBe(false);
+  });
+
+  it.each([
+    ...MODELS_JSON_CREDENTIAL_ENV_REFERENCES,
+  ])("preserves the allowed bare and braced models.json reference marker %s", (name) => {
+    expect(
+      modelsJsonContainsCredentialLeak(JSON.stringify({ providers: { bare: { apiKey: name } } })),
+    ).toBe(false);
+    expect(
+      modelsJsonContainsCredentialLeak(
+        JSON.stringify({ providers: { braced: { apiKey: `\${${name}}` } } }),
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -74,12 +99,7 @@ describe("snapshot credential scanner", () => {
   });
 
   it.each([
-    ...new Set([
-      ...CREDENTIAL_ENV_EXPLICIT_DENY,
-      ...[...MODELS_JSON_CREDENTIAL_ENV_REFERENCES].filter((name) => name !== "AWS_PROFILE"),
-      "AWS_BEARER_TOKEN_BEDROCK",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-    ]),
+    ...SUPPORTED_CREDENTIAL_ENV_NAMES,
   ])("rejects an opaque assignment for the supported credential name %s", (name) => {
     expect(snapshotFileContainsCredentialLeak("runtime.env", `${name}=opaque-value`)).toBe(true);
     expect(snapshotFileContainsCredentialLeak("runtime.env", `export ${name}=opaque-value`)).toBe(

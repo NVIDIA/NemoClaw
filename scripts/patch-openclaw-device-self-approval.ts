@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -30,6 +29,14 @@ const EXIT_AUDIT_FAILURE = 3;
 const CLI_MARKER = "nemoclaw: reach gateway for bounded same-device scope approval";
 const HANDLER_MARKER = "nemoclaw: bounded same-device scope approval";
 const STATE_MARKER = "nemoclaw: validate bounded self-approval inside pairing lock";
+const CLI_SELECTOR_DEPENDENCIES = [
+  "normalizeDeviceRoles",
+  "resolvePairedOperatorScopes",
+  "GATEWAY_CLIENT_NAMES",
+  "GATEWAY_CLIENT_MODES",
+  "OPERATOR_ROLE",
+  "PAIRING_SCOPE",
+] as const;
 
 type PatchStatus = "already-applied" | "no-match" | "would-apply";
 
@@ -119,7 +126,10 @@ const CLI_REPLACEMENT = [
   "\t}",
   "\tconst nemoclawRawScopes = request.scopes;",
   "\tconst nemoclawRoles = normalizeDeviceRoles(request);",
-  "\tconst nemoclawPairedScopes = resolvePairedOperatorScopes(paired);",
+  "\tconst nemoclawPairedTokens = paired?.tokens;",
+  '	const nemoclawPairedView = nemoclawPairedTokens && typeof nemoclawPairedTokens === "object" && !Array.isArray(nemoclawPairedTokens) ? { ...paired, tokens: Object.values(nemoclawPairedTokens) } : paired;',
+  "\tconst nemoclawPairedScopes = resolvePairedOperatorScopes(nemoclawPairedView);",
+  "\tconst nemoclawPairingBaselineVisible = nemoclawPairedScopes.length > 0;",
   "\tif (",
   "\t\tArray.isArray(nemoclawRawScopes) &&",
   "\t\tnemoclawRawScopes.length > 0 &&",
@@ -129,7 +139,7 @@ const CLI_REPLACEMENT = [
   "\t\trequest.isRepair === true &&",
   "\t\tnemoclawRoles.length === 1 &&",
   "\t\tnemoclawRoles[0] === OPERATOR_ROLE &&",
-  "\t\tnemoclawPairedScopes.includes(PAIRING_SCOPE)",
+  "\t\t(!nemoclawPairingBaselineVisible || nemoclawPairedScopes.includes(PAIRING_SCOPE))",
   "\t) return [PAIRING_SCOPE]; // nemoclaw: reach gateway for bounded same-device scope approval (#4462)",
   "\treturn [...out];",
 ].join("\n");
@@ -327,7 +337,8 @@ const FILE_SPECS: FileSpec[] = [
       return (
         source.includes("async function approvePairingWithFallback(opts, requestId)") &&
         source.includes("function resolveApprovePairingScopesForRequest(request, paired)") &&
-        source.includes('callGatewayCli("device.pair.approve"')
+        source.includes('callGatewayCli("device.pair.approve"') &&
+        CLI_SELECTOR_DEPENDENCIES.every((dependency) => source.includes(dependency))
       );
     },
     patch(source, file) {

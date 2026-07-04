@@ -331,6 +331,25 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
         }
 
+        const retryPersistencePreimage = [
+          "\t\t\tlet suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
+          "\t\t\tlet lastPersistedCurrentMessageId;",
+          "\t\t\tconst onUserMessagePersisted = (message) => {",
+          "\t\t\t\tif (params.currentMessageId !== void 0) lastPersistedCurrentMessageId = params.currentMessageId;",
+        ].join("\n");
+        const embeddedAgentFiles = fs
+          .readdirSync(dist)
+          .filter((file) => file.startsWith("embedded-agent-") && file.endsWith(".js"))
+          .map((file) => path.join(dist, file));
+        const retryPersistenceTargets = embeddedAgentFiles.filter(
+          (file) => fs.readFileSync(file, "utf-8").split(retryPersistencePreimage).length === 2,
+        );
+        requireRuntimeEqual(
+          String(retryPersistenceTargets.length),
+          "1",
+          "embedded-agent retry persistence patch preimage count",
+        );
+
         const chatPatch = spawnSync(process.execPath, [PATCH_OPENCLAW_CHAT_SEND, dist], {
           encoding: "utf-8",
           timeout: PATCH_COMMAND_TIMEOUT_MS,
@@ -350,6 +369,27 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         requireRuntimeIncludes(audit.stdout, "chat.send runtime:", "chat.send audit");
         requireRuntimeIncludes(audit.stdout, "get-reply runtime:", "get-reply audit");
         requireRuntimeIncludes(audit.stdout, "followup runner runtime:", "followup audit");
+        requireRuntimeIncludes(
+          audit.stdout,
+          "embedded-agent retry runtime:",
+          "embedded-agent retry audit",
+        );
+        const retryPersistenceMarker = "nemoclaw: suppress persisted user turn on embedded retries";
+        const retryPersistenceSource = fs.readFileSync(
+          retryPersistenceTargets[0] as string,
+          "utf-8",
+        );
+        requireRuntimeEqual(
+          String(retryPersistenceSource.split(retryPersistenceMarker).length - 1),
+          "1",
+          "embedded-agent retry persistence marker count",
+        );
+        const embeddedAgentSyntax = spawnSync(
+          process.execPath,
+          ["--check", retryPersistenceTargets[0] as string],
+          { encoding: "utf-8", timeout: PATCH_COMMAND_TIMEOUT_MS },
+        );
+        requireSpawnSuccess(embeddedAgentSyntax, "validate patched embedded-agent syntax");
 
         const issue4434Patch = spawnSync(
           process.execPath,

@@ -79,6 +79,7 @@ delete process.env.NEMOCLAW_ENDPOINT_URL;
 if (process.env.NEMOCLAW_TEST_KEEP_MODEL_OVERRIDE !== "1") delete process.env.NEMOCLAW_MODEL;
 delete process.env.COMPATIBLE_API_KEY;
 delete process.env.NVIDIA_INFERENCE_API_KEY;
+delete process.env.NVIDIA_API_KEY;
 
 const registry = require(${registryPath});
 const registryRoute = {
@@ -149,6 +150,7 @@ const { setupNim, setupInference } = require(${onboardPath});
             OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
             COMPATIBLE_API_KEY: "",
             NVIDIA_INFERENCE_API_KEY: "",
+            NVIDIA_API_KEY: "",
           },
           timeout: 80_000,
         });
@@ -196,6 +198,7 @@ const { setupNim, setupInference } = require(${onboardPath});
             OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
             COMPATIBLE_API_KEY: "",
             NVIDIA_INFERENCE_API_KEY: "",
+            NVIDIA_API_KEY: "",
           },
           timeout: 80_000,
         });
@@ -224,6 +227,7 @@ const { setupNim, setupInference } = require(${onboardPath});
             OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
             COMPATIBLE_API_KEY: "",
             NVIDIA_INFERENCE_API_KEY: "",
+            NVIDIA_API_KEY: "",
           },
           timeout: 80_000,
         });
@@ -253,12 +257,17 @@ const { setupNim, setupInference } = require(${onboardPath});
             OPENSHELL_FAKE_COMMAND_LOG: openshellLogPath,
             COMPATIBLE_API_KEY: "",
             NVIDIA_INFERENCE_API_KEY: "",
+            NVIDIA_API_KEY: "",
           },
           timeout: 80_000,
         });
         const conflictingEndpointOutput = `${conflictingEndpointResult.stdout || ""}\n${conflictingEndpointResult.stderr || ""}`;
         assert.notEqual(conflictingEndpointResult.status, 0, conflictingEndpointOutput);
-        assert.match(conflictingEndpointOutput, /NVIDIA Endpoints endpoint validation failed/);
+        assert.match(
+          conflictingEndpointOutput,
+          /recovered endpoint identity is missing or incompatible/,
+        );
+        assert.doesNotMatch(conflictingEndpointOutput, /Provider: build/);
         assert.ok(
           !conflictingEndpointOutput.includes("Reusing existing gateway credential"),
           conflictingEndpointOutput,

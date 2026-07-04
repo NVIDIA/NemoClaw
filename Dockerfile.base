@@ -277,12 +277,12 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
         pack_integrity="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.integrity ?? ""));')"; \
         pack_filename="$(printf '%s' "$pack_json" | node -e 'const p = JSON.parse(require("node:fs").readFileSync(0, "utf8")); process.stdout.write(String(p[0]?.filename ?? ""));')"; \
         if [ -z "$pack_integrity" ] || [ -z "$pack_filename" ]; then \
-            echo "Error: ${label} npm pack did not report filename and integrity"; exit 1; \
+            echo "Error: ${label} npm pack did not report filename and integrity" >&2; exit 1; \
         fi; \
         if [ "$pack_integrity" != "$expected_integrity" ]; then \
-            echo "Error: ${label} downloaded tarball integrity mismatch"; \
-            echo "Expected: ${expected_integrity}"; \
-            echo "Actual:   ${pack_integrity}"; exit 1; \
+            echo "Error: ${label} downloaded tarball integrity mismatch" >&2; \
+            echo "Expected: ${expected_integrity}" >&2; \
+            echo "Actual:   ${pack_integrity}" >&2; exit 1; \
         fi; \
         if ! pack_archive="$(node -e 'const path = require("node:path"); const [dir, filename, label] = process.argv.slice(1); const parts = filename.split(/[\\/]+/); const unsafe = !filename || path.isAbsolute(filename) || filename === "." || filename === ".." || filename.includes("/") || filename.includes("\\") || parts.includes("..") || parts.includes(""); if (unsafe) { console.error("Error: " + label + " npm pack reported unsafe archive filename: " + filename); process.exit(1); } const root = path.resolve(dir); const archive = path.resolve(root, filename); if (!archive.startsWith(root + path.sep)) { console.error("Error: " + label + " npm pack archive escaped pack directory: " + filename); process.exit(1); } process.stdout.write(archive);' "$pack_dir" "$pack_filename" "$label")"; then exit 1; fi; \
         printf '%s\n' "$pack_archive"; \
@@ -298,13 +298,14 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && rm -rf "$OPENCLAW_PACK_DIR" \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi \
-    && if [ -n "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
-        if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-            echo "Error: mcporter ${MCPORTER_VERSION} npm integrity mismatch"; \
-            echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}"; \
-            echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}"; exit 1; \
-        fi; \
+    && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
+    fi \
+    && MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity) \
+    && if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "Error: mcporter ${MCPORTER_VERSION} npm integrity mismatch"; \
+        echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}"; \
+        echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}"; exit 1; \
     fi \
     && rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \

@@ -3,9 +3,11 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
+  resetRebuildFlowTestEnvironment,
+  restoreRebuildFlowTestEnvironment,
   type RebuildFlowHarness,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import {
@@ -122,9 +124,8 @@ function makeRouteApplier() {
   });
 }
 
-afterEach(() => {
-  vi.restoreAllMocks();
-});
+beforeEach(resetRebuildFlowTestEnvironment);
+afterEach(restoreRebuildFlowTestEnvironment);
 
 describe("rebuild local-provider recreation", () => {
   it.each(

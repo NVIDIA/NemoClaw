@@ -8,6 +8,7 @@ import {
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
 import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
+import type { RebuildRouteHandoff } from "../../onboard/rebuild-route-handoff";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
 export type RebuildGpuOptOutEntry = {
@@ -85,6 +86,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
+  rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   autoYes: boolean;
   noGpu?: true;
 };

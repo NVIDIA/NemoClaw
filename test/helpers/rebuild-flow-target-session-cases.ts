@@ -118,11 +118,13 @@ export function registerRebuildFlowTargetSessionTests(): void {
         "NEMOCLAW_ENDPOINT_URL",
         "NEMOCLAW_PROVIDER",
         "NEMOCLAW_MODEL",
+        "NEMOCLAW_PREFERRED_API",
         "COMPATIBLE_API_KEY",
       ]);
       process.env.NEMOCLAW_ENDPOINT_URL = "https://attacker.example.test/v1";
       process.env.NEMOCLAW_PROVIDER = "build";
       process.env.NEMOCLAW_MODEL = "attacker-model";
+      process.env.NEMOCLAW_PREFERRED_API = "openai-responses";
       process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
 
       let envSeenInsideOnboard: Record<string, string | undefined> | null = null;
@@ -135,11 +137,13 @@ export function registerRebuildFlowTargetSessionTests(): void {
               endpoint: process.env.NEMOCLAW_ENDPOINT_URL,
               provider: process.env.NEMOCLAW_PROVIDER,
               model: process.env.NEMOCLAW_MODEL,
+              preferredApi: process.env.NEMOCLAW_PREFERRED_API,
             };
           },
         });
         harness.session.provider = "compatible-endpoint";
         harness.session.model = "session-model";
+        harness.session.preferredInferenceApi = "openai-completions";
         harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
 
         await expect(
@@ -150,13 +154,16 @@ export function registerRebuildFlowTargetSessionTests(): void {
           endpoint: undefined,
           provider: undefined,
           model: undefined,
+          preferredApi: undefined,
         });
         expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
         expect(harness.session.provider).toBe("compatible-endpoint");
         expect(harness.session.model).toBe("session-model");
+        expect(harness.session.preferredInferenceApi).toBe("openai-completions");
         expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe("https://attacker.example.test/v1");
         expect(process.env.NEMOCLAW_PROVIDER).toBe("build");
         expect(process.env.NEMOCLAW_MODEL).toBe("attacker-model");
+        expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-responses");
       } finally {
         restoreEnv();
       }

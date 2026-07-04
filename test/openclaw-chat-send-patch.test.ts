@@ -385,6 +385,42 @@ function writeFollowupRunner20260610Fixture(dist: string): string {
   return fixture;
 }
 
+function writeEmbeddedAgent20260610Fixture(dist: string): string {
+  const fixture = path.join(dist, "embedded-agent.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "function runEmbeddedAgent(params) {",
+      "  const maxEmptyResponseRetryAttempts = 1;",
+      "  const MAX_RUN_LOOP_ITERATIONS = 2;",
+      "  let runLoopIterations = 0;",
+      "  let suppressNextUserMessagePersistence = params.suppressNextUserMessagePersistence ?? false;",
+      "  let lastPersistedCurrentMessageId;",
+      "  const onUserMessagePersisted = (message) => {",
+      "    if (params.currentMessageId !== void 0) lastPersistedCurrentMessageId = params.currentMessageId;",
+      "    params.userTurnTranscriptRecorder?.markRuntimePersisted(message);",
+      "    params.onUserMessagePersisted?.(message);",
+      "  };",
+      "  const retryLog = `empty response detected: runId=${params.runId} — retrying 1/${maxEmptyResponseRetryAttempts}`;",
+      "  void retryLog;",
+      "  const suppressions = [];",
+      "  while (true) {",
+      "    if (runLoopIterations >= MAX_RUN_LOOP_ITERATIONS) return suppressions;",
+      "    runLoopIterations += 1;",
+      "    suppressions.push(suppressNextUserMessagePersistence);",
+      "    if (runLoopIterations === 1) {",
+      '      if (params.persistFirstAttempt) onUserMessagePersisted({ role: "user" });',
+      "      continue;",
+      "    }",
+      "    return suppressions;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
 function writeFollowupRunnerWithoutOptsBindingFixture(dist: string): string {
   const fixture = path.join(dist, "agent-runner.fixture.js");
   fs.writeFileSync(
@@ -580,6 +616,26 @@ async function runPatchedFollowupFixture(
 
   const runId = await createFollowupRunner(params)(queued);
   return { registeredRuns, runId };
+}
+
+function runPatchedEmbeddedAgentFixture(
+  patchedSource: string,
+  persistFirstAttempt = true,
+): boolean[] {
+  const runEmbeddedAgent = vm.runInNewContext(`${patchedSource}\nrunEmbeddedAgent;`) as (params: {
+    currentMessageId: string;
+    persistFirstAttempt: boolean;
+    runId: string;
+    suppressNextUserMessagePersistence: boolean;
+  }) => boolean[];
+  return Array.from(
+    runEmbeddedAgent({
+      currentMessageId: "message-b",
+      persistFirstAttempt,
+      runId: "run-b",
+      suppressNextUserMessagePersistence: false,
+    }),
+  );
 }
 
 describe("OpenClaw chat.send compatibility patch", () => {
@@ -789,13 +845,14 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("recognizes the 2026.6.10 chat final and admission-session followup runner shape", async () => {
+  it("recognizes the 2026.6.10 chat, followup, and embedded retry shapes", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-669-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
     const chatFixture = writeChatSend20260610Fixture(dist);
     const followupFixture = writeFollowupRunner20260610Fixture(dist);
     const getReplyFixture = writeGetReply20260610Fixture(dist);
+    const embeddedAgentFixture = writeEmbeddedAgent20260610Fixture(dist);
 
     try {
       const patch = runPatch(dist);
@@ -820,6 +877,13 @@ describe("OpenClaw chat.send compatibility patch", () => {
         "const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
       );
 
+      const patchedEmbeddedAgent = fs.readFileSync(embeddedAgentFixture, "utf-8");
+      expect(patchedEmbeddedAgent).toContain(
+        "suppressNextUserMessagePersistence = true; // nemoclaw: suppress persisted user turn on embedded retries (#2603, #3145)",
+      );
+      expect(runPatchedEmbeddedAgentFixture(patchedEmbeddedAgent)).toEqual([false, true]);
+      expect(runPatchedEmbeddedAgentFixture(patchedEmbeddedAgent, false)).toEqual([false, false]);
+
       const patchedGetReply = fs.readFileSync(getReplyFixture, "utf-8");
       expect(patchedGetReply).toContain("let resolvedQueue = useFastReplyRuntime ? {");
       expect(patchedGetReply).toContain(
@@ -835,6 +899,10 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(
         rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g),
       ).toHaveLength(1);
+      const rerunPatchedEmbeddedAgent = fs.readFileSync(embeddedAgentFixture, "utf-8");
+      expect(
+        rerunPatchedEmbeddedAgent.match(/suppress persisted user turn on embedded retries/g),
+      ).toHaveLength(1);
 
       await expect(
         runPatchedFollowupFixture(
@@ -846,7 +914,38 @@ describe("OpenClaw chat.send compatibility patch", () => {
 
       const audit = runPatchAudit(dist);
       expect(audit.status, `${audit.stdout}${audit.stderr}`).toBe(0);
-      expect(audit.stdout).toContain("6 recognizers · 6 OK · 0 missing");
+      expect(audit.stdout).toContain("embedded-agent retry runtime:");
+      expect(audit.stdout).toContain("retry-user-persistence: already-applied");
+      expect(audit.stdout).toContain("7 recognizers · 7 OK · 0 missing");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the 2026.6.10 embedded retry persistence shape changes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-retry-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeChatSend20260610Fixture(dist);
+    writeFollowupRunner20260610Fixture(dist);
+    writeGetReply20260610Fixture(dist);
+    const embeddedAgentFixture = writeEmbeddedAgent20260610Fixture(dist);
+    fs.writeFileSync(
+      embeddedAgentFixture,
+      fs
+        .readFileSync(embeddedAgentFixture, "utf-8")
+        .replace(
+          "if (params.currentMessageId !== void 0) lastPersistedCurrentMessageId = params.currentMessageId;",
+          "if (params.currentMessageId != null) lastPersistedCurrentMessageId = params.currentMessageId;",
+        ),
+    );
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain(
+        "OpenClaw embedded-agent user persistence callback shape not recognized",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

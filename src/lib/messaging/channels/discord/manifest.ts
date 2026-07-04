@@ -198,6 +198,9 @@ export const discordManifest = {
         "2026.6.10":
           "sha512-NKp/j00l+rk5PC0Lv/0fOIiiQJ1c/OpG9471zqXUDKQie6pQ1Fi9KUZUouyoTMmfLh/n4S0CkEMqrON40eBKXA==",
       },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/discord/-/discord-2026.6.10.tgz",
+      },
       required: true,
     },
   ],

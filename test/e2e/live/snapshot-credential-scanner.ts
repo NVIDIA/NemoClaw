@@ -4,7 +4,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { shouldStripCredentialEnv } from "../../../src/lib/security/credential-env.ts";
+import {
+  SUPPORTED_CREDENTIAL_ENV_NAMES,
+  shouldStripCredentialEnv,
+} from "../../../src/lib/security/credential-env.ts";
 import {
   isCredentialField,
   isSafeCredentialPlaceholder,
@@ -87,7 +90,9 @@ function isModelsJsonCredentialMarker(value: unknown): boolean {
 function containsCredentialEnvAssignment(value: string): boolean {
   for (const match of value.matchAll(ENV_ASSIGNMENT_PATTERN)) {
     const name = match[1];
-    if (name && shouldStripCredentialEnv(name)) return true;
+    if (name && (SUPPORTED_CREDENTIAL_ENV_NAMES.has(name) || shouldStripCredentialEnv(name))) {
+      return true;
+    }
   }
   return false;
 }

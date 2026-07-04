@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -113,6 +114,29 @@ function findProductionBuildGuardCoverage(
             ),
       }));
   });
+}
+
+function runBaseImageBuildArgGuard(
+  step: WorkflowStep,
+  openclawVersion: string,
+): { output: string; result: ReturnType<typeof spawnSync> } {
+  const tmp = mkdtempSync(path.join(tmpdir(), "nemoclaw-base-image-build-args-"));
+  const githubOutput = path.join(tmp, "github-output");
+  try {
+    const result = spawnSync("bash", ["-c", step.run ?? ""], {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: githubOutput,
+        OPENCLAW_VERSION_INPUT: openclawVersion,
+      },
+    });
+    const output = existsSync(githubOutput) ? readFileSync(githubOutput, "utf-8") : "";
+    return { output, result };
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 }
 
 describe("OpenClaw 2026.6.10 dependency review contract", () => {
@@ -390,18 +414,16 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
   });
 
-  it("records the accepted SRI-only messaging plugin provenance boundary", () => {
+  it("records the fail-closed messaging plugin provenance boundary", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
     const source = readFileSync(MESSAGING_BUILD_APPLIER, "utf-8");
 
     expect(review).toContain("Messaging Plugin Registry Provenance Boundary");
-    expect(review).toContain("`registryTarballUrl` policy is explicitly `not-pinned`");
-    expect(review).toContain(
-      "accepted state only while the exact package spec, registry SRI, and packed-byte SRI",
-    );
-    expect(review).toContain("carries exact tarball URLs for every messaging plugin");
-    expect(source).toContain("Accepted residual for this reviewed dependency bump");
-    expect(source).toContain("Remove this boundary only when #5896");
+    expect(review).toContain("`registryTarballUrl` policy is `must-match-committed-url`");
+    expect(review).toContain("committed exact URL matching registry `dist.tarball`");
+    expect(review).toContain("carry exact tarball URLs for every messaging plugin");
+    expect(source).toContain('registryTarballField: "dist.tarball"');
+    expect(source).toContain('registryTarballUrl: "must-match-committed-url"');
   });
 
   it("keeps the rebuild-resume compatibility shim tied to its removal tracker", () => {
@@ -468,19 +490,28 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     }
   });
 
-  it("validates the base-image dispatch version through the environment only", () => {
+  it("guards and exports the base-image dispatch version as one scalar", () => {
     const baseImages = readYaml<Workflow>(".github/workflows/base-image.yaml");
     const buildAndPush = baseImages.jobs["build-and-push"] as WorkflowJob;
-    const validation = requiredStep(buildAndPush, "Validate OpenClaw version input");
+    const guard = requiredStep(buildAndPush, "Validate production Docker build args");
+    const build = requiredStep(buildAndPush, "Build and push");
 
-    expect(validation.env).toEqual({
+    expect(guard.id).toBe("production-build-args");
+    expect(guard.env).toEqual({
       OPENCLAW_VERSION_INPUT: "${{ inputs.openclaw_version }}",
     });
-    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\r'*`);
-    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\n'*`);
-    expect(validation.run).toContain(`"$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$`);
-    expect(requiredStepIndex(buildAndPush, "Validate OpenClaw version input")).toBeLessThan(
-      requiredStepIndex(buildAndPush, "Validate production Docker build args"),
+    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\r'*`);
+    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" == *$'\\n'*`);
+    expect(guard.run).toContain(`"$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$`);
+    expect(guard.run).toContain('scripts/check-production-build-args.sh "${build_args[@]}"');
+    expect(guard.run).toContain(
+      `printf 'openclaw_build_arg=%s\\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"`,
+    );
+    expect(build.with?.["build-args"]).toBe(
+      "${{ steps.production-build-args.outputs.openclaw_build_arg }}",
+    );
+    expect(requiredStepIndex(buildAndPush, "Validate production Docker build args")).toBeLessThan(
+      requiredStepIndex(buildAndPush, "Build and push"),
     );
 
     for (const [jobName, job] of Object.entries(baseImages.jobs)) {
@@ -491,29 +522,33 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       }
     }
 
-    for (const input of ["2026", "2026.6.10", "1.2.3.4"]) {
-      const result = spawnSync("bash", ["-c", validation.run ?? ""], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: { ...process.env, OPENCLAW_VERSION_INPUT: input },
-      });
+    for (const [input, expectedOutput] of [
+      ["", "openclaw_build_arg=\n"],
+      ["2026", "openclaw_build_arg=OPENCLAW_VERSION=2026\n"],
+      ["2026.6.10", "openclaw_build_arg=OPENCLAW_VERSION=2026.6.10\n"],
+      ["1.2.3.4", "openclaw_build_arg=OPENCLAW_VERSION=1.2.3.4\n"],
+    ]) {
+      const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, `${JSON.stringify(input)}: ${result.stderr}`).toBe(0);
+      expect(output).toBe(expectedOutput);
     }
 
     for (const input of [
-      "",
       "v2026.6.10",
       "2026.6.10-beta.1",
       "2026.6.10 trailing",
+      "2026.4.24",
       "2026.6.10\r",
-      "2026.6.10\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24",
+      "2026.6.9\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24",
     ]) {
-      const result = spawnSync("bash", ["-c", validation.run ?? ""], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-        env: { ...process.env, OPENCLAW_VERSION_INPUT: input },
-      });
+      const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, JSON.stringify(input)).toBe(1);
+      expect(output).toBe("");
+      if (input.includes("\r") || input.includes("\n")) {
+        expect(result.stderr).toContain(
+          "production Docker build arguments must not contain CR or LF characters",
+        );
+      }
     }
   });
 
@@ -536,6 +571,12 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",
     );
+    expect(requiredStep(mainJob, "Install test dependencies").run).toBe("npm ci --ignore-scripts");
+    expect(mainJob.env).toMatchObject({
+      npm_config_fetch_retries: "3",
+      npm_config_fetch_retry_mintimeout: "10000",
+      npm_config_fetch_retry_maxtimeout: "60000",
+    });
 
     expect(prChecks.needs).not.toContain("real-openclaw-dist-harness");
     expect(mainChecks.needs).toContain("real-openclaw-dist-harness");

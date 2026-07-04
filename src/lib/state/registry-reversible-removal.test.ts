@@ -4,9 +4,13 @@
 import { describe, expect, it } from "vitest";
 import type { SandboxEntry, SandboxRegistry } from "./registry";
 import {
+  claimInitialDefaultInRegistry,
+  clearRegistry,
   type RegistryRemovalReceipt,
   removeSandboxFromRegistry,
+  restoreSandboxEntryInRegistry,
   restoreSandboxIfMissingInRegistry,
+  setDefaultInRegistry,
 } from "./registry-reversible-removal";
 
 function entry(name: string, model?: string): SandboxEntry {
@@ -42,6 +46,50 @@ function receipt(
 }
 
 describe("reversible registry removal", () => {
+  it("owns initial, explicit, and cleared default-pointer revisions", () => {
+    const alpha = entry("alpha");
+    const initial = registry([alpha], null, 4);
+
+    const claimed = claimInitialDefaultInRegistry(initial, "alpha");
+    expect(claimed).toEqual({
+      sandboxes: { alpha },
+      defaultSandbox: "alpha",
+      defaultSelectionRevision: 5,
+    });
+    expect(initial.defaultSandbox).toBeNull();
+
+    const explicitSameValue = setDefaultInRegistry(claimed, "alpha");
+    expect(explicitSameValue?.defaultSelectionRevision).toBe(6);
+    expect(setDefaultInRegistry(claimed, "missing")).toBeNull();
+
+    const cleared = clearRegistry(explicitSameValue!);
+    expect(cleared).toEqual({
+      sandboxes: {},
+      defaultSandbox: null,
+      defaultSelectionRevision: 7,
+    });
+    expect(clearRegistry(cleared).defaultSelectionRevision).toBe(7);
+  });
+
+  it("restores a prepared row only for the captured default transition", () => {
+    const alpha = entry("alpha", "preserved");
+    const source = registry([entry("beta")], "beta", 8);
+    const transition = { from: "beta", to: "alpha", expectedRevision: 8 };
+
+    expect(restoreSandboxEntryInRegistry(source, alpha, transition)).toEqual({
+      sandboxes: { beta: entry("beta"), alpha },
+      defaultSandbox: "alpha",
+      defaultSelectionRevision: 9,
+    });
+    expect(
+      restoreSandboxEntryInRegistry({ ...source, defaultSelectionRevision: 9 }, alpha, transition),
+    ).toEqual({
+      sandboxes: { beta: entry("beta"), alpha },
+      defaultSandbox: "beta",
+      defaultSelectionRevision: 9,
+    });
+  });
+
   it("returns the removed row without mutating its source registry", () => {
     const alpha = entry("alpha", "old-model");
     const source = registry([alpha, entry("beta")], "alpha");
@@ -182,12 +230,9 @@ describe("reversible registry removal", () => {
     expect(reclaimed.registry.defaultSandbox).toBe("alpha");
     expect(reclaimed.registry.defaultSelectionRevision).toBe(2);
 
-    const concurrentDefault = {
-      ...removed.registry,
-      defaultSandbox: "gamma",
-      defaultSelectionRevision: 2,
-    };
-    const preserved = restoreSandboxIfMissingInRegistry(concurrentDefault, removed.receipt!);
+    const concurrentDefault = setDefaultInRegistry(removed.registry, "gamma");
+    expect(concurrentDefault).not.toBeNull();
+    const preserved = restoreSandboxIfMissingInRegistry(concurrentDefault!, removed.receipt!);
     expect(preserved.registry.defaultSandbox).toBe("gamma");
     expect(preserved.registry.defaultSelectionRevision).toBe(2);
   });
@@ -198,11 +243,9 @@ describe("reversible registry removal", () => {
     const removed = removeSandboxFromRegistry(registry([alpha, beta], "alpha", 7), "alpha");
     expect(removed.receipt?.postRemovalDefaultSelectionRevision).toBe(8);
 
-    const explicitSameFallback = {
-      ...removed.registry,
-      defaultSelectionRevision: 9,
-    };
-    const restored = restoreSandboxIfMissingInRegistry(explicitSameFallback, removed.receipt!);
+    const explicitSameFallback = setDefaultInRegistry(removed.registry, "beta");
+    expect(explicitSameFallback).not.toBeNull();
+    const restored = restoreSandboxIfMissingInRegistry(explicitSameFallback!, removed.receipt!);
 
     expect(restored.registry.defaultSandbox).toBe("beta");
     expect(restored.registry.defaultSelectionRevision).toBe(9);

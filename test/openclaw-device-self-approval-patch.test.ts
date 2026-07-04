@@ -51,19 +51,41 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       const resolveScopes = runFixture<
         (request: Record<string, unknown>, paired: Record<string, unknown>) => string[]
       >(source, "resolveApprovePairingScopesForRequest");
-      expect(resolveScopes(validPending(), { tokenScopes: ["operator.pairing"] })).toEqual([
-        "operator.pairing",
-      ]);
+      expect(
+        resolveScopes(validPending(), {
+          tokens: [{ role: "operator", scopes: ["operator.pairing"] }],
+        }),
+      ).toEqual(["operator.pairing"]);
+      // The gateway handler and canonical pairing writer remain authoritative
+      // for identity and baseline checks. A missing/redacted paired view, or a
+      // legacy local view whose tokens are still keyed by role, must not force
+      // the CLI to request operator.read before that strict path can run.
+      expect(
+        resolveScopes(validPending(), undefined as unknown as Record<string, unknown>),
+      ).toEqual(["operator.pairing"]);
+      expect(
+        resolveScopes(validPending(), {
+          scopes: ["operator.pairing"],
+          tokens: {
+            operator: { role: "operator", scopes: ["operator.pairing"] },
+          },
+        }),
+      ).toEqual(["operator.pairing"]);
+      expect(
+        resolveScopes(validPending(), {
+          tokens: [{ role: "operator", scopes: ["operator.read"] }],
+        }),
+      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
       expect(
         resolveScopes(validPending({ clientId: "openclaw-control-ui" }), {
-          tokenScopes: ["operator.pairing"],
+          tokens: [{ role: "operator", scopes: ["operator.pairing"] }],
         }),
-      ).toEqual(["operator.pairing", "operator.write"]);
+      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
       expect(
         resolveScopes(validPending({ isRepair: false }), {
-          tokenScopes: ["operator.pairing"],
+          tokens: [{ role: "operator", scopes: ["operator.pairing"] }],
         }),
-      ).toEqual(["operator.pairing", "operator.write"]);
+      ).toEqual(["operator.pairing", "operator.read", "operator.write"]);
       expect(resolveScopes(validPending({ scopes: ["operator.admin"] }), {})).toEqual([
         "operator.admin",
       ]);
@@ -332,6 +354,32 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
+    }
+  });
+
+  it.each([
+    "normalizeDeviceRoles",
+    "resolvePairedOperatorScopes",
+    "GATEWAY_CLIENT_NAMES",
+    "GATEWAY_CLIENT_MODES",
+    "OPERATOR_ROLE",
+    "PAIRING_SCOPE",
+  ])("fails closed when the CLI replacement dependency %s drifts", (dependency) => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-dependency-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      const file = path.join(dist, "devices-cli.runtime-fixture.js");
+      fs.writeFileSync(
+        file,
+        fs.readFileSync(file, "utf8").replaceAll(dependency, "DRIFTED_DEPENDENCY"),
+      );
+      const audit = runPatch(dist, true);
+      expect(audit.status).toBe(3);
+      expect(audit.stdout).toContain("[MISS]");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 });

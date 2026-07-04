@@ -289,13 +289,14 @@ RUN set -eu; \
     rm -rf "$OPENCLAW_PACK_DIR"; \
     MCPORTER_EXPECTED_INTEGRITY=""; \
     if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
-    if [ -n "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
-        if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-            echo "ERROR: mcporter ${MCPORTER_VERSION} npm integrity mismatch" >&2; \
-            echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}" >&2; \
-            echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}" >&2; exit 1; \
-        fi; \
+    if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
+    fi; \
+    MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
+    if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} npm integrity mismatch" >&2; \
+        echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}" >&2; \
+        echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}" >&2; exit 1; \
     fi; \
     # Always reinstall from the committed lock. Matching top-level versions can
     # otherwise hide drift in mcporter's ranged transitive dependencies.

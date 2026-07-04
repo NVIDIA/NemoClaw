@@ -107,7 +107,7 @@ function runInstallBlock(
     codexAcpRegistryIntegrity?: string;
     codexAcpRegistryTarball?: string;
     codexAcpPackIntegrity?: string;
-    packFilename?: string;
+    packFilename?: string | null;
     allowLegacyFixture?: boolean;
     installedOpenClawVersion?: string;
   } = {},
@@ -122,7 +122,7 @@ function runInstallBlock(
     codexAcpRegistryIntegrity = codexAcpCommittedIntegrity,
     codexAcpRegistryTarball = PINNED_CODEX_ACP_TARBALL,
     codexAcpPackIntegrity = codexAcpCommittedIntegrity,
-    packFilename = "",
+    packFilename,
     allowLegacyFixture = false,
     installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
   } = options;
@@ -173,8 +173,10 @@ function runInstallBlock(
     '    test -n "$pack_dir";',
     '    pack_file="$(basename "$pack_spec")";',
     '    case "$pack_file" in *.tgz) ;; *) pack_file="${pack_file}.tgz" ;; esac',
-    `    reported_pack_file=${JSON.stringify(packFilename)}`,
-    '    reported_pack_file="${reported_pack_file:-$pack_file}"',
+    `    reported_pack_file=${JSON.stringify(packFilename ?? "")}`,
+    ...(packFilename === null
+      ? []
+      : ['    reported_pack_file="${reported_pack_file:-$pack_file}"']),
     '    printf "fake tarball" > "$pack_dir/$pack_file";',
     `    case "$pack_spec" in *"codex-acp"*) pack_integrity=${JSON.stringify(codexAcpPackIntegrity)} ;; *) pack_integrity=${JSON.stringify(packIntegrity)} ;; esac`,
     '    printf \'[{"filename":"%s","integrity":"%s"}]\\n\' "$reported_pack_file" "$pack_integrity";',
@@ -707,6 +709,29 @@ describe("OpenClaw npm integrity pins", () => {
       expect(item.outcome.calls, item.label).toContain("npm pack");
       expect(item.outcome.calls, item.label).not.toContain(item.blockedCommand);
     }
+  });
+
+  it("reports missing base-image npm pack filenames on stderr", () => {
+    const { result, calls } = runInstallBlock(
+      extractRunBlock(
+        DOCKERFILE_BASE,
+        "# Install OpenClaw CLI + PyYAML.",
+        "# Baseline health check.",
+      ),
+      {
+        openclawVersion: PINNED_OPENCLAW_VERSION,
+        committedIntegrity: PINNED_OPENCLAW_INTEGRITY,
+        registryIntegrity: PINNED_OPENCLAW_INTEGRITY,
+        packFilename: null,
+      },
+    );
+    const diagnostic = `OpenClaw ${PINNED_OPENCLAW_VERSION} npm pack did not report filename and integrity`;
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(diagnostic);
+    expect(result.stdout).not.toContain(diagnostic);
+    expect(calls).toContain(`npm pack ${PINNED_OPENCLAW_TARBALL} --pack-destination`);
+    expect(calls).not.toContain("npm install -g");
   });
 
   it("rejects legacy fixture pins unless stale-upgrade fixture mode is explicit", () => {

@@ -214,6 +214,9 @@ export const slackManifest = {
         "2026.6.10":
           "sha512-OOsMLjPcbWhQRM5XDwfdrACjJmKqavFtpuIlhHAXWrLrd/p7SyIVE9AoKS0yxOx6bqGDIMJ9+knzdViHMLgBdA==",
       },
+      tarballUrlByVersion: {
+        "2026.6.10": "https://registry.npmjs.org/@openclaw/slack/-/slack-2026.6.10.tgz",
+      },
       required: true,
     },
   ],
