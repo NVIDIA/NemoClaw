@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
+import { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 
 const tmpRoots: string[] = [];
 
@@ -85,5 +86,59 @@ describe("dockerfile patch security guards", () => {
     ).toThrow();
     expect(truncateSpy).not.toHaveBeenCalled();
     expect(fs.statSync(dockerfilePath).isDirectory()).toBe(true);
+  });
+
+  it("uses read-only wording when contract validation rejects a Dockerfile symlink", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-contract-link-test-"));
+    tmpRoots.push(dir);
+    const realDockerfile = path.join(dir, "real.Dockerfile");
+    const linkDockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(realDockerfile, "FROM scratch\n", "utf-8");
+    fs.symlinkSync(realDockerfile, linkDockerfile);
+
+    expect(() => assertToolDisclosureDockerfileContract(linkDockerfile, "progressive")).toThrow(
+      /Refusing to open Dockerfile through a symlink/,
+    );
+  });
+
+  it("rejects an ancestor directory swap around the Dockerfile open", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-parent-swap-test-"));
+    tmpRoots.push(dir);
+    const trustedDir = path.join(dir, "trusted");
+    const movedTrustedDir = path.join(dir, "trusted-moved");
+    const redirectedDir = path.join(dir, "redirected");
+    fs.mkdirSync(trustedDir);
+    fs.mkdirSync(redirectedDir);
+    const validContract = [
+      "FROM scratch",
+      "ARG NEMOCLAW_TOOL_DISCLOSURE=progressive",
+      "ENV NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}",
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(trustedDir, "Dockerfile"), validContract, "utf-8");
+    fs.writeFileSync(path.join(redirectedDir, "Dockerfile"), validContract, "utf-8");
+
+    const openSync = fs.openSync.bind(fs);
+    let swappedParent = false;
+    vi.spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      if (swappedParent || path.basename(String(args[0])) !== "Dockerfile") {
+        return openSync(...args);
+      }
+      fs.renameSync(trustedDir, movedTrustedDir);
+      fs.renameSync(redirectedDir, trustedDir);
+      try {
+        const fd = openSync(...args);
+        swappedParent = true;
+        return fd;
+      } finally {
+        fs.renameSync(trustedDir, redirectedDir);
+        fs.renameSync(movedTrustedDir, trustedDir);
+      }
+    }) as typeof fs.openSync);
+
+    expect(() =>
+      assertToolDisclosureDockerfileContract(path.join(trustedDir, "Dockerfile"), "progressive"),
+    ).toThrow(/Dockerfile because it changed during validation/);
+    expect(swappedParent).toBe(true);
   });
 });

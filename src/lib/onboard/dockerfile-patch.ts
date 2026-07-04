@@ -36,7 +36,7 @@ const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 type LooseObject = Record<string, unknown>;
 
 function writeExistingDockerfileNoFollow(dockerfilePath: string, dockerfile: string): void {
-  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_WRONLY);
+  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_WRONLY, "patch");
   try {
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, dockerfile, { encoding: "utf8" });
@@ -101,7 +101,7 @@ export function patchStagedDockerfile(
     inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
-  let dockerfile = readExistingDockerfileNoFollow(dockerfilePath);
+  let dockerfile = readExistingDockerfileNoFollow(dockerfilePath, "patch");
   const toolDisclosure = normalizeToolDisclosure(options.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE;
   const toolDisclosureInstruction = options.requireToolDisclosureContract
     ? validateToolDisclosureDockerfileContract(dockerfile, toolDisclosure)

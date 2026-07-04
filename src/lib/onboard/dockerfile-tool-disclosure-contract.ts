@@ -7,6 +7,8 @@ import type { ToolDisclosure } from "../tool-disclosure";
 
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
 
+type DockerfileOpenOperation = "open" | "patch";
+
 function errnoCode(err: unknown): string | null {
   return typeof err === "object" && err !== null && "code" in err
     ? String((err as { code?: unknown }).code)
@@ -16,23 +18,45 @@ function errnoCode(err: unknown): string | null {
 export function openExistingRegularDockerfileNoFollow(
   dockerfilePath: string,
   flags: number,
+  operation: DockerfileOpenOperation = "open",
 ): number {
   if (typeof O_NOFOLLOW !== "number") {
-    throw new Error("Refusing to patch Dockerfile: O_NOFOLLOW is unavailable on this platform.");
+    throw new Error(
+      `Refusing to ${operation} Dockerfile: O_NOFOLLOW is unavailable on this platform.`,
+    );
+  }
+  // Bind the opened fd to the leaf identity sampled immediately before open.
+  // This catches a mutable ancestor or leaf being retargeted around openSync;
+  // O_NOFOLLOW independently rejects a symlink leaf.
+  const expectedFile = fs.lstatSync(dockerfilePath);
+  if (expectedFile.isSymbolicLink()) {
+    throw new Error(`Refusing to ${operation} Dockerfile through a symlink: ${dockerfilePath}`);
+  }
+  if (!expectedFile.isFile()) {
+    throw new Error(`Refusing to ${operation} non-regular Dockerfile path: ${dockerfilePath}`);
   }
   let fd: number;
   try {
     fd = fs.openSync(dockerfilePath, flags | O_NOFOLLOW, 0o600);
   } catch (err) {
     if (errnoCode(err) === "ELOOP") {
-      throw new Error(`Refusing to patch Dockerfile through a symlink: ${dockerfilePath}`);
+      throw new Error(`Refusing to ${operation} Dockerfile through a symlink: ${dockerfilePath}`);
     }
     throw err;
   }
   try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) {
-      throw new Error(`Refusing to patch non-regular Dockerfile path: ${dockerfilePath}`);
+    const fileStat = fs.fstatSync(fd);
+    if (
+      !fileStat.isFile() ||
+      fileStat.dev !== expectedFile.dev ||
+      fileStat.ino !== expectedFile.ino
+    ) {
+      if (fileStat.isFile()) {
+        throw new Error(
+          `Refusing to ${operation} Dockerfile because it changed during validation: ${dockerfilePath}`,
+        );
+      }
+      throw new Error(`Refusing to ${operation} non-regular Dockerfile path: ${dockerfilePath}`);
     }
     return fd;
   } catch (err) {
@@ -41,8 +65,15 @@ export function openExistingRegularDockerfileNoFollow(
   }
 }
 
-export function readExistingDockerfileNoFollow(dockerfilePath: string): string {
-  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_RDONLY);
+export function readExistingDockerfileNoFollow(
+  dockerfilePath: string,
+  operation: DockerfileOpenOperation = "open",
+): string {
+  const fd = openExistingRegularDockerfileNoFollow(
+    dockerfilePath,
+    fs.constants.O_RDONLY,
+    operation,
+  );
   try {
     return fs.readFileSync(fd, "utf8");
   } finally {
