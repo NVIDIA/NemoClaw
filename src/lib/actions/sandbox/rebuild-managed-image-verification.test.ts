@@ -155,10 +155,13 @@ describe("managed DCode rebuild image verification", () => {
 
   it("rejects changes through an already-open descriptor and disposes idempotently (#6195)", async () => {
     const fixture = await createPreparedDcodeImageFixture();
-    const mutationFd = fs.openSync(fixture.stagedDockerfile, fs.constants.O_WRONLY);
+    const mutationFd = fs.openSync(
+      fixture.stagedDockerfile,
+      fs.constants.O_WRONLY | fs.constants.O_APPEND,
+    );
     try {
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(true);
-      fs.appendFileSync(fixture.stagedDockerfile, "# temporary drift\n");
+      fs.writeSync(mutationFd, "# temporary drift\n", null, "utf8");
       expect(verifyPreparedDcodeRebuildImage(fixture.prepared)).toBe(false);
       fs.ftruncateSync(mutationFd, 0);
       fs.writeSync(mutationFd, "FROM scratch\n", 0, "utf8");
