@@ -3,6 +3,7 @@
 
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import {
@@ -21,6 +22,7 @@ export function prepareRebuildRecreateOptions(
   rebuildAgent: string | null,
   storedFromDockerfile: string | null,
   autoYes: boolean,
+  baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null,
   bail: RebuildBail,
 ): RebuildRecreateOnboardOpts | null {
   try {
@@ -29,6 +31,7 @@ export function prepareRebuildRecreateOptions(
       rebuildAgent,
       storedFromDockerfile,
       autoYes,
+      baseImageResolutionHint,
       usageNoticeAccepted: true,
     });
   } catch (err) {

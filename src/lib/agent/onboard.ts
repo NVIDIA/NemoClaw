@@ -53,16 +53,16 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
 
 export function ensureAgentBaseImage(
   agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): { imageTag: string | null; built: boolean } {
-  return baseImage.ensureAgentBaseImage(agent, opts);
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.EnsureAgentBaseImageResult {
+  return baseImage.ensureAgentBaseImage(agent, options);
 }
 
 export function createAgentSandbox(
   agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): { buildCtx: string; stagedDockerfile: string } {
-  return baseImage.createAgentSandbox(agent, opts);
+  options: baseImage.EnsureAgentBaseImageOptions = {},
+): baseImage.CreateAgentSandboxResult {
+  return baseImage.createAgentSandbox(agent, options);
 }
 
 /**
