@@ -19,6 +19,8 @@ export interface LocalInferenceRouteDeps {
   compactText(value: string): string;
   redact(value: string): string;
   localInferenceTimeoutSecs: number;
+  error?(message: string): void;
+  exitProcess?(code: number): never;
 }
 
 const LOCAL_PROVIDER_LABELS: Record<string, string> = {
@@ -33,6 +35,8 @@ const LOCAL_PROVIDER_LABELS: Record<string, string> = {
 // context — onboarding appears to stop silently after the [4/8] warning. See #4257.
 // Returns true if the user chose to back out to provider selection; false on success.
 export function createLocalInferenceRouteApplier(deps: LocalInferenceRouteDeps) {
+  const error = deps.error ?? console.error;
+  const exitProcess = deps.exitProcess ?? ((code: number): never => process.exit(code));
   return async function applyLocalInferenceRoute(
     provider: string,
     model: string,
@@ -57,16 +61,16 @@ export function createLocalInferenceRouteApplier(deps: LocalInferenceRouteDeps) 
       const detail =
         deps.compactText(deps.redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
         `Failed to configure inference provider '${provider}'.`;
-      console.error(`  ${detail}`);
+      error(`  ${detail}`);
       if (deps.isNonInteractive()) {
         // Only surface the resume guidance when we are actually about to exit —
         // printing it on every interactive retry is misleading because the user
         // is still inside an active onboard run.
-        console.error(
+        error(
           "  No sandbox was created. Fix the inference route and re-run " +
             "`nemoclaw onboard --resume` to continue, or choose a different provider/model.",
         );
-        process.exit(applyResult.status || 1);
+        exitProcess(applyResult.status || 1);
       }
       const retry = await deps.promptValidationRecovery(
         label,

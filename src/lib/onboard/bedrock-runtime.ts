@@ -130,6 +130,8 @@ export async function setupBedrockRuntimeInference(options: {
     credentialEnv?: string | null;
     forceOpenAiLike?: boolean;
   }) => void;
+  ensureAdapter?: typeof ensureBedrockRuntimeAdapter;
+  updateSandbox?: typeof registry.updateSandbox;
 }): Promise<{ handled: false } | { handled: true; result: SetupInferenceResult }> {
   const classification =
     options.provider === "compatible-anthropic-endpoint" && options.endpointUrl
@@ -147,7 +149,10 @@ export async function setupBedrockRuntimeInference(options: {
 
   let adapter: Awaited<ReturnType<typeof ensureBedrockRuntimeAdapter>>;
   try {
-    adapter = await ensureBedrockRuntimeAdapter({ classification, compatibleCredential });
+    adapter = await (options.ensureAdapter ?? ensureBedrockRuntimeAdapter)({
+      classification,
+      compatibleCredential,
+    });
   } catch (err) {
     console.error(
       `  Failed to start Bedrock Runtime adapter: ${err instanceof Error ? err.message : String(err)}`,
@@ -204,7 +209,7 @@ export async function setupBedrockRuntimeInference(options: {
     forceOpenAiLike: true,
   });
   if (options.sandboxName) {
-    registry.updateSandbox(options.sandboxName, {
+    (options.updateSandbox ?? registry.updateSandbox)(options.sandboxName, {
       model: options.model,
       provider: options.provider,
     });

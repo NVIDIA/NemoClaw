@@ -10,8 +10,8 @@
     "test/install-preflight.test.ts": 3934,
     "test/nemoclaw-start.test.ts": 4827,
     "test/onboard-messaging.test.ts": 2062,
-    "test/onboard-selection.test.ts": 6867,
-    "test/onboard.test.ts": 4774,
+    "test/onboard-selection.test.ts": 6603,
+    "test/onboard.test.ts": 4202,
     "test/policies.test.ts": 2332
   }
 }

@@ -6,7 +6,21 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  getWindowsHostOllamaDockerRequirement,
+  rejectUnsupportedWindowsHostOllama,
+} from "../src/lib/onboard/local-inference-topology.js";
+import { buildInferenceProviderMenu } from "../src/lib/onboard/provider-menu.js";
+import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
+import { reportProviderSelectionFailure } from "../src/lib/onboard/provider-selection-failure.js";
+import { createSetupNimOllamaHandlers } from "../src/lib/onboard/setup-nim-ollama.js";
+import type { SetupNimSelectionState } from "../src/lib/onboard/setup-nim-selection.js";
+import {
+  type DetectWindowsHostOllamaDeps,
+  detectWindowsHostOllama,
+} from "../src/lib/onboard/windows-host-ollama.js";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -17,6 +31,134 @@ const CREDENTIAL_RETRY_PROMPT_RE =
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
 const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
+
+const TEST_REMOTE_PROVIDER_CONFIG = {
+  build: { label: "NVIDIA Endpoints", providerName: "nvidia-prod" },
+  openai: { label: "OpenAI", providerName: "openai-api" },
+  custom: {
+    label: "Other OpenAI-compatible endpoint",
+    providerName: "compatible-endpoint",
+  },
+  anthropic: { label: "Anthropic", providerName: "anthropic-prod" },
+  anthropicCompatible: {
+    label: "Other Anthropic-compatible endpoint",
+    providerName: "compatible-anthropic-endpoint",
+  },
+  gemini: { label: "Google Gemini", providerName: "gemini-api" },
+};
+
+type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequirement>;
+type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
+type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
+
+function buildWindowsProviderMenu(
+  requirement: WindowsRequirement,
+  overrides: ProviderMenuOverrides = {},
+) {
+  return buildInferenceProviderMenu({
+    remoteProviderConfig: TEST_REMOTE_PROVIDER_CONFIG,
+    agentProviderOptions: [],
+    experimental: false,
+    gpuNimCapable: false,
+    hasOllama: false,
+    ollamaRunning: false,
+    ollamaHost: null,
+    ollamaPort: 11434,
+    isWsl: true,
+    hasWindowsOllama: false,
+    isWindowsHostOllama: false,
+    windowsHostLabelSuffix: requirement.supported ? "" : requirement.labelSuffix,
+    windowsHostInstallLabel: requirement.installLabel,
+    windowsHostStartLabel: requirement.startLabel,
+    windowsOllamaReachable: false,
+    winOllamaLoopbackOnly: false,
+    ollamaInstallEntry: null,
+    vllmEntries: [],
+    routedEnabled: false,
+    ...overrides,
+  });
+}
+
+function resolveWindowsProvider(
+  options: Array<{ key: string; label: string }>,
+  requestedProvider: string,
+  overrides: Partial<Parameters<typeof resolveRequestedProviderSelection>[0]> = {},
+) {
+  return resolveRequestedProviderSelection({
+    options,
+    requestedProvider,
+    sandboxName: null,
+    remoteProviderConfig: TEST_REMOTE_PROVIDER_CONFIG,
+    isWsl: true,
+    isWindowsHostOllama: false,
+    windowsHostOllamaSupported: true,
+    hermesProviderAvailable: false,
+    readRecordedProvider: () => null,
+    readRecordedNimContainer: () => null,
+    readRecordedModel: () => null,
+    ...overrides,
+  });
+}
+
+function makeOllamaSelectionState(): SetupNimSelectionState {
+  return {
+    model: null,
+    provider: "nvidia-prod",
+    endpointUrl: null,
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: null,
+    nimContainer: null,
+    allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
+  };
+}
+
+function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): SetupNimOllamaDeps {
+  const processStub = {
+    platform: "linux",
+    exit(code?: number): never {
+      throw new Error(`Unexpected process.exit(${String(code)})`);
+    },
+  } as NodeJS.Process;
+  return {
+    OLLAMA_PORT: 11434,
+    OLLAMA_PROXY_PORT: 11435,
+    process: processStub,
+    isNonInteractive: () => true,
+    prompt: async () => "",
+    checkOllamaPortsOrWarn: () => true,
+    ensureOllamaLoopbackSystemdOverride: () => "not-applicable",
+    runOllamaStartupOrGate: () => ({ kind: "ready" }),
+    shouldFrontOllamaWithProxy: () => false,
+    startOllamaAuthProxy: () => true,
+    getLocalProviderBaseUrl: () => "http://host.docker.internal:11434/v1",
+    selectAndValidateOllamaModel: async () => ({
+      outcome: "selected",
+      model: "qwen3:8b",
+      allowToolsIncompatible: false,
+    }),
+    printOllamaExposureWarning: () => {},
+    switchToWindowsOllamaHost: () => {},
+    installOllamaOnWindowsHost: async () => ({ ok: true }),
+    awaitWindowsOllamaReady: () => true,
+    setupWindowsOllamaWith0000Binding: () => true,
+    printWindowsOllamaTimeoutDiagnostics: () => {},
+    resetOllamaHostCache: () => {},
+    installOllamaOnMacOS: () => ({ ok: true }),
+    installOllamaOnLinux: () => ({ ok: true }),
+    abortNonInteractive(message: string): never {
+      throw new Error(message);
+    },
+    assertOllamaUpgradeApplied: () => ({ ok: true }),
+    ...overrides,
+  };
+}
+
+function nonInteractiveAbort(reason: string, hint?: string): never {
+  throw new Error(`[non-interactive] Aborting: ${reason}${hint ? `\n${hint}` : ""}`);
+}
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
@@ -5930,88 +6072,11 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("shows Windows-host Ollama in the menu with a Docker Desktop requirement on native Docker WSL", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-native-docker-menu-"),
-    );
-    const scriptPath = path.join(tmpDir, "windows-ollama-native-docker-menu-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker";
-credentials.ensureApiKey = async () => {};
-const messages = [];
-credentials.prompt = async (message) => {
-  messages.push(message);
-  if (/Choose \[/.test(message)) throw new Error("STOP_AFTER_MENU");
-  return "";
-};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("docker images")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe"))
-    return "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
-  return "";
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    try {
-      await setupNim(null, null);
-    } catch (error) {
-      if (!String(error && error.message).includes("STOP_AFTER_MENU")) throw error;
-    }
-    originalLog(JSON.stringify({ lines, messages }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "",
-        NEMOCLAW_PROVIDER: "",
-        NEMOCLAW_MODEL: "",
-      },
+    const requirement = getWindowsHostOllamaDockerRequirement("docker");
+    const { options } = buildWindowsProviderMenu(requirement, {
+      hasWindowsOllama: true,
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    const menuOutput = payload.lines.join("\n");
+    const menuOutput = options.map((option) => option.label).join("\n");
 
     assert.match(
       menuOutput,
@@ -6021,135 +6086,137 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("rejects Windows-host Ollama providers on native Docker WSL before launching Ollama", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+    const requirement = getWindowsHostOllamaDockerRequirement("docker");
+    assert.equal(requirement.supported, false);
     const scenarios = [
       { provider: "start-windows-ollama", hasWindowsOllama: true },
       { provider: "install-windows-ollama", hasWindowsOllama: false },
     ];
 
     for (const scenario of scenarios) {
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), `nemoclaw-onboard-${scenario.provider}-native-docker-`),
-      );
-      const scriptPath = path.join(tmpDir, `${scenario.provider}-native-docker-check.js`);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-      );
-      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-      const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-      const topologyPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-      );
-      const windowsPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-      );
-
-      const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-const windows = require(${windowsPath});
-const hasWindowsOllama = ${JSON.stringify(scenario.hasWindowsOllama)};
-
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker";
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("docker images")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
-    return hasWindowsOllama
-      ? "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe"
-      : "";
-  }
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
-  return "";
-};
-runner.run = () => ({ status: 0 });
-runner.runShell = () => ({ status: 0 });
-windows.installOllamaOnWindowsHost = async () => {
-  console.error("WINDOWS_INSTALL_CALLED");
-  return {
-    ok: true,
-    path: "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
-  };
-};
-windows.setupWindowsOllamaWith0000Binding = () => {
-  console.error("WINDOWS_SETUP_CALLED");
-  return true;
-};
-windows.switchToWindowsOllamaHost = () => {
-  console.error("WINDOWS_SWITCH_CALLED");
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  await setupNim(null, null);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_PROVIDER: scenario.provider,
-          NEMOCLAW_MODEL: "qwen3:8b",
-          NEMOCLAW_YES: "1",
-        },
+      const { options } = buildWindowsProviderMenu(requirement, {
+        hasWindowsOllama: scenario.hasWindowsOllama,
       });
+      const resolution = resolveWindowsProvider(options, scenario.provider, {
+        windowsHostOllamaSupported: false,
+      });
+      assert.equal(resolution.kind, "selected");
+      if (resolution.kind !== "selected") throw new Error("Expected provider selection");
+      assert.equal(resolution.selected.key, scenario.provider);
 
-      assert.equal(result.status, 1, `${scenario.provider} unexpectedly passed`);
-      assert.match(result.stderr, /\[non-interactive\] Aborting:/);
-      assert.match(result.stderr, new RegExp(`${scenario.provider} requires Docker Desktop`));
-      assert.match(result.stderr, /Choose WSL-local Ollama/);
-      assert.doesNotMatch(
-        result.stderr,
-        /WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
-      );
+      const install = vi.fn();
+      const setup = vi.fn();
+      const switchHost = vi.fn();
+      const abort = vi.fn(nonInteractiveAbort);
+      let failure = "";
+      try {
+        const rejected = rejectUnsupportedWindowsHostOllama(
+          requirement,
+          resolution.selected.key,
+          true,
+          () => true,
+          abort,
+        );
+        if (!rejected) {
+          install();
+          setup();
+          switchHost();
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+
+      assert.match(failure, /\[non-interactive\] Aborting:/);
+      assert.match(failure, new RegExp(scenario.provider + " requires Docker Desktop"));
+      assert.match(failure, /Choose WSL-local Ollama/);
+      assert.equal(abort.mock.calls.length, 1);
+      assert.equal(install.mock.calls.length, 0);
+      assert.equal(setup.mock.calls.length, 0);
+      assert.equal(switchHost.mock.calls.length, 0);
     }
   });
 
   it("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths", () => {
+    const requirement = getWindowsHostOllamaDockerRequirement("docker");
+    assert.equal(requirement.supported, false);
+    const { options } = buildWindowsProviderMenu(requirement, {
+      ollamaRunning: true,
+      ollamaHost: "host.docker.internal",
+      hasWindowsOllama: true,
+      isWindowsHostOllama: true,
+    });
+
+    for (const provider of ["ollama", "start-windows-ollama", "install-windows-ollama"]) {
+      const resolution = resolveWindowsProvider(options, provider, {
+        isWindowsHostOllama: true,
+        windowsHostOllamaSupported: false,
+      });
+      const modelSelection = vi.fn();
+      const install = vi.fn();
+      const setup = vi.fn();
+      const switchHost = vi.fn();
+      const abort = vi.fn(nonInteractiveAbort);
+      const reject = (providerKey: string, windowsHostSelected: boolean) =>
+        rejectUnsupportedWindowsHostOllama(
+          requirement,
+          providerKey,
+          windowsHostSelected,
+          () => true,
+          abort,
+        );
+      let failure = "";
+
+      try {
+        if (resolution.kind === "failure") {
+          reportProviderSelectionFailure({
+            reason: resolution.reason,
+            isWindowsHostOllama: true,
+            rejectWindowsHostOllama: reject,
+            writeError(message) {
+              throw new Error(message);
+            },
+          });
+        } else if (!reject(resolution.selected.key, true)) {
+          modelSelection();
+          install();
+          setup();
+          switchHost();
+        }
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+
+      assert.match(failure, /\[non-interactive\] Aborting:/);
+      assert.match(failure, new RegExp(provider + " requires Docker Desktop"));
+      assert.match(failure, /Choose WSL-local Ollama/);
+      assert.equal(abort.mock.calls.length, 1);
+      assert.equal(modelSelection.mock.calls.length, 0);
+      assert.equal(install.mock.calls.length, 0);
+      assert.equal(setup.mock.calls.length, 0);
+      assert.equal(switchHost.mock.calls.length, 0);
+    }
+
+    // Keep one production boundary to pin setupNim's reject-before-dispatch ordering.
     const repoRoot = path.join(import.meta.dirname, "..");
-    const scenarios = ["ollama", "start-windows-ollama", "install-windows-ollama"];
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-reachable-native-docker-"),
+    );
+    const scriptPath = path.join(tmpDir, "ollama-reachable-native-docker-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+    const topologyPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
+    );
+    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
+    );
 
-    for (const provider of scenarios) {
-      const tmpDir = fs.mkdtempSync(
-        path.join(os.tmpdir(), `nemoclaw-onboard-${provider}-reachable-native-docker-`),
-      );
-      const scriptPath = path.join(tmpDir, `${provider}-reachable-native-docker-check.js`);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-      const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-      );
-      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-      const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-      const topologyPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-      );
-      const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-      const windowsPath = JSON.stringify(
-        path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-      );
-
-      const script = String.raw`
+    const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
@@ -6168,8 +6235,9 @@ runner.runCapture = (command) => {
   if (cmd.includes("command -v ollama")) return "";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
   if (cmd.includes("docker images")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe"))
-    return "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
+    return "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+  }
   if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
   if (cmd.includes("api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
   return "";
@@ -6184,10 +6252,7 @@ local.getOllamaModelOptions = () => {
 };
 windows.installOllamaOnWindowsHost = async () => {
   console.error("WINDOWS_INSTALL_CALLED");
-  return {
-    ok: true,
-    path: "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
-  };
+  return { ok: true, path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe" };
 };
 windows.setupWindowsOllamaWith0000Binding = () => {
   console.error("WINDOWS_SETUP_CALLED");
@@ -6206,584 +6271,255 @@ const { setupNim } = require(${onboardPath});
   process.exit(1);
 });
 `;
-      fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
+    try {
+      const boundary = spawnSync(process.execPath, [scriptPath], {
         cwd: repoRoot,
         encoding: "utf-8",
         env: {
           ...process.env,
           HOME: tmpDir,
           NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_PROVIDER: provider,
+          NEMOCLAW_PROVIDER: "ollama",
           NEMOCLAW_MODEL: "qwen3:8b",
           NEMOCLAW_YES: "1",
         },
       });
 
-      assert.equal(result.status, 1, `${provider} unexpectedly passed`);
-      assert.match(result.stderr, /\[non-interactive\] Aborting:/);
-      assert.match(result.stderr, new RegExp(`${provider} requires Docker Desktop`));
-      assert.match(result.stderr, /Choose WSL-local Ollama/);
+      assert.equal(boundary.status, 1, "generic ollama unexpectedly passed");
+      assert.match(boundary.stderr, /\[non-interactive\] Aborting:/);
+      assert.match(boundary.stderr, /ollama requires Docker Desktop/);
+      assert.match(boundary.stderr, /Choose WSL-local Ollama/);
       assert.doesNotMatch(
-        result.stderr,
+        boundary.stderr,
         /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
       );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 
-  it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-install-to-start-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "windows-ollama-install-to-start-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
+  it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", async () => {
+    const requirement = getWindowsHostOllamaDockerRequirement("docker-desktop");
+    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+    const { options } = buildWindowsProviderMenu(requirement, {
+      hasWindowsOllama: true,
+    });
+    const resolution = resolveWindowsProvider(options, "install-windows-ollama");
+    assert.equal(resolution.kind, "selected");
+    if (resolution.kind !== "selected") throw new Error("Expected provider selection");
+    assert.equal(resolution.selected.key, "start-windows-ollama");
+
+    const install = vi.fn(async () => ({ ok: false, path: "" }));
+    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...args) => {
+      lines.push(args.join(" "));
+    });
+    const state = makeOllamaSelectionState();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        installOllamaOnWindowsHost: install,
+        setupWindowsOllamaWith0000Binding: setup,
+      }),
     );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
+    try {
+      const result = await handleWindowsHostOllamaSelection(
+        null,
+        resolution.selected.key,
+        "qwen3:8b",
+        false,
+        false,
+        installedPath,
+        state,
+      );
 
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker-desktop";
-
-const installedPath = "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
-const installCalls = [];
-const setupCalls = [];
-const runCommands = [];
-credentials.prompt = async () => "";
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return installedPath;
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
-  if (cmd.includes("api/tags")) {
-    if (setupCalls.length > 0) {
-      return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+      assert.equal(result, "selected");
+      assert.equal(state.provider, "ollama-local");
+      assert.equal(state.model, "qwen3:8b");
+      assert.equal(install.mock.calls.length, 0);
+      assert.deepEqual(
+        setup.mock.calls.map(([options]) => options),
+        [{ announceStop: false, installedPath }],
+      );
+      assert.ok(lines.some((line) => line.includes("Using Ollama on host.docker.internal:11434")));
+    } finally {
+      log.mockRestore();
     }
-    return "";
-  }
-  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = (command) => {
-  runCommands.push(Array.isArray(command) ? command.join(" ") : String(command));
-  return { status: 0 };
-};
-runner.runShell = (command) => {
-  runCommands.push(command);
-  return { status: 0 };
-};
-
-const local = require(${localPath});
-local.resetOllamaHostCache();
-local.getOllamaModelOptions = () => ["qwen3:8b"];
-
-const windows = require(${windowsPath});
-windows.installOllamaOnWindowsHost = async () => {
-  installCalls.push(true);
-  return { ok: false, path: "" };
-};
-windows.setupWindowsOllamaWith0000Binding = (opts) => {
-  setupCalls.push(opts || {});
-  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-  return true;
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("windows-install-to-start-test", null);
-    originalLog(JSON.stringify({ result, installCalls, setupCalls, lines, runCommands }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
-      },
-    });
-
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen3:8b");
-    assert.equal(payload.installCalls.length, 0);
-    // The restart/start path now forwards the verified executable path
-    // recovered from Get-Command so windows.ts can launch the binary
-    // directly instead of relying on the calling shell's Windows PATH
-    // (#3949).
-    assert.deepEqual(payload.setupCalls, [
-      {
-        announceStop: false,
-        // The mock injects `\\\\` per separator (raw template → 4 source
-        // backslashes per separator → 2 backslashes in the subprocess
-        // JS string). The deepEqual right-hand side is a regular TS
-        // string, so 4 backslashes per separator here equals 2 in the
-        // compiled string, matching what the subprocess captured.
-        installedPath:
-          "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
-      },
-    ]);
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Using Ollama on host.docker.internal:11434"),
-      ),
-    );
   });
 
-  it("detects Windows-host Ollama via running process when not on the user PATH (#3949)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-process-fallback-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "windows-ollama-process-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker-desktop";
-
-const setupCalls = [];
-const installedPath = "C:/Program Files/Ollama/ollama.exe";
-credentials.prompt = async () => "";
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  // The fix: Get-Command misses ollama.exe (service install, not on user
-  // PATH), but Get-Process recovers both the live PID and the verified
-  // executable path. Repro for #3949.
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Path"))
-    return installedPath;
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Id"))
-    return "7652";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-NetTCPConnection")) return "127.0.0.1";
-  if (cmd.includes("api/tags")) {
-    if (setupCalls.length === 0) return "";
-    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
-  }
-  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = () => ({ status: 0 });
-runner.runShell = () => ({ status: 0 });
-
-const local = require(${localPath});
-local.resetOllamaHostCache();
-local.getOllamaModelOptions = () => ["qwen3:8b"];
-
-const windows = require(${windowsPath});
-windows.installOllamaOnWindowsHost = async () => {
-  throw new Error("installOllamaOnWindowsHost called: hasWindowsOllama not detected");
-};
-windows.setupWindowsOllamaWith0000Binding = (opts) => {
-  setupCalls.push(opts || {});
-  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-  return true;
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("windows-process-fallback-test", null);
-    originalLog(JSON.stringify({ result, setupCalls, lines }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "start-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
-      },
+  it("detects Windows-host Ollama via running process when not on the user PATH (#3949)", async () => {
+    const installedPath = "C:/Program Files/Ollama/ollama.exe";
+    const runCapture = vi.fn<DetectWindowsHostOllamaDeps["runCapture"]>((command) => {
+      const rendered = Array.isArray(command) ? command.join(" ") : String(command);
+      if (rendered.includes("Get-Command ollama.exe")) return "";
+      if (rendered.includes("Get-Process ollama") && rendered.includes("Path")) {
+        return installedPath;
+      }
+      if (rendered.includes("Get-Process ollama") && rendered.includes("Id")) return "7652";
+      if (rendered.includes("Get-NetTCPConnection")) return "127.0.0.1";
+      return "";
+    });
+    const detected = detectWindowsHostOllama({ isWsl: () => true, runCapture });
+    assert.deepEqual(detected, {
+      installed: true,
+      installedPath,
+      loopbackOnly: true,
     });
 
-    assert.equal(
-      result.status,
-      0,
-      `Process failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+    const install = vi.fn(async () => ({ ok: false, path: "" }));
+    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const state = makeOllamaSelectionState();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        installOllamaOnWindowsHost: install,
+        setupWindowsOllamaWith0000Binding: setup,
+      }),
     );
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
 
-    assert.equal(payload.result.provider, "ollama-local");
-    // hasWindowsOllama detected via Get-Process → winOllamaLoopbackOnly
-    // observed from 127.0.0.1 listen → restart path taken with
-    // announceStop:true and the recovered executable path threaded
-    // through so windows.ts can target the verified binary instead of
-    // the broken PATH fallback. Pre-fix behaviour was the bogus install
-    // path with no setup call at all.
-    assert.deepEqual(payload.setupCalls, [
-      {
-        announceStop: true,
-        installedPath: "C:/Program Files/Ollama/ollama.exe",
-      },
-    ]);
+    try {
+      await handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        detected.loopbackOnly,
+        detected.installedPath,
+        state,
+      );
+
+      assert.equal(state.provider, "ollama-local");
+      assert.equal(install.mock.calls.length, 0);
+      assert.deepEqual(
+        setup.mock.calls.map(([options]) => options),
+        [{ announceStop: true, installedPath }],
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
-  it("uses a known Windows install path when a running Ollama process has no readable path", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-static-path-fallback-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "windows-ollama-static-path-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker-desktop";
-
-const setupCalls = [];
-const installedPath = "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe";
-credentials.prompt = async () => "";
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Path"))
-    return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Id"))
-    return "7652";
-  if (cmd.includes("powershell.exe") && cmd.includes("Test-Path -LiteralPath"))
-    return installedPath;
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-NetTCPConnection")) return "127.0.0.1";
-  if (cmd.includes("api/tags")) {
-    if (setupCalls.length === 0) return "";
-    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
-  }
-  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = () => ({ status: 0 });
-runner.runShell = () => ({ status: 0 });
-
-const local = require(${localPath});
-local.resetOllamaHostCache();
-local.getOllamaModelOptions = () => ["qwen3:8b"];
-
-const windows = require(${windowsPath});
-windows.installOllamaOnWindowsHost = async () => {
-  throw new Error("installOllamaOnWindowsHost called: hasWindowsOllama not detected");
-};
-windows.setupWindowsOllamaWith0000Binding = (opts) => {
-  setupCalls.push(opts || {});
-  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-  return true;
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("windows-static-path-fallback-test", null);
-    originalLog(JSON.stringify({ result, setupCalls, lines }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "start-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
-      },
+  it("uses a known Windows install path when a running Ollama process has no readable path", async () => {
+    const installedPath = "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe";
+    const runCapture = vi.fn<DetectWindowsHostOllamaDeps["runCapture"]>((command) => {
+      const rendered = Array.isArray(command) ? command.join(" ") : String(command);
+      if (rendered.includes("Get-Command ollama.exe")) return "";
+      if (rendered.includes("Get-Process ollama") && rendered.includes("Path")) return "";
+      if (rendered.includes("Test-Path -LiteralPath")) return installedPath;
+      if (rendered.includes("Get-Process ollama") && rendered.includes("Id")) return "7652";
+      if (rendered.includes("Get-NetTCPConnection")) return "127.0.0.1";
+      return "";
+    });
+    const detected = detectWindowsHostOllama({ isWsl: () => true, runCapture });
+    assert.deepEqual(detected, {
+      installed: true,
+      installedPath,
+      loopbackOnly: true,
     });
 
-    assert.equal(
-      result.status,
-      0,
-      `Process failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+    const install = vi.fn(async () => ({ ok: false, path: "" }));
+    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const state = makeOllamaSelectionState();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        installOllamaOnWindowsHost: install,
+        setupWindowsOllamaWith0000Binding: setup,
+      }),
     );
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
 
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.deepEqual(payload.setupCalls, [
-      {
-        announceStop: true,
-        installedPath: "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe",
-      },
-    ]);
+    try {
+      await handleWindowsHostOllamaSelection(
+        null,
+        "start-windows-ollama",
+        "qwen3:8b",
+        false,
+        detected.loopbackOnly,
+        detected.installedPath,
+        state,
+      );
+
+      assert.equal(state.provider, "ollama-local");
+      assert.equal(install.mock.calls.length, 0);
+      assert.deepEqual(
+        setup.mock.calls.map(([options]) => options),
+        [{ announceStop: true, installedPath }],
+      );
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("does not satisfy start-windows-ollama with WSL-local Ollama", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-wsl-fallback-"),
-    );
-    const scriptPath = path.join(tmpDir, "windows-ollama-no-wsl-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-    );
+    const requirement = getWindowsHostOllamaDockerRequirement("docker-desktop");
+    const { options } = buildWindowsProviderMenu(requirement, {
+      hasOllama: true,
+      ollamaRunning: true,
+      ollamaHost: "127.0.0.1",
+      hasWindowsOllama: false,
+    });
+    const resolution = resolveWindowsProvider(options, "start-windows-ollama", {
+      isWsl: true,
+      isWindowsHostOllama: false,
+    });
+    assert.equal(resolution.kind, "failure");
+    if (resolution.kind !== "failure") throw new Error("Expected provider selection failure");
 
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker-desktop";
-
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
-  if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
-  return "";
-};
-
-const local = require(${localPath});
-local.resetOllamaHostCache();
-
-const windows = require(${windowsPath});
-windows.setupWindowsOllamaWith0000Binding = () => {
-  console.error("WINDOWS_SETUP_CALLED");
-  return false;
-};
-windows.switchToWindowsOllamaHost = () => {
-  console.error("WINDOWS_SWITCH_CALLED");
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  await setupNim("windows-no-wsl-fallback-test", null);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "start-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
+    const setup = vi.fn();
+    const switchHost = vi.fn();
+    const errors: string[] = [];
+    reportProviderSelectionFailure({
+      reason: resolution.reason,
+      isWindowsHostOllama: false,
+      rejectWindowsHostOllama: () => {
+        setup();
+        switchHost();
+        return true;
       },
+      writeError: (message) => errors.push(message),
     });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Requested provider 'start-windows-ollama' is not available/);
-    assert.doesNotMatch(result.stderr, /WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/);
+    assert.match(errors.join("\n"), /Requested provider 'start-windows-ollama' is not available/);
+    assert.equal(setup.mock.calls.length, 0);
+    assert.equal(switchHost.mock.calls.length, 0);
   });
 
   it("does not satisfy install-windows-ollama with non-WSL local Ollama", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-linux-fallback-"),
-    );
-    const scriptPath = path.join(tmpDir, "windows-ollama-no-linux-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-    );
+    const requirement = getWindowsHostOllamaDockerRequirement(null);
+    const { options } = buildWindowsProviderMenu(requirement, {
+      hasOllama: true,
+      ollamaRunning: true,
+      ollamaHost: "127.0.0.1",
+      isWsl: false,
+      hasWindowsOllama: false,
+    });
+    const resolution = resolveWindowsProvider(options, "install-windows-ollama", {
+      isWsl: false,
+      isWindowsHostOllama: false,
+    });
+    assert.equal(resolution.kind, "failure");
+    if (resolution.kind !== "failure") throw new Error("Expected provider selection failure");
 
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-platform.isWsl = () => false;
-
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  return "";
-};
-
-const local = require(${localPath});
-local.resetOllamaHostCache();
-
-const windows = require(${windowsPath});
-windows.installOllamaOnWindowsHost = async () => {
-  console.error("WINDOWS_INSTALL_CALLED");
-  return { ok: false, path: "" };
-};
-windows.setupWindowsOllamaWith0000Binding = () => {
-  console.error("WINDOWS_SETUP_CALLED");
-  return false;
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  await setupNim("windows-no-linux-fallback-test", null);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
+    const install = vi.fn();
+    const setup = vi.fn();
+    const errors: string[] = [];
+    reportProviderSelectionFailure({
+      reason: resolution.reason,
+      isWindowsHostOllama: false,
+      rejectWindowsHostOllama: () => {
+        install();
+        setup();
+        return true;
       },
+      writeError: (message) => errors.push(message),
     });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Requested provider 'install-windows-ollama' is not available/);
-    assert.doesNotMatch(result.stderr, /WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED/);
+    assert.match(errors.join("\n"), /Requested provider 'install-windows-ollama' is not available/);
+    assert.equal(install.mock.calls.length, 0);
+    assert.equal(setup.mock.calls.length, 0);
   });
 
   it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {
