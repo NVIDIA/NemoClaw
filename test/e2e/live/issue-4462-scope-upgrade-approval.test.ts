@@ -594,9 +594,16 @@ def inert_final_pending_failures(state, context, reviewed_target):
         hashlib.sha256(current_token.encode()).hexdigest()
         if isinstance(current_token, str) else ''
     )
-    # OpenClaw can publish this no-capability metadata repair after the reviewed
-    # scope upgrade. Leave it untouched; the final real agent call proves that
-    # it is irrelevant to this scope gate rather than treating it as paired.
+    authorization_inert=(
+        request.get('scopes') == [] and request.get('silent') is True
+    ) or (
+        request.get('scopes') == ['operator.pairing']
+        and request.get('silent') is False
+    )
+    # OpenClaw can publish an already-authorized local or pairing-only repair
+    # after the reviewed scope upgrade. Leave it untouched; the final real
+    # agent call proves it is irrelevant to this scope gate rather than
+    # treating the pending request itself as paired.
     checks=(
         ('same-device-count', len(pending) == 1),
         ('target-present', bool(reviewed_target)),
@@ -634,9 +641,9 @@ def inert_final_pending_failures(state, context, reviewed_target):
         ('successor-repair', request.get('isRepair') is True),
         ('successor-role',
             request.get('role') == 'operator' and request.get('roles') == ['operator']),
-        ('successor-scopes', scope_keys == {'scopes'} and request.get('scopes') == []),
+        ('successor-scope-fields', scope_keys == {'scopes'}),
+        ('successor-authorization-inert', authorization_inert),
         ('successor-auth-fields', not unexpected_auth_keys),
-        ('successor-silent-local', request.get('silent') is True),
     )
     return [name for name, valid in checks if not valid]
 def inert_final_pending(state, context, reviewed_target):
@@ -700,6 +707,13 @@ def verify_inert_final_pending_classifier():
     valid={'pending': {'inert-request': request}}
     if not inert_final_pending(valid, context, reviewed):
         fail('inert final-state classifier rejected its reviewed shape')
+    pairing_only={
+        'pending': {'inert-request': {
+            **request, 'scopes': ['operator.pairing'], 'silent': False,
+        }}
+    }
+    if not inert_final_pending(pairing_only, context, reviewed):
+        fail('inert final-state classifier rejected a pairing-only successor')
     with_unrelated={'pending': {**valid['pending'], 'unrelated-request': {
         **request, 'requestId': 'unrelated-request', 'deviceId': 'other-device',
     }}}
@@ -723,6 +737,7 @@ def verify_inert_final_pending_classifier():
         }}}, context, reviewed),
         ({'pending': {'inert-request': missing_scopes}}, context, reviewed),
         (changed_request({'scopes': ['operator.read']}), context, reviewed),
+        (changed_request({'scopes': ['operator.pairing']}), context, reviewed),
         (changed_request({'scopes': 'operator.read'}), context, reviewed),
         (changed_request({'requestedScopes': []}), context, reviewed),
         (changed_request({'unknownScopes': []}), context, reviewed),
