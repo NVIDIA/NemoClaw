@@ -206,9 +206,7 @@ function runLoggedPackageScript(script: string): string[][] {
         PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
       },
     });
-    if (result.status !== 0) {
-      throw new Error(`Package script failed: ${result.stderr}`);
-    }
+    expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
     return readFileSync(commandLog, "utf8")
       .trim()
       .split("\n")
