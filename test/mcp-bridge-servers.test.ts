@@ -615,10 +615,25 @@ describe("authenticated MCP live fixtures", () => {
     expect(missedSearch).toMatchObject({
       choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
     });
+    const legacySearch = await post(
+      [
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_tool_search",
+          content: "Discovered fake_fake_echo",
+        },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(legacySearch).toMatchObject({
+      choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
+    });
     const searchResult = {
       role: "tool",
       tool_call_id: "call_progressive_tool_search",
-      content: "Discovered fake_fake_echo",
+      content:
+        "Found 1 matching hidden tool(s); returning 1 bounded discovery candidate(s) " +
+        "(per-search limit 20):\n- fake_fake_echo: Authenticated MCP tool",
     };
     const callBody = await post([searchResult], ["search_tools", "ls", "fake_fake_echo"]);
     expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({

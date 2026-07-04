@@ -392,7 +392,7 @@ export async function startCompatibleMock(options: {
           };
         } else if (
           toolResultCount !== 1 ||
-          !hasExpectedToolResult(0, "call_progressive_tool_search", ["Discovered", toolName])
+          !hasExpectedToolResult(0, "call_progressive_tool_search", [`- ${toolName}:`])
         ) {
           protocolError = "search_tools did not return the expected progressive target";
         } else if (!visibleToolNames.has(toolName)) {
