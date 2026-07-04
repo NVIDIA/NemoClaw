@@ -1171,6 +1171,8 @@ const { onboard } = require(${onboardPath});
           compactText: (value) => value.trim(),
           redact: (value) => value,
           localInferenceTimeoutSecs: 120,
+          error: vi.fn(),
+          exitProcess: () => assert.fail("unexpected exit"),
         });
         harness = createDirectSetupInferenceHarness({
           runOpenshell: (args) =>
@@ -1179,9 +1181,7 @@ const { onboard } = require(${onboardPath});
               : undefined,
           overrides: { applyLocalInferenceRoute },
         });
-
         await harness.setupInference("test-box", "meta-llama", "vllm-local");
-
         const providerCommand = harness.commands.find((entry) =>
           entry.command.includes("provider create"),
         );
@@ -1206,6 +1206,8 @@ const { onboard } = require(${onboardPath});
       compactText: (value) => value.trim(),
       redact: (value) => value,
       localInferenceTimeoutSecs: 120,
+      error: vi.fn(),
+      exitProcess: () => assert.fail("unexpected exit"),
     });
     harness = createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
@@ -1237,7 +1239,6 @@ const { onboard } = require(${onboardPath});
     } finally {
       warn.mockRestore();
     }
-
     assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
     const providerCommand = harness.commands.find(
       (entry) =>
@@ -1299,7 +1300,6 @@ const { onboard } = require(${onboardPath});
     } finally {
       warn.mockRestore();
     }
-
     const setCmd = harness.commands.find((entry) =>
       entry.command.includes("inference set --no-verify --provider ollama-local"),
     );

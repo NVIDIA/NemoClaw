@@ -126,6 +126,8 @@ function makeRouteApplier() {
     compactText: (value) => value.trim(),
     redact: (value) => value,
     localInferenceTimeoutSecs: 30,
+    error: unusedCommonInferenceDeps.error,
+    exitProcess: unusedCommonInferenceDeps.exitProcess,
   });
 }
 
