@@ -26,11 +26,11 @@ import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 import {
-  DEFAULT_TOOL_DISCLOSURE,
-  invalidRecordedToolDisclosure,
-  normalizeToolDisclosure,
+  assignSafeToolDisclosureUpdate,
+  normalizeSessionToolDisclosure,
+  preserveInvalidSessionToolDisclosure,
   type ToolDisclosure,
-} from "../tool-disclosure";
+} from "./onboard-session-tool-disclosure";
 import {
   LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   RECORD_ONLY_STEP_MUTATION_OPTIONS,
@@ -59,14 +59,8 @@ const STEP_STATES: readonly StepStatus[] = [
   "skipped",
 ];
 const VALID_STEP_STATES: ReadonlySet<string> = new Set(STEP_STATES);
-const INVALID_TOOL_DISCLOSURE_SESSIONS = new WeakSet<object>();
 
-/** True when a normalized session carried a non-null, unsupported persisted value. */
-export function hasInvalidSessionToolDisclosure(session: unknown): boolean {
-  return typeof session === "object" && session !== null
-    ? INVALID_TOOL_DISCLOSURE_SESSIONS.has(session)
-    : false;
-}
+export { hasInvalidSessionToolDisclosure } from "./onboard-session-tool-disclosure";
 
 // ── Types ────────────────────────────────────────────────────────
 
@@ -444,9 +438,6 @@ function transitionMachineSnapshot(
 }
 
 export function createSession(overrides: Partial<Session> = {}): Session {
-  const invalidToolDisclosure =
-    hasInvalidSessionToolDisclosure(overrides) ||
-    invalidRecordedToolDisclosure(overrides.toolDisclosure);
   const now = new Date().toISOString();
   const startedAt = overrides.startedAt ?? now;
   const steps = {
@@ -477,7 +468,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
-    toolDisclosure: normalizeToolDisclosure(overrides.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE,
+    toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -496,15 +487,12 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       createMachineSnapshot("init", startedAt),
     steps,
   };
-  if (invalidToolDisclosure) INVALID_TOOL_DISCLOSURE_SESSIONS.add(session);
+  preserveInvalidSessionToolDisclosure(overrides, session);
   return session;
 }
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
   if (!isObject(data) || data.version !== SESSION_VERSION) return null;
-
-  const invalidToolDisclosure =
-    hasInvalidSessionToolDisclosure(data) || invalidRecordedToolDisclosure(data.toolDisclosure);
 
   const normalized = createSession({
     sessionId: readString(data.sessionId) ?? undefined,
@@ -524,7 +512,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
-    toolDisclosure: normalizeToolDisclosure(data.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE,
+    toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -550,7 +538,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
   }
 
   normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
-  if (invalidToolDisclosure) INVALID_TOOL_DISCLOSURE_SESSIONS.add(normalized);
+  preserveInvalidSessionToolDisclosure(data, normalized);
 
   return normalized;
 }
@@ -1021,8 +1009,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
-  const toolDisclosure = normalizeToolDisclosure(updates.toolDisclosure);
-  if (toolDisclosure) safe.toolDisclosure = toolDisclosure;
+  assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {

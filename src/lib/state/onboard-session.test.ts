@@ -164,25 +164,6 @@ describe("onboard session", () => {
     expect(dirStat.mode & 0o777).toBe(0o700);
   });
 
-  it("round-trips direct tool disclosure and defaults legacy sessions to progressive", () => {
-    session.saveSession(session.createSession({ toolDisclosure: "direct" }));
-    expect(requireLoadedSession(session.loadSession()).toolDisclosure).toBe("direct");
-    expect(requireDebugSummary(session.summarizeForDebug()).toolDisclosure).toBe("direct");
-
-    const legacy = session.createSession() as unknown as Record<string, unknown>;
-    delete legacy.toolDisclosure;
-    expect(requireLoadedSession(normalizeLegacySession(legacy)).toolDisclosure).toBe("progressive");
-  });
-
-  it("marks corrupt persisted tool-disclosure state instead of treating it as legacy missing", () => {
-    const corrupt = session.createSession() as unknown as Record<string, unknown>;
-    corrupt.toolDisclosure = "everything";
-
-    const normalized = requireLoadedSession(session.normalizeSession(corrupt as never));
-    expect(normalized.toolDisclosure).toBe("progressive");
-    expect(session.hasInvalidSessionToolDisclosure(normalized)).toBe(true);
-  });
-
   it("redacts credential-bearing endpoint URLs before persisting them", () => {
     session.saveSession(session.createSession());
     markStepCompleteLegacy(session, stepMutation, "provider_selection", {

@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Session } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
+import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;
@@ -12,6 +16,22 @@ export interface SandboxResumeSignals {
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
+}
+
+export function resolveToolDisclosureResumeSignals(
+  registryEntry: SandboxEntry | null,
+  session: Session | null,
+): Pick<SandboxResumeSignals, "toolDisclosureMigrationNeeded" | "toolDisclosureChanged"> {
+  const recorded = normalizeToolDisclosure(registryEntry?.toolDisclosure);
+  const migrationNeeded = Boolean(registryEntry && registryEntry.toolDisclosure === undefined);
+  return {
+    toolDisclosureMigrationNeeded: migrationNeeded,
+    toolDisclosureChanged: Boolean(
+      registryEntry &&
+        !migrationNeeded &&
+        recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
+    ),
+  };
 }
 
 export type SandboxResumeDecision =

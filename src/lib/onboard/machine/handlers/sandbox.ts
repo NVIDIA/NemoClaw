@@ -13,7 +13,7 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
-import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -21,6 +21,7 @@ import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sa
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -371,18 +372,9 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const registryEntry = state.sandboxName
-      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
-      : null;
-    const recordedToolDisclosure = normalizeToolDisclosure(registryEntry?.toolDisclosure);
-    const desiredToolDisclosure = toolDisclosureOrDefault(state.session?.toolDisclosure);
-    const toolDisclosureMigrationNeeded = Boolean(
-      registryEntry && registryEntry.toolDisclosure === undefined,
-    );
-    const toolDisclosureChanged = Boolean(
-      registryEntry &&
-        !toolDisclosureMigrationNeeded &&
-        recordedToolDisclosure !== desiredToolDisclosure,
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
+      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
+      state.session,
     );
     return decideSandboxResume({
       resume: this.options.resume,
@@ -401,8 +393,7 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
-      toolDisclosureMigrationNeeded,
-      toolDisclosureChanged,
+      ...toolDisclosureSignals,
     });
   }
 
