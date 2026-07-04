@@ -136,6 +136,19 @@ class FileSnapshot:
         )
 
 
+# invalidState: persisted intent is treated as gateway-applied before a healthy
+# replacement gateway has consumed it, or mutable config bytes race an anchor
+# transition and are accidentally blessed.
+# sourceBoundary: this guard owns parsing and atomically advancing the durable
+# intended/applied marker; the transaction helper owns candidate writes and
+# rollback, while startup advances `applied` only after replacement health.
+# whyNotSourceFix: config bytes prove desired state but cannot prove which bytes
+# a long-lived Hermes gateway consumed; Hermes/OpenShell exposes no authenticated
+# applied-config digest in the pinned runtime.
+# regressionTest: hermes-mcp-integrity-state covers pending/current transitions,
+# metadata-only apply, stale snapshots, rollback, and startup commit ordering.
+# removalCondition: replace this marker only when the runtime exposes an
+# authenticated applied-config digest with equivalent transactional rollback.
 @dataclass(frozen=True)
 class McpHashState:
     intended: str
@@ -1216,6 +1229,12 @@ def refresh_hashes(
     if mcp_transition not in {"preserve", "intend", "apply"}:
         raise UnsafePathError("refusing unsupported Hermes MCP hash transition")
 
+    # Snapshot-stability/TOCTOU contract: derive the config hash and canonical
+    # MCP digest from one `_read_text` result, retain both config/env inode
+    # snapshots, and reopen/compare them before each anchor write and once after
+    # the final write. For `apply`, the complete pending anchor must also remain
+    # byte-identical, so advancing only the metadata line cannot bless unrelated
+    # config/env drift between gateway health and commit.
     state_path = hash_file if mode in ("strict", "both") else compat_hash
     # Runtime refresh is allowed to advance an existing trust anchor, never to
     # create one from the mutable config it is supposed to authenticate. Image

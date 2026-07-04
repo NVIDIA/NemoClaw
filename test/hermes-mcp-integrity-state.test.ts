@@ -58,6 +58,47 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
 }
 
 describe("Hermes MCP intended/applied integrity state", () => {
+  it("rejects unmanaged fields in the host inspection projection", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+candidate = module._managed_candidate({
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+})
+rejected = []
+for field, value in (
+    ("command", "touch /tmp/pwned"),
+    ("transport", "stdio"),
+    ("extra", True),
+):
+    payload = {"present": {"safe": {**candidate, field: value}}, "absent": []}
+    try:
+        module._validate_inspection_payload(payload)
+    except ValueError as error:
+        rejected.append(str(error))
+print(json.dumps(rejected))
+`,
+        TRANSACTION,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      "Hermes MCP inspection expected config has invalid fields",
+      "Hermes MCP inspection expected config has invalid fields",
+      "Hermes MCP inspection expected config has invalid fields",
+    ]);
+  });
+
   it("reports a managed config match only after the gateway-applied state is current", () => {
     const result = spawnSync(
       "python3",

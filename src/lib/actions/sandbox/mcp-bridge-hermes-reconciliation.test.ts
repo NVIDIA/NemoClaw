@@ -111,21 +111,50 @@ describe("Hermes MCP host reconciliation", () => {
     });
   });
 
-  it("fails closed and redacts helper diagnostics", () => {
+  it("fails closed and sanitizes helper stdout and stderr", () => {
     process.env.GITHUB_TOKEN = "host-only-secret";
     mocks.runOpenshellProviderCommand.mockReturnValue({
       status: 2,
-      stdout: "",
-      stderr: "Hermes MCP config drifted: host-only-secret",
+      stdout: "\x1b[32mFORGED SUCCESS\x1b[0m\ngeneric ghp_0123456789abcdefghij",
+      stderr: "Hermes MCP config drifted: host-only-secret\r\n\x1b]0;spoof\x07SECOND",
     });
 
     expect(inspectHermesMcpRuntimeIntent("alpha")).toEqual({
       ok: false,
       state: "mismatch",
-      detail: "Hermes MCP config drifted: ***REDACTED***",
+      detail: "Hermes MCP config drifted: ***REDACTED*** SECOND FORGED SUCCESS generic <REDACTED>",
     });
     expect(() => assertHermesMcpRuntimeIntent("alpha")).toThrow(
       /does not match the persisted managed intent/,
+    );
+  });
+
+  it("sanitizes thrown helper failures before returning or throwing them", () => {
+    process.env.GITHUB_TOKEN = "host-only-secret";
+    mocks.runOpenshellProviderCommand.mockImplementation(() => {
+      throw new Error(
+        "\x1b[31mhelper failed\x1b[0m\nFORGED READY host-only-secret sk-proj-0123456789abcdef",
+      );
+    });
+
+    expect(inspectHermesMcpRuntimeIntent("alpha")).toEqual({
+      ok: false,
+      state: "error",
+      detail: "helper failed FORGED READY ***REDACTED*** <REDACTED>",
+    });
+
+    let thrown: unknown;
+    try {
+      assertHermesMcpRuntimeIntent("alpha");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).not.toMatch(/[\r\n\x1b]/);
+    expect((thrown as Error).message).not.toContain("host-only-secret");
+    expect((thrown as Error).message).not.toContain("sk-proj-0123456789abcdef");
+    expect((thrown as Error).message).toContain(
+      "helper failed FORGED READY ***REDACTED*** <REDACTED>",
     );
   });
 

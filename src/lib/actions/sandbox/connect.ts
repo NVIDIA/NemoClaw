@@ -59,6 +59,7 @@ import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-st
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
+import { sanitizeHermesMcpReconciliationDetail } from "./mcp-bridge-hermes-reconciliation";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
@@ -247,9 +248,10 @@ function exitOnMcpReconciliationRefusal(
     "mcpReconciliationReason" in processCheck
       ? String(processCheck.mcpReconciliationReason)
       : "the effective Hermes MCP configuration does not match persisted managed intent";
+  const sanitizedDetail = sanitizeHermesMcpReconciliationDetail(detail);
   console.error("");
   console.error(
-    `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — ${detail}.`,
+    `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — ${sanitizedDetail}.`,
   );
   console.error(
     `  Run \`nemoclaw ${sandboxName} mcp restart\` to restore the managed MCP configuration, then retry.`,

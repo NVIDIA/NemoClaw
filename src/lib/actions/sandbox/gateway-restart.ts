@@ -5,6 +5,7 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFull } from "../../security/redact";
+import { sanitizeHermesMcpReconciliationDetail } from "./mcp-bridge-hermes-reconciliation";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -304,11 +305,12 @@ export function restartSandboxGatewayWithDeps(
   if (agentName === "hermes") {
     const reconciliation = deps.inspectHermesMcpRuntimeIntent(sandboxName);
     if (!reconciliation.ok) {
-      printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", reconciliation.detail);
+      const detail = sanitizeHermesMcpReconciliationDetail(reconciliation.detail);
+      printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", detail);
       return {
         ok: false,
         failureLayer: "MCP reconciliation refusal",
-        detail: reconciliation.detail,
+        detail,
       };
     }
   }

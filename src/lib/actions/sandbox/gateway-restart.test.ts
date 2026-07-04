@@ -104,6 +104,34 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
     }
   });
 
+  it("returns only sanitized Hermes MCP reconciliation detail", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        getSessionAgent: () => ({
+          name: "hermes",
+          displayName: "Hermes Agent",
+          runtime: { type: "gateway" },
+        }),
+        getSandbox: () => ({ name: "alpha", agent: "hermes" }),
+        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
+          ok: false,
+          state: "mismatch",
+          detail: "\x1b[31mintegrity pending\x1b[0m\nFORGED SUCCESS ghp_0123456789abcdefghij",
+        })),
+      });
+
+      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
+        ok: false,
+        failureLayer: "MCP reconciliation refusal",
+        detail: "integrity pending FORGED SUCCESS <REDACTED>",
+      });
+      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
   it("refuses supervisor output without a completion marker", () => {
     const deps = baseDeps({
       getSandbox: () => ({ name: "openclaw-box", agent: "openclaw" }),

@@ -124,8 +124,9 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # exact loaded MCP policy remains the running-supervisor capability proof.
     # regressionTest: hermes-mcp-config-transaction and image packaging tests cover
     # both layouts, strict parsing, version alignment, and reserved-name parity.
-    # removalCondition: use an upstream capability/version attestation once the
-    # minimum supported OpenShell release exposes one to workload startup.
+    # removalCondition: replace this manifest boundary only when the live
+    # supervisor exposes an authenticated, machine-readable attestation binding
+    # both its running version and child-env contract to workload startup.
     candidates = (
         Path(__file__).with_name(BOUNDARY_MANIFEST_NAME),
         Path(__file__).resolve().parents[2]
@@ -394,6 +395,11 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
     return candidate
 
 
+_MANAGED_CANDIDATE_FIELDS = frozenset(
+    {"url", "enabled", "timeout", "connect_timeout", "tools", "headers"}
+)
+
+
 def _validate_inspection_payload(payload: dict[str, object]) -> None:
     if set(payload) != {"present", "absent"}:
         raise ValueError("Hermes MCP inspection payload has invalid fields")
@@ -414,6 +420,8 @@ def _validate_inspection_payload(payload: dict[str, object]) -> None:
     for server, expected in present.items():
         if not isinstance(expected, dict):
             raise ValueError("Hermes MCP inspection expected config must be an object")
+        if not set(expected).issubset(_MANAGED_CANDIDATE_FIELDS):
+            raise ValueError("Hermes MCP inspection expected config has invalid fields")
         synthetic = {
             "server": server,
             "url": expected.get("url"),

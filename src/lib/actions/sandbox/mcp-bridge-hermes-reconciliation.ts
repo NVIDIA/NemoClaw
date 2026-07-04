@@ -4,15 +4,19 @@
 import { runOpenshellProviderCommand } from "../../actions/global";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
+import { redactFull } from "../../security/redact";
 import { buildHermesMcpIntentPayload } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
-import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
+import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 
 const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 const HERMES_MCP_INSPECT_TIMEOUT_SECONDS = 45;
 const HERMES_MCP_INSPECT_TIMEOUT_MS = 60_000;
 const HERMES_MCP_RECONCILIATION_FAILURE =
   "Hermes MCP runtime does not match the persisted managed intent";
+const ANSI_OR_UNSAFE_CONTROL_RE =
+  /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g;
+const DISPLAY_LINE_BREAK_RE = /[\r\n\u2028\u2029]+/g;
 
 export type HermesMcpReconciliationResult =
   | { ok: true; state: "matched" | "not-applicable" }
@@ -62,18 +66,40 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
   return null;
 }
 
-function redactedDetail(
-  result: ReturnType<typeof runOpenshellProviderCommand>,
-  entries: readonly McpBridgeEntry[],
+export function sanitizeHermesMcpReconciliationDetail(
+  detail: string,
+  entries: readonly McpBridgeEntry[] = [],
 ): string {
-  let detail = commandOutput(result).trim();
+  // Reconciliation detail crosses from an untrusted sandbox helper into host
+  // exceptions and terminal output. Remove terminal controls before matching
+  // secrets so escape bytes cannot split a token and evade redaction.
+  let sanitized = String(detail || "").replace(ANSI_OR_UNSAFE_CONTROL_RE, "");
   for (const entry of entries) {
     const envValues = Object.fromEntries(
       entry.env.flatMap((name) => (process.env[name] ? [[name, process.env[name]]] : [])),
     );
-    detail = redactBridgeSecretsForDisplay(detail, entry, envValues);
+    sanitized = redactBridgeSecretsForDisplay(sanitized, entry, envValues);
   }
-  return detail || HERMES_MCP_RECONCILIATION_FAILURE;
+  return (
+    redactFull(sanitized).replace(DISPLAY_LINE_BREAK_RE, " ").replace(/\s+/g, " ").trim() ||
+    HERMES_MCP_RECONCILIATION_FAILURE
+  );
+}
+
+function commandStream(value: string | Buffer | null | undefined): string {
+  return typeof value === "string" ? value : (value?.toString() ?? "");
+}
+
+function sanitizedCommandDetail(
+  result: ReturnType<typeof runOpenshellProviderCommand>,
+  entries: readonly McpBridgeEntry[],
+): string {
+  return sanitizeHermesMcpReconciliationDetail(
+    [commandStream(result.stderr), commandStream(result.stdout), result.error?.message]
+      .filter(Boolean)
+      .join("\n"),
+    entries,
+  );
 }
 
 export function inspectHermesMcpRuntimeIntent(
@@ -82,7 +108,11 @@ export function inspectHermesMcpRuntimeIntent(
 ): HermesMcpReconciliationResult {
   const sandbox = registry.getSandbox(sandboxName);
   if (!sandbox) {
-    return { ok: false, state: "error", detail: `Sandbox '${sandboxName}' not found.` };
+    return {
+      ok: false,
+      state: "error",
+      detail: sanitizeHermesMcpReconciliationDetail(`Sandbox '${sandboxName}' not found.`),
+    };
   }
   const entries = options.entries ? [...options.entries] : bridgeEntries(sandbox);
   const managedServerNames = options.managedServerNames
@@ -104,7 +134,10 @@ export function inspectHermesMcpRuntimeIntent(
     return {
       ok: false,
       state: "error",
-      detail: error instanceof Error ? error.message : String(error),
+      detail: sanitizeHermesMcpReconciliationDetail(
+        error instanceof Error ? error.message : String(error),
+        entries,
+      ),
     };
   }
   const response = parseLastJsonObject(result.stdout || "");
@@ -119,7 +152,7 @@ export function inspectHermesMcpRuntimeIntent(
   return {
     ok: false,
     state: result.status === 2 ? "mismatch" : "error",
-    detail: redactedDetail(result, entries),
+    detail: sanitizedCommandDetail(result, entries),
   };
 }
 
@@ -130,6 +163,9 @@ export function assertHermesMcpRuntimeIntent(
   const inspection = inspectHermesMcpRuntimeIntent(sandboxName, options);
   if (inspection.ok) return;
   throw new McpBridgeError(
-    `${HERMES_MCP_RECONCILIATION_FAILURE} for sandbox '${sandboxName}': ${inspection.detail}.`,
+    `${sanitizeHermesMcpReconciliationDetail(
+      `${HERMES_MCP_RECONCILIATION_FAILURE} for sandbox '${sandboxName}': ${inspection.detail}`,
+      options.entries,
+    )}.`,
   );
 }
