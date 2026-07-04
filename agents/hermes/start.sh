@@ -1676,7 +1676,7 @@ refresh_hermes_runtime_config_hashes() {
 
 inspect_hermes_mcp_integrity() {
   local hash_file="${1:-}"
-  local output
+  local guard_status
   [ -n "$hash_file" ] || {
     if [ "$(id -u)" -eq 0 ]; then
       hash_file="$HERMES_HASH_FILE"
@@ -1684,21 +1684,26 @@ inspect_hermes_mcp_integrity() {
       hash_file="${HERMES_DIR}/.config-hash"
     fi
   }
-  if ! output="$("$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
+  # Keep the guard as the startup owner's direct child. A command
+  # substitution here would interpose a shell process and invalidate the
+  # exact-parent proof used by --startup-owner. State is returned only through
+  # the kernel-owned exit status: 0=current, 10=pending, anything else=failure.
+  # This avoids a same-UID writable result file or ambiguous shell byte parsing.
+  if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
     --hermes-dir "$HERMES_DIR" \
     --hash-file "$hash_file" \
-    --startup-owner 2>&1)"; then
-    printf '%s\n' "$output" >&2
-    HERMES_MCP_INTEGRITY_FAILED=1
-    echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: MCP intent cannot be matched to the persisted gateway state; rebuild the sandbox from its NemoClaw registry state" >&2
-    return 1
+    --startup-owner \
+    --mcp-state-exit-code >/dev/null; then
+    guard_status=0
+  else
+    guard_status=$?
   fi
-  case "$output" in
-    mcp_state=current) HERMES_MCP_RECONCILE_PENDING=0 ;;
-    mcp_state=pending) HERMES_MCP_RECONCILE_PENDING=1 ;;
+  case "$guard_status" in
+    0) HERMES_MCP_RECONCILE_PENDING=0 ;;
+    10) HERMES_MCP_RECONCILE_PENDING=1 ;;
     *)
       HERMES_MCP_INTEGRITY_FAILED=1
-      echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: invalid MCP integrity response; rebuild the sandbox from its NemoClaw registry state" >&2
+      echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: MCP intent cannot be matched to the persisted gateway state; rebuild the sandbox from its NemoClaw registry state" >&2
       return 1
       ;;
   esac

@@ -167,4 +167,15 @@ describe("Hermes MCP host reconciliation", () => {
     });
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
   });
+
+  it("fails closed when a corrupted registry key returns another sandbox name", () => {
+    mocks.getSandbox.mockReturnValue(sandbox({ name: "other" }));
+
+    expect(inspectHermesMcpRuntimeIntent("alpha")).toEqual({
+      ok: false,
+      state: "error",
+      detail: "Registry entry name mismatch for sandbox 'alpha'.",
+    });
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+  });
 });

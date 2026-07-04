@@ -21,7 +21,7 @@ function withTmpDir(run: (tmpDir: string) => void): void {
   }
 }
 
-describe("gateway supervisor MCP failure contract", () => {
+describe("gateway supervisor MCP failure contract (#6257)", () => {
   it.each([
     "mcp-integrity",
     "mcp-reconcile-required",

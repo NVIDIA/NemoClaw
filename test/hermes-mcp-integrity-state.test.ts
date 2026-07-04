@@ -7,7 +7,16 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { bashPrintfQ, extractShellFunction } from "./support/hermes-shell-harness";
+
 const GUARD = path.join(import.meta.dirname, "..", "agents", "hermes", "runtime-config-guard.py");
+const BUILD_DIGEST = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "build-mcp-digest.py",
+);
 const TRANSACTION = path.join(
   import.meta.dirname,
   "..",
@@ -58,6 +67,206 @@ function runHermesRootMcpStartup(commitStatus: 0 | 1) {
 }
 
 describe("Hermes MCP intended/applied integrity state", () => {
+  it("uses the runtime canonicalizer for the build-time MCP seal", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-build-seal-"));
+    const config = path.join(tempDir, "config.yaml");
+    fs.writeFileSync(
+      config,
+      "mcp_servers:\n  zed:\n    url: https://zed.example/mcp\n  alpha:\n    url: https://alpha.example/mcp\n",
+    );
+
+    try {
+      const buildDigest = spawnSync(
+        "python3",
+        ["-I", BUILD_DIGEST, "--guard", GUARD, "--config", config],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      const runtimeDigest = spawnSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          String.raw`
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+print(guard._canonical_mcp_servers_digest(open(sys.argv[2], encoding="utf-8").read()))
+`,
+          GUARD,
+          config,
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(buildDigest.status, buildDigest.stderr).toBe(0);
+      expect(runtimeDigest.status, runtimeDigest.stderr).toBe(0);
+      expect(buildDigest.stdout).toMatch(/^[0-9a-f]{64}\n$/u);
+      expect(buildDigest.stdout).toBe(runtimeDigest.stdout);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns current and pending through the guarded CLI status protocol", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+root = tempfile.mkdtemp(prefix="hermes-mcp-cli-status-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+anchor = os.path.join(root, "hermes.config-hash")
+open(config, "w", encoding="utf-8").write("model: test\n")
+open(env, "w", encoding="utf-8").write("SAFE=1\n")
+hash_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(anchor, hash_text)
+
+def inspect_status():
+    sys.argv = [
+        "runtime-config-guard.py",
+        "inspect-mcp-integrity",
+        "--hermes-dir", hermes,
+        "--hash-file", anchor,
+        "--startup-owner",
+        "--mcp-state-exit-code",
+    ]
+    return guard.main()
+
+current = inspect_status()
+open(config, "w", encoding="utf-8").write(
+    "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n"
+)
+guard.refresh_hashes(hermes, anchor, "strict", mcp_transition="intend")
+pending = inspect_status()
+sys.argv = [
+    "runtime-config-guard.py",
+    "ensure-api-key",
+    "--hermes-dir", hermes,
+    "--mcp-state-exit-code",
+]
+try:
+    guard.main()
+except SystemExit as error:
+    misuse = error.code
+else:
+    misuse = 0
+print(json.dumps({"current": current, "pending": pending, "misuse": misuse}))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ current: 0, pending: 10, misuse: 1 });
+  });
+
+  it("runs startup-owned MCP inspection as a direct child", () => {
+    const source = fs.readFileSync(START, "utf-8");
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-parent-"));
+    const helper = path.join(tempDir, "guard-helper.sh");
+    const parentFile = path.join(tempDir, "guard-parent");
+    fs.writeFileSync(
+      helper,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        'printf "%s\\n" "$PPID" >"$NEMOCLAW_TEST_GUARD_PARENT_FILE"',
+        'printf "%s\\n" "mcp_state=current"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            extractShellFunction(source, "inspect_hermes_mcp_integrity"),
+            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
+            "HERMES_DIR=/test/.hermes",
+            "HERMES_HASH_FILE=/test/hermes.config-hash",
+            `NEMOCLAW_TEST_GUARD_PARENT_FILE=${bashPrintfQ(parentFile)}`,
+            "export NEMOCLAW_TEST_GUARD_PARENT_FILE",
+            "HERMES_MCP_RECONCILE_PENDING=9",
+            "caller_pid=$BASHPID",
+            "inspect_hermes_mcp_integrity",
+            'IFS= read -r guard_parent <"$NEMOCLAW_TEST_GUARD_PARENT_FILE"',
+            '[ "$guard_parent" = "$caller_pid" ]',
+            'printf "pending=%s\\n" "$HERMES_MCP_RECONCILE_PENDING"',
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("pending=0\n");
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { status: 0, expected: "rc=0 pending=0 failed=0\n" },
+    { status: 10, expected: "rc=0 pending=1 failed=0\n" },
+    { status: 1, expected: "rc=1 pending=9 failed=1\n" },
+  ])("uses only the authenticated guard exit status ($status)", ({ status, expected }) => {
+    const source = fs.readFileSync(START, "utf-8");
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-status-"));
+    const helper = path.join(tempDir, "guard-helper.sh");
+    fs.writeFileSync(
+      helper,
+      [
+        "#!/bin/bash",
+        "set -euo pipefail",
+        "printf 'mcp_state=current\\0attacker\\nmcp_state=pending'",
+        `exit ${status}`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -uo pipefail",
+            extractShellFunction(source, "inspect_hermes_mcp_integrity"),
+            `_HERMES_PYTHON=${bashPrintfQ(helper)}`,
+            "_HERMES_RUNTIME_CONFIG_GUARD=/test/runtime-config-guard.py",
+            "HERMES_DIR=/test/.hermes",
+            "HERMES_HASH_FILE=/test/hermes.config-hash",
+            "HERMES_MCP_RECONCILE_PENDING=9",
+            "HERMES_MCP_INTEGRITY_FAILED=0",
+            "if inspect_hermes_mcp_integrity; then rc=0; else rc=$?; fi",
+            'printf "rc=%s pending=%s failed=%s\\n" "$rc" "$HERMES_MCP_RECONCILE_PENDING" "$HERMES_MCP_INTEGRITY_FAILED"',
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe(expected);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unmanaged fields in the host inspection projection", () => {
     const result = spawnSync(
       "python3",

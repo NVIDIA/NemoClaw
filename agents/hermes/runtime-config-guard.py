@@ -48,6 +48,7 @@ MAX_PROC_BYTES = 1024 * 1024
 PROC_ROOT = "/proc"
 MAX_PROC_ENTRIES = 32768
 MCP_HASH_STATE_PREFIX = "# nemoclaw-hermes-mcp-state-v1"
+MCP_INTEGRITY_PENDING_EXIT_CODE = 10
 MCP_HASH_STATE_RE = re.compile(
     rf"{re.escape(MCP_HASH_STATE_PREFIX)} intended=([0-9a-f]{{64}}) applied=([0-9a-f]{{64}})"
 )
@@ -165,7 +166,8 @@ class McpHashState:
 # regressionTest: hermes-mcp-integrity-state mutates config after authentication
 # and proves the final snapshot validation refuses the raced managed-state match.
 # removalCondition: remove this snapshot token only when Hermes exposes an
-# authenticated applied-config digest and exact config bytes through one API.
+# authenticated applied-config digest and exact config bytes through one API;
+# #6257 tracks that upstream attestation boundary.
 @dataclass(frozen=True)
 class McpIntegritySnapshot:
     state: str
@@ -571,6 +573,11 @@ def _pinned_process_matches_supervised_nonroot_start(
     supervisor_identity: tuple[str, int | None],
     expected_effective_uid: int,
 ) -> bool:
+    # OpenShell 0.0.72 keeps its supervisor at PID 1 and launches the non-root
+    # NemoClaw entrypoint as a child, so startup authority must be proved from
+    # pinned procfs identity rather than a PID-1 equality check. Remove this
+    # compatibility proof when #6256 provides authenticated supervisor/runtime
+    # attestation with a unified workload topology.
     proc_pid_fd = -1
     try:
         numeric_pid = int(pid, 10)
@@ -1251,6 +1258,18 @@ def refresh_hashes(
     mode: str,
     mcp_transition: str = "preserve",
 ) -> None:
+    """Advance the durable MCP intended/applied state without blessing drift.
+
+    ``preserve`` requires current config to equal intended. ``intend`` records
+    current config as the next intent while retaining the last applied digest.
+    ``rollback`` requires restored config to equal the prior applied digest,
+    then conservatively records restored/failed-candidate until reload health is
+    proven. ``apply`` is a metadata-only intended/intended commit and requires
+    the complete pending config/env anchor to remain byte-identical. Thus a new
+    image begins current/current, add/remove moves to new/old, rollback moves to
+    old/new, and only a healthy replacement advances either pending state to
+    current/current; concurrent config or env changes fail closed.
+    """
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash = os.path.join(hermes_dir, ".config-hash")
@@ -4666,11 +4685,16 @@ def main() -> int:
         "--rollback-shields-mode", choices=("locked", "mutable"), default=""
     )
     parser.add_argument("--startup-owner", action="store_true")
+    parser.add_argument("--mcp-state-exit-code", action="store_true")
     args = parser.parse_args()
 
     previous_alarm_handler = signal.signal(signal.SIGALRM, _deadline_expired)
     signal.alarm(GUARD_DEADLINE_SECONDS)
     try:
+        if args.mcp_state_exit_code and args.action != "inspect-mcp-integrity":
+            raise UnsafePathError(
+                "--mcp-state-exit-code requires inspect-mcp-integrity"
+            )
         _validate_action_readiness(args.action, args.startup_owner)
         if args.action == "ensure-api-key":
             if not args.hash_file:
@@ -4683,7 +4707,17 @@ def main() -> int:
         elif args.action == "inspect-mcp-integrity":
             if not args.hash_file:
                 raise UnsafePathError("inspect-mcp-integrity requires --hash-file")
-            print(f"mcp_state={inspect_mcp_integrity(args.hermes_dir, args.hash_file)}")
+            state = inspect_mcp_integrity(args.hermes_dir, args.hash_file)
+            if args.mcp_state_exit_code:
+                # Startup uses an exit-only protocol so no same-UID process can
+                # forge a named result file and no shell parser can truncate an
+                # embedded NUL or accept a non-canonical response.
+                if state == "current":
+                    return 0
+                if state == "pending":
+                    return MCP_INTEGRITY_PENDING_EXIT_CODE
+                raise UnsafePathError("refusing unknown Hermes MCP integrity state")
+            print(f"mcp_state={state}")
         elif args.action == "commit-mcp-applied":
             if not args.hash_file:
                 raise UnsafePathError("commit-mcp-applied requires --hash-file")

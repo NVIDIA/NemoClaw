@@ -121,6 +121,15 @@ export function inspectHermesMcpRuntimeIntent(
       detail: sanitizeHermesMcpReconciliationDetail(`Sandbox '${sandboxName}' not found.`),
     };
   }
+  if (sandbox.name !== sandboxName) {
+    return {
+      ok: false,
+      state: "error",
+      detail: sanitizeHermesMcpReconciliationDetail(
+        `Registry entry name mismatch for sandbox '${sandboxName}'.`,
+      ),
+    };
+  }
   const entries = options.entries ? [...options.entries] : bridgeEntries(sandbox);
   const managedServerNames = options.managedServerNames
     ? [...options.managedServerNames]

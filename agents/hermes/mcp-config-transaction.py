@@ -126,7 +126,8 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # both layouts, strict parsing, version alignment, and reserved-name parity.
     # removalCondition: replace this manifest boundary only when the live
     # supervisor exposes an authenticated, machine-readable attestation binding
-    # both its running version and child-env contract to workload startup.
+    # both its running version and child-env contract to workload startup; #6256
+    # tracks that upstream capability boundary.
     candidates = (
         Path(__file__).with_name(BOUNDARY_MANIFEST_NAME),
         Path(__file__).resolve().parents[2]
@@ -443,6 +444,10 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     compatibility_hash_path = (
         os.path.join(HERMES_DIR, ".config-hash") if privileged else None
     )
+    # TOCTOU contract: this call reads config, env, and every hash anchor into
+    # one authenticated snapshot. After comparing the returned config bytes to
+    # host intent, `assert_mcp_integrity_snapshot_current` reopens every path and
+    # requires the same inode/content metadata before any match is reported.
     integrity = guard.inspect_mcp_integrity_snapshot(
         HERMES_DIR, hash_path, compatibility_hash_path
     )
