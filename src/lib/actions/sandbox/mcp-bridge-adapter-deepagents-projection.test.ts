@@ -41,9 +41,11 @@ describe("Deep Agents managed MCP projection safety", () => {
     expect(rollbackCommand).toContain(
       `len(payload['expectedServers']) > ${String(DEEPAGENTS_MCP_MAX_SERVERS)}`,
     );
-    expect(registrationCommand.indexOf("len(payload) > MANAGED_MCP_MAX_BYTES")).toBeLessThan(
-      registrationCommand.indexOf("os.ftruncate(descriptor, 0)"),
-    );
+    const sizeCheckIndex = registrationCommand.indexOf("len(payload) > MANAGED_MCP_MAX_BYTES");
+    const truncateIndex = registrationCommand.indexOf("os.ftruncate(descriptor, 0)");
+    expect(sizeCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(truncateIndex).toBeGreaterThanOrEqual(0);
+    expect(sizeCheckIndex).toBeLessThan(truncateIndex);
   });
 
   it("applies the shared server cap before normal and rollback v2 publication", () => {

@@ -16,10 +16,10 @@ const managedRuntimePath = path.join(
 
 function runManagedHelper(source: string) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-mcp-"));
-  const helperPath = path.join(tempDir, "_nemoclaw_managed.py");
-  const helperSource = fs.readFileSync(managedRuntimePath, "utf-8");
-  fs.writeFileSync(helperPath, helperSource, "utf-8");
   try {
+    const helperPath = path.join(tempDir, "_nemoclaw_managed.py");
+    const helperSource = fs.readFileSync(managedRuntimePath, "utf-8");
+    fs.writeFileSync(helperPath, helperSource, "utf-8");
     return spawnSync("python3", ["-I", "-c", source, helperPath], {
       encoding: "utf-8",
       timeout: 5000,

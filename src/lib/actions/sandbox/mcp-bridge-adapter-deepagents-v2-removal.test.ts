@@ -11,14 +11,22 @@ import { buildDeepAgentsMcpStatusCommand } from "./mcp-bridge-adapter-status";
 
 describe("Deep Agents MCP config adapter v2 removal", () => {
   it("fails Deep Agents removal on corrupt config unless forced", () => {
-    const normal = buildDeepAgentsMcpRemoveCommand(baseEntry);
-    const forced = buildDeepAgentsMcpRemoveCommand(baseEntry, true);
+    const corruptProjection = { mcpServers: [] };
+    const normal = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRemoveCommand(baseEntry),
+      corruptProjection,
+    );
+    expect(normal.status).toBe(2);
+    expect(normal.stderr).toContain("Invalid managed MCP v2 server map");
+    expect(normal.config).toEqual(corruptProjection);
 
-    expect(normal).toContain("Invalid managed MCP v2 projection");
-    expect(normal).toContain('\\"force\\":false');
-    expect(normal).toContain("raise SystemExit(2)");
-    expect(normal).toContain("Refusing to remove modified MCP server");
-    expect(forced).toContain('\\"force\\":true');
+    const forced = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRemoveCommand(baseEntry, true),
+      corruptProjection,
+    );
+    expect(forced.status, forced.stderr).toBe(0);
+    expect(forced.stdout.trim()).toBe("NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=removed");
+    expect(forced.config).toEqual({ mcpServers: {} });
   });
 
   it("treats every extra Deep Agents server field as ownership drift", () => {

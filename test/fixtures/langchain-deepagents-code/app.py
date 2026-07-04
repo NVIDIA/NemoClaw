@@ -65,20 +65,20 @@ class DeepAgentsApp:
         return str((launch_cwd / path).resolve())
 
     async def _check_for_updates(self, *, periodic=False):
-        del periodic
+        pass
 
     async def _handle_update_command(self, command="/update"):
-        del command
+        pass
 
     async def _handle_install_command(self, command):
-        del command
+        pass
 
     async def _install_extra(self, *args, **kwargs):
         del args, kwargs
         return True
 
     async def _handle_install_package(self, *args, **kwargs):
-        del args, kwargs
+        pass
 
     async def _handle_auto_update_toggle(self):
         return None
