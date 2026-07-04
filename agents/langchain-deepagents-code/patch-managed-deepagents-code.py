@@ -365,6 +365,13 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
+# supported managed progressive-disclosure middleware hook in its agent factory
+# API, and this repository cannot change that third-party package source.
+# Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
+# fail-closed integration. Remove it once upstream provides a supported hook
+# preserving managed MCP, credentials, approvals, executor, sandbox, and private
+# checkpoint-state boundaries.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
