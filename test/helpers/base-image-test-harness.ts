@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import path from "node:path";
 
 import { vi } from "vitest";
 
@@ -51,7 +52,7 @@ export function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefini
     hasDevicePairing: false,
     phoneHomeHosts: [],
     dockerfileBasePath: "/test/root/agents/hermes/Dockerfile.base",
-    dockerfilePath: "/test/root/agents/hermes/Dockerfile",
+    dockerfilePath: path.resolve(import.meta.dirname, "../../agents/hermes/Dockerfile"),
     startScriptPath: null,
     policyAdditionsPath: null,
     policyPermissivePath: null,

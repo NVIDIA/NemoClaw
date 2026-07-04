@@ -54,10 +54,10 @@ Package-specific guides:
 | Run package contracts | `npm run test:package` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
-| Run all linters | `make check` |
+| Run all repository checks | `npm run check` |
 | Run all hooks manually | `npx prek run --all-files` |
 | Type-check CLI | `npm run typecheck:cli` |
-| Auto-format | `make format` |
+| Auto-format | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 

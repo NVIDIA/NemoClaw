@@ -17,12 +17,35 @@ import {
 import { ROOT } from "../runner";
 import {
   buildLocalBaseTag,
+  createSandboxBaseImageResolutionKey,
+  createSandboxBaseImageResolutionMetadata,
+  getImageGlibcVersion,
+  type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
   SANDBOX_BASE_TAG,
+  type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import type { AgentDefinition } from "./defs";
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+
+export interface EnsureAgentBaseImageOptions {
+  forceBaseImageRebuild?: boolean;
+  resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+  forceBaseImageRefresh?: boolean;
+}
+
+export interface EnsureAgentBaseImageResult {
+  imageTag: string | null;
+  built: boolean;
+  resolutionMetadata?: SandboxBaseImageResolutionMetadata;
+}
+
+export interface CreateAgentSandboxResult {
+  buildCtx: string;
+  stagedDockerfile: string;
+  baseImageResolutionMetadata: SandboxBaseImageResolutionMetadata | null;
+}
 
 export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
   return `NEMOCLAW_${agentName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
@@ -51,6 +74,35 @@ export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string)
   return pinnedRef;
 }
 
+function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
+  if (agent.name !== "hermes") return null;
+  const finalDockerfile = agent.dockerfilePath;
+  if (!finalDockerfile) {
+    throw new Error("Hermes is missing its final sandbox Dockerfile");
+  }
+  let dockerfile: string;
+  try {
+    dockerfile = fs.readFileSync(finalDockerfile, "utf8");
+  } catch (error) {
+    throw new Error(`Failed to read Hermes final Dockerfile: ${finalDockerfile}`, {
+      cause: error,
+    });
+  }
+  const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
+    (match) => match[1],
+  );
+  const pinnedRef = declarations.length === 1 ? declarations[0] : null;
+  if (
+    !pinnedRef ||
+    !/^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
+  ) {
+    throw new Error(
+      "Hermes final Dockerfile must declare exactly one immutable official sandbox base image",
+    );
+  }
+  return pinnedRef;
+}
+
 function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: string): boolean {
   if (agent.name !== "hermes") return true;
   if (
@@ -61,25 +113,7 @@ function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: stri
   ) {
     return true;
   }
-  if (!imageRef.startsWith("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:")) return false;
-  const finalDockerfile = agent.dockerfilePath;
-  if (!finalDockerfile) return false;
-  let dockerfile: string;
-  try {
-    dockerfile = fs.readFileSync(finalDockerfile, "utf8");
-  } catch {
-    return false;
-  }
-  const declarations = [...dockerfile.matchAll(/^ARG BASE_IMAGE=(\S+)$/gm)].map(
-    (match) => match[1],
-  );
-  return (
-    declarations.length === 1 &&
-    /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(
-      declarations[0] ?? "",
-    ) &&
-    imageRef === declarations[0]
-  );
+  return imageRef === getHermesPinnedRemoteBaseRef(agent);
 }
 
 /**
@@ -103,41 +137,70 @@ export function hermesBaseImageSupportsMcp(imageRef: string): boolean {
   return output.trim() === HERMES_MCP_RUNTIME_PROBE_OK;
 }
 
+function createAgentBaseImageResolutionOptions(
+  agent: AgentDefinition,
+  dockerfilePath: string,
+  options: EnsureAgentBaseImageOptions,
+): ResolveBaseImageOptions {
+  const imageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const validateImage = agent.name === "hermes" ? hermesBaseImageSupportsMcp : undefined;
+  return {
+    imageName,
+    dockerfilePath,
+    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
+    envVar: getAgentSandboxBaseImageEnvVar(agent.name),
+    label: `${agent.displayName} sandbox base image`,
+    requireOpenshellSandboxAbi: process.platform === "linux",
+    resolutionHint: options.resolutionHint,
+    forceRefresh: options.forceBaseImageRefresh,
+    rootDir: ROOT,
+    pinnedRemoteRef: getHermesPinnedRemoteBaseRef(agent) ?? undefined,
+    validateImage,
+    validationDescription:
+      agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined,
+  };
+}
+
+function createLocalResolutionMetadata(
+  options: ResolveBaseImageOptions,
+  imageTag: string,
+  glibcVersion?: string | null,
+): SandboxBaseImageResolutionMetadata | null {
+  return createSandboxBaseImageResolutionMetadata(
+    options,
+    createSandboxBaseImageResolutionKey(options),
+    {
+      ref: imageTag,
+      digest: null,
+      source: "local",
+      glibcVersion:
+        glibcVersion === undefined
+          ? process.platform === "linux"
+            ? getImageGlibcVersion(imageTag)
+            : null
+          : glibcVersion,
+    },
+  );
+}
+
 /**
  * Ensure the agent-specific sandbox base image exists locally.
  * Rebuild callers can force this so local Dockerfile.base edits are applied.
  */
 export function ensureAgentBaseImage(
   agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  imageTag: string | null;
-  built: boolean;
-} {
+  options: EnsureAgentBaseImageOptions = {},
+): EnsureAgentBaseImageResult {
   const baseDockerfile = agent.dockerfileBasePath;
 
   if (!baseDockerfile) {
     return { imageTag: null, built: false };
   }
 
-  const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const resolutionOptions = createAgentBaseImageResolutionOptions(agent, baseDockerfile, options);
+  const baseImageName = resolutionOptions.imageName;
   const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
-  const localBaseImageTag = buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT);
   const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agent.name);
-  const validateImage = agent.name === "hermes" ? hermesBaseImageSupportsMcp : undefined;
-  const validationDescription =
-    agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined;
-  const resolutionOptions = {
-    imageName: baseImageName,
-    dockerfilePath: baseDockerfile,
-    localTag: localBaseImageTag,
-    envVar: overrideEnvVar,
-    label: `${agent.displayName} sandbox base image`,
-    requireOpenshellSandboxAbi: process.platform === "linux",
-    rootDir: ROOT,
-    validateImage,
-    validationDescription,
-  };
   const resolveExactImage = (imageRef: string) =>
     resolveSandboxBaseImage({
       ...resolutionOptions,
@@ -148,8 +211,8 @@ export function ensureAgentBaseImage(
         NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
       },
     });
-  const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
-  if (forceBaseImageRebuild) {
+
+  if (options.forceBaseImageRebuild === true) {
     const forceBuildTag = `nemoclaw-${agent.name}-sandbox-base-local:build-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
     console.log(`  Rebuilding ${agent.displayName} base image...`);
     const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
@@ -177,7 +240,16 @@ export function ensureAgentBaseImage(
         );
       }
       console.log(`  \u2713 Base image built: ${pinnedBaseImageTag}`);
-      return { imageTag: pinnedBaseImageTag, built: true };
+      const resolutionMetadata = createLocalResolutionMetadata(
+        resolutionOptions,
+        pinnedBaseImageTag,
+        resolved.glibcVersion,
+      );
+      return {
+        imageTag: pinnedBaseImageTag,
+        built: true,
+        ...(resolutionMetadata ? { resolutionMetadata } : {}),
+      };
     } finally {
       dockerRmi(forceBuildTag, { ignoreError: true, suppressOutput: true });
     }
@@ -187,20 +259,25 @@ export function ensureAgentBaseImage(
   const resolved = explicitOverride
     ? resolveExactImage(explicitOverride)
     : resolveSandboxBaseImage(resolutionOptions);
-  if (resolved && !forceBaseImageRebuild) {
+  if (resolved) {
     if (!hermesFinalDockerfileAcceptsBase(agent, resolved.ref)) {
       throw new Error(
         `Hermes final image does not accept base image ref '${resolved.ref}'; use the tracked official digest or a repository-built local base`,
       );
     }
     console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
-    return { imageTag: resolved.ref, built: false };
+    return {
+      imageTag: resolved.ref,
+      built: false,
+      ...(resolved.metadata ? { resolutionMetadata: resolved.metadata } : {}),
+    };
   }
-  if (!resolved && (process.platform === "linux" || validateImage) && !forceBaseImageRebuild) {
+  if (process.platform === "linux" || resolutionOptions.validateImage) {
     throw new Error(
       `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
     );
   }
+
   const inspectResult = dockerImageInspect(baseImageTag, {
     ignoreError: true,
     suppressOutput: true,
@@ -218,28 +295,35 @@ export function ensureAgentBaseImage(
       throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
     }
     console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
+    const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
+    return {
+      imageTag: baseImageTag,
+      built: true,
+      ...(resolutionMetadata ? { resolutionMetadata } : {}),
+    };
   }
 
   console.log(`  Base image exists: ${baseImageTag}`);
-  return { imageTag: baseImageTag, built: false };
+  const resolutionMetadata = createLocalResolutionMetadata(resolutionOptions, baseImageTag);
+  return {
+    imageTag: baseImageTag,
+    built: false,
+    ...(resolutionMetadata ? { resolutionMetadata } : {}),
+  };
 }
 
 /** Stage build context for an agent-specific sandbox image. */
 export function createAgentSandbox(
   agent: AgentDefinition,
-  opts: { forceBaseImageRebuild?: boolean } = {},
-): {
-  buildCtx: string;
-  stagedDockerfile: string;
-} {
+  options: EnsureAgentBaseImageOptions = {},
+): CreateAgentSandboxResult {
   const agentDockerfile = agent.dockerfilePath;
 
   if (!agentDockerfile) {
     throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
   }
 
-  const { imageTag: baseImageRef } = ensureAgentBaseImage(agent, opts);
+  const { imageTag: baseImageRef, resolutionMetadata } = ensureAgentBaseImage(agent, options);
   const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
   fs.cpSync(ROOT, buildCtx, {
     recursive: true,
@@ -259,5 +343,9 @@ export function createAgentSandbox(
   }
   console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
 
-  return { buildCtx, stagedDockerfile };
+  return {
+    buildCtx,
+    stagedDockerfile,
+    baseImageResolutionMetadata: resolutionMetadata ?? null,
+  };
 }

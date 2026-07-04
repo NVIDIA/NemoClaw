@@ -3,6 +3,10 @@
 
 import type { AgentDefinition } from "../agent/defs";
 import type { WebSearchConfig } from "../inference/web-search";
+import {
+  SandboxBaseImageResolutionError,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
 import { DEFAULT_TOOL_DISCLOSURE, type ToolDisclosure } from "../tool-disclosure";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
@@ -38,6 +42,9 @@ export type PrepareSandboxDockerfilePatchInput = {
   toolDisclosure?: ToolDisclosure;
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuConfig;
+  resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+  preResolvedBaseImageMetadata?: SandboxBaseImageResolutionMetadata | null;
+  forceBaseImageRefresh?: boolean;
   gatewayPort?: number;
   log?: (message: string) => void;
   warn?: (message: string) => void;
@@ -99,6 +106,9 @@ export async function prepareSandboxDockerfilePatch({
   toolDisclosure = DEFAULT_TOOL_DISCLOSURE,
   hermesToolGateways,
   sandboxGpuConfig,
+  resolutionHint = null,
+  preResolvedBaseImageMetadata = null,
+  forceBaseImageRefresh = false,
   gatewayPort,
   log = console.log,
   warn = console.warn,
@@ -107,15 +117,23 @@ export async function prepareSandboxDockerfilePatch({
   const shouldResolveBaseImage = !(agent && !fromDockerfile);
   const getDockerDriverGateway =
     deps.isLinuxDockerDriverGatewayEnabled ?? linuxDockerDriverGatewayEnabled;
+  const dockerDriverGateway = getDockerDriverGateway();
   const resolved = shouldResolveBaseImage
     ? (deps.pullAndResolveBaseImageDigest ?? pullAndResolveBaseImageDigest)({
-        requireOpenshellSandboxAbi: getDockerDriverGateway(),
+        requireOpenshellSandboxAbi: dockerDriverGateway,
+        ...(resolutionHint ? { resolutionHint } : {}),
+        ...(forceBaseImageRefresh ? { forceRefresh: true } : {}),
       })
     : null;
   if (resolved?.digest) {
     log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else if (resolved) {
     log(`  Using sandbox base image ${resolved.ref}`);
+  } else if (shouldResolveBaseImage && dockerDriverGateway) {
+    throw new SandboxBaseImageResolutionError(
+      "No OpenShell ABI-compatible sandbox base image could be resolved. " +
+        "Refusing to fall back to an unvalidated cached :latest image.",
+    );
   } else if (shouldResolveBaseImage) {
     const localCheck = (deps.dockerImageInspect ?? inspectDockerImage)(
       `${sandboxBaseImage}:${sandboxBaseTag}`,
@@ -139,7 +157,7 @@ export async function prepareSandboxDockerfilePatch({
     provider,
     sandboxGpuConfig,
     {
-      dockerDriverGateway: getDockerDriverGateway(),
+      dockerDriverGateway,
       gatewayPort,
       log,
     },
@@ -165,11 +183,15 @@ export async function prepareSandboxDockerfilePatch({
     darwinVmCompat,
     null,
     hermesToolGateways,
-    {
-      buildIdPolicy,
-      toolDisclosure,
-      requireToolDisclosureContract: Boolean(fromDockerfile),
-    },
+    (() => {
+      const metadata = fromDockerfile ? null : (resolved?.metadata ?? preResolvedBaseImageMetadata);
+      return {
+        buildIdPolicy,
+        toolDisclosure,
+        requireToolDisclosureContract: Boolean(fromDockerfile),
+        ...(metadata ? { baseImageResolutionMetadata: metadata } : {}),
+      };
+    })(),
   );
 
   return { buildId, resolvedBaseImage: resolved };

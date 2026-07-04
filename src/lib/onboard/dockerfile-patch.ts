@@ -12,6 +12,10 @@ import {
 import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import {
+  formatSandboxBaseImageResolutionLabels,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
+import {
   DEFAULT_TOOL_DISCLOSURE,
   normalizeToolDisclosure,
   type ToolDisclosure,
@@ -389,6 +393,7 @@ export interface PatchStagedDockerfileOptions {
   buildIdPolicy?: DockerfileBuildIdPolicy;
   toolDisclosure?: ToolDisclosure;
   requireToolDisclosureContract?: boolean;
+  baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -634,6 +639,13 @@ export function patchStagedDockerfile(
       /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=.*$/m,
       `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
     );
+  }
+
+  const baseResolutionLabels = formatSandboxBaseImageResolutionLabels(
+    options.baseImageResolutionMetadata,
+  );
+  if (baseResolutionLabels) {
+    dockerfile = `${dockerfile.trimEnd()}\n\n# NemoClaw sandbox-base warm-resolution metadata\n${baseResolutionLabels}\n`;
   }
   // NEMOCLAW_EXTRA_AGENTS_JSON — bake secondary OpenClaw agents into
   // agents.list[] alongside the canonical "main" entry. Pass the raw operator
