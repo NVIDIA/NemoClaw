@@ -157,10 +157,17 @@ describe("preflightRebuildImage", () => {
       fs.symlinkSync("Dockerfile.changed", dockerfile);
 
       expect(builtDockerfiles).toEqual(["FROM scratch\n# safe\n"]);
-      expect(fs.lstatSync(result.prepared.stagedDockerfile).isSymbolicLink()).toBe(false);
-      expect(fs.readFileSync(result.prepared.stagedDockerfile, "utf8")).toBe(
-        "FROM scratch\n# safe\n",
+      const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
+      const stagedFd = fs.openSync(
+        result.prepared.stagedDockerfile,
+        fs.constants.O_RDONLY | noFollow,
       );
+      try {
+        expect(fs.fstatSync(stagedFd).isFile()).toBe(true);
+        expect(fs.readFileSync(stagedFd, "utf8")).toBe("FROM scratch\n# safe\n");
+      } finally {
+        fs.closeSync(stagedFd);
+      }
       expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
       expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {

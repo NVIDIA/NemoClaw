@@ -80,10 +80,11 @@ export function normalizeRebuildSandboxOptions(
   if (Array.isArray(options)) {
     const splitIndex = options.lastIndexOf("--tool-disclosure");
     const inline = [...options].reverse().find((value) => value.startsWith("--tool-disclosure="));
+    const toolDisclosureFlagProvided = splitIndex >= 0 || inline !== undefined;
     rawToolDisclosure =
       splitIndex >= 0 ? options[splitIndex + 1] : inline?.slice("--tool-disclosure=".length);
     const toolDisclosure = normalizeToolDisclosure(rawToolDisclosure);
-    if (rawToolDisclosure !== undefined && !toolDisclosure) {
+    if (toolDisclosureFlagProvided && !toolDisclosure) {
       throw new Error(`--tool-disclosure must be one of: ${TOOL_DISCLOSURE_VALUES.join(", ")}.`);
     }
     return {

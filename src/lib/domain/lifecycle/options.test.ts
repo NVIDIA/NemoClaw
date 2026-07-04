@@ -139,6 +139,12 @@ describe("lifecycle option normalization", () => {
     expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure", "sometimes"])).toThrow(
       /progressive, direct/,
     );
+    expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure"])).toThrow(
+      /progressive, direct/,
+    );
+    expect(() => normalizeRebuildSandboxOptions(["--tool-disclosure="])).toThrow(
+      /progressive, direct/,
+    );
   });
 
   it("preserves typed maintenance options and still accepts compatibility argv", () => {
