@@ -18,7 +18,11 @@ import { createLocalInferenceRouteApplier } from "../src/lib/onboard/local-infer
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { stageOptimizedSandboxBuildContext } from "../src/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
-import { createDirectSetupInferenceHarnessFactory } from "./support/setup-inference-test-harness.js";
+import {
+  createDirectCommandRouter,
+  createDirectSetupInferenceHarnessFactory,
+  withProcessEnv,
+} from "./support/setup-inference-test-harness.js";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -105,26 +109,6 @@ const bedrockRuntimeOnboard =
   require("../src/lib/onboard/bedrock-runtime") as typeof import("../src/lib/onboard/bedrock-runtime.js");
 const createDirectSetupInferenceHarness =
   createDirectSetupInferenceHarnessFactory(createSetupInference);
-
-async function withProcessEnv<T>(
-  values: Record<string, string | undefined>,
-  runTest: () => Promise<T> | T,
-): Promise<T> {
-  const previous = new Map<string, string | undefined>();
-  for (const [key, value] of Object.entries(values)) {
-    previous.set(key, process.env[key]);
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    return await runTest();
-  } finally {
-    for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
@@ -819,11 +803,12 @@ startGateway(null).catch(() => {});
             ? { status: 1, stdout: "", stderr: "" }
             : undefined,
         overrides: {
+          updateSandbox,
           bedrockRuntimeOnboard: {
             ...bedrockRuntimeOnboard,
             setupBedrockRuntimeInference: (
               input: Parameters<typeof setupBedrockRuntimeInference>[0],
-            ) => setupBedrockRuntimeInference({ ...input, ensureAdapter, updateSandbox }),
+            ) => setupBedrockRuntimeInference({ ...input, ensureAdapter }),
           },
         },
       });
@@ -1287,17 +1272,20 @@ const { onboard } = require(${onboardPath});
         throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
       },
     });
-    harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) => {
-        const command = args.join(" ");
-        if (command.startsWith("provider get")) {
-          return { status: 1, stdout: "", stderr: "" };
-        }
-        if (command.includes("inference set") && command.includes("ollama-local")) {
-          return { status: 7, stdout: "", stderr: "openshell: route apply failed" };
-        }
-        return undefined;
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "provider-get",
+        matches: (command) => command.startsWith("provider get"),
+        results: [{ status: 1, stdout: "", stderr: "" }],
       },
+      {
+        name: "ollama-inference-set",
+        matches: (command) => command.includes("inference set") && command.includes("ollama-local"),
+        results: [{ status: 7, stdout: "", stderr: "openshell: route apply failed" }],
+      },
+    ]);
+    harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
       overrides: {
         isNonInteractive: () => true,
         validateLocalProvider: () => ({
@@ -1355,17 +1343,20 @@ const { onboard } = require(${onboardPath});
         throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
       },
     });
-    harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) => {
-        const command = args.join(" ");
-        if (command.startsWith("provider get")) {
-          return { status: 1, stdout: "", stderr: "" };
-        }
-        if (command.includes("inference set") && command.includes("vllm-local")) {
-          return { status: 13, stdout: "", stderr: "openshell: vllm route apply failed" };
-        }
-        return undefined;
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "provider-get",
+        matches: (command) => command.startsWith("provider get"),
+        results: [{ status: 1, stdout: "", stderr: "" }],
       },
+      {
+        name: "vllm-inference-set",
+        matches: (command) => command.includes("inference set") && command.includes("vllm-local"),
+        results: [{ status: 13, stdout: "", stderr: "openshell: vllm route apply failed" }],
+      },
+    ]);
+    harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
       overrides: {
         isNonInteractive: () => true,
         applyLocalInferenceRoute,
@@ -1615,21 +1606,20 @@ console.log(JSON.stringify({
   });
   it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-bad" }, async () => {
-      let inferenceSetCalls = 0;
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) => {
-          const command = args.join(" ");
-          if (command.startsWith("provider get")) {
-            return { status: 0, stdout: "", stderr: "" };
-          }
-          if (command.includes("inference set")) {
-            inferenceSetCalls += 1;
-            if (inferenceSetCalls === 1) {
-              return { status: 1, stdout: "", stderr: "HTTP 403: forbidden" };
-            }
-          }
-          return undefined;
+      const commandRouter = createDirectCommandRouter([
+        {
+          name: "provider-get",
+          matches: (command) => command.startsWith("provider get"),
+          results: [{ status: 0, stdout: "", stderr: "" }],
         },
+        {
+          name: "inference-set",
+          matches: (command) => command.includes("inference set"),
+          results: [{ status: 1, stdout: "", stderr: "HTTP 403: forbidden" }, undefined],
+        },
+      ]);
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: commandRouter.runOpenshell,
         overrides: {
           promptValidationRecovery: async () => {
             process.env.OPENAI_API_KEY = "sk-good";
@@ -1651,7 +1641,7 @@ console.log(JSON.stringify({
       }
 
       assert.equal(process.env.OPENAI_API_KEY, "sk-good");
-      assert.equal(inferenceSetCalls, 2);
+      assert.equal(commandRouter.callCount("inference-set"), 2);
       const providerEnvs = harness.commands
         .filter((entry) => entry.command.includes("provider"))
         .map((entry) => entry.env?.OPENAI_API_KEY)
@@ -1661,17 +1651,20 @@ console.log(JSON.stringify({
   });
   it("returns control to provider selection when inference apply recovery chooses back", async () => {
     await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) => {
-          const command = args.join(" ");
-          if (command.startsWith("provider get")) {
-            return { status: 0, stdout: "", stderr: "" };
-          }
-          if (command.includes("inference set")) {
-            return { status: 1, stdout: "", stderr: "HTTP 404: model not found" };
-          }
-          return undefined;
+      const commandRouter = createDirectCommandRouter([
+        {
+          name: "provider-get",
+          matches: (command) => command.startsWith("provider get"),
+          results: [{ status: 0, stdout: "", stderr: "" }],
         },
+        {
+          name: "inference-set",
+          matches: (command) => command.includes("inference set"),
+          results: [{ status: 1, stdout: "", stderr: "HTTP 404: model not found" }],
+        },
+      ]);
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: commandRouter.runOpenshell,
         overrides: { promptValidationRecovery: async () => "selection" },
       });
       const error = vi.spyOn(console, "error").mockImplementation(() => {});

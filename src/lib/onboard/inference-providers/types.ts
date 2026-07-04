@@ -77,7 +77,7 @@ export type PromptValidationRecovery = (
 export type ClassifyApplyFailure = (message: string) => any;
 
 export type Registry = {
-  updateSandbox(sandboxName: string, patch: { model: string; provider: string }): void;
+  updateSandbox: typeof import("../../state/registry").updateSandbox;
 };
 
 export type CommonDeps = {
@@ -109,6 +109,7 @@ export type RemoteProviderDeps = CommonDeps & {
       upsertProvider: UpsertProvider;
       verifyInferenceRoute: VerifyInferenceRoute;
       verifyOnboardInferenceSmoke: any;
+      updateSandbox: Registry["updateSandbox"];
     }): Promise<{ handled: true; result: SetupInferenceResult } | { handled: false }>;
   };
 };

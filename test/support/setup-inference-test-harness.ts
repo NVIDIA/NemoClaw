@@ -43,6 +43,48 @@ export type DirectSetupHarnessOptions = {
   overrides?: Partial<SetupInferenceDeps>;
 };
 
+type DirectCommandRoute = {
+  name: string;
+  matches(command: string): boolean;
+  results: readonly [DirectRunStubResult | undefined, ...(DirectRunStubResult | undefined)[]];
+};
+
+export async function withProcessEnv<T>(
+  values: Record<string, string | undefined>,
+  runTest: () => Promise<T> | T,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(values)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  try {
+    return await runTest();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+export function createDirectCommandRouter(routes: readonly DirectCommandRoute[]) {
+  const callCounts = new Map<string, number>();
+  const runOpenshell: NonNullable<DirectSetupHarnessOptions["runOpenshell"]> = (args) => {
+    const command = args.join(" ");
+    const route = routes.find((candidate) => candidate.matches(command));
+    if (!route) return undefined;
+    const callIndex = callCounts.get(route.name) ?? 0;
+    callCounts.set(route.name, callIndex + 1);
+    return route.results[Math.min(callIndex, route.results.length - 1)];
+  };
+  return {
+    callCount: (name: string) => callCounts.get(name) ?? 0,
+    runOpenshell,
+  };
+}
+
 export function directRunResult({
   status = 0,
   stdout = "",

@@ -11,6 +11,7 @@ import {
   HARNESS_COUNTER,
   HARNESS_TMPDIR,
   makeFakeCurlScript,
+  makeResponsesFallbackUrlRecordingFakeCurlScript,
   withFakeCurlProbe,
 } from "./onboard-probes-curl-harness";
 
@@ -769,31 +770,11 @@ exit 28
   });
 
   it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", () => {
-    const script = `#!/usr/bin/env bash
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w|-d|--config) shift 2 ;;
-    http://*|https://*) url="$1"; shift ;;
-    *) shift ;;
-  esac
-done
-n=$(cat "${HARNESS_COUNTER}")
-n=$((n + 1))
-echo "$n" > "${HARNESS_COUNTER}"
-printf '%s' "$url" > "${HARNESS_TMPDIR}/request-$n-url.txt"
-if echo "$url" | grep -q '/responses$'; then
-  printf '%s' '{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}' > "$outfile"
-else
-  printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$outfile"
-fi
-printf '200'
-`;
-
     withFakeCurlProbe(
-      { script, dirPrefix: "nemoclaw-responses-tool-fallback-" },
+      {
+        script: makeResponsesFallbackUrlRecordingFakeCurlScript(),
+        dirPrefix: "nemoclaw-responses-tool-fallback-",
+      },
       ({ counter, tmpDir }) => {
         const result = probeOpenAiLikeEndpoint(
           "https://proxy.example.com/v1",

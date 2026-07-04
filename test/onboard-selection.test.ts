@@ -15,10 +15,7 @@ import {
   validateOpenAiLikeModel,
 } from "../src/lib/inference/provider-models.js";
 import { createInferenceSelectionValidationHelpers } from "../src/lib/onboard/inference-selection-validation.js";
-import {
-  getWindowsHostOllamaDockerRequirement,
-  rejectUnsupportedWindowsHostOllama,
-} from "../src/lib/onboard/local-inference-topology.js";
+import { getWindowsHostOllamaDockerRequirement } from "../src/lib/onboard/local-inference-topology.js";
 import { buildInferenceProviderMenu } from "../src/lib/onboard/provider-menu.js";
 import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
 import { reportProviderSelectionFailure } from "../src/lib/onboard/provider-selection-failure.js";
@@ -29,12 +26,17 @@ import {
   type SetupNimSelectionState,
 } from "../src/lib/onboard/setup-nim-selection.js";
 import { createValidationRecoveryPromptHelpers } from "../src/lib/onboard/validation-recovery-prompt.js";
-import {
-  type DetectWindowsHostOllamaDeps,
-  detectWindowsHostOllama,
-} from "../src/lib/onboard/windows-host-ollama.js";
+import { detectWindowsHostOllama } from "../src/lib/onboard/windows-host-ollama.js";
 
 import { testTimeout } from "./helpers/timeouts";
+import {
+  createWindowsHostOllamaRunCapture,
+  requireFailedProviderResolution,
+  requirePresent,
+  requireSelectedProviderResolution,
+  restoreProcessEnvValue,
+  runNativeDockerWindowsProviderBoundary,
+} from "./support/onboard-selection-test-helpers.js";
 
 const CREDENTIAL_RETRY_PROMPT =
   "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
@@ -106,10 +108,7 @@ function makeRemoteModelValidatorDeps(
   return {
     OPENAI_ENDPOINT_URL: TEST_OPENAI_ENDPOINT_URL,
     ANTHROPIC_ENDPOINT_URL: TEST_ANTHROPIC_ENDPOINT_URL,
-    requireValue: (value, message) => {
-      if (value === null || value === undefined) throw new Error(message);
-      return value;
-    },
+    requireValue: requirePresent,
     isBackToSelection: (_value): _value is never => false,
     validateCustomOpenAiLikeSelection: async () => ({
       ok: true as const,
@@ -268,10 +267,6 @@ function makeSetupNimOllamaDeps(overrides: Partial<SetupNimOllamaDeps> = {}): Se
     assertOllamaUpgradeApplied: () => ({ ok: true }),
     ...overrides,
   };
-}
-
-function nonInteractiveAbort(reason: string, hint?: string): never {
-  throw new Error(`[non-interactive] Aborting: ${reason}${hint ? `\n${hint}` : ""}`);
 }
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
@@ -3068,8 +3063,7 @@ const { setupNim } = require(${onboardPath});
         },
       );
     } finally {
-      if (previousPreferredApi === undefined) delete process.env.NEMOCLAW_PREFERRED_API;
-      else process.env.NEMOCLAW_PREFERRED_API = previousPreferredApi;
+      restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
     }
   });
 
@@ -3129,8 +3123,7 @@ const { setupNim } = require(${onboardPath});
         },
       );
     } finally {
-      if (previousPreferredApi === undefined) delete process.env.NEMOCLAW_PREFERRED_API;
-      else process.env.NEMOCLAW_PREFERRED_API = previousPreferredApi;
+      restoreProcessEnvValue("NEMOCLAW_PREFERRED_API", previousPreferredApi);
     }
   });
 
@@ -5817,217 +5810,45 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("rejects Windows-host Ollama providers on native Docker WSL before launching Ollama", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement("docker");
-    assert.equal(requirement.supported, false);
     const scenarios = [
-      { provider: "start-windows-ollama", hasWindowsOllama: true },
-      { provider: "install-windows-ollama", hasWindowsOllama: false },
-    ];
+      { provider: "start-windows-ollama", installed: true },
+      { provider: "install-windows-ollama", installed: false },
+    ] as const;
 
     for (const scenario of scenarios) {
-      const { options } = buildWindowsProviderMenu(requirement, {
-        hasWindowsOllama: scenario.hasWindowsOllama,
+      const boundary = runNativeDockerWindowsProviderBoundary({
+        ...scenario,
+        reachable: false,
+        timeoutMs: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
       });
-      const resolution = resolveWindowsProvider(options, scenario.provider, {
-        windowsHostOllamaSupported: false,
-      });
-      assert.equal(resolution.kind, "selected");
-      if (resolution.kind !== "selected") throw new Error("Expected provider selection");
-      assert.equal(resolution.selected.key, scenario.provider);
-
-      const install = vi.fn();
-      const setup = vi.fn();
-      const switchHost = vi.fn();
-      const abort = vi.fn(nonInteractiveAbort);
-      let failure = "";
-      try {
-        const rejected = rejectUnsupportedWindowsHostOllama(
-          requirement,
-          resolution.selected.key,
-          true,
-          () => true,
-          abort,
-        );
-        if (!rejected) {
-          install();
-          setup();
-          switchHost();
-        }
-      } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
-      }
-
-      assert.match(failure, /\[non-interactive\] Aborting:/);
-      assert.match(failure, new RegExp(scenario.provider + " requires Docker Desktop"));
-      assert.match(failure, /Choose WSL-local Ollama/);
-      assert.equal(abort.mock.calls.length, 1);
-      assert.equal(install.mock.calls.length, 0);
-      assert.equal(setup.mock.calls.length, 0);
-      assert.equal(switchHost.mock.calls.length, 0);
-    }
-  });
-
-  it("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement("docker");
-    assert.equal(requirement.supported, false);
-    const { options } = buildWindowsProviderMenu(requirement, {
-      ollamaRunning: true,
-      ollamaHost: "host.docker.internal",
-      hasWindowsOllama: true,
-      isWindowsHostOllama: true,
-    });
-
-    for (const provider of ["ollama", "start-windows-ollama", "install-windows-ollama"]) {
-      const resolution = resolveWindowsProvider(options, provider, {
-        isWindowsHostOllama: true,
-        windowsHostOllamaSupported: false,
-      });
-      const modelSelection = vi.fn();
-      const install = vi.fn();
-      const setup = vi.fn();
-      const switchHost = vi.fn();
-      const abort = vi.fn(nonInteractiveAbort);
-      const reject = (providerKey: string, windowsHostSelected: boolean) =>
-        rejectUnsupportedWindowsHostOllama(
-          requirement,
-          providerKey,
-          windowsHostSelected,
-          () => true,
-          abort,
-        );
-      let failure = "";
-
-      try {
-        if (resolution.kind === "failure") {
-          reportProviderSelectionFailure({
-            reason: resolution.reason,
-            isWindowsHostOllama: true,
-            rejectWindowsHostOllama: reject,
-            writeError(message) {
-              throw new Error(message);
-            },
-          });
-        } else if (!reject(resolution.selected.key, true)) {
-          modelSelection();
-          install();
-          setup();
-          switchHost();
-        }
-      } catch (error) {
-        failure = error instanceof Error ? error.message : String(error);
-      }
-
-      assert.match(failure, /\[non-interactive\] Aborting:/);
-      assert.match(failure, new RegExp(provider + " requires Docker Desktop"));
-      assert.match(failure, /Choose WSL-local Ollama/);
-      assert.equal(abort.mock.calls.length, 1);
-      assert.equal(modelSelection.mock.calls.length, 0);
-      assert.equal(install.mock.calls.length, 0);
-      assert.equal(setup.mock.calls.length, 0);
-      assert.equal(switchHost.mock.calls.length, 0);
-    }
-
-    // Keep one production boundary to pin setupNim's reject-before-dispatch ordering.
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-reachable-native-docker-"),
-    );
-    const scriptPath = path.join(tmpDir, "ollama-reachable-native-docker-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-const local = require(${localPath});
-const windows = require(${windowsPath});
-
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker";
-credentials.prompt = async () => {
-  throw new Error("Unexpected prompt in non-interactive test");
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("docker images")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) {
-    return "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
-  }
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
-  if (cmd.includes("api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
-  return "";
-};
-runner.run = () => ({ status: 0 });
-runner.runShell = () => ({ status: 0 });
-local.resetOllamaHostCache();
-local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-local.getOllamaModelOptions = () => {
-  console.error("MODEL_SELECTION_REACHED");
-  return ["qwen3:8b"];
-};
-windows.installOllamaOnWindowsHost = async () => {
-  console.error("WINDOWS_INSTALL_CALLED");
-  return { ok: true, path: "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe" };
-};
-windows.setupWindowsOllamaWith0000Binding = () => {
-  console.error("WINDOWS_SETUP_CALLED");
-  return true;
-};
-windows.switchToWindowsOllamaHost = () => {
-  console.error("WINDOWS_SWITCH_CALLED");
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  await setupNim(null, null);
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    try {
-      const boundary = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          NEMOCLAW_NON_INTERACTIVE: "1",
-          NEMOCLAW_PROVIDER: "ollama",
-          NEMOCLAW_MODEL: "qwen3:8b",
-          NEMOCLAW_YES: "1",
-        },
-      });
-
-      assert.equal(boundary.status, 1, "generic ollama unexpectedly passed");
+      assert.equal(boundary.status, 1, `${scenario.provider} unexpectedly passed`);
       assert.match(boundary.stderr, /\[non-interactive\] Aborting:/);
-      assert.match(boundary.stderr, /ollama requires Docker Desktop/);
+      assert.match(boundary.stderr, new RegExp(scenario.provider + " requires Docker Desktop"));
       assert.match(boundary.stderr, /Choose WSL-local Ollama/);
       assert.doesNotMatch(
         boundary.stderr,
         /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
       );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects reachable Windows-host Ollama on native Docker WSL through generic and fallback paths", () => {
+    const providers = ["ollama", "start-windows-ollama", "install-windows-ollama"] as const;
+    for (const provider of providers) {
+      const boundary = runNativeDockerWindowsProviderBoundary({
+        provider,
+        installed: true,
+        reachable: true,
+        timeoutMs: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+      });
+      assert.equal(boundary.status, 1, `${provider} unexpectedly passed`);
+      assert.match(boundary.stderr, /\[non-interactive\] Aborting:/);
+      assert.match(boundary.stderr, new RegExp(provider + " requires Docker Desktop"));
+      assert.match(boundary.stderr, /Choose WSL-local Ollama/);
+      assert.doesNotMatch(
+        boundary.stderr,
+        /MODEL_SELECTION_REACHED|WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/,
+      );
     }
   });
 
@@ -6039,8 +5860,8 @@ const { setupNim } = require(${onboardPath});
     });
     const resolution = resolveWindowsProvider(options, "install-windows-ollama");
     assert.equal(resolution.kind, "selected");
-    if (resolution.kind !== "selected") throw new Error("Expected provider selection");
-    assert.equal(resolution.selected.key, "start-windows-ollama");
+    const selectedResolution = requireSelectedProviderResolution(resolution);
+    assert.equal(selectedResolution.selected.key, "start-windows-ollama");
 
     const install = vi.fn(async () => ({ ok: false, path: "" }));
     const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
@@ -6059,7 +5880,7 @@ const { setupNim } = require(${onboardPath});
     try {
       const result = await handleWindowsHostOllamaSelection(
         null,
-        resolution.selected.key,
+        selectedResolution.selected.key,
         "qwen3:8b",
         false,
         false,
@@ -6083,16 +5904,11 @@ const { setupNim } = require(${onboardPath});
 
   it("detects Windows-host Ollama via running process when not on the user PATH (#3949)", async () => {
     const installedPath = "C:/Program Files/Ollama/ollama.exe";
-    const runCapture = vi.fn<DetectWindowsHostOllamaDeps["runCapture"]>((command) => {
-      const rendered = Array.isArray(command) ? command.join(" ") : String(command);
-      if (rendered.includes("Get-Command ollama.exe")) return "";
-      if (rendered.includes("Get-Process ollama") && rendered.includes("Path")) {
-        return installedPath;
-      }
-      if (rendered.includes("Get-Process ollama") && rendered.includes("Id")) return "7652";
-      if (rendered.includes("Get-NetTCPConnection")) return "127.0.0.1";
-      return "";
-    });
+    const runCapture = createWindowsHostOllamaRunCapture([
+      { contains: ["Get-Process ollama", "Path"], output: installedPath },
+      { contains: ["Get-Process ollama", "Id"], output: "7652" },
+      { contains: ["Get-NetTCPConnection"], output: "127.0.0.1" },
+    ]);
     const detected = detectWindowsHostOllama({ isWsl: () => true, runCapture });
     assert.deepEqual(detected, {
       installed: true,
@@ -6135,15 +5951,11 @@ const { setupNim } = require(${onboardPath});
 
   it("uses a known Windows install path when a running Ollama process has no readable path", async () => {
     const installedPath = "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe";
-    const runCapture = vi.fn<DetectWindowsHostOllamaDeps["runCapture"]>((command) => {
-      const rendered = Array.isArray(command) ? command.join(" ") : String(command);
-      if (rendered.includes("Get-Command ollama.exe")) return "";
-      if (rendered.includes("Get-Process ollama") && rendered.includes("Path")) return "";
-      if (rendered.includes("Test-Path -LiteralPath")) return installedPath;
-      if (rendered.includes("Get-Process ollama") && rendered.includes("Id")) return "7652";
-      if (rendered.includes("Get-NetTCPConnection")) return "127.0.0.1";
-      return "";
-    });
+    const runCapture = createWindowsHostOllamaRunCapture([
+      { contains: ["Test-Path -LiteralPath"], output: installedPath },
+      { contains: ["Get-Process ollama", "Id"], output: "7652" },
+      { contains: ["Get-NetTCPConnection"], output: "127.0.0.1" },
+    ]);
     const detected = detectWindowsHostOllama({ isWsl: () => true, runCapture });
     assert.deepEqual(detected, {
       installed: true,
@@ -6197,13 +6009,13 @@ const { setupNim } = require(${onboardPath});
       isWindowsHostOllama: false,
     });
     assert.equal(resolution.kind, "failure");
-    if (resolution.kind !== "failure") throw new Error("Expected provider selection failure");
+    const failedResolution = requireFailedProviderResolution(resolution);
 
     const setup = vi.fn();
     const switchHost = vi.fn();
     const errors: string[] = [];
     reportProviderSelectionFailure({
-      reason: resolution.reason,
+      reason: failedResolution.reason,
       isWindowsHostOllama: false,
       rejectWindowsHostOllama: () => {
         setup();
@@ -6232,13 +6044,13 @@ const { setupNim } = require(${onboardPath});
       isWindowsHostOllama: false,
     });
     assert.equal(resolution.kind, "failure");
-    if (resolution.kind !== "failure") throw new Error("Expected provider selection failure");
+    const failedResolution = requireFailedProviderResolution(resolution);
 
     const install = vi.fn();
     const setup = vi.fn();
     const errors: string[] = [];
     reportProviderSelectionFailure({
-      reason: resolution.reason,
+      reason: failedResolution.reason,
       isWindowsHostOllama: false,
       rejectWindowsHostOllama: () => {
         install();
