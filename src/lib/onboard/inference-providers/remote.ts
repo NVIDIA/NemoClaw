@@ -21,10 +21,18 @@ export async function setupRemoteProviderInference(
     provider: string;
     endpointUrl: string | null;
     credentialEnv: string | null;
+    reuseGatewayCredentialWithoutLocalKey?: boolean;
   },
   deps: RemoteProviderDeps,
 ): Promise<{ done: true; result: SetupInferenceResult } | { done: false }> {
-  const { sandboxName, model, provider, endpointUrl, credentialEnv } = args;
+  const {
+    sandboxName,
+    model,
+    provider,
+    endpointUrl,
+    credentialEnv,
+    reuseGatewayCredentialWithoutLocalKey,
+  } = args;
   const {
     runOpenshell,
     upsertProvider,
@@ -65,16 +73,43 @@ export async function setupRemoteProviderInference(
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
-    const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
-    const env =
-      resolvedCredentialEnv && credentialValue ? { [resolvedCredentialEnv]: credentialValue } : {};
-    const providerResult = upsertProvider(
-      provider,
-      config.providerType,
-      resolvedCredentialEnv,
-      resolvedEndpointUrl,
-      env,
-    );
+    let providerResult;
+    if (reuseGatewayCredentialWithoutLocalKey) {
+      // This is only a last-moment existence probe. The primary authorization
+      // of the provider's non-secret credential/config binding identity is
+      // assessRecoveredProviderCredentialReuse in recovered-provider-reuse.ts.
+      const existing = runOpenshell(["provider", "get", provider], {
+        ignoreError: true,
+        suppressOutput: true,
+      });
+      providerResult =
+        existing.status === 0
+          ? { ok: true }
+          : {
+              ok: false,
+              status: existing.status || 1,
+              message: `Recovered provider '${provider}' is no longer registered in OpenShell.`,
+            };
+    } else {
+      const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
+      const env =
+        resolvedCredentialEnv && credentialValue
+          ? { [resolvedCredentialEnv]: credentialValue }
+          : {};
+      providerResult = credentialValue
+        ? upsertProvider(
+            provider,
+            config.providerType,
+            resolvedCredentialEnv,
+            resolvedEndpointUrl,
+            env,
+          )
+        : {
+            ok: false,
+            status: 1,
+            message: `A host credential is required to configure provider '${provider}'.`,
+          };
+    }
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       if (isNonInteractive()) {

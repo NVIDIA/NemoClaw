@@ -177,7 +177,7 @@ describe("rebuild gateway drift preflight", () => {
     const destroy = requireDist("./destroy.js");
     const onboardMod = requireDist("../../onboard.js");
     spies.push(
-      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
+      vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue(null),
       vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
     );
 
@@ -289,7 +289,7 @@ describe("rebuild gateway drift preflight", () => {
         .mockResolvedValue({ ok: true, imageTag: null }),
       vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
       checkAgentVersionSpy,
-      vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
+      vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue(null),
       vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
     );
     await expect(rebuildSandbox("alpha", ["--yes"], { throwOnError: true })).rejects.toThrow(

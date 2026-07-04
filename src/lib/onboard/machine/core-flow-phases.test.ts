@@ -192,7 +192,10 @@ function createPhases(
 
 describe("core onboard flow phases", () => {
   it("carries provider selection output into sandbox setup", async () => {
-    const [providerPhase, sandboxPhase] = createPhases();
+    const updateSandboxRegistry = vi.fn();
+    const [providerPhase, sandboxPhase] = createPhases({
+      sandboxDeps: { updateSandboxRegistry },
+    });
 
     const providerResult = await providerPhase.run(context());
 
@@ -226,6 +229,13 @@ describe("core onboard flow phases", () => {
       selectedMessagingChannels: ["slack", "discord"],
       webSearchSupported: true,
     });
+    expect(updateSandboxRegistry).toHaveBeenCalledWith(
+      "created-sandbox",
+      expect.objectContaining({
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    );
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {

@@ -19,6 +19,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
 };
 
@@ -44,10 +45,35 @@ export function applyCloudFallbackSelection(
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
+  state.reuseGatewayCredentialWithoutLocalKey = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {
   state.nimContainer = null;
+}
+
+type CompatibleEndpointKind = "openai" | "anthropic";
+
+export async function resolveCompatibleEndpointInput(args: {
+  kind: CompatibleEndpointKind;
+  envUrl: string | null | undefined;
+  recoveredEndpointUrl: string | null | undefined;
+  nonInteractive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<string> {
+  const envUrl = (args.envUrl || "").trim();
+  const recoveredUrl = (args.recoveredEndpointUrl || "").trim();
+  const defaultEndpointUrl = envUrl || recoveredUrl;
+  if (args.nonInteractive) return defaultEndpointUrl;
+  return (
+    (await args.prompt(
+      defaultEndpointUrl
+        ? `  ${args.kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${defaultEndpointUrl}]: `
+        : args.kind === "openai"
+          ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
+          : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
+    )) || defaultEndpointUrl
+  );
 }
 
 type ProviderChoice = {

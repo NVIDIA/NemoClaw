@@ -20,6 +20,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { scanSnapshotCredentialLeaks } from "./snapshot-credential-scanner.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-snapshot";
@@ -33,12 +34,6 @@ const MARKER_FILE = "/sandbox/.openclaw/workspace/snapshot-marker.txt";
 const SECOND_MARKER = "/sandbox/.openclaw/workspace/snapshot-marker-2.txt";
 const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
-const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
-const CREDENTIAL_ENV_ASSIGNMENT_PATTERN =
-  /(?:^|\n)\s*(?:export\s+)?(?:NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*=/i;
-const STRUCTURED_CREDENTIAL_KEY_PATTERN =
-  /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
-
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -112,45 +107,6 @@ function firstSnapshotTimestamp(listOutput: string): string {
   if (!match)
     throw new Error(`Failed to parse snapshot timestamp from list output:\n${listOutput}`);
   return match[0];
-}
-
-function scanSnapshotCredentialLeaks(root: string): string[] {
-  if (!fs.existsSync(root)) throw new Error(`Backup directory missing: ${root}`);
-  const ignored = new Set([
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "yarn.lock",
-    "pnpm-lock.yaml",
-    "pnpm-lock.yml",
-  ]);
-  const leaks: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        visit(fullPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      if (ignored.has(entry.name)) continue;
-      if (!(entry.name === ".env" || entry.name.endsWith(".env") || entry.name.endsWith(".json"))) {
-        continue;
-      }
-      const body = fs.readFileSync(fullPath, "utf8");
-      const tokenValueLeak = CREDENTIAL_TOKEN_VALUE_PATTERN.test(body);
-      const envAssignmentLeak = CREDENTIAL_ENV_ASSIGNMENT_PATTERN.test(body);
-      // openclaw.json may legitimately contain non-secret provider metadata
-      // such as credential env-var references. Still fail it on token-shaped
-      // values or concrete env assignments, but reserve generic structured-key
-      // checks for other env/json files where such keys indicate persisted
-      // credentials rather than configuration schema.
-      const structuredKeyLeak =
-        entry.name !== "openclaw.json" && STRUCTURED_CREDENTIAL_KEY_PATTERN.test(body);
-      if (tokenValueLeak || envAssignmentLeak || structuredKeyLeak) leaks.push(fullPath);
-    }
-  };
-  visit(root);
-  return leaks;
 }
 
 test.skipIf(!shouldRunLiveE2E())(

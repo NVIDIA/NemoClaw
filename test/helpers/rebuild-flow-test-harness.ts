@@ -88,11 +88,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockReturnValue(
       overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
     );
-  if (overrides.sandboxBaseImageLabelsOutput !== undefined) {
-    vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
-      () => overrides.sandboxBaseImageLabelsOutput,
-    );
-  }
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockReturnValue(
+    overrides.sandboxBaseImageLabelsOutput ?? "",
+  );
   const ensureTargetGatewaySpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildTargetGatewaySelected")
     .mockResolvedValue(true);
@@ -175,31 +173,86 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ...(overrides.sandboxEntry ?? {}),
   };
   vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
-  vi.spyOn(registry, "getDefault").mockReturnValue(overrides.defaultSandbox ?? null);
+  const initialDefaultSandbox = overrides.defaultSandbox ?? null;
+  const preDeleteDefaultSandbox =
+    overrides.preDeleteDefaultSandbox !== undefined
+      ? overrides.preDeleteDefaultSandbox
+      : initialDefaultSandbox;
+  const initialDefaultSelectionRevision = overrides.defaultSelectionRevision ?? 10;
+  const preDeleteDefaultSelectionRevision =
+    overrides.preDeleteDefaultSelectionRevision ?? initialDefaultSelectionRevision;
+  const preDeleteSandboxEntry = overrides.preDeleteSandboxEntry ?? sandboxEntry;
+  let currentDefaultSandbox = initialDefaultSandbox;
+  let currentDefaultSelectionRevision = initialDefaultSelectionRevision;
+  const currentRegistryEntryNames = new Set([String(sandboxEntry.name)]);
+  if (initialDefaultSandbox) currentRegistryEntryNames.add(initialDefaultSandbox);
+  if (preDeleteDefaultSandbox) currentRegistryEntryNames.add(preDeleteDefaultSandbox);
+  vi.spyOn(registry, "getDefault").mockImplementation(() => currentDefaultSandbox);
+  const setDefaultSpy = vi
+    .spyOn(registry, "setDefault")
+    .mockImplementation((...args: unknown[]) => {
+      currentDefaultSandbox = String(args[0]);
+      currentDefaultSelectionRevision++;
+      return true;
+    });
   let registryLoadCount = 0;
   vi.spyOn(registry, "load").mockImplementation(() => {
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
-    const defaultSandbox = isPreDeleteRead
-      ? overrides.preDeleteDefaultSandbox !== undefined
-        ? overrides.preDeleteDefaultSandbox
-        : (overrides.defaultSandbox ?? null)
-      : (overrides.defaultSandbox ?? null);
+    const defaultSandbox = isPreDeleteRead ? preDeleteDefaultSandbox : initialDefaultSandbox;
+    const defaultSelectionRevision = isPreDeleteRead
+      ? preDeleteDefaultSelectionRevision
+      : initialDefaultSelectionRevision;
+    const selectedEntry = isPreDeleteRead ? preDeleteSandboxEntry : sandboxEntry;
     return {
       sandboxes: {
-        alpha:
-          isPreDeleteRead && overrides.preDeleteSandboxEntry
-            ? overrides.preDeleteSandboxEntry
-            : sandboxEntry,
+        alpha: selectedEntry,
+        ...(defaultSandbox && defaultSandbox !== "alpha"
+          ? { [defaultSandbox]: { name: defaultSandbox } }
+          : {}),
       },
       defaultSandbox,
+      defaultSelectionRevision,
     };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
-    .mockImplementation(() => undefined);
+    .mockImplementation((...args: unknown[]) => {
+      currentRegistryEntryNames.add(String((args[0] as { name: string }).name));
+      const options = (args[1] ?? {}) as Record<string, unknown>;
+      const transition = options.defaultTransition as
+        | { from: string | null; to: string; expectedRevision: number }
+        | undefined;
+      if (
+        transition &&
+        currentDefaultSandbox === transition.from &&
+        currentDefaultSelectionRevision === transition.expectedRevision
+      ) {
+        currentDefaultSandbox = transition.to;
+        currentDefaultSelectionRevision++;
+      }
+    });
+  const restoreSandboxEntryIfMissingSpy = vi
+    .spyOn(registry, "restoreSandboxEntryIfMissing")
+    .mockImplementation((...args: unknown[]) => {
+      const receipt = args[0] as Record<string, unknown>;
+      const entryName = String((receipt.entry as { name: string }).name);
+      if (currentRegistryEntryNames.has(entryName)) return false;
+      currentRegistryEntryNames.add(entryName);
+      const shouldReclaimDefault =
+        receipt.wasDefault === true &&
+        currentDefaultSandbox === receipt.fallbackDefault &&
+        currentDefaultSelectionRevision === receipt.postRemovalDefaultSelectionRevision;
+      const currentDefaultIsValid =
+        currentDefaultSandbox !== null && currentRegistryEntryNames.has(currentDefaultSandbox);
+      if (shouldReclaimDefault || !currentDefaultIsValid) {
+        currentDefaultSandbox = entryName;
+        currentDefaultSelectionRevision++;
+      }
+      return true;
+    });
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -264,9 +317,36 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       const argv = Array.isArray(args) ? args.map(String) : [];
       return overrides.runOpenshell ? overrides.runOpenshell(argv) : { status: 0, output: "" };
     });
-  const removeSandboxRegistryEntrySpy = vi
-    .spyOn(destroy, "removeSandboxRegistryEntry")
-    .mockImplementation(overrides.removeSandboxRegistryEntry ?? (() => undefined));
+  const defaultRemovalReceipt = {
+    entry: preDeleteSandboxEntry,
+    wasDefault: preDeleteDefaultSandbox === "alpha",
+    fallbackDefault:
+      preDeleteDefaultSandbox && preDeleteDefaultSandbox !== "alpha"
+        ? preDeleteDefaultSandbox
+        : null,
+    postRemovalDefaultSelectionRevision:
+      preDeleteDefaultSelectionRevision + (preDeleteDefaultSandbox === "alpha" ? 1 : 0),
+  };
+  const removeSandboxRegistryEntryWithReceiptSpy = vi
+    .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
+    .mockImplementation(() => {
+      const overridden = overrides.removeSandboxRegistryEntryWithReceipt?.();
+      const receipt =
+        overridden !== undefined
+          ? overridden
+          : overrides.removalReceipt === undefined
+            ? defaultRemovalReceipt
+            : overrides.removalReceipt;
+      if (receipt) {
+        currentRegistryEntryNames.delete(String(receipt.entry.name));
+        if (receipt.fallbackDefault) currentRegistryEntryNames.add(receipt.fallbackDefault);
+        currentDefaultSandbox = receipt.wasDefault
+          ? receipt.fallbackDefault
+          : currentDefaultSandbox;
+        currentDefaultSelectionRevision = receipt.postRemovalDefaultSelectionRevision;
+      }
+      return receipt;
+    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi
@@ -351,6 +431,19 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     markStepFailedSpy,
     onboardSpy,
     registryUpdateSpy,
+    setDefaultSpy,
+    setDefault: (name: string) => registry.setDefault(name),
+    registerSandboxEntry: (name: string) => {
+      currentRegistryEntryNames.add(name);
+      if (currentDefaultSandbox === null) {
+        currentDefaultSandbox = name;
+        currentDefaultSelectionRevision++;
+      }
+    },
+    getDefaultSelectionState: () => ({
+      defaultSandbox: currentDefaultSandbox,
+      defaultSelectionRevision: currentDefaultSelectionRevision,
+    }),
     releaseOnboardLockSpy,
     relockSpy,
     restoreSandboxStateSpy,
@@ -359,8 +452,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     prepareMcpBridgesForAbsentSandboxRebuildSpy,
     prepareMcpBridgesForRebuildSpy,
     reattachMcpProvidersAfterRebuildAbortSpy,
-    removeSandboxRegistryEntrySpy,
+    removeSandboxRegistryEntryWithReceiptSpy,
     restoreSandboxEntrySpy,
+    restoreSandboxEntryIfMissingSpy,
     restoreMcpBridgesAfterRebuildSpy,
     warnUnpreservedUserManagedFilesSpy,
     session,

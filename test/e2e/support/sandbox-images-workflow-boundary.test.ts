@@ -101,6 +101,68 @@ describe("sandbox image workflow boundary", () => {
     );
   });
 
+  it("requires the guarded build_args shape for every production image build", () => {
+    const cases = [
+      {
+        jobName: "build-sandbox-images",
+        stepName: "Build production image",
+        error:
+          "OpenClaw production image must use the guarded build_args shape under nemoclaw-production",
+      },
+      {
+        jobName: "build-hermes-sandbox-image",
+        stepName: "Build Hermes production image",
+        error:
+          "Hermes production image must use the guarded build_args shape under nemoclaw-hermes-production",
+      },
+      {
+        jobName: "build-sandbox-images-arm64",
+        stepName: "Build production image on arm64",
+        error:
+          "OpenClaw arm64 production image must use the guarded build_args shape under nemoclaw-production-arm64",
+      },
+    ];
+
+    for (const { jobName, stepName, error } of cases) {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
+      build.run = build.run!.replace(
+        'scripts/check-production-build-args.sh "${build_args[@]}"',
+        'echo "guard bypassed"',
+      );
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
+    }
+  });
+
+  it("rejects a second source build for every production image job", () => {
+    const cases = [
+      {
+        jobName: "build-sandbox-images",
+        stepName: "Build production image",
+        error: "OpenClaw production image must have exactly one source build",
+      },
+      {
+        jobName: "build-hermes-sandbox-image",
+        stepName: "Build Hermes production image",
+        error: "Hermes production image must have exactly one source build",
+      },
+      {
+        jobName: "build-sandbox-images-arm64",
+        stepName: "Build production image on arm64",
+        error: "OpenClaw arm64 production image must have exactly one source build",
+      },
+    ];
+
+    for (const { jobName, stepName, error } of cases) {
+      const { imageWorkflow, mainWorkflow } = readWorkflows();
+      const build = imageWorkflow.jobs[jobName].steps!.find((step) => step.name === stepName)!;
+      build.run = `${build.run}docker build -t duplicate-production-image .\n`;
+
+      expect(validateSandboxImagesWorkflow(imageWorkflow, mainWorkflow)).toContain(error);
+    }
+  });
+
   it("rejects coupling, rebuilding, or failing to reuse the OpenClaw image artifact", () => {
     const { imageWorkflow, mainWorkflow } = readWorkflows();
     const producer = imageWorkflow.jobs["build-sandbox-images"];

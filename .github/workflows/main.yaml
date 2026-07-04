@@ -57,6 +57,35 @@ jobs:
       - name: Run installer integration tests
         uses: ./.github/actions/ci-installer-integration
 
+  real-openclaw-dist-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      # This required proof reads reviewed npm metadata/tarballs. Keep npm's
+      # transient-registry retry policy explicit at the hard merge boundary.
+      npm_config_fetch_retries: "3"
+      npm_config_fetch_retry_mintimeout: "10000"
+      npm_config_fetch_retry_maxtimeout: "60000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Audit the real patched OpenClaw distribution
+        env:
+          NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1"
+        run: npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default
+
   cli-test-shards:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -144,6 +173,7 @@ jobs:
       - static-checks
       - build-typecheck
       - installer-integration
+      - real-openclaw-dist-harness
       - cli-tests
       - plugin-tests
       - test-e2e-ollama-proxy
@@ -156,6 +186,7 @@ jobs:
           STATIC_RESULT: ${{ needs['static-checks'].result }}
           BUILD_TYPECHECK_RESULT: ${{ needs['build-typecheck'].result }}
           INSTALLER_INTEGRATION_RESULT: ${{ needs['installer-integration'].result }}
+          REAL_OPENCLAW_DIST_HARNESS_RESULT: ${{ needs['real-openclaw-dist-harness'].result }}
           CLI_TESTS_RESULT: ${{ needs['cli-tests'].result }}
           PLUGIN_TESTS_RESULT: ${{ needs['plugin-tests'].result }}
           E2E_PROXY_RESULT: ${{ needs['test-e2e-ollama-proxy'].result }}
@@ -174,6 +205,7 @@ jobs:
           require_success "static-checks" "$STATIC_RESULT"
           require_success "build-typecheck" "$BUILD_TYPECHECK_RESULT"
           require_success "installer-integration" "$INSTALLER_INTEGRATION_RESULT"
+          require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"
           require_success "cli-tests" "$CLI_TESTS_RESULT"
           require_success "plugin-tests" "$PLUGIN_TESTS_RESULT"
           require_success "test-e2e-ollama-proxy" "$E2E_PROXY_RESULT"

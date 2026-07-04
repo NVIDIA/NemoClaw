@@ -1157,8 +1157,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-hermes-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -1195,7 +1195,8 @@ jobs:
         run: bash scripts/install-openshell.sh
       - name: Run Hermes inference switch live Vitest test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -3808,8 +3809,8 @@ jobs:
         include:
           - mode: hosted
             sandbox_name: e2e-openclaw-inference-switch
-            switch_provider: compatible-endpoint
-            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_provider: nvidia-prod
+            switch_model: nvidia/nemotron-3-super-120b-a12b
             switch_inference_api: openai-completions
             switch_mock_anthropic: "0"
           - mode: anthropic
@@ -3850,7 +3851,8 @@ jobs:
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_API_KEY || '' }}
+          NVIDIA_INFERENCE_API_KEY: ${{ matrix.mode == 'hosted' && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-live \
@@ -3994,8 +3996,6 @@ jobs:
         run: bash scripts/install-openshell.sh
 
       - name: Run device auth health live Vitest test
-        env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -4036,12 +4036,6 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
-      NEMOCLAW_PROVIDER: custom
-      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
-      NEMOCLAW_PREFERRED_API: openai-completions
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -4063,10 +4057,9 @@ jobs:
         # Preserves the
         # real OpenClaw + Docker/OpenShell boundary for onboard-empty,
         # channels add, rebuild, gateway credential reuse, policy-list, and
-        # channels remove cleanup.
+        # channels remove cleanup; the test owns its authenticated local
+        # compatible-inference baseline.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
-          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
           TELEGRAM_REQUIRE_MENTION: "0"

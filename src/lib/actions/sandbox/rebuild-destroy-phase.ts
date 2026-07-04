@@ -7,7 +7,7 @@ import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
 import { redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
-import { removeSandboxRegistryEntry } from "./destroy";
+import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import { type RebuildSandboxEntry, warnUnpreservedUserManagedFiles } from "./rebuild-flow-helpers";
@@ -34,6 +34,10 @@ export interface RebuildDestroyPhaseInput {
   onDeleted: () => void;
 }
 
+export type RebuildDestroyPhaseResult = McpRebuildPreparation & {
+  removalReceipt: registry.SandboxRemovalReceipt | null;
+};
+
 /**
  * Detach owned MCP state, stop inference, and delete the old sandbox.
  * Boundary coverage: rebuild-flow.test.ts exercises success, stale recovery,
@@ -41,7 +45,7 @@ export interface RebuildDestroyPhaseInput {
  */
 export async function runRebuildDestroyPhase(
   input: RebuildDestroyPhaseInput,
-): Promise<McpRebuildPreparation | null> {
+): Promise<RebuildDestroyPhaseResult | null> {
   const {
     sandboxName,
     staleRecovery,
@@ -144,8 +148,9 @@ export async function runRebuildDestroyPhase(
     return null;
   }
   onDeleted();
+  let removalReceipt: registry.SandboxRemovalReceipt | null = null;
   if (rebuildMcpEntries.length === 0) {
-    removeSandboxRegistryEntry(sandboxName);
+    removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
   } else {
     // The registry entry is the durable MCP rebuild transaction. The inner
     // onboard run observes that the sandbox is absent, carries the MCP state
@@ -159,5 +164,5 @@ export async function runRebuildDestroyPhase(
   );
   console.log(`  ${G}\u2713${R} Old sandbox deleted`);
 
-  return mcpPreparation;
+  return { ...mcpPreparation, removalReceipt };
 }

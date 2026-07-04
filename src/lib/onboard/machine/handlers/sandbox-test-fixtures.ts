@@ -210,6 +210,8 @@ export function baseOptions(
     sandboxName: null,
     model: "model",
     provider: "provider",
+    endpointUrl: null,
+    credentialEnv: null,
     nimContainer: null,
     webSearchConfig: null,
     selectedMessagingChannels: [],

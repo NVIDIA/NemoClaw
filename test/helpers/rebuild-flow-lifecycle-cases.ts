@@ -79,7 +79,7 @@ export function registerRebuildFlowLifecycleTests(): void {
         "/tmp/nemoclaw-rebuild-backup",
       );
       expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
-      expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
       expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
         "Preserving MCP-bearing registry entry across sandbox recreation",
       );
@@ -140,7 +140,7 @@ export function registerRebuildFlowLifecycleTests(): void {
 
     it("relocks as absent when registry cleanup throws after confirmed delete", async () => {
       const harness = createRebuildFlowHarness({
-        removeSandboxRegistryEntry: () => {
+        removeSandboxRegistryEntryWithReceipt: () => {
           throw new Error("registry cleanup after delete failed");
         },
       });

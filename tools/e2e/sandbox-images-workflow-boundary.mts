@@ -52,6 +52,45 @@ const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const REGISTRY_WRITE =
   /(?:\bdocker\s+(?:image\s+)?push\b|\bdocker\s+buildx\s+build\b[^\n]*\s--push(?:\s|$)|\b(?:oras|crane)\s+push\b|\bskopeo\s+copy\b)/u;
 
+type GuardedProductionBuildContract = {
+  args: string;
+  envName: string;
+  jobName: (typeof IMAGE_BUILD_JOBS)[number];
+  label: string;
+  stepName: string;
+  target: string;
+  testImageDockerfile?: string;
+};
+
+const GUARDED_PRODUCTION_BUILD_CONTRACTS: readonly GuardedProductionBuildContract[] = [
+  {
+    args: '--build-arg "BASE_IMAGE=${BASE_IMAGE}"',
+    envName: "BASE_IMAGE",
+    jobName: "build-sandbox-images",
+    label: "OpenClaw production image",
+    stepName: "Build production image",
+    target: "nemoclaw-production",
+    testImageDockerfile: "-f test/Dockerfile.sandbox",
+  },
+  {
+    args: '-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}"',
+    envName: "HERMES_BASE_IMAGE",
+    jobName: "build-hermes-sandbox-image",
+    label: "Hermes production image",
+    stepName: "Build Hermes production image",
+    target: "nemoclaw-hermes-production",
+  },
+  {
+    args: '--build-arg "BASE_IMAGE=${BASE_IMAGE}"',
+    envName: "BASE_IMAGE",
+    jobName: "build-sandbox-images-arm64",
+    label: "OpenClaw arm64 production image",
+    stepName: "Build production image on arm64",
+    target: "nemoclaw-production-arm64",
+    testImageDockerfile: "-f test/Dockerfile.sandbox",
+  },
+];
+
 type WorkflowRecord = Record<string, unknown>;
 
 export type SandboxImagesWorkflowStep = WorkflowRecord & {
@@ -280,6 +319,55 @@ function validateSecretScopeAndRegistryWrites(
   }
 }
 
+function dockerBuildLines(job: SandboxImagesWorkflowJob): string[] {
+  return steps(job).flatMap((step) =>
+    (step.run ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^docker\s+build(?:\s|$)/u.test(line)),
+  );
+}
+
+function validateGuardedProductionBuild(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+  contract: GuardedProductionBuildContract,
+): void {
+  const job = workflow.jobs[contract.jobName] ?? {};
+  const build = requireStep(errors, contract.jobName, job, contract.stepName);
+  const expectedRun = [
+    "set -euo pipefail",
+    `build_args=(${contract.args})`,
+    'scripts/check-production-build-args.sh "${build_args[@]}"',
+    `docker build "\${build_args[@]}" -t ${contract.target} .`,
+    "",
+  ].join("\n");
+  const expectedEnv = {
+    [contract.envName]: `\${{ env.${contract.envName} }}`,
+  };
+
+  if (!isDeepStrictEqual(record(build.env), expectedEnv) || build.run !== expectedRun) {
+    errors.push(`${contract.label} must use the guarded build_args shape under ${contract.target}`);
+  }
+
+  const sourceBuilds = dockerBuildLines(job).filter(
+    (line) =>
+      contract.testImageDockerfile === undefined || !line.includes(contract.testImageDockerfile),
+  );
+  if (sourceBuilds.length !== 1) {
+    errors.push(`${contract.label} must have exactly one source build`);
+  }
+}
+
+function validateGuardedProductionBuildContracts(
+  errors: string[],
+  workflow: SandboxImagesWorkflow,
+): void {
+  for (const contract of GUARDED_PRODUCTION_BUILD_CONTRACTS) {
+    validateGuardedProductionBuild(errors, workflow, contract);
+  }
+}
+
 function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWorkflow): void {
   const producerName = "build-sandbox-images";
   const producer = workflow.jobs[producerName] ?? {};
@@ -296,7 +384,6 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
       errors.push(`${consumerName} must remain an independent consumer of build-sandbox-images`);
     }
   }
-  const build = requireStep(errors, producerName, producer, "Build production image");
   const runtime = requireStep(
     errors,
     runtimeName,
@@ -306,18 +393,9 @@ function validateRuntimeImageReuse(errors: string[], workflow: SandboxImagesWork
   if (runtime["timeout-minutes"] !== 45) {
     errors.push("runtime overrides must retain its 45-minute probe budget");
   }
-  if (
-    build.run !==
-    "docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production ."
-  ) {
-    errors.push("OpenClaw production image must be built once under nemoclaw-production");
-  }
   const allRuns = steps(producer)
     .map((step) => step.run ?? "")
     .join("\n");
-  if ((allRuns.match(/docker build --build-arg BASE_IMAGE=/gu) ?? []).length !== 1) {
-    errors.push("OpenClaw production image must have exactly one source build");
-  }
   if (
     findStep(producer, "Run runtime overrides test against production image") ||
     allRuns.includes("test/e2e/live/runtime-overrides.test.ts")
@@ -431,7 +509,6 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
       errors.push(`${jobName} must run '${stepName}' exactly once`);
     }
   }
-  const build = requireStep(errors, jobName, job, "Build Hermes production image");
   const secretBoundary = requireStep(
     errors,
     jobName,
@@ -455,18 +532,6 @@ function validateHermesImageReuse(errors: string[], workflow: SandboxImagesWorkf
   }
   if (rootEntrypoint["timeout-minutes"] !== 45) {
     errors.push("Hermes root entrypoint must retain its 45-minute probe budget");
-  }
-  if (
-    build.run !==
-    "docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production ."
-  ) {
-    errors.push("Hermes production image must be built once under nemoclaw-hermes-production");
-  }
-  const hermesBuilds = steps(job).filter((step) =>
-    (step.run ?? "").includes("docker build -f agents/hermes/Dockerfile"),
-  );
-  if (hermesBuilds.length !== 1) {
-    errors.push("Hermes production image must have exactly one source build");
   }
   for (const [label, step, target, artifactDirectory] of [
     [
@@ -530,6 +595,7 @@ export function validateSandboxImagesWorkflow(
     validateImageJobAuth(errors, jobName, job, canonicalAuth);
   }
   validateSecretScopeAndRegistryWrites(errors, workflow);
+  validateGuardedProductionBuildContracts(errors, workflow);
   validateRuntimeImageReuse(errors, workflow);
   validateHermesImageReuse(errors, workflow);
   return errors;

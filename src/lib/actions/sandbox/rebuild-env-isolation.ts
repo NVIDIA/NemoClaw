@@ -7,8 +7,9 @@
 // `upgrade-sandboxes --auto`) must never steer `onboard --resume` away from the
 // target sandbox's recorded agent/provider/model/credential. These are the env
 // vars that onboard's resume path reads to pick the agent, provider, model,
-// endpoint, and credential — isolating them during the recreate forces the
-// pinned session + gateway-registered provider to win.
+// endpoint, credential, preferred inference API, and endpoint reasoning mode —
+// isolating them during the recreate forces the pinned session +
+// gateway-registered provider to win.
 //
 // SOURCE-OF-TRUTH NOTE (#5735, PRA-4): the real source boundary is
 // `onboard --resume`, which still reads these from the global `process.env`:

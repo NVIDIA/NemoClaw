@@ -69,6 +69,16 @@ PRODUCTION_FAIL_CLOSED_CONFIG_DIRS = frozenset(
     {"/sandbox/.openclaw", "/sandbox/.hermes"}
 )
 OPENCLAW_MUTATION_MUTEX_PATH = "/run/nemoclaw/openclaw-config-mutation.lock"
+# Keep this exact source/target contract aligned with
+# src/lib/state/openclaw-managed-extensions.ts.
+OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw"
+OPENCLAW_EXTENSION_PEER_LINK_SUFFIX = ("node_modules", "openclaw")
+SAFE_EXTENSION_ID_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+)
+ASCII_ALNUM_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+)
 FS_IMMUTABLE_FL = 0x00000010
 FS_APPEND_FL = 0x00000020
 FS_IOC_GETFLAGS = 0x80086601
@@ -540,6 +550,30 @@ def _normalize_link_target(
     return relative
 
 
+def _is_allowed_openclaw_extension_peer_symlink(
+    context: TraversalContext,
+    relative_path: str,
+    target: str,
+) -> bool:
+    """Recognize the one image-owned peer link that may leave the state tree."""
+
+    if target != OPENCLAW_GLOBAL_PACKAGE_PATH:
+        return False
+    if posixpath.basename(context.config_path) != ".openclaw":
+        return False
+    components = relative_path.split("/")
+    if len(components) != 4:
+        return False
+    root, extension_id, *suffix = components
+    return (
+        root == "extensions"
+        and bool(extension_id)
+        and extension_id[0] in ASCII_ALNUM_CHARS
+        and all(character in SAFE_EXTENSION_ID_CHARS for character in extension_id)
+        and tuple(suffix) == OPENCLAW_EXTENSION_PEER_LINK_SUFFIX
+    )
+
+
 def _resolve_internal_symlink(
     context: TraversalContext,
     link_relative_path: str,
@@ -697,7 +731,10 @@ def _validate_symlink(
         )
     try:
         target = os.readlink(name, dir_fd=parent_fd)
-        _resolve_internal_symlink(context, relative_path, target)
+        if not _is_allowed_openclaw_extension_peer_symlink(
+            context, relative_path, target
+        ):
+            _resolve_internal_symlink(context, relative_path, target)
     except GuardOperationError as exc:
         return Issue(exc.issue.code, path, exc.issue.detail)
     except OSError as exc:
@@ -1178,6 +1215,10 @@ def _chown_symlink(
         raise GuardOperationError(
             Issue("entry-raced", path, "symlink changed while ownership was updated")
         )
+    if action == "unlock":
+        issue = _validate_symlink(context, parent_fd, name, relative_path, after)
+        if issue is not None:
+            raise GuardOperationError(issue)
 
 
 def _mutate_dir(

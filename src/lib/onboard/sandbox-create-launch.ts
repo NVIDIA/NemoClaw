@@ -18,6 +18,28 @@ import {
 
 type OpenshellShellCommand = (args: string[]) => string;
 
+// These non-secret scheduler controls are intentionally forwarded for bounded
+// live-test and operator tuning. Keep this as an exact allowlist: the host's
+// broader NEMOCLAW_* environment must not become sandbox runtime input.
+const OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS = [
+  "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS",
+  "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS",
+  "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS",
+] as const;
+
+function appendOpenClawAutoPairRuntimeEnvArgs(
+  envArgs: string[],
+  agent: AgentDefinition | null,
+  env: NodeJS.ProcessEnv,
+): void {
+  if (agent && agent.name !== "openclaw") return;
+  for (const key of OPENCLAW_AUTO_PAIR_RUNTIME_ENV_KEYS) {
+    const value = env[key]?.trim();
+    if (value) envArgs.push(formatEnvAssignment(key, value));
+  }
+}
+
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
   chatUiUrl: string;
@@ -68,6 +90,7 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   }
 
   appendOpenClawRuntimeEnvArgs(envArgs, input.agent ?? null);
+  appendOpenClawAutoPairRuntimeEnvArgs(envArgs, input.agent ?? null, env);
   appendHermesDashboardEnvArgs(envArgs, input.hermesDashboardState, formatEnvAssignment);
   appendHostProxyEnvArgs(envArgs, env, {
     dropCredentialBearingProxyUrls: input.agent?.name === "langchain-deepagents-code",

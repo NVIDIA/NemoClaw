@@ -65,6 +65,7 @@ export type RebuildFlowOverrides = {
   recoveryManifestValidation?: (
     manifest: Record<string, unknown>,
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
+  updateSession?: () => void;
   dcodeRouteResults?: Array<{ ok: true } | { ok: false; detail: string }>;
   gatewayRecoveryResult?: Record<string, unknown>;
   reconciledSandboxGatewayState?: Record<string, unknown>;
@@ -105,6 +106,7 @@ export type RebuildFlowHarness = {
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxEntrySpy: MockInstance;
+  restoreRegistryEntryIfMissingSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   messagingRebuildPlanSpy: MockInstance;
@@ -243,6 +245,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
   const messaging = requireDist("../../messaging/index.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
+  const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
   const rebuildInference = requireDist("./rebuild-inference-preflight.js");
   const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
   const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
@@ -266,6 +269,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
+  vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue({
+    ok: true,
+    imageTag: null,
+  });
   const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
   vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation((...args: unknown[]) =>
     args[0] === "{{json .Config.Labels}}" && overrides.sandboxBaseImageLabelsOutput !== undefined
@@ -303,6 +310,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true });
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
+    overrides.updateSession?.();
     if (typeof mutator !== "function") {
       throw new TypeError("updateSession expected a mutator function");
     }
@@ -321,9 +329,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     policies: ["npm"],
     agent: null,
     agentVersion: "0.1.0",
+    // A current managed-image registry row carries positive NemoClaw provenance.
+    // Tests that exercise the legacy ambiguous-image path override this explicitly.
+    nemoclawVersion: "0.0.71",
     nimContainer: null,
     ...(overrides.sandboxEntry ?? {}),
   };
+  const preDeleteDefaultSandbox =
+    overrides.preDeleteDefaultSandbox === undefined ? "alpha" : overrides.preDeleteDefaultSandbox;
   let sandboxEntryReadCount = 0;
   vi.spyOn(registry, "getSandbox").mockImplementation(() => {
     const configuredReads = overrides.sandboxEntryReads ?? [];
@@ -338,7 +351,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     const isPreDeleteRead = registryLoadCount > 0;
     registryLoadCount++;
     return {
-      defaultSandbox: isPreDeleteRead ? (overrides.preDeleteDefaultSandbox ?? "alpha") : "alpha",
+      defaultSandbox: isPreDeleteRead ? preDeleteDefaultSandbox : "alpha",
       sandboxes: {
         alpha:
           isPreDeleteRead && overrides.preDeleteSandboxEntry
@@ -352,6 +365,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation(() => undefined);
+  const restoreRegistryEntryIfMissingSpy = vi
+    .spyOn(registry, "restoreSandboxEntryIfMissing")
+    .mockReturnValue(true);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -436,12 +452,25 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
         failedFiles: [],
       })),
   );
-  const runOpenshellSpy = vi
-    .spyOn(openshellRuntime, "runOpenshell")
-    .mockReturnValue({ status: 0, output: "" });
+  const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+    const argv = args as string[];
+    return argv[0] === "provider" && argv[1] === "get"
+      ? {
+          status: 0,
+          stdout:
+            "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+          stderr: "",
+        }
+      : { status: 0, output: "" };
+  });
   const removeSandboxRegistryEntrySpy = vi
-    .spyOn(destroy, "removeSandboxRegistryEntry")
-    .mockImplementation(() => undefined);
+    .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
+    .mockReturnValue({
+      entry: { name: "alpha", imageTag: "old-image" },
+      wasDefault: preDeleteDefaultSandbox === "alpha",
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 1,
+    });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -525,6 +554,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     releaseOnboardLockSpy,
     relockSpy,
     restoreSandboxEntrySpy,
+    restoreRegistryEntryIfMissingSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,

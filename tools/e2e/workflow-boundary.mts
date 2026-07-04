@@ -2864,23 +2864,19 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
     errors.push("channels-add-remove job must force OPENSHELL_GATEWAY=nemoclaw");
   }
-  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
-    errors.push("channels-add-remove job must enable hosted-compatible inference mode");
-  }
-  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
-    errors.push("channels-add-remove job must route hosted inference through the custom provider");
-  }
-  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
-    errors.push("channels-add-remove job must use the hosted compatible inference endpoint");
-  }
-  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must use the hosted Inference Hub model id");
-  }
-  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must set NEMOCLAW_COMPAT_MODEL to the hosted model id");
-  }
-  if (jobEnv.NEMOCLAW_PREFERRED_API !== "openai-completions") {
-    errors.push("channels-add-remove job must prefer openai-completions for hosted inference");
+  for (const name of [
+    "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_ENDPOINT_URL",
+    "NEMOCLAW_MODEL",
+    "NEMOCLAW_COMPAT_MODEL",
+    "NEMOCLAW_PREFERRED_API",
+  ]) {
+    if (jobEnv[name] !== undefined) {
+      errors.push(
+        `channels-add-remove job must leave ${name} unset for its local inference fixture`,
+      );
+    }
   }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
@@ -2897,10 +2893,8 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   for (const step of steps) {
     const stepName = `channels-add-remove step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (step.name !== "Run channels add/remove live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "COMPATIBLE_API_KEY");
-    }
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "COMPATIBLE_API_KEY");
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
@@ -2926,14 +2920,6 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
 
   const runVitest = requireJobStep(errors, jobName, steps, "Run channels add/remove live test");
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("channels-add-remove step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(
-      "channels-add-remove step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
-    );
-  }
   if (runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-add-remove-e2e") {
     errors.push("channels-add-remove step must set the fake Telegram token");
   }

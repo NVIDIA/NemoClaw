@@ -18,6 +18,35 @@ const expectedIntegrity =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
 const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 
+function extractIntegrityGate(contents: string): string {
+  const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
+  const start = contents.indexOf(startMarker);
+  const [end = -1] = [
+    contents.indexOf('MCPORTER_LOCK_SHA256="', start),
+    contents.indexOf("&& MCPORTER_REGISTRY_INTEGRITY=", start),
+  ]
+    .filter((index) => index > start)
+    .sort((left, right) => left - right);
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThan(start);
+  return contents
+    .slice(start, end)
+    .replace(/\\\s*\n/g, " ")
+    .trim();
+}
+
+function runIntegrityGate(contents: string, version: string) {
+  const script = [
+    "set -euo pipefail",
+    `MCPORTER_VERSION=${JSON.stringify(version)}`,
+    `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(expectedIntegrity)}`,
+    `npm() { printf '%s\\n' ${JSON.stringify(expectedIntegrity)}; }`,
+    extractIntegrityGate(contents),
+    "printf 'gate-passed\\n'",
+  ].join("\n");
+  return spawnSync("bash", ["-c", script], { encoding: "utf8" });
+}
+
 describe("mcporter image supply-chain controls", () => {
   it("resolves the committed production graph through npm's lockfile boundary", () => {
     const result = spawnSync(
@@ -55,6 +84,20 @@ describe("mcporter image supply-chain controls", () => {
     expect(contents).toContain('test "$(mcporter --version)" = "$MCPORTER_VERSION"');
     expect(contents).not.toMatch(/npm install -g[^\n]*mcporter/);
     expect(contents).not.toContain("mcporter shrinkwrap");
+  });
+
+  it.each(dockerfiles)("fails closed for unrecognized versions in $name", ({ contents }) => {
+    const pinned = runIntegrityGate(contents, expectedVersion);
+    expect(pinned.status, pinned.stderr).toBe(0);
+    expect(pinned.stdout).toContain("gate-passed");
+
+    const unrecognizedVersion = "9.9.9-unreviewed";
+    const unpinned = runIntegrityGate(contents, unrecognizedVersion);
+    expect(unpinned.status).not.toBe(0);
+    expect(unpinned.stderr).toContain(
+      `mcporter ${unrecognizedVersion} has no committed npm integrity pin`,
+    );
+    expect(unpinned.stdout).not.toContain("gate-passed");
   });
 
   it.each(dockerfiles)("audits the committed dependency graph in $name", ({ contents }) => {

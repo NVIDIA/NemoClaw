@@ -76,9 +76,30 @@ jobs:
             type=ref,event=tag
             type=sha,prefix=,format=short
 
-      - name: Validate OpenClaw version input
-        if: inputs.openclaw_version != ''
-        run: echo "${{ inputs.openclaw_version }}" | grep -qxE '[0-9]+(\.[0-9]+)*'
+      - name: Validate production Docker build args
+        id: production-build-args
+        env:
+          OPENCLAW_VERSION_INPUT: ${{ inputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          build_args=()
+          openclaw_build_arg=""
+          if [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+            openclaw_build_arg="OPENCLAW_VERSION=${OPENCLAW_VERSION_INPUT}"
+            build_args+=(--build-arg "$openclaw_build_arg")
+          fi
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          if [ -n "${OPENCLAW_VERSION_INPUT}" ]; then
+            if [[ "$OPENCLAW_VERSION_INPUT" == *$'\r'* || "$OPENCLAW_VERSION_INPUT" == *$'\n'* ]]; then
+              echo "ERROR: OpenClaw version must not contain CR or LF characters." >&2
+              exit 1
+            fi
+            if [[ ! "$OPENCLAW_VERSION_INPUT" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+              echo "ERROR: OpenClaw version must be a whole decimal dotted version (for example, 2026.6.10)." >&2
+              exit 1
+            fi
+          fi
+          printf 'openclaw_build_arg=%s\n' "$openclaw_build_arg" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
@@ -91,8 +112,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: |
-            ${{ inputs.openclaw_version && format('OPENCLAW_VERSION={0}', inputs.openclaw_version) || '' }}
+          build-args: ${{ steps.production-build-args.outputs.openclaw_build_arg }}
 
   build-and-push-hermes:
     if: github.repository == 'NVIDIA/NemoClaw'
@@ -126,6 +146,9 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=ref,event=tag
             type=sha,prefix=,format=short
+
+      - name: Validate Hermes production Docker build args
+        run: scripts/check-production-build-args.sh
 
       - name: Build and push
         uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0

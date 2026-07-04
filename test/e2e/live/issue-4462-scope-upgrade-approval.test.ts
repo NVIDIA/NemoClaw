@@ -8,6 +8,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -116,7 +117,8 @@ import json, os
 from pathlib import Path
 state=json.load(os.fdopen(3))
 def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
+def is_cli(e):
+    return e.get('clientId') == 'cli' and e.get('clientMode') == 'cli'
 def roles(e): return {norm(r) for r in (e.get('roles') or [e.get('role')]) if norm(r)}
 def scopes(e):
     result={norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
@@ -176,7 +178,8 @@ for dev in sorted([e for e in state.get('paired') or [] if isinstance(e, dict)],
     if (
         norm(dev.get('deviceId')) == identity_id
         and norm(dev.get('publicKey')) == identity_key
-        and norm(dev.get('clientMode')).lower() == 'cli'
+        and dev.get('clientId') == 'cli'
+        and dev.get('clientMode') == 'cli'
         and roles(dev) == {'operator'}
         and device_scopes == {'operator.pairing'}
         and approved_scopes == {'operator.pairing'}
@@ -195,189 +198,8 @@ PY
 seed_initial_pairing_request() {
   local requested_id="$1"
   python3 - "$requested_id" <<'PY'
-import base64, hashlib, json, os, secrets, sys, time
-from pathlib import Path
-
-requested_id=sys.argv[1]
-root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
-pending_path=root / 'devices' / 'pending.json'
-paired_path=root / 'devices' / 'paired.json'
-identity_path=root / 'identity' / 'device.json'
-auth_path=root / 'identity' / 'device-auth.json'
-allowed={'operator.pairing','operator.read','operator.write'}
-
-def norm(value): return str(value or '').strip()
-def load(path):
-    try: value=json.loads(path.read_text(encoding='utf-8'))
-    except FileNotFoundError: return {}
-    return value if isinstance(value, dict) else {}
-def stage_json(path, value, mode):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp=path.with_name(f'.{path.name}.{os.getpid()}.tmp')
-    flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    if hasattr(os, 'O_NOFOLLOW'): flags |= os.O_NOFOLLOW
-    fd=os.open(tmp, flags, mode)
-    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + '\n')
-        handle.flush()
-        os.fsync(handle.fileno())
-        os.fchmod(handle.fileno(), mode)
-    return tmp
-def roles(value):
-    result={norm(role) for role in (value.get('roles') or []) if norm(role)}
-    if norm(value.get('role')): result.add(norm(value.get('role')))
-    return result
-def identity_public_key(value):
-    direct=norm(value.get('publicKey'))
-    if direct: return direct
-    pem=norm(value.get('publicKeyPem'))
-    if not pem: return ''
-    body=''.join(line.strip() for line in pem.splitlines() if not line.startswith('-----'))
-    try: der=base64.b64decode(body, validate=True)
-    except Exception: return ''
-    prefix=bytes.fromhex('302a300506032b6570032100')
-    if len(der) != len(prefix) + 32 or not der.startswith(prefix): return ''
-    return base64.urlsafe_b64encode(der[len(prefix):]).decode('ascii').rstrip('=')
-def requested_scopes(value):
-    views=[]
-    for key in ('scopes','requestedScopes'):
-        if key not in value: continue
-        if not isinstance(value[key], list): return None
-        view={norm(scope) for scope in value[key] if norm(scope)}
-        if 'operator.write' in view: view.add('operator.read')
-        views.append(view)
-    if not views or any(not view or not view.issubset(allowed) for view in views):
-        return None
-    if any(view != views[0] for view in views[1:]):
-        return None
-    return views[0]
-def is_compatible(value, device_id, public_key):
-    scopes=requested_scopes(value)
-    return bool(
-        norm(value.get('requestId')) and norm(value.get('deviceId')) == device_id
-        and norm(value.get('publicKey')) == public_key
-        and norm(value.get('clientMode')).lower() == 'cli'
-        and roles(value) == {'operator'} and scopes is not None
-        and 'operator.pairing' in scopes
-    )
-
-identity=load(identity_path)
-device_id=norm(identity.get('deviceId'))
-public_key=identity_public_key(identity)
-if not device_id or not public_key:
-    raise SystemExit('persisted CLI identity is incomplete')
-try: public_key_raw=base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
-except Exception: raise SystemExit('persisted CLI public key is malformed')
-if len(public_key_raw) != 32 or hashlib.sha256(public_key_raw).hexdigest() != device_id:
-    raise SystemExit('persisted CLI identity key does not match its device id')
-
-pending=load(pending_path)
-paired=load(paired_path)
-if device_id in paired or any(
-    isinstance(item, dict) and norm(item.get('deviceId')) == device_id
-    for item in paired.values()
-):
-    raise SystemExit('refusing to seed over an existing paired CLI device')
-
-same_device=[
-    (key,item) for key,item in pending.items()
-    if isinstance(item, dict) and norm(item.get('deviceId')) == device_id
-]
-if not same_device or any(not is_compatible(item, device_id, public_key) for _,item in same_device):
-    raise SystemExit('pending state contains no exclusively compatible CLI pairing request')
-
-selected=next(
-    ((key,item) for key,item in same_device if norm(item.get('requestId')) == requested_id),
-    None,
-)
-if selected is None:
-    selected=max(same_device, key=lambda pair: pair[1].get('ts') or 0)
-request_key,request=selected
-request_id=norm(request.get('requestId'))
-
-token=secrets.token_urlsafe(32)
-if not token or token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN')):
-    raise SystemExit('temporary device token generation failed')
-seed_token_path=Path('/tmp/issue4462-seed-token.sha256')
-seed_flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL
-if hasattr(os, 'O_NOFOLLOW'): seed_flags |= os.O_NOFOLLOW
-seed_fd=os.open(seed_token_path, seed_flags, 0o600)
-with os.fdopen(seed_fd, 'w', encoding='utf-8') as handle:
-    handle.write(hashlib.sha256(token.encode('utf-8')).hexdigest())
-    handle.flush()
-    os.fsync(handle.fileno())
-    os.fchmod(handle.fileno(), 0o600)
-approved=['operator.pairing']
-now=int(time.time() * 1000)
-operator_token={
-    'token': token,
-    'role': 'operator',
-    'scopes': approved,
-    'createdAtMs': now,
-}
-device={
-    'deviceId': device_id,
-    'publicKey': public_key,
-    'displayName': request.get('displayName'),
-    'platform': request.get('platform'),
-    'deviceFamily': request.get('deviceFamily'),
-    'clientId': request.get('clientId'),
-    'clientMode': request.get('clientMode'),
-    'role': 'operator',
-    'roles': ['operator'],
-    'scopes': approved,
-    'approvedScopes': approved,
-    'remoteIp': request.get('remoteIp'),
-    'tokens': {'operator': operator_token},
-    'createdAtMs': now,
-    'approvedAtMs': now,
-}
-device={key:value for key,value in device.items() if value is not None}
-for key,_ in same_device:
-    pending.pop(key, None)
-paired[device_id]=device
-auth={
-    'version': 1,
-    'deviceId': device_id,
-    'tokens': {'operator': {
-        'token': token,
-        'role': 'operator',
-        'scopes': approved,
-        'updatedAtMs': now,
-    }},
-}
-staged=[]
-try:
-    paired_tmp=stage_json(paired_path, paired, 0o600)
-    staged.append(paired_tmp)
-    auth_tmp=stage_json(auth_path, auth, 0o600)
-    staged.append(auth_tmp)
-    pending_tmp=stage_json(pending_path, pending, 0o600)
-    staged.append(pending_tmp)
-    os.replace(pending_tmp, pending_path)
-    os.replace(paired_tmp, paired_path)
-    os.replace(auth_tmp, auth_path)
-finally:
-    for tmp in staged:
-        tmp.unlink(missing_ok=True)
-
-if any(
-    isinstance(item, dict) and norm(item.get('deviceId')) == device_id
-    for item in load(pending_path).values()
-):
-    raise SystemExit('temporary pairing seed left a same-device request pending')
-seeded=load(paired_path).get(device_id)
-seeded_auth=load(auth_path)
-if (
-    not isinstance(seeded, dict) or norm(seeded.get('publicKey')) != public_key
-    or roles(seeded) != {'operator'} or seeded.get('scopes') != approved
-    or seeded.get('approvedScopes') != approved
-    or seeded.get('tokens', {}).get('operator', {}).get('token') != token
-    or seeded_auth.get('deviceId') != device_id
-    or seeded_auth.get('tokens', {}).get('operator', {}).get('token') != token
-):
-    raise SystemExit('temporary pairing seed did not persist the reviewed low-scope state')
-print(device_id)
+${ISSUE_4462_PAIRING_SEED_PY}
+run_cli()
 PY
 }
 
@@ -494,7 +316,8 @@ if paired_device is None:
     raise SystemExit('rotated device is missing from paired state')
 if (
     norm(paired_device.get('publicKey')) != identity_key
-    or norm(paired_device.get('clientMode')).lower() != 'cli'
+    or paired_device.get('clientId') != 'cli'
+    or paired_device.get('clientMode') != 'cli'
     or roles(paired_device) != {'operator'}
     or scopes(paired_device.get('scopes') or []) != {'operator.pairing'}
     or scopes(paired_device.get('approvedScopes') or []) != {'operator.pairing'}
@@ -577,7 +400,8 @@ import json, os, sys
 state=json.load(os.fdopen(3))
 expected_device_id=sys.argv[1]
 def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
+def is_cli(e):
+    return e.get('clientId') == 'cli' and e.get('clientMode') == 'cli'
 def scopes(e): return {norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
 def approved(e): return {norm(s) for s in (e.get('approvedScopes') or e.get('scopes') or []) if norm(s)}
 paired={norm(e.get('deviceId')): e for e in state.get('paired') or [] if isinstance(e, dict)}
@@ -588,7 +412,9 @@ for req in sorted([e for e in state.get('pending') or [] if isinstance(e, dict)]
     p=paired.get(request_device_id)
     requested=scopes(req)
     is_upgrade = p is None or not requested.issubset(approved(p))
-    if is_cli(req) and {'operator.write','operator.read'}.intersection(requested) and is_upgrade and norm(req.get('requestId')):
+    if (is_cli(req) and req.get('isRepair') is True
+            and {'operator.write','operator.read'}.intersection(requested)
+            and is_upgrade and norm(req.get('requestId'))):
         print(norm(req.get('requestId')))
         raise SystemExit(0)
 raise SystemExit(1)
@@ -602,189 +428,637 @@ contains_integer_42() {
   grep -Eq '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
 }
 
-assert_agent_scopes_without_admin() {
-  local expected_device_id="$1"
-python3 - "$expected_device_id" 3<&0 <<'PY'
-import json, os, sys
-state=json.load(os.fdopen(3))
-expected_device_id=sys.argv[1]
-def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
-def scopes(e): return {norm(s) for s in (e.get('approvedScopes') or e.get('scopes') or []) if norm(s)}
-for dev in state.get('paired') or []:
-    if not isinstance(dev, dict) or not is_cli(dev) or norm(dev.get('deviceId')) != expected_device_id:
-        continue
-    approved=scopes(dev)
-    if 'operator.admin' in approved:
-        print('ADMIN_SCOPE_PRESENT', file=sys.stderr)
-        raise SystemExit(2)
-    if 'operator.write' in approved:
-        print(norm(dev.get('deviceId')) or 'cli-device')
-        raise SystemExit(0)
-print('NO_AGENT_SCOPES', file=sys.stderr)
-raise SystemExit(1)
-PY
-}
-
-approve_request() {
-  local request_id="$1" approve_output approve_log approve_rc=0 snapshot
-  snapshot="/tmp/issue4462-approve-$request_id.request.json"
-  umask 077
-  if ! python3 - "$request_id" >"$snapshot" <<'PY'
-import json, os, sys
+approval_state() {
+python3 - "$@" 3<&3 4<&4 5<&5 <<'PY'
+import base64, hashlib, json, os, re, sys, tempfile, time
 from pathlib import Path
 
-want=sys.argv[1]
+mode, want, expected_device_id, approve_rc=sys.argv[1:5]
+target_raw=os.fdopen(3).read().strip()
+snapshot_raw=os.fdopen(4).read().strip()
+raw_log=os.fdopen(5).read()[:2000]
+parsed_target=json.loads(target_raw) if target_raw else {}
+parsed_snapshot=json.loads(snapshot_raw) if snapshot_raw else {}
+target=parsed_target if isinstance(parsed_target, dict) else {}
+snapshot=parsed_snapshot if isinstance(parsed_snapshot, dict) else {}
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
 allowed={'operator.pairing','operator.read','operator.write'}
-
-def norm(value): return str(value or '').strip()
-def load(name):
-    try: value=json.loads((root / 'devices' / name).read_text(encoding='utf-8'))
-    except FileNotFoundError: return {}
-    return value if isinstance(value, dict) else {}
-def normalize(values):
-    result={norm(value) for value in values if norm(value)}
-    if 'operator.write' in result: result.add('operator.read')
-    return result
-def scope_views(value, keys):
-    views=[]
-    for key in keys:
-        if key not in value: continue
-        if not isinstance(value[key], list): raise SystemExit(f'{key} is not a scope list')
-        views.append(normalize(value[key]))
-    return views
-def canonical_scopes(value, keys, label):
-    views=scope_views(value, keys)
-    if not views or any(not view or not view.issubset(allowed) for view in views):
-        raise SystemExit(f'unsafe {label} scope representation')
-    if any(view != views[0] for view in views[1:]):
-        raise SystemExit(f'divergent {label} scope representations')
-    return views[0]
-def roles(value):
-    result={norm(role) for role in (value.get('roles') or []) if norm(role)}
-    if norm(value.get('role')): result.add(norm(value.get('role')))
-    return result
-
-pending=load('pending.json')
-request=next((item for item in pending.values() if isinstance(item, dict) and norm(item.get('requestId')) == want), None)
-if request is None: raise SystemExit(f'missing pending request {want}')
-device_id=norm(request.get('deviceId'))
-public_key=norm(request.get('publicKey'))
-is_cli=norm(request.get('clientMode')).lower() == 'cli'
-if not device_id or not public_key or not is_cli or roles(request) != {'operator'}:
-    raise SystemExit('refusing non-CLI/non-operator pairing request')
-requested=canonical_scopes(request, ('scopes','requestedScopes'), 'requested')
-
-paired=load('paired.json')
-existing=next((item for item in paired.values() if isinstance(item, dict) and norm(item.get('deviceId')) == device_id), None)
-if existing is None:
-    raise SystemExit('scope approval requires an existing paired operator baseline')
-else:
-    if norm(existing.get('publicKey')) != public_key or roles(existing) != {'operator'}:
-        raise SystemExit('scope upgrade does not match the paired operator device')
-    baseline=canonical_scopes(existing, ('scopes','approvedScopes'), 'existing paired')
-    expected=baseline | requested
-    if not {'operator.read','operator.write'}.intersection(requested) or expected == baseline:
-        raise SystemExit('request is not an operator scope upgrade')
-
-identity=json.loads((root / 'identity' / 'device.json').read_text(encoding='utf-8'))
-if norm(identity.get('deviceId')) != device_id:
-    raise SystemExit('request does not match the persisted CLI identity')
-print(json.dumps({
-    'requestId': want,
-    'deviceId': device_id,
-    'publicKey': public_key,
-    'clientId': norm(request.get('clientId')),
-    'clientMode': norm(request.get('clientMode')),
-    'expectedScopes': sorted(expected),
-}, sort_keys=True))
-PY
-  then
-    rm -f "$snapshot"
-    return 1
-  fi
-  set +e
-  approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
-  approve_rc=$?
-  set -e
-  approve_log="/tmp/issue4462-approve-$request_id.log"
-  printf '%s\n' "$approve_output" >"$approve_log"
-  python3 - "$snapshot" "$approve_rc" "$approve_log" <<'PY'
-import json, os, sys
-from pathlib import Path
-
-snapshot=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-approve_rc=int(sys.argv[2])
-approve_log=Path(sys.argv[3])
-root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
-allowed={'operator.pairing','operator.read','operator.write'}
+final_scopes=allowed
+SETTLE_TIMEOUT_SECONDS=10.0
+SETTLE_POLL_SECONDS=0.2
+SETTLE_ATTEMPTS=int(SETTLE_TIMEOUT_SECONDS / SETTLE_POLL_SECONDS) + 1
 
 def norm(value): return str(value or '').strip()
 def fail(message):
-    if approve_log.exists(): print(approve_log.read_text(encoding='utf-8'), file=sys.stderr)
+    safe=re.sub(r'(?i)(["\x27]?[A-Za-z0-9_.-]*token["\x27]?\s*[:=]\s*["\x27]?)[A-Za-z0-9._~+/=-]{8,}', r'\1<redacted>', raw_log)
+    safe=re.sub(r'(?i)(Bearer\s+)\S+', r'\1<redacted>', safe)
+    if safe.strip(): print(safe, file=sys.stderr)
     raise SystemExit(f'{message} (approve rc={approve_rc})')
 def load(path):
     try: value=json.loads(path.read_text(encoding='utf-8'))
     except FileNotFoundError: return {}
     return value if isinstance(value, dict) else {}
-def normalize(values):
-    result={norm(value) for value in values if norm(value)}
-    if 'operator.write' in result: result.add('operator.read')
-    return result
-def canonical_scopes(value, keys):
+def load_state():
+    return {
+        'pending': load(root / 'devices' / 'pending.json'),
+        'paired': load(root / 'devices' / 'paired.json'),
+        'identity': load(root / 'identity' / 'device.json'),
+        'auth': load(root / 'identity' / 'device-auth.json'),
+    }
+def bounded_scope_views(value, keys):
     views=[]
     for key in keys:
         if key not in value: continue
-        if not isinstance(value[key], list): fail(f'{key} is not a scope list')
-        views.append(normalize(value[key]))
-    if not views or any(not view or not view.issubset(allowed) for view in views): fail('unsafe scope representation')
-    if any(view != views[0] for view in views[1:]): fail('divergent scope representations')
+        raw=value[key]
+        if not isinstance(raw, list): return None
+        view={norm(item) for item in raw if norm(item)}
+        if 'operator.write' in view: view.add('operator.read')
+        if not view or not view.issubset(allowed): return None
+        views.append(view)
+    return views or None
+def scopes(value, keys):
+    views=bounded_scope_views(value, keys)
+    if views is None or any(view != views[0] for view in views[1:]): return None
     return views[0]
 def roles(value):
-    result={norm(role) for role in (value.get('roles') or []) if norm(role)}
+    raw=value.get('roles') or []
+    if not isinstance(raw, list): return None
+    result={norm(role) for role in raw if norm(role)}
     if norm(value.get('role')): result.add(norm(value.get('role')))
     return result
+def identity_key(identity):
+    direct=identity.get('publicKey')
+    if isinstance(direct, str) and direct == direct.strip() and direct:
+        key=direct
+    else:
+        pem=identity.get('publicKeyPem')
+        if not isinstance(pem, str): return ''
+        body=''.join(line.strip() for line in pem.splitlines() if not line.startswith('-----'))
+        try: der=base64.b64decode(body, validate=True)
+        except Exception: return ''
+        prefix=bytes.fromhex('302a300506032b6570032100')
+        if len(der) != len(prefix) + 32 or not der.startswith(prefix): return ''
+        key=base64.urlsafe_b64encode(der[len(prefix):]).decode('ascii').rstrip('=')
+    try: raw=base64.urlsafe_b64decode(key + '=' * (-len(key) % 4))
+    except Exception: return ''
+    if len(raw) != 32 or hashlib.sha256(raw).hexdigest() != expected_device_id: return ''
+    return key
+def same_device_pending(state):
+    return [
+        value for value in state['pending'].values()
+        if isinstance(value, dict) and norm(value.get('deviceId')) == expected_device_id
+    ]
+def exact_request(state, request_id):
+    matches=[
+        value for value in state['pending'].values()
+        if isinstance(value, dict) and value.get('requestId') == request_id
+    ]
+    if len(matches) > 1: fail('duplicate exact request ids appeared')
+    return matches[0] if matches else None
+def paired_context(state, expected_key=''):
+    identity=state['identity']
+    key=identity_key(identity)
+    if identity.get('deviceId') != expected_device_id or not key:
+        return None
+    if expected_key and key != expected_key: return None
+    device=state['paired'].get(expected_device_id)
+    if (not isinstance(device, dict) or device.get('deviceId') != expected_device_id
+            or device.get('publicKey') != key
+            or device.get('clientId') != 'cli' or device.get('clientMode') != 'cli'
+            or roles(device) != {'operator'}):
+        return None
+    device_scopes=scopes(device, ('scopes','approvedScopes'))
+    tokens=device.get('tokens') if isinstance(device.get('tokens'), dict) else {}
+    operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
+    token=operator.get('token')
+    if (device_scopes is None or set(tokens) != {'operator'}
+            or operator.get('role') != 'operator'
+            or scopes(operator, ('scopes',)) != device_scopes
+            or not isinstance(token, str) or token != token.strip() or not token
+            or token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN'))):
+        return None
+    return {'key': key, 'device': device, 'operator': operator, 'token': token, 'scopes': device_scopes}
+def auth_matches(state, context):
+    auth=state['auth']
+    tokens=auth.get('tokens') if isinstance(auth.get('tokens'), dict) else {}
+    operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
+    return (
+        auth.get('version') == 1 and auth.get('deviceId') == expected_device_id
+        and set(tokens) == {'operator'} and operator.get('role') == 'operator'
+        and operator.get('token') == context['token']
+        and scopes(operator, ('scopes',)) == context['scopes']
+    )
+def exact_nonempty_id(value):
+    return (
+        isinstance(value, str) and value == value.strip() and bool(value)
+        and not any(character.isspace() for character in value)
+    )
+def inert_final_pending_failures(state, context, reviewed_target):
+    state=state if isinstance(state, dict) else {}
+    context=context if isinstance(context, dict) else {}
+    reviewed_target=reviewed_target if isinstance(reviewed_target, dict) else {}
+    pending_by_id=state.get('pending')
+    pending_by_id=pending_by_id if isinstance(pending_by_id, dict) else {}
+    pending=[
+        value for value in pending_by_id.values()
+        if isinstance(value, dict) and norm(value.get('deviceId')) == expected_device_id
+    ]
+    request=pending[0] if len(pending) == 1 else {}
+    request_id=request.get('requestId')
+    target_request_id=reviewed_target.get('requestId')
+    target_baseline=reviewed_target.get('baselineScopes')
+    target_requested=reviewed_target.get('requestedScopes')
+    target_expected=(reviewed_target.get('expectedScopes')
+        if isinstance(reviewed_target.get('expectedScopes'), list) else [])
+    target_hash=reviewed_target.get('baselineTokenHash')
+    target_requested_set=(
+        {norm(scope) for scope in target_requested if norm(scope)}
+        if isinstance(target_requested, list) else set()
+    )
+    scope_keys={
+        key for key in request
+        if isinstance(key, str) and key.lower().endswith('scopes')
+    }
+    unexpected_auth_keys={
+        key for key in request
+        if isinstance(key, str)
+        and any(marker in key.lower()
+            for marker in ('auth', 'credential', 'permission', 'secret', 'token'))
+    }
+    request_id_matches=[
+        value for value in pending_by_id.values()
+        if isinstance(value, dict) and value.get('requestId') == request_id
+    ]
+    current_token=context.get('token')
+    current_hash=(
+        hashlib.sha256(current_token.encode()).hexdigest()
+        if isinstance(current_token, str) else ''
+    )
+    authorization_inert=request.get('scopes') == [] and request.get('silent') is True
+    # OpenClaw can publish this no-capability local repair after the reviewed
+    # scope upgrade. Leave it untouched; the final real agent call proves it
+    # is irrelevant to this scope gate rather than treating the pending
+    # request itself as paired.
+    checks=(
+        ('same-device-count', len(pending) == 1),
+        ('target-present', bool(reviewed_target)),
+        ('final-context', context.get('scopes') == final_scopes),
+        ('target-request-id', exact_nonempty_id(target_request_id)),
+        ('target-identity',
+            reviewed_target.get('deviceId') == expected_device_id
+            and reviewed_target.get('publicKey') == context.get('key')
+            and reviewed_target.get('clientId') == 'cli'
+            and reviewed_target.get('clientMode') == 'cli'),
+        ('target-baseline', target_baseline == ['operator.pairing']),
+        ('target-requested',
+            isinstance(target_requested, list)
+            and all(isinstance(scope, str) and scope == scope.strip() and scope
+                for scope in target_requested)
+            and target_requested == sorted(target_requested_set)
+            and bool({'operator.read','operator.write'}.intersection(target_requested_set))
+            and target_requested_set.issubset(final_scopes)
+            and {'operator.pairing'} | target_requested_set == final_scopes),
+        ('target-expected', target_expected == sorted(final_scopes)),
+        ('target-hash',
+            isinstance(target_hash, str)
+            and re.fullmatch(r'[0-9a-f]{64}', target_hash) is not None),
+        ('token-rotated', bool(current_hash) and current_hash != target_hash),
+        ('successor-request-id',
+            exact_nonempty_id(request_id) and request_id != target_request_id),
+        ('successor-request-id-unique', len(request_id_matches) == 1),
+        ('successor-map-key',
+            isinstance(request_id, str) and pending_by_id.get(request_id) is request),
+        ('successor-identity',
+            request.get('deviceId') == expected_device_id
+            and request.get('publicKey') == context.get('key')),
+        ('successor-client',
+            request.get('clientId') == 'cli' and request.get('clientMode') == 'cli'),
+        ('successor-repair', request.get('isRepair') is True),
+        ('successor-role',
+            request.get('role') == 'operator' and request.get('roles') == ['operator']),
+        ('successor-scope-fields', scope_keys == {'scopes'}),
+        ('successor-authorization-inert', authorization_inert),
+        ('successor-auth-fields', not unexpected_auth_keys),
+    )
+    return [name for name, valid in checks if not valid]
+def inert_final_pending(state, context, reviewed_target):
+    return not inert_final_pending_failures(state, context, reviewed_target)
+def inert_final_pending_diagnostic(state, context, reviewed_target):
+    state=state if isinstance(state, dict) else {}
+    pending_by_id=state.get('pending')
+    pending_by_id=pending_by_id if isinstance(pending_by_id, dict) else {}
+    pending=[
+        value for value in pending_by_id.values()
+        if isinstance(value, dict) and norm(value.get('deviceId')) == expected_device_id
+    ]
+    request=pending[0] if len(pending) == 1 else {}
+    scope_keys=[
+        key for key in request
+        if isinstance(key, str) and key.lower().endswith('scopes')
+    ]
+    raw_scopes=request.get('scopes')
+    scope_count=len(raw_scopes) if isinstance(raw_scopes, list) else -1
+    scope_classes=[]
+    known_scope_classes={
+        'operator.admin': 'admin',
+        'operator.approvals': 'approvals',
+        'operator.pairing': 'pairing',
+        'operator.read': 'read',
+        'operator.talk.secrets': 'talk-secrets',
+        'operator.write': 'write',
+    }
+    if isinstance(raw_scopes, list):
+        for scope in raw_scopes:
+            if not isinstance(scope, str):
+                scope_classes.append(type(scope).__name__)
+                continue
+            normalized=scope.strip()
+            scope_classes.append(known_scope_classes.get(normalized, 'blank' if not normalized else 'other'))
+    if request.get('silent') is True:
+        silent_label='true'
+    elif request.get('silent') is False:
+        silent_label='false'
+    elif 'silent' not in request:
+        silent_label='missing'
+    else:
+        silent_label=type(request.get('silent')).__name__
+    failures=inert_final_pending_failures(state, context, reviewed_target)
+    return (
+        f"failures={'+'.join(failures) or 'none'} fields={len(request)} "
+        f"scope_keys={len(scope_keys)} scopes_present={'scopes' in request} "
+        f"requested_scopes_present={'requestedScopes' in request} "
+        f"scopes_type={type(raw_scopes).__name__} scopes_count={scope_count} "
+        f"scope_classes={'+'.join(scope_classes) or 'none'} silent={silent_label}"
+    )
+def verify_inert_final_pending_classifier():
+    context={'key': 'reviewed-public-key', 'scopes': final_scopes, 'token': 'rotated-token'}
+    reviewed={
+        'requestId': 'reviewed-upgrade',
+        'deviceId': expected_device_id,
+        'publicKey': context['key'],
+        'clientId': 'cli',
+        'clientMode': 'cli',
+        'baselineScopes': ['operator.pairing'],
+        'baselineTokenHash': 'a' * 64,
+        'requestedScopes': ['operator.read', 'operator.write'],
+        'expectedScopes': sorted(final_scopes),
+    }
+    request={
+        'requestId': 'inert-request',
+        'deviceId': expected_device_id,
+        'publicKey': context['key'],
+        'clientId': 'cli',
+        'clientMode': 'cli',
+        'role': 'operator',
+        'roles': ['operator'],
+        'isRepair': True,
+        'scopes': [],
+        'silent': True,
+    }
+    valid={'pending': {'inert-request': request}}
+    if not inert_final_pending(valid, context, reviewed):
+        fail('inert final-state classifier rejected its reviewed shape')
+    with_unrelated={'pending': {**valid['pending'], 'unrelated-request': {
+        **request, 'requestId': 'unrelated-request', 'deviceId': 'other-device',
+    }}}
+    if not inert_final_pending(with_unrelated, context, reviewed):
+        fail('inert final-state classifier rejected an unrelated pending device')
+    def changed_request(changes):
+        return {'pending': {'inert-request': {**request, **changes}}}
+    missing_scopes={key: value for key, value in request.items() if key != 'scopes'}
+    rejected=[
+        ([], context, reviewed),
+        (valid, [], reviewed),
+        (valid, context, []),
+        ({'pending': []}, context, reviewed),
+        ({'pending': {}}, context, reviewed),
+        ({'pending': {'wrong-key': request}}, context, reviewed),
+        ({'pending': {**valid['pending'], 'extra-request': {
+            **request, 'requestId': 'extra-request',
+        }}}, context, reviewed),
+        ({'pending': {**valid['pending'], 'unrelated-key': {
+            **request, 'deviceId': 'other-device',
+        }}}, context, reviewed),
+        ({'pending': {'inert-request': missing_scopes}}, context, reviewed),
+        (changed_request({'scopes': ['operator.read']}), context, reviewed),
+        (changed_request({'scopes': ['operator.pairing'], 'silent': False}), context, reviewed),
+        (changed_request({'scopes': 'operator.read'}), context, reviewed),
+        (changed_request({'requestedScopes': []}), context, reviewed),
+        (changed_request({'unknownScopes': []}), context, reviewed),
+        (changed_request({'authToken': 'unexpected'}), context, reviewed),
+        (changed_request({'silent': False}), context, reviewed),
+        (changed_request({'deviceId': 'other-device'}), context, reviewed),
+        (changed_request({'publicKey': 'other-public-key'}), context, reviewed),
+        (changed_request({'clientId': 'other-client'}), context, reviewed),
+        (changed_request({'roles': ['operator', 'node']}), context, reviewed),
+        (changed_request({'role': 'node'}), context, reviewed),
+        (changed_request({'isRepair': False}), context, reviewed),
+        (valid, context, {}),
+        (valid, context, {**reviewed, 'requestId': 'inert-request'}),
+        (valid, context, {**reviewed, 'baselineScopes': []}),
+        (valid, context, {**reviewed, 'requestedScopes': ['operator.read']}),
+        (valid, context, {**reviewed, 'expectedScopes': ['operator.pairing']}),
+        (valid, context, {**reviewed,
+            'baselineTokenHash': hashlib.sha256(context['token'].encode()).hexdigest()}),
+        (valid, context, {**reviewed, 'publicKey': 'other-public-key'}),
+        (valid, {**context, 'scopes': {'operator.pairing'}}, reviewed),
+    ]
+    if any(inert_final_pending(state, candidate_context, candidate_target)
+            for state, candidate_context, candidate_target in rejected):
+        fail('inert final-state classifier accepted a drifted shape')
+verify_inert_final_pending_classifier()
+def converged(state):
+    expected_key=target.get('publicKey') if target else ''
+    context=paired_context(state, expected_key)
+    if (context is None or context['scopes'] != final_scopes or not auth_matches(state, context)):
+        return None
+    pending=same_device_pending(state)
+    if pending and not inert_final_pending(state, context, target):
+        return None
+    return context
+def sync_auth(context):
+    auth_path=root / 'identity' / 'device-auth.json'
+    auth_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name=tempfile.mkstemp(prefix='.device-auth.', dir=auth_path.parent)
+    tmp=Path(tmp_name)
+    try:
+        auth={'version': 1, 'deviceId': expected_device_id, 'tokens': {'operator': {
+            'token': context['token'],
+            'role': 'operator',
+            'scopes': sorted(final_scopes),
+            'updatedAtMs': (
+                context['operator'].get('updatedAtMs')
+                or context['operator'].get('rotatedAtMs')
+                or context['operator'].get('createdAtMs')
+            ),
+        }}}
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            handle.write(json.dumps(auth, indent=2, sort_keys=True) + '\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), 0o600)
+        os.replace(tmp, auth_path)
+    finally:
+        tmp.unlink(missing_ok=True)
+def converge_after_sync(state):
+    complete=converged(state)
+    if complete is not None: return complete
+    if same_device_pending(state): return None
+    expected_key=target.get('publicKey') if target else ''
+    context=paired_context(state, expected_key)
+    if context is None or context['scopes'] != final_scopes: return None
+    sync_auth(context)
+    return converged(load_state())
+def safe_state_summary(state):
+    expected_key=target.get('publicKey') if target else snapshot.get('publicKey', '')
+    context=paired_context(state, expected_key)
+    if context is None:
+        paired_label='invalid'
+        auth_label='unverified'
+    else:
+        paired_label='final' if context['scopes'] == final_scopes else 'baseline-or-other'
+        auth_label='match' if auth_matches(state, context) else 'mismatch'
+    return f'paired={paired_label} auth={auth_label} pending={len(state["pending"])} same_device_pending={len(same_device_pending(state))}'
 
-device_id=snapshot['deviceId']
-pending=load(root / 'devices' / 'pending.json')
-if any(isinstance(item, dict) and norm(item.get('deviceId')) == device_id for item in pending.values()):
-    fail('pairing request did not converge')
-paired=load(root / 'devices' / 'paired.json')
-device=next((value for value in paired.values() if isinstance(value, dict) and norm(value.get('deviceId')) == device_id), None)
-if device is None or norm(device.get('publicKey')) != snapshot['publicKey']:
-    fail('approval did not produce the exact requested device')
-if roles(device) != {'operator'}:
-    fail('approved device has a non-operator role')
-is_cli=norm(device.get('clientMode')).lower() == 'cli'
-if not is_cli: fail('approved device is not a CLI client')
-expected=set(snapshot['expectedScopes'])
-if canonical_scopes(device, ('scopes','approvedScopes')) != expected:
-    fail('approved device scopes do not match the reviewed request')
-tokens=device.get('tokens') if isinstance(device.get('tokens'), dict) else {}
-operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
-if norm(operator.get('role')) != 'operator' or canonical_scopes(operator, ('scopes',)) != expected:
-    fail('approved device token scopes do not match the reviewed request')
-token=norm(operator.get('token'))
-if not token or token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN')):
-    fail('approval did not produce a distinct real device token')
-identity=load(root / 'identity' / 'device.json')
-if norm(identity.get('deviceId')) != device_id:
-    fail('approved device does not match the persisted CLI identity')
-auth_path=root / 'identity' / 'device-auth.json'
-auth_path.parent.mkdir(parents=True, exist_ok=True)
-tmp=auth_path.with_name('.device-auth.json.tmp')
-auth={'version': 1, 'deviceId': device_id, 'tokens': {'operator': {
-    'token': token,
-    'role': 'operator',
-    'scopes': sorted(expected),
-    'updatedAtMs': operator.get('updatedAtMs') or operator.get('rotatedAtMs') or operator.get('createdAtMs'),
-}}}
-tmp.write_text(json.dumps(auth, indent=2, sort_keys=True) + '\n', encoding='utf-8')
-os.chmod(tmp, 0o600)
-os.replace(tmp, auth_path)
-print(device_id)
+state=load_state()
+complete=converge_after_sync(state)
+if complete is not None:
+    print(f"CONVERGED {expected_device_id}")
+    raise SystemExit(0)
+if mode == 'prove':
+    fail('device approval state is not canonically converged')
+
+if mode == 'prepare':
+    original_want=want
+    request=None
+    for poll in range(SETTLE_ATTEMPTS):
+        state=load_state()
+        complete=converge_after_sync(state)
+        if complete is not None:
+            print(f"CONVERGED {expected_device_id}")
+            raise SystemExit(0)
+        request=exact_request(state, want)
+        if isinstance(request, dict): break
+        same_device=same_device_pending(state)
+        if len(same_device) > 1:
+            fail('multiple same-device requests appeared before approval')
+        if len(same_device) == 1:
+            replacement=same_device[0].get('requestId')
+            if (not isinstance(replacement, str) or not replacement
+                    or replacement != replacement.strip()
+                    or any(character.isspace() for character in replacement)):
+                fail('replacement request has no exact id')
+            want=replacement
+            request=same_device[0]
+            break
+        if poll + 1 < SETTLE_ATTEMPTS: time.sleep(SETTLE_POLL_SECONDS)
+    same_device=same_device_pending(state)
+    if (not want or any(character.isspace() for character in want)
+            or not isinstance(request, dict) or request.get('requestId') != want
+            or request.get('deviceId') != expected_device_id
+            or len(same_device) != 1 or same_device[0] is not request
+            or request.get('clientId') != 'cli' or request.get('clientMode') != 'cli'
+            or request.get('isRepair') is not True or roles(request) != {'operator'}):
+        fail('refusing missing or non-exact CLI operator repair request')
+    public_key=request.get('publicKey')
+    if not isinstance(public_key, str) or public_key != public_key.strip() or not public_key:
+        fail('repair request has no exact public key')
+    context=paired_context(state, public_key)
+    requested_views=bounded_scope_views(request, ('scopes','requestedScopes'))
+    requested=scopes(request, ('scopes','requestedScopes'))
+    target_expected=target.get('expectedScopes') if isinstance(target.get('expectedScopes'), list) else []
+    successor_closures=[]
+    for view in requested_views or []:
+        closure=set(view)
+        if {'operator.read','operator.write'}.intersection(closure):
+            closure.add('operator.pairing')
+        successor_closures.append(closure)
+    is_upgrade=(
+        context is not None and requested is not None
+        and context['scopes'] != final_scopes
+        and bool({'operator.read','operator.write'}.intersection(requested))
+        and context['scopes'] | requested == final_scopes
+    )
+    is_final_successor=(
+        bool(target) and context is not None and requested_views is not None
+        and context['scopes'] == final_scopes
+        and all(closure == final_scopes for closure in successor_closures)
+        and set(target_expected) == final_scopes
+    )
+    if (context is None or not auth_matches(state, context)
+            or not (is_upgrade or is_final_successor)):
+        def scope_sets_label(views):
+            if views is None: return 'invalid'
+            return '|'.join('+'.join(sorted(view)) for view in views)
+        context_label='missing' if context is None else scope_sets_label([context['scopes']])
+        auth_ok=context is not None and auth_matches(state, context)
+        inert_label=inert_final_pending_diagnostic(state, context or {}, target)
+        fail(
+            'request is not the exact canonical operator scope upgrade; '
+            f'context={context_label} auth_match={auth_ok} '
+            f'views={scope_sets_label(requested_views)} '
+            f'closures={scope_sets_label(successor_closures)} '
+            f'target={bool(target)} target_expected_final={set(target_expected) == final_scopes} '
+            f'upgrade={is_upgrade} final_successor={is_final_successor} inert={inert_label}'
+        )
+    candidate_requested=final_scopes if is_final_successor else requested
+    candidate={
+        'requestId': want,
+        'deviceId': expected_device_id,
+        'publicKey': context['key'],
+        'clientId': 'cli',
+        'clientMode': 'cli',
+        'baselineScopes': sorted(context['scopes']),
+        'baselineTokenHash': hashlib.sha256(context['token'].encode()).hexdigest(),
+        'requestedScopes': sorted(candidate_requested),
+        'expectedScopes': sorted(final_scopes),
+    }
+    if target:
+        exact=('deviceId','publicKey','clientId','clientMode','expectedScopes')
+        if not is_final_successor:
+            exact += ('requestedScopes','baselineScopes','baselineTokenHash')
+        if any(candidate.get(key) != target.get(key) for key in exact):
+            fail('replacement request does not match the reviewed scope upgrade')
+    status='CANDIDATE' if want == original_want else 'RETRY'
+    print(f'{status} {want} ' + json.dumps(candidate, sort_keys=True))
+    raise SystemExit(0)
+
+if mode != 'observe' or not snapshot:
+    fail('invalid approval state validation mode')
+
+last_state=state
+for poll in range(SETTLE_ATTEMPTS):
+    state=load_state()
+    complete=converge_after_sync(state)
+    if complete is not None:
+        print(f"CONVERGED {expected_device_id}")
+        raise SystemExit(0)
+    pending=same_device_pending(state)
+    baseline=paired_context(state, snapshot.get('publicKey', ''))
+    unchanged=(
+        baseline is not None
+        and baseline['scopes'] == set(snapshot.get('baselineScopes') or [])
+        and hashlib.sha256(baseline['token'].encode()).hexdigest() == snapshot.get('baselineTokenHash')
+        and auth_matches(state, baseline)
+    )
+    final_successor_hint=(
+        bool(target) and baseline is not None
+        and baseline['scopes'] == final_scopes
+        and auth_matches(state, baseline)
+        and len(pending) == 1
+    )
+    if final_successor_hint:
+        replacement=pending[0].get('requestId')
+        if (isinstance(replacement, str) and replacement == replacement.strip()
+                and replacement and not any(character.isspace() for character in replacement)
+                and replacement != want):
+            print(f"RETRY {replacement}")
+            raise SystemExit(0)
+    if unchanged and len(pending) > 1:
+        fail('multiple same-device replacement requests appeared')
+    if unchanged and len(pending) == 1:
+        replacement=pending[0].get('requestId')
+        if isinstance(replacement, str) and replacement and replacement != want:
+            print(f"RETRY {replacement}")
+            raise SystemExit(0)
+    last_state=state
+    if poll + 1 < SETTLE_ATTEMPTS: time.sleep(SETTLE_POLL_SECONDS)
+
+baseline=paired_context(last_state, snapshot.get('publicKey', ''))
+pending=same_device_pending(last_state)
+unchanged=(
+    baseline is not None
+    and baseline['scopes'] == set(snapshot.get('baselineScopes') or [])
+    and hashlib.sha256(baseline['token'].encode()).hexdigest() == snapshot.get('baselineTokenHash')
+    and auth_matches(last_state, baseline)
+)
+if unchanged and len(pending) == 1:
+    replacement=pending[0].get('requestId')
+    if isinstance(replacement, str) and replacement:
+        print(f"RETRY {replacement}")
+        raise SystemExit(0)
+fail('approval did not settle: ' + safe_state_summary(last_state))
 PY
+}
+
+approval_target_json=
+approve_request() {
+  local request_id="$1" expected_device_id="$2" approve_output approve_rc prepare_output post_output prepared snapshot_json
+  local attempt=1 id_count=0 original_request_id seen_request_ids= target_json=
+  while [ "$attempt" -le 3 ]; do
+    original_request_id="$request_id"
+    if ! prepare_output="$(approval_state prepare "$request_id" "$expected_device_id" 0 3<<<"$target_json" 4</dev/null 5</dev/null)"; then
+      return 1
+    fi
+    case "$prepare_output" in
+      "CONVERGED "*)
+        approval_target_json="$target_json"
+        echo "ISSUE_4462_APPROVAL_CONVERGED attempt=$attempt request=\${request_id:-consumed} device=\${prepare_output#CONVERGED }"
+        return 0
+        ;;
+      "CANDIDATE "*|"RETRY "*)
+        prepared="\${prepare_output#* }"
+        request_id="\${prepared%% *}"
+        snapshot_json="\${prepared#* }"
+        ;;
+      *) echo "INVALID_APPROVAL_PREPARE_RESULT" >&2; return 1 ;;
+    esac
+    if [ -n "$original_request_id" ]; then
+      case ",$seen_request_ids," in
+        *",$original_request_id,"*) unset snapshot_json; echo "REPEATED_SCOPE_REQUEST=$original_request_id" >&2; return 1 ;;
+      esac
+      if [ "$id_count" -ge 3 ]; then
+        unset snapshot_json
+        echo "SCOPE_APPROVAL_ID_LIMIT_EXCEEDED next=$original_request_id" >&2
+        return 1
+      fi
+      seen_request_ids="\${seen_request_ids:+$seen_request_ids,}$original_request_id"
+      id_count=$((id_count + 1))
+    fi
+    if [ "$request_id" != "$original_request_id" ]; then
+      case ",$seen_request_ids," in
+        *",$request_id,"*) unset snapshot_json; echo "REPEATED_SCOPE_REQUEST=$request_id" >&2; return 1 ;;
+      esac
+      if [ "$id_count" -ge 3 ]; then
+        unset snapshot_json
+        echo "SCOPE_APPROVAL_ID_LIMIT_EXCEEDED next=$request_id" >&2
+        return 1
+      fi
+      seen_request_ids="\${seen_request_ids:+$seen_request_ids,}$request_id"
+      id_count=$((id_count + 1))
+    fi
+    if [ -z "$target_json" ]; then target_json="$snapshot_json"; fi
+    echo "ISSUE_4462_STAGE=approve-scope-upgrade attempt=$attempt request=$request_id"
+    echo "ISSUE_4462_APPROVAL_CONTEXT=validated-repair-cli"
+    approve_rc=0
+    set +e
+    approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
+    approve_rc=$?
+    set -e
+    set +e
+    post_output="$(approval_state observe "$request_id" "$expected_device_id" "$approve_rc" \
+      3<<<"$target_json" 4<<<"$snapshot_json" 5<<<"$approve_output")"
+    post_rc=$?
+    set -e
+    unset approve_output snapshot_json
+    if [ "$post_rc" -ne 0 ]; then return 1; fi
+    case "$post_output" in
+      "CONVERGED "*)
+        approval_target_json="$target_json"
+        echo "ISSUE_4462_APPROVAL_CONVERGED attempt=$attempt request=$request_id device=\${post_output#CONVERGED }"
+        return 0
+        ;;
+      "RETRY "*) request_id="\${post_output#RETRY }" ;;
+      *) echo "INVALID_APPROVAL_OBSERVE_RESULT" >&2; return 1 ;;
+    esac
+    if [ "$attempt" -ge 3 ]; then
+      echo "SCOPE_APPROVAL_RETRY_EXHAUSTED next=$request_id" >&2
+      return 1
+    fi
+    attempt=$((attempt + 1))
+  done
+  echo "SCOPE_APPROVAL_RETRY_EXHAUSTED" >&2
+  return 1
 }
 
 initial_list_rc=0
@@ -823,34 +1097,14 @@ if [ -z "$request_id" ]; then
   printf '%s\n' "$trigger_output" >/tmp/issue4462-trigger-agent.log
   state="$(state_json)"
   request_id="$(printf '%s' "$state" | select_scope_request "$paired_device_id" 2>/dev/null || true)"
-  if [ -z "$request_id" ]; then
-    if printf '%s' "$state" | assert_agent_scopes_without_admin "$paired_device_id" >/tmp/issue4462-approved-device.txt 2>/tmp/issue4462-approved-device.err; then
-      echo "SCOPE_ALREADY_APPROVED=$(cat /tmp/issue4462-approved-device.txt)"
-    elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log \
-      && contains_integer_42 </tmp/issue4462-trigger-agent.log; then
-      echo "TRIGGER_COMPLETED_WITHOUT_PENDING_SCOPE_UPGRADE"
-      echo "ISSUE_4462_SCOPE_UPGRADE_OK device=trigger-completed request=not-reproduced"
-      exit 0
-    else
-      echo "NO_SCOPE_REQUEST" >&2
-      cat /tmp/issue4462-trigger-agent.log >&2
-      printf '%s\n' "$state" >&2
-      exit 5
-    fi
-  fi
 fi
 
-if [ -n "$request_id" ]; then
-  echo "ISSUE_4462_STAGE=approve-scope-upgrade request=$request_id"
-  approve_request "$request_id"
-fi
-
-state="$(state_json)"
-printf '%s' "$state" | assert_agent_scopes_without_admin "$paired_device_id" >/tmp/issue4462-final-device.txt
-if printf '%s' "$state" | select_scope_request "$paired_device_id" >/tmp/issue4462-pending-after.txt 2>/dev/null; then
-  echo "PENDING_AFTER_APPROVAL=$(cat /tmp/issue4462-pending-after.txt)" >&2
-  exit 6
-fi
+approve_request "$request_id" "$paired_device_id"
+proof_output="$(approval_state prove "" "$paired_device_id" 0 3<<<"$approval_target_json" 4</dev/null 5</dev/null)"
+case "$proof_output" in
+  "CONVERGED "*) final_device="\${proof_output#CONVERGED }" ;;
+  *) echo "INVALID_FINAL_APPROVAL_PROOF" >&2; exit 9 ;;
+esac
 
 session_id="issue-4462-final-$(date +%s)-$$"
 echo "ISSUE_4462_STAGE=final-gateway-agent"
@@ -866,7 +1120,7 @@ if ! contains_integer_42 </tmp/issue4462-final-agent.log; then
   cat /tmp/issue4462-final-agent.log >&2
   exit 8
 fi
-echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$(cat /tmp/issue4462-final-device.txt) request=\${request_id:-auto}"
+echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$final_device request=\${request_id:-consumed}"
 `;
 }
 

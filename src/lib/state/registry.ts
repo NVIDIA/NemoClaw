@@ -21,6 +21,7 @@ import {
   serializeSandboxMcpStateForDisk,
 } from "./registry-mcp";
 import type { SandboxMessagingState } from "./registry-messaging";
+import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
   getSandboxEntryDisplayInference,
@@ -132,8 +133,11 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+  defaultSelectionRevision?: number;
   extraProviders?: string[];
 }
+
+export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
@@ -352,6 +356,9 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -367,6 +374,9 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
+    defaultSelectionRevision: reversibleRemoval.normalizeDefaultSelectionRevision(
+      data.defaultSelectionRevision,
+    ),
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
         name,
@@ -501,10 +511,7 @@ export function registerSandbox(entry: SandboxEntry): void {
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
     };
-    if (!data.defaultSandbox) {
-      data.defaultSandbox = entry.name;
-    }
-    save(data);
+    save(reversibleRemoval.claimInitialDefaultInRegistry(data, entry.name));
   });
 }
 
@@ -521,47 +528,43 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
-export function removeSandbox(name: string): boolean {
+/** Atomically capture and remove one registry row for a reversible lifecycle operation. */
+export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
-    const data = load();
-    if (!data.sandboxes[name]) return false;
-    delete data.sandboxes[name];
-    if (data.defaultSandbox === name) {
-      const remaining = Object.keys(data.sandboxes);
-      data.defaultSandbox = remaining.length > 0 ? remaining[0] || null : null;
-    }
-    save(data);
-    return true;
+    const result = reversibleRemoval.removeSandboxFromRegistry(load(), name);
+    if (!result.receipt) return null;
+    save(result.registry);
+    return result.receipt;
   });
 }
 
-/**
- * Restore a previously-removed sandbox entry verbatim under the registry lock,
- * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
- * fresh entry from known fields). Used to roll back a failed stale-sandbox
- * rebuild recovery (#4497): the entry was removed before the recreate, and on
- * failure it must come back intact. Operates on the CURRENT registry (it does
- * not clobber other sandboxes' entries another command added during the rebuild
- * window).
- *
- * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
- * performed: when this sandbox was the default, `removeSandbox` reassigned
- * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
- * it back. This is best-effort "undo my operation" — a deliberate default change
- * by a concurrent command during the rebuild window is an inherent race and may
- * be overwritten.
- */
+export function removeSandbox(name: string): boolean {
+  return removeSandboxWithReceipt(name) !== null;
+}
+
+/** Restore a captured row and reclaim its default only while its revision still matches. */
 export function restoreSandboxEntry(
   entry: SandboxEntry,
-  options: { reclaimDefault?: string | null } = {},
+  options: {
+    defaultTransition?: {
+      readonly from: string | null;
+      readonly to: string;
+      readonly expectedRevision: number;
+    };
+  } = {},
 ): void {
   withLock(() => {
-    const data = load();
-    data.sandboxes[entry.name] = entry;
-    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
-      data.defaultSandbox = options.reclaimDefault;
-    }
-    save(data);
+    save(reversibleRemoval.restoreSandboxEntryInRegistry(load(), entry, options.defaultTransition));
+  });
+}
+
+/** Restore a removed entry unless a recreate already registered its replacement. */
+export function restoreSandboxEntryIfMissing(receipt: SandboxRemovalReceipt): boolean {
+  return withLock(() => {
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), receipt);
+    if (!result.restored) return false;
+    save(result.registry);
+    return result.restored;
   });
 }
 
@@ -575,18 +578,15 @@ export function listSandboxes(): { sandboxes: SandboxEntry[]; defaultSandbox: st
 
 export function setDefault(name: string): boolean {
   return withLock(() => {
-    const data = load();
-    if (!data.sandboxes[name]) return false;
-    data.defaultSandbox = name;
-    save(data);
+    const registry = reversibleRemoval.setDefaultInRegistry(load(), name);
+    if (!registry) return false;
+    save(registry);
     return true;
   });
 }
 
 export function clearAll(): void {
-  withLock(() => {
-    save({ sandboxes: {}, defaultSandbox: null });
-  });
+  withLock(() => save(reversibleRemoval.clearRegistry(load())));
 }
 
 export function listExtraProviders(): string[] {

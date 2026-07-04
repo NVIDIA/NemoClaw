@@ -20,6 +20,7 @@ import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
+import { validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -45,6 +46,11 @@ type RemoveSandboxImageDeps = {
 type RemoveSandboxRegistryEntryDeps = {
   removeImage?: (sandboxName: string) => void;
   removeSandbox?: typeof registry.removeSandbox;
+};
+
+type RemoveSandboxRegistryEntryWithReceiptDeps = {
+  removeImage?: (sandboxName: string) => void;
+  removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
@@ -131,6 +137,13 @@ export function cleanupSandboxServices(
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): void {
+  // Source boundary: this exported helper can be called independently of CLI
+  // dispatch, including from forced local recovery. Validate once before every
+  // host and provider cleanup side effect, then derive the PID path from that
+  // same RFC 1123 name. Remove only when the helper accepts a validated-name
+  // type that cannot be constructed from unchecked input.
+  const validatedSandboxName = validateName(sandboxName, "sandbox name");
+  const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const stopAll =
     deps.stopAll ??
@@ -161,19 +174,19 @@ export function cleanupSandboxServices(
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
-    stopAll({ sandboxName });
+    stopAll({ sandboxName: validatedSandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = getSandbox(sandboxName);
+    const sb = getSandbox(validatedSandboxName);
     if (sb?.provider?.includes("ollama")) {
       unloadOllamaModels();
     }
   }
 
   try {
-    rmSync(`/tmp/nemoclaw-services-${sandboxName}`, {
+    rmSync(servicesPidDir, {
       recursive: true,
       force: true,
     });
@@ -188,7 +201,7 @@ export function cleanupSandboxServices(
   // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
   // drift on which providers count as per-sandbox state.
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
-    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
+    runOpenshell(["provider", "delete", `${validatedSandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });
@@ -260,6 +273,17 @@ export function removeSandboxRegistryEntry(
   const removeSandbox = deps.removeSandbox ?? registry.removeSandbox;
   removeImage(sandboxName);
   return removeSandbox(sandboxName);
+}
+
+export function removeSandboxRegistryEntryWithReceipt(
+  sandboxName: string,
+  deps: RemoveSandboxRegistryEntryWithReceiptDeps = {},
+): registry.SandboxRemovalReceipt | null {
+  const removeImage = deps.removeImage ?? removeSandboxImage;
+  const removeSandboxWithReceipt =
+    deps.removeSandboxWithReceipt ?? registry.removeSandboxWithReceipt;
+  removeImage(sandboxName);
+  return removeSandboxWithReceipt(sandboxName);
 }
 
 function defaultDestroyWarn(message: string): void {
@@ -349,6 +373,21 @@ async function destroySandboxUnlocked(
   const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
     destructiveResult;
 
+  /**
+   * SOURCE_OF_TRUTH
+   * Invalid state: the OpenShell gateway is unreachable while a local sandbox
+   * record still exists, so a normal destroy cannot confirm remote deletion.
+   * Source boundary: destroySandbox -> executeSandboxDestroy -> `openshell
+   * sandbox delete`; only an explicit --force and no retained MCP ownership may
+   * select forcedLocalCleanup.
+   * Source-fix constraint: NemoClaw cannot make an unreachable remote gateway
+   * delete or attest the sandbox, so this path discards local state only.
+   * Regression proof: destroy-flow.test.ts and the CLI integration test
+   * test/cli/destroy-gateway-unreachable.test.ts prove the forced cleanup,
+   * registry removal, and preservation of shared host/gateway services.
+   * Removal condition: remove this workaround when OpenShell provides an
+   * authenticated force-cleanup operation for an unreachable gateway.
+   */
   if (forcedLocalCleanup) {
     if (deleteOutput) {
       console.error(`  ${deleteOutput}`);

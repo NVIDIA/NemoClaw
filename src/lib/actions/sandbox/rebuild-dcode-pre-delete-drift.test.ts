@@ -42,6 +42,7 @@ describe("rebuildSandbox DCode flow: pre-delete drift", () => {
           compatibleEndpointReasoning: "false",
           nimContainer: null,
           pinEndpoint: true,
+          registryInferenceRoute: null,
           ambient: { presentVars: [], agentMismatch: null },
         },
         toolDisclosure: "direct",
