@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { createOpenshellCliHelpers } from "./openshell-cli";
 import {
   prepareSandboxCreateLaunch,
@@ -18,7 +19,7 @@ const disabledHermesDashboardState = { config: null, enabled: false };
 const temporaryBuildContexts: string[] = [];
 
 function createTrustedBuildContext(): string {
-  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), SANDBOX_BUILD_CONTEXT_PREFIX));
   temporaryBuildContexts.push(buildCtx);
   fs.writeFileSync(path.join(buildCtx, "Dockerfile"), "FROM scratch\n");
   return buildCtx;
@@ -297,6 +298,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
+        buildContextOrigin: "generated",
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage,
@@ -332,6 +334,7 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
+        buildContextOrigin: "generated",
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage: async () => 1,

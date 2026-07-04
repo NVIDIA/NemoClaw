@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import {
   dockerBuildSubprocessEnv,
   prebuildSandboxImageIfEligible,
@@ -19,7 +20,7 @@ const temporaryDirectories: string[] = [];
 
 function createBuildContext(
   parent = os.tmpdir(),
-  prefix = "nemoclaw-build-",
+  prefix = SANDBOX_BUILD_CONTEXT_PREFIX,
 ): {
   buildCtx: string;
   createArgs: string[];
@@ -113,6 +114,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs: ["--from", "/other/Dockerfile"],
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -121,6 +123,28 @@ describe("sandbox BuildKit prebuild", () => {
       }),
     ).resolves.toEqual({ createArgs: ["--from", "/other/Dockerfile"], imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("keeps user-supplied Dockerfiles on the gateway builder", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const log = vi.fn();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        buildContextOrigin: "custom",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+        log,
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null });
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("custom Dockerfile"));
   });
 
   it("skips host Docker for a staged-looking context outside the OS temp directory", async () => {
@@ -134,11 +158,13 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
         env: {},
         buildImage,
+        log: () => {},
       }),
     ).resolves.toEqual({ createArgs, imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
@@ -152,14 +178,39 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
         env: {},
         buildImage,
+        log: () => {},
       }),
     ).resolves.toEqual({ createArgs, imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("skips host Docker for a group-writable staged context", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    fs.chmodSync(buildCtx, 0o770);
+    const buildImage = vi.fn(async () => 0);
+    const log = vi.fn();
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        buildContextOrigin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+        log,
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null });
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("failed trust validation"));
   });
 
   it("skips host Docker for a symlinked staged Dockerfile", async () => {
@@ -173,11 +224,13 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
         env: {},
         buildImage,
+        log: () => {},
       }),
     ).resolves.toEqual({ createArgs, imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
@@ -193,11 +246,13 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
         env: {},
         buildImage,
+        log: () => {},
       }),
     ).resolves.toEqual({ createArgs, imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
@@ -217,14 +272,42 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
+        buildContextOrigin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
         env: {},
         buildImage,
+        log: () => {},
       }),
     ).resolves.toEqual({ createArgs, imageRef: null });
     expect(buildImage).not.toHaveBeenCalled();
+  });
+
+  it("logs filesystem inspection errors distinctly before falling back", async () => {
+    const { buildCtx, createArgs } = createBuildContext();
+    const buildImage = vi.fn(async () => 0);
+    const log = vi.fn();
+    vi.spyOn(fs, "openSync").mockImplementation(() => {
+      throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
+    });
+
+    await expect(
+      prebuildSandboxImageIfEligible({
+        buildCtx,
+        buildId: BUILD_ID,
+        buildContextOrigin: "generated",
+        createArgs,
+        sandboxName: "alpha",
+        dockerDriverGateway: true,
+        env: {},
+        buildImage,
+        log,
+      }),
+    ).resolves.toEqual({ createArgs, imageRef: null });
+    expect(buildImage).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("too many open files"));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("could not be inspected"));
   });
 
   it("uses the argv-based Docker helper and returns the local image on success", async () => {
@@ -233,6 +316,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
+      buildContextOrigin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
@@ -270,6 +354,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
+      buildContextOrigin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
@@ -285,6 +370,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
+      buildContextOrigin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,

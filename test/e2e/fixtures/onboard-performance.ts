@@ -85,5 +85,7 @@ export function maximumOutputSilenceMs(
     .filter((atMs) => atMs >= startedAtMs && atMs <= finishedAtMs)
     .sort((left, right) => left - right);
   const boundaries = [startedAtMs, ...outputTimes, finishedAtMs];
-  return Math.max(...boundaries.slice(1).map((atMs, index) => atMs - boundaries[index]));
+  return boundaries
+    .slice(1)
+    .reduce((maximum, atMs, index) => Math.max(maximum, atMs - boundaries[index]), 0);
 }

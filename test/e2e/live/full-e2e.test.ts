@@ -17,23 +17,27 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
-import { maximumOutputSilenceMs, readOnboardTraceWindow } from "../fixtures/onboard-performance.ts";
+import {
+  maximumOutputSilenceMs,
+  type OnboardTraceWindow,
+  readOnboardTraceWindow,
+} from "../fixtures/onboard-performance.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { extractOpenClawAgentText } from "./agent-turn-latency-helpers.ts";
+import { extractOpenClawAgentPayloadText } from "./agent-turn-latency-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
-const FIRST_TURN_TIMEOUT_MS =
-  Number(process.env.NEMOCLAW_E2E_FIRST_TURN_TIMEOUT_SECS ?? 240) * 1_000;
-const ONBOARD_BUDGET_SECS = Number(process.env.NEMOCLAW_E2E_ONBOARD_BUDGET_SECS ?? 180);
-const MAX_SILENCE_SECS = Number(process.env.NEMOCLAW_E2E_MAX_SILENCE_SECS ?? 60);
+const FIRST_TURN_TIMEOUT_MS = 240_000;
+const ONBOARD_BUDGET_SECS = 180;
+const MAX_SILENCE_SECS = 60;
+const EXPECTED_FIRST_REPLY = "NEMOCLAW_E2E_READY_6002";
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
 const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
@@ -115,9 +119,14 @@ function parseReplyCommand(): string {
   return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or "").strip())'`;
 }
 
-function readAndDeleteTrace(traceFile: string, traceDirectory: string): unknown {
+function readAndDeleteTraceWindow(traceFile: string, traceDirectory: string): OnboardTraceWindow {
   try {
-    return JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown;
+    return readOnboardTraceWindow(JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown);
+  } catch (error) {
+    throw new Error(
+      `Cold onboard evidence requires a valid trace file with one successful nemoclaw.onboard root span: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
   } finally {
     fs.rmSync(traceDirectory, { recursive: true, force: true });
   }
@@ -145,16 +154,13 @@ async function assertColdOnboardPerformance(input: {
   traceDirectory: string;
   traceFile: string;
 }): Promise<void> {
-  const traceWindow = readOnboardTraceWindow(
-    readAndDeleteTrace(input.traceFile, input.traceDirectory),
-  );
+  const traceWindow = readAndDeleteTraceWindow(input.traceFile, input.traceDirectory);
   const ansiSgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
   const plain = resultText(input.install).replace(ansiSgr, "");
   const heartbeatCount = (plain.match(/Still working on /g) ?? []).length;
-  const buildKitFallback =
-    /Local BuildKit build (?:could not start|failed)[^\n]*using the gateway builder instead\./u.test(
-      plain,
-    );
+  const buildKitFallback = /Local BuildKit build [^\n]*using the gateway builder instead\./u.test(
+    plain,
+  );
   const usedBuildKitPrebuild =
     /Building sandbox image with BuildKit/u.test(plain) && !buildKitFallback;
   const classicBuildSteps = (plain.match(/Step \d+\/\d+ :/gu) ?? []).length;
@@ -165,7 +171,7 @@ async function assertColdOnboardPerformance(input: {
     SANDBOX_NAME,
     trustedSandboxShellScript(
       "openclaw agent --agent main --json --thinking off --session-id e2e-6002 " +
-        "-m 'Reply with a short acknowledgement.'",
+        `-m 'Reply with exactly: ${EXPECTED_FIRST_REPLY}'`,
     ),
     {
       artifactName: "phase-1-first-agent-turn",
@@ -177,7 +183,9 @@ async function assertColdOnboardPerformance(input: {
   const totalMs = Date.now() - traceWindow.startedAtMs;
   const totalSecs = Math.ceil(totalMs / 1_000);
   const turnText = resultText(turn);
-  const responseChars = extractOpenClawAgentText(turnText).trim().length;
+  const assistantReply = extractOpenClawAgentPayloadText(turnText).trim();
+  const compactAssistantReply = assistantReply.replace(/\s+/gu, "");
+  const responseChars = assistantReply.length;
 
   await input.artifacts.writeJson("onboard-progress-budget.json", {
     sandbox: SANDBOX_NAME,
@@ -205,9 +213,10 @@ async function assertColdOnboardPerformance(input: {
     `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
   ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
   expect(turn.exitCode, turnText).toBe(0);
-  expect(responseChars, `expected a non-empty first agent reply, got: ${turnText}`).toBeGreaterThan(
-    0,
-  );
+  expect(
+    compactAssistantReply,
+    `expected the sentinel first agent reply, got: ${turnText}`,
+  ).toContain(EXPECTED_FIRST_REPLY);
   expect(
     totalMs,
     `[1/8]-to-first-response took ${totalSecs}s, over the ${ONBOARD_BUDGET_SECS}s budget`,

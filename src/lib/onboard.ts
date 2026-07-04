@@ -2885,7 +2885,12 @@ async function createSandboxWithBaseImageResolution(
       manageDashboard,
       openshellShellCommand,
       // Transitional BuildKit handoff removal is tracked by #6258.
-      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
+      prebuild: {
+        buildCtx,
+        buildId,
+        buildContextOrigin: fromDockerfile ? "custom" : "generated",
+        dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,

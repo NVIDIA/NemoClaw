@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
 import { maximumOutputSilenceMs, readOnboardTraceWindow } from "../fixtures/onboard-performance.ts";
+import { extractOpenClawAgentPayloadText } from "../live/agent-turn-latency-helpers.ts";
 
 function traceArtifact(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
   return {
@@ -66,5 +66,33 @@ describe("onboard performance evidence", () => {
     expect(() => maximumOutputSilenceMs({ startedAtMs: 5_000, finishedAtMs: 1_000 }, [])).toThrow(
       "onboard output window is invalid",
     );
+  });
+
+  it("rejects echoed user messages as first-agent-response evidence", () => {
+    expect(
+      extractOpenClawAgentPayloadText(
+        JSON.stringify({
+          messages: [{ role: "user", content: "Reply with exactly: NEMOCLAW_E2E_READY_6002" }],
+        }),
+      ),
+    ).toBe("");
+  });
+
+  it("accepts a framed OpenClaw agent-output payload", () => {
+    expect(
+      extractOpenClawAgentPayloadText(
+        `progress\n${JSON.stringify({ result: { payloads: [{ text: "NEMOCLAW_E2E_READY_6002" }] } })}`,
+      ),
+    ).toBe("NEMOCLAW_E2E_READY_6002");
+  });
+
+  it("joins top-level agent-output payload fragments", () => {
+    expect(
+      extractOpenClawAgentPayloadText(
+        JSON.stringify({
+          payloads: [{ text: "NEMOCLAW_" }, { text: "E2E_READY_6002" }],
+        }),
+      ),
+    ).toBe("NEMOCLAW_\nE2E_READY_6002");
   });
 });

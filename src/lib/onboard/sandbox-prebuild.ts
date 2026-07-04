@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawn } from "../adapters/docker/exec";
+import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -22,6 +23,7 @@ const DOCKER_ENV_NAMES = [
 export interface SandboxPrebuildInput {
   buildCtx: string;
   buildId: string;
+  buildContextOrigin: "custom" | "generated";
   createArgs: readonly string[];
   sandboxName: string;
   dockerDriverGateway: boolean;
@@ -53,19 +55,19 @@ function resolveTrustedStagedBuildContext(buildCtx: string): TrustedStagedBuildC
   try {
     const temporaryRoot = fs.realpathSync(os.tmpdir());
     const resolvedBuildCtx = fs.realpathSync(buildCtx);
+    const context = fs.statSync(resolvedBuildCtx);
     if (
       path.dirname(resolvedBuildCtx) !== temporaryRoot ||
-      !path.basename(resolvedBuildCtx).startsWith("nemoclaw-build-") ||
-      !fs.statSync(resolvedBuildCtx).isDirectory()
+      !path.basename(resolvedBuildCtx).startsWith(SANDBOX_BUILD_CONTEXT_PREFIX) ||
+      !context.isDirectory() ||
+      (context.mode & 0o022) !== 0
     ) {
       return null;
     }
 
     const dockerfile = path.join(resolvedBuildCtx, "Dockerfile");
-    const entry = fs.lstatSync(dockerfile);
     const resolvedDockerfile = fs.realpathSync(dockerfile);
     if (path.dirname(resolvedDockerfile) !== resolvedBuildCtx) return null;
-    if (entry.isSymbolicLink() || !entry.isFile()) return null;
 
     const noFollow = fs.constants.O_NOFOLLOW;
     if (typeof noFollow !== "number") return null;
@@ -73,11 +75,9 @@ function resolveTrustedStagedBuildContext(buildCtx: string): TrustedStagedBuildC
 
     descriptor = fs.openSync(dockerfile, fs.constants.O_RDONLY | noFollow | nonBlocking);
     const opened = fs.fstatSync(descriptor);
-    if (!opened.isFile() || opened.dev !== entry.dev || opened.ino !== entry.ino) return null;
+    if (!opened.isFile()) return null;
 
     return { buildCtx: resolvedBuildCtx, dockerfile: resolvedDockerfile };
-  } catch {
-    return null;
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
@@ -133,8 +133,9 @@ export function sandboxLocalImageRef(sandboxName: string, buildId: string): stri
 }
 
 /**
- * Build the already-staged sandbox context with BuildKit on the shared local
- * Docker daemon. Any failure preserves the original OpenShell build path.
+ * Build a NemoClaw-generated staged context with BuildKit on the shared local
+ * Docker daemon. User-supplied Dockerfiles stay on the OpenShell gateway
+ * builder trust boundary, and any failure preserves that original build path.
  * Remove this bridge once OpenShell uses BuildKit for this local-driver path;
  * extraction and observable retirement criteria are tracked by #6258.
  */
@@ -143,7 +144,14 @@ export async function prebuildSandboxImageIfEligible(
 ): Promise<SandboxPrebuildResult> {
   const createArgs = [...input.createArgs];
   const env = input.env ?? process.env;
+  const log = input.log ?? console.log;
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
+    return { createArgs, imageRef: null };
+  }
+  if (input.buildContextOrigin !== "generated") {
+    log(
+      "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
+    );
     return { createArgs, imageRef: null };
   }
   const fromIndex = createArgs.indexOf("--from");
@@ -155,12 +163,23 @@ export async function prebuildSandboxImageIfEligible(
   ) {
     return { createArgs, imageRef: null };
   }
-  const trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
+  let trustedContext: TrustedStagedBuildContext | null;
+  try {
+    trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    log(
+      `  Local BuildKit build skipped: staged build context could not be inspected (${detail}); using the gateway builder instead.`,
+    );
+    return { createArgs, imageRef: null };
+  }
   if (!trustedContext) {
+    log(
+      "  Local BuildKit build skipped: staged build context failed trust validation; using the gateway builder instead.",
+    );
     return { createArgs, imageRef: null };
   }
 
-  const log = input.log ?? console.log;
   const imageRef = sandboxLocalImageRef(input.sandboxName, input.buildId);
   const buildImage =
     input.buildImage ??
