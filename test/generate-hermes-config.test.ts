@@ -7,21 +7,20 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
+import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
+import {
+  applyMessagingBuildPhase,
+  readMessagingBuildPlanFromEnv,
+} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "./helpers/timeouts";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import {
+  withLegacyMessagingPlanEnv,
+  withLegacyMessagingPlanEnvDirect,
+} from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
-const APPLIER_PATH = path.join(
-  import.meta.dirname,
-  "..",
-  "src",
-  "lib",
-  "messaging",
-  "applier",
-  "build",
-  "messaging-build-applier.mts",
-);
+const SCRIPT_DIR = path.dirname(SCRIPT_PATH);
 const CONFIG_MODULE_DIR = path.join(import.meta.dirname, "..", "agents", "hermes", "config");
 
 const BASE_ENV: Record<string, string> = {
@@ -67,62 +66,93 @@ function encodeJson(value: unknown): string {
 }
 
 function buildHermesTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
-  return withLegacyMessagingPlanEnv(
-    {
-      PATH: process.env.PATH || "/usr/bin:/bin",
-      ...BASE_ENV,
-      ...envOverrides,
-      HOME: tmpDir,
-    },
-    "hermes",
+  return withLegacyMessagingPlanEnv(buildHermesTestEnvBase(envOverrides), "hermes");
+}
+
+function buildHermesTestEnvBase(envOverrides: Record<string, string> = {}): Record<string, string> {
+  return {
+    PATH: process.env.PATH || "/usr/bin:/bin",
+    ...BASE_ENV,
+    ...envOverrides,
+    HOME: tmpDir,
+  };
+}
+
+function buildHermesTestEnvDirect(
+  envOverrides: Record<string, string> = {},
+): Promise<Record<string, string>> {
+  return withLegacyMessagingPlanEnvDirect(buildHermesTestEnvBase(envOverrides), "hermes");
+}
+
+function withEnv<T>(env: Record<string, string>, fn: () => T): T {
+  const originalEnv = { ...process.env };
+  try {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, env);
+    return fn();
+  } finally {
+    for (const key of Object.keys(process.env)) delete process.env[key];
+    Object.assign(process.env, originalEnv);
+  }
+}
+
+function readGeneratedConfig(): { config: Record<string, any>; envFile: string } {
+  const hermesDir = path.join(tmpDir, ".hermes");
+  return {
+    config: YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8")),
+    envFile: fs.readFileSync(path.join(hermesDir, ".env"), "utf-8"),
+  };
+}
+
+function generateBaseConfig(envOverrides: Record<string, string> = {}): {
+  config: Record<string, any>;
+  envFile: string;
+} {
+  fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
+  const env = buildHermesTestEnv(envOverrides);
+  withEnv(env, () =>
+    generateHermesConfig({
+      env,
+      scriptDir: SCRIPT_DIR,
+      homeDir: tmpDir,
+      log: () => {},
+    }),
   );
+  return readGeneratedConfig();
 }
 
 function runConfigScript(envOverrides: Record<string, string> = {}): {
   config: Record<string, any>;
   envFile: string;
 } {
+  return generateConfigWithMessaging(buildHermesTestEnv(envOverrides));
+}
+
+async function runConfigScriptWithMessaging(
+  envOverrides: Record<string, string> = {},
+): Promise<{ config: Record<string, any>; envFile: string }> {
+  return generateConfigWithMessaging(await buildHermesTestEnvDirect(envOverrides));
+}
+
+function generateConfigWithMessaging(env: Record<string, string>): {
+  config: Record<string, any>;
+  envFile: string;
+} {
   fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
-  const env = buildHermesTestEnv(envOverrides);
-  const result = runConfigScriptRaw(envOverrides);
-
-  if (result.status !== 0) {
-    throw new Error(
-      `Script failed (exit ${result.status}):
-stdout: ${result.stdout}
-stderr: ${result.stderr}`,
-    );
-  }
-
-  const applierResult = spawnSync(
-    process.execPath,
-    [
-      "--experimental-strip-types",
-      APPLIER_PATH,
-      "--agent",
-      "hermes",
-      "--phase",
-      "post-agent-install",
-    ],
-    {
-      encoding: "utf-8",
+  withEnv(env, () => {
+    generateHermesConfig({
       env,
-      timeout: 10_000,
-    },
-  );
-  if (applierResult.status !== 0) {
-    throw new Error(
-      `Messaging applier failed (exit ${applierResult.status}):
-stdout: ${applierResult.stdout}
-stderr: ${applierResult.stderr}`,
+      scriptDir: SCRIPT_DIR,
+      homeDir: tmpDir,
+      log: () => {},
+    });
+    applyMessagingBuildPhase(
+      readMessagingBuildPlanFromEnv(env, "hermes"),
+      "post-agent-install",
+      env,
     );
-  }
-
-  const hermesDir = path.join(tmpDir, ".hermes");
-  return {
-    config: YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8")),
-    envFile: fs.readFileSync(path.join(hermesDir, ".env"), "utf-8"),
-  };
+  });
+  return readGeneratedConfig();
 }
 
 function runConfigScriptRaw(
@@ -141,6 +171,13 @@ function runConfigScriptRaw(
       timeout: 10_000,
     },
   );
+}
+
+function expectGenerationError(
+  envOverrides: Record<string, string>,
+  message: string | RegExp,
+): void {
+  expect(() => generateBaseConfig(envOverrides)).toThrow(message);
 }
 
 function writeRegistryManifest(
@@ -230,10 +267,13 @@ afterEach(() => {
 
 describe("agents/hermes/generate-config.ts", () => {
   it(
-    "leaves messaging render to the messaging build applier",
-    () => {
-      const result = runConfigScriptRaw({
+    "runs as a strip-types executable and leaves messaging render to the build applier",
+    async () => {
+      const env = await buildHermesTestEnvDirect({
         NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
+      });
+      const result = runConfigScriptRaw({
+        NEMOCLAW_MESSAGING_PLAN_B64: env.NEMOCLAW_MESSAGING_PLAN_B64,
       });
       expect(result.status, result.stderr).toBe(0);
       const hermesDir = path.join(tmpDir, ".hermes");
@@ -276,9 +316,10 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("rejects unknown tool-disclosure modes", () => {
-    const result = runConfigScriptRaw({ NEMOCLAW_TOOL_DISCLOSURE: "sometimes" });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct");
+    expectGenerationError(
+      { NEMOCLAW_TOOL_DISCLOSURE: "sometimes" },
+      "NEMOCLAW_TOOL_DISCLOSURE must be progressive or direct",
+    );
   });
 
   it("generates API server config without messaging platform token blocks", () => {
@@ -354,25 +395,21 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("fails fast for unsupported web-search provider values", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-      NEMOCLAW_WEB_SEARCH_PROVIDER: "search.example.com",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(`${result.stderr}\n${result.stdout}`).toContain(
+    expectGenerationError(
+      {
+        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "search.example.com",
+      },
       'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
     );
   });
 
   it("fails closed when Brave is requested for Hermes", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
-      NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(`${result.stderr}\n${result.stdout}`).toContain(
+    expectGenerationError(
+      {
+        NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+        NEMOCLAW_WEB_SEARCH_PROVIDER: "brave",
+      },
       'Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily"',
     );
   });
@@ -501,12 +538,8 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("fails fast for unsupported Hermes inference API values", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_INFERENCE_API: "graphql",
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(`${result.stderr}\n${result.stdout}`).toContain(
+    expectGenerationError(
+      { NEMOCLAW_INFERENCE_API: "graphql" },
       "Unsupported Hermes inference API: graphql",
     );
   });
@@ -526,8 +559,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
   });
 
-  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", () => {
-    const { config } = runConfigScript({
+  it("preserves Hermes remote platform toolsets while keeping CLI defaults unpinned", async () => {
+    const { config } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
         "discord",
         "slack",
@@ -607,19 +640,17 @@ describe("agents/hermes/generate-config.ts", () => {
   });
 
   it("fails fast for unknown managed-tool gateway presets", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
-      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-web", "nous-typo"]),
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(`${result.stderr}\n${result.stdout}`).toContain(
+    expectGenerationError(
+      {
+        NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+        NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-web", "nous-typo"]),
+      },
       "Unknown Hermes managed-tool gateway preset: nous-typo",
     );
   });
 
-  it("emits only resolver placeholders for secret-shaped Hermes env keys", () => {
-    const { envFile } = runConfigScript({
+  it("emits only resolver placeholders for secret-shaped Hermes env keys", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([
         "discord",
         "slack",
@@ -646,8 +677,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("OPENAI_API_KEY=");
   });
 
-  it("writes Discord settings in Hermes' top-level schema and keeps tokens in .env", () => {
-    const { config, envFile } = runConfigScript({
+  it("writes Discord settings in Hermes' top-level schema and keeps tokens in .env", async () => {
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
         discord: ["1005536447329222676"],
@@ -699,19 +730,17 @@ describe("agents/hermes/generate-config.ts", () => {
       buildSteps: [],
     };
 
-    const result = runConfigScriptRaw({
+    const { envFile } = generateBaseConfig({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
       NEMOCLAW_MESSAGING_PLAN_B64: encodeJson(plan),
     });
-    const envFile = fs.readFileSync(path.join(tmpDir, ".hermes", ".env"), "utf-8");
 
-    expect(result.status, result.stderr).toBe(0);
     expect(envFile).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n");
     expect(findRawSecretEnvEntries(envFile)).toEqual([]);
   });
 
-  it("preserves the Discord all-messages reply mode from onboarding", () => {
-    const { config } = runConfigScript({
+  it("preserves the Discord all-messages reply mode from onboarding", async () => {
+    const { config } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
       NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({
         "1491590992753590594": {
@@ -723,8 +752,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.discord.require_mention).toBe(false);
   });
 
-  it("allows Discord server members when no explicit user allowlist is configured", () => {
-    const { envFile } = runConfigScript({
+  it("allows Discord server members when no explicit user allowlist is configured", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
       NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({
         "1491590992753590594": {
@@ -737,8 +766,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
-  it("does not allow all Discord users for empty guild config keys", () => {
-    const { envFile } = runConfigScript({
+  it("does not allow all Discord users for empty guild config keys", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
       NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({
         " ": {
@@ -751,8 +780,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("DISCORD_ALLOWED_USERS=");
   });
 
-  it("enables Slack under platforms and keeps Telegram top-level only when messaging tokens are configured", () => {
-    const { config, envFile } = runConfigScript({
+  it("enables Slack under platforms and keeps Telegram top-level only when messaging tokens are configured", async () => {
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram", "slack"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
         telegram: ["123456789"],
@@ -791,8 +820,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(Object.keys(config.platforms)).toEqual(["api_server"]);
   });
 
-  it("enables Slack under platforms even when the slack token allowlist is empty", () => {
-    const { config } = runConfigScript({
+  it("enables Slack under platforms even when the slack token allowlist is empty", async () => {
+    const { config } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["slack"]),
     });
 
@@ -800,7 +829,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.platforms.api_server.enabled).toBe(true);
   });
 
-  it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
+  it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", async () => {
     // Hermes' adapter reads WEIXIN_TOKEN + WEIXIN_ACCOUNT_ID (plus optional
     // WEIXIN_BASE_URL, WEIXIN_ALLOWED_USERS) per
     // https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
@@ -808,7 +837,7 @@ describe("agents/hermes/generate-config.ts", () => {
     // WECHAT_BOT_TOKEN in the OpenShell credential store; the placeholder
     // must reference that name so L7 egress can resolve it without a
     // host-side credential rename.
-    const { config, envFile } = runConfigScript({
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
         wechat: ["bot_other_friend"],
@@ -840,8 +869,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("WEIXIN_ALLOWED_USERS=operator_self_id,bot_other_friend\n");
   });
 
-  it("enables Hermes WhatsApp without provider tokens", () => {
-    const { config, envFile } = runConfigScript({
+  it("enables Hermes WhatsApp without provider tokens", async () => {
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
     });
 
@@ -854,8 +883,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("openshell:resolve:env:WHATSAPP");
   });
 
-  it("emits Hermes WhatsApp allowed users when configured", () => {
-    const { envFile } = runConfigScript({
+  it("emits Hermes WhatsApp allowed users when configured", async () => {
+    const { envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
       NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
         whatsapp: ["15551234567", "15557654321"],
@@ -865,8 +894,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("WHATSAPP_ALLOWED_USERS=15551234567,15557654321\n");
   });
 
-  it("omits WeChat env when captured account metadata is incomplete", () => {
-    const { config, envFile } = runConfigScript({
+  it("omits WeChat env when captured account metadata is incomplete", async () => {
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
       NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
         baseUrl: "https://ilinkai.wechat.com",
@@ -879,8 +908,8 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("WEIXIN_ACCOUNT_ID=");
   });
 
-  it("defaults Telegram behavior config when requireMention is non-canonical", () => {
-    const { config, envFile } = runConfigScript({
+  it("defaults Telegram behavior config when requireMention is non-canonical", async () => {
+    const { config, envFile } = await runConfigScriptWithMessaging({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
       NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({ requireMention: "true" }),
     });
@@ -1003,22 +1032,16 @@ describe("agents/hermes/generate-config.ts", () => {
       },
     });
 
-    const result = runConfigScriptRaw({
-      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
-    });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("unknown effects for agent 'hermes': openclawCompat");
+    expectGenerationError(
+      { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir },
+      "unknown effects for agent 'hermes': openclawCompat",
+    );
   });
 
   it("rejects empty match objects and invalid explicit registry overrides", () => {
     const missingRegistry = path.join(tmpDir, "missing-registry");
-    const missingRegistryResult = runConfigScriptRaw({
-      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: missingRegistry,
-    });
-
-    expect(missingRegistryResult.status).not.toBe(0);
-    expect(missingRegistryResult.stderr).toContain(
+    expectGenerationError(
+      { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: missingRegistry },
       "NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR must point to an existing directory",
     );
 
@@ -1033,11 +1056,9 @@ describe("agents/hermes/generate-config.ts", () => {
       },
     });
 
-    const emptyMatchResult = runConfigScriptRaw({
-      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir,
-    });
-
-    expect(emptyMatchResult.status).not.toBe(0);
-    expect(emptyMatchResult.stderr).toContain("field 'match' must be a non-empty object");
+    expectGenerationError(
+      { NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: registryDir },
+      "field 'match' must be a non-empty object",
+    );
   });
 });
