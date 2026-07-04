@@ -42,6 +42,43 @@ function mode(filePath: string): number {
 const oneShotFunction = extractShellFunction("run_oneshot_command");
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
+  it("sources the trusted runtime env before preserving one-shot argv", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-env-"));
+    const runtimeEnv = path.join(root, "runtime-env.sh");
+    fs.writeFileSync(runtimeEnv, 'export NEMOCLAW_ONESHOT_ENV_MARKER="runtime-loaded"\n');
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(runtimeEnv)}`,
+      `run_oneshot_command bash -c 'printf "marker=%s arg=%s\\n" "$NEMOCLAW_ONESHOT_ENV_MARKER" "$1"' bash ${JSON.stringify("space ; quote' marker")}`,
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("marker=runtime-loaded arg=space ; quote' marker");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reinterpret a command-leading exec option", () => {
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      "rc=0",
+      "run_oneshot_command -a spoofed-argv-zero /usr/bin/printf SHOULD_NOT_RUN || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = runBash(script);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rc=127");
+    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
+  });
+
   it("restores a real mutable config tree and preserves child exit status (#6047)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-perms-"));
     const configDir = path.join(root, ".openclaw");

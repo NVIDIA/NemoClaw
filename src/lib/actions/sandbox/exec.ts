@@ -86,6 +86,23 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
+const SANDBOX_RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
+const SANDBOX_RUNTIME_ENV_EXEC_SCRIPT = `if [ -r "${SANDBOX_RUNTIME_ENV_FILE}" ]; then builtin source "${SANDBOX_RUNTIME_ENV_FILE}" || exit $?; fi; builtin exec -- "$@"`;
+
+/** Source NemoClaw's trusted runtime env without flattening the caller's argv. */
+export function wrapExecCommandWithRuntimeEnv(command: readonly string[]): string[] {
+  return [
+    "/bin/bash",
+    "--noprofile",
+    "--norc",
+    "-p",
+    "-c",
+    SANDBOX_RUNTIME_ENV_EXEC_SCRIPT,
+    "nemoclaw-runtime-env",
+    ...command,
+  ];
+}
+
 export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {
   return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
 }
@@ -409,7 +426,7 @@ export async function execSandbox(
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
-    command,
+    wrapExecCommandWithRuntimeEnv(command),
     options,
     deps.run ?? runSandboxExecChild,
     deps.cleanupDeps ?? {

@@ -1,8 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The default exec runner shells out via spawn with stdio: "inherit"; the
@@ -25,7 +28,12 @@ import {
   execSandbox,
   findMultilineExecArg,
   multilineExecMessage,
+  wrapExecCommandWithRuntimeEnv,
 } from "./exec";
+
+function expectedExecArgs(sandboxName: string, command: readonly string[]): string[] {
+  return buildOpenshellExecArgs(sandboxName, wrapExecCommandWithRuntimeEnv(command));
+}
 
 describe("findMultilineExecArg", () => {
   it("returns -1 when every argument is single-line", () => {
@@ -50,6 +58,56 @@ describe("findMultilineExecArg", () => {
 
   it("reports the earliest offending argument when several are multi-line", () => {
     expect(findMultilineExecArg(["a", "b\nc", "d\ne"])).toBe(1);
+  });
+});
+
+describe("wrapExecCommandWithRuntimeEnv", () => {
+  it("sources the trusted runtime env and preserves each original argv element", () => {
+    const command = ["openclaw", "agent", "-m", "hello world", "quote'and\"double"];
+    const wrapped = wrapExecCommandWithRuntimeEnv(command);
+
+    expect(wrapped).toEqual([
+      "/bin/bash",
+      "--noprofile",
+      "--norc",
+      "-p",
+      "-c",
+      'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin exec -- "$@"',
+      "nemoclaw-runtime-env",
+      ...command,
+    ]);
+    expect(wrapped[5]).not.toMatch(/[\r\n]/);
+  });
+
+  it("ignores ambient BASH_ENV before sourcing the trusted runtime env", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
+    const bashEnv = path.join(root, "bash-env.sh");
+    fs.writeFileSync(bashEnv, 'printf "BASH_ENV_RAN"\n');
+    const wrapped = wrapExecCommandWithRuntimeEnv(["/usr/bin/printf", "%s", "COMMAND_RAN"]);
+
+    try {
+      const result = spawnSync(wrapped[0], wrapped.slice(1), {
+        encoding: "utf-8",
+        env: { ...process.env, BASH_ENV: bashEnv },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("COMMAND_RAN");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reinterpret a command-leading exec option", () => {
+    const wrapped = wrapExecCommandWithRuntimeEnv([
+      "-a",
+      "spoofed-argv-zero",
+      "/usr/bin/printf",
+      "SHOULD_NOT_RUN",
+    ]);
+    const result = spawnSync(wrapped[0], wrapped.slice(1), { encoding: "utf-8" });
+
+    expect(result.status).toBe(127);
+    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
   });
 });
 
@@ -150,16 +208,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "-lc",
-      "echo line1; echo line2",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "-lc", "echo line1; echo line2"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -183,15 +235,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "printf",
-      "a\u2028b",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["printf", "a\u2028b"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -268,14 +315,7 @@ describe("execSandbox multi-line guard (#5980)", () => {
       execSandbox("bug5980test", ["bash"], {}, { run, resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-    ]);
+    expect(run).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]));
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -308,11 +348,9 @@ describe("execSandbox multi-line guard (#5980)", () => {
       execSandbox("bug5980test", ["bash"], {}, { resolveBinary: () => "openshell" }),
     ).rejects.toThrow("exit:0");
 
-    expect(spawn).toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "exec", "--name", "bug5980test", "--", "bash"],
-      { stdio: "inherit" },
-    );
+    expect(spawn).toHaveBeenCalledWith("openshell", expectedExecArgs("bug5980test", ["bash"]), {
+      stdio: "inherit",
+    });
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
@@ -334,15 +372,10 @@ describe("execSandbox multi-line guard (#5980)", () => {
       ),
     ).rejects.toThrow("exit:0");
 
-    expect(run).toHaveBeenCalledWith("openshell", [
-      "sandbox",
-      "exec",
-      "--name",
-      "bug5980test",
-      "--",
-      "bash",
-      "/sandbox/run.sh",
-    ]);
+    expect(run).toHaveBeenCalledWith(
+      "openshell",
+      expectedExecArgs("bug5980test", ["bash", "/sandbox/run.sh"]),
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 

@@ -826,7 +826,7 @@ function ensureSandboxInferenceRouteOrExit(
 // (#4504). The realistic case here is a single pending CLI/webchat scope
 // upgrade, so MAX_APPROVALS is 1 and the approve timeout matches the in-sandbox
 // watcher's RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh). The outer spawnSync cap
-// (15s) exceeds the internal worst case (2s list + 10s × 1 = 12s) plus
+// (20s) exceeds the internal worst case (5s list + 10s × 1 = 15s) plus
 // shell/python startup so a legitimate slow approve is never SIGKILLed mid-loop
 // and the allowlisted request is never stranded. Constants live in the
 // dependency-free ./connect-autopair-budget leaf so tests can assert the
