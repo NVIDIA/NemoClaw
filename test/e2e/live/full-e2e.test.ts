@@ -37,6 +37,12 @@ const MAX_SILENCE_SECS = Number(process.env.NEMOCLAW_E2E_MAX_SILENCE_SECS ?? 60)
 const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
 const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
+interface ColdOnboardCapture {
+  outputEvents: ShellProbeOutputEvent[];
+  traceDirectory: string;
+  traceFile: string;
+}
+
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
 validateSandboxName(SANDBOX_NAME);
 
@@ -115,6 +121,19 @@ function readAndDeleteTrace(traceFile: string, traceDirectory: string): unknown 
   } finally {
     fs.rmSync(traceDirectory, { recursive: true, force: true });
   }
+}
+
+function createColdOnboardCapture(): ColdOnboardCapture | null {
+  const traceDirectory = MEASURE_COLD_ONBOARD
+    ? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-full-e2e-trace-"))
+    : null;
+  return traceDirectory
+    ? {
+        outputEvents: [],
+        traceDirectory,
+        traceFile: path.join(traceDirectory, "onboard.json"),
+      }
+    : null;
 }
 
 async function assertColdOnboardPerformance(input: {
@@ -231,16 +250,11 @@ liveTest(
     cleanupRegistry.add("remove full-e2e sandbox", () => cleanup(host, sandbox));
     await cleanup(host, sandbox);
 
-    const traceDirectory = MEASURE_COLD_ONBOARD
-      ? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-full-e2e-trace-"))
-      : null;
-    const traceFile = traceDirectory ? path.join(traceDirectory, "onboard.json") : null;
-    if (traceDirectory) {
+    const coldOnboard = createColdOnboardCapture();
+    coldOnboard &&
       cleanupRegistry.add("remove raw full-e2e trace", async () => {
-        fs.rmSync(traceDirectory, { recursive: true, force: true });
+        fs.rmSync(coldOnboard.traceDirectory, { recursive: true, force: true });
       });
-    }
-    const outputEvents: ShellProbeOutputEvent[] = [];
 
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-1-install-sh",
@@ -248,26 +262,26 @@ liveTest(
       env: env({
         ...hosted.env,
         NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
-        ...(traceFile ? { NEMOCLAW_TRACE_FILE: traceFile } : {}),
+        ...(coldOnboard ? { NEMOCLAW_TRACE_FILE: coldOnboard.traceFile } : {}),
       }),
-      ...(MEASURE_COLD_ONBOARD
-        ? { onOutput: (event: ShellProbeOutputEvent) => outputEvents.push(event) }
+      ...(coldOnboard
+        ? { onOutput: (event: ShellProbeOutputEvent) => coldOnboard.outputEvents.push(event) }
         : {}),
       redactionValues,
       timeoutMs: 25 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
-    if (traceDirectory && traceFile) {
-      await assertColdOnboardPerformance({
-        apiKey: hosted.apiKey,
-        artifacts,
-        install,
-        outputEvents,
-        sandbox,
-        traceDirectory,
-        traceFile,
-      });
-    }
+    await (coldOnboard
+      ? assertColdOnboardPerformance({
+          apiKey: hosted.apiKey,
+          artifacts,
+          install,
+          outputEvents: coldOnboard.outputEvents,
+          sandbox,
+          traceDirectory: coldOnboard.traceDirectory,
+          traceFile: coldOnboard.traceFile,
+        })
+      : Promise.resolve());
 
     const pathProbe = await host.command(
       "bash",
