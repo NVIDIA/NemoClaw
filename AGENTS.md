@@ -41,8 +41,10 @@ Package-specific guides:
 
 | Task | Command |
 |------|---------|
-| Install all deps | `npm install && npm link && cd nemoclaw && npm install && npm run build && cd .. && uv sync` |
+| Set up contributor checkout | `npm run dev:setup` |
 | Check contributor environment | `npm run dev:doctor` |
+| Expose development CLI | `./scripts/dev-setup.sh --expose-cli` |
+| Launch pinned coding agent | `npm run agent` |
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
@@ -52,10 +54,10 @@ Package-specific guides:
 | Run package contracts | `npm run test:package` |
 | Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
-| Run all linters | `make check` |
+| Run all repository checks | `npm run check` |
 | Run all hooks manually | `npx prek run --all-files` |
 | Type-check CLI | `npm run typecheck:cli` |
-| Auto-format | `make format` |
+| Auto-format | `npm run format` |
 | Build docs | `npm run docs` |
 | Serve docs locally | `npm run docs:live` |
 
@@ -166,8 +168,10 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 ### Before Making Changes
 
 1. Read `CONTRIBUTING.md` for the full contributor guide
-2. Run `npm run dev:doctor` to verify the contributor environment without changing it
-3. Run tests targeted to the area you plan to change; reserve the full suite for broad changes
+2. For a first-time checkout, use `.agents/skills/nemoclaw-contributor-onboard/SKILL.md` or run `npm run dev:setup`
+3. Run `npm run dev:doctor` to verify the contributor environment without changing it
+4. Use `./scripts/dev-setup.sh --expose-cli` only with explicit approval for host-visible CLI exposure
+5. Run tests targeted to the area you plan to change; reserve the full suite for broad changes
 
 ### Git and GitHub Access Failures
 

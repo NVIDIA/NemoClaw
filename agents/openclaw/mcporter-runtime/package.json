@@ -1,0 +1,14 @@
+{
+  "$comment": "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\nSPDX-License-Identifier: Apache-2.0",
+  "name": "nemoclaw-mcporter-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Locked production dependency graph for the in-sandbox mcporter runtime",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "mcporter": "0.7.3"
+  },
+  "engines": {
+    "node": ">=22.16.0"
+  }
+}

@@ -11,7 +11,7 @@ type PresetInfo = {
 const moduleMocks = vi.hoisted(() => ({
   getSandbox: vi.fn<(sandboxName: string) => Record<string, unknown> | null>(),
   getCustomPolicies: vi.fn<(sandboxName: string) => PresetInfo[]>(),
-  listPresets: vi.fn<() => PresetInfo[]>(),
+  listPresets: vi.fn<(options?: { agent?: string | null }) => PresetInfo[]>(),
   listCustomPresets: vi.fn<(sandboxName: string) => PresetInfo[]>(),
   getAppliedPresets: vi.fn<(sandboxName: string) => string[]>(),
   getGatewayPresets: vi.fn<(sandboxName: string) => string[] | null>(),
@@ -170,6 +170,33 @@ describe("listSandboxPolicies provenance", () => {
     const output = printedText();
     expect(output).toMatch(/○ pypi —/);
     expect(output).not.toMatch(/○ pypi \[/);
+  });
+
+  it("omits channel policy presets that are not available for the sandbox agent (#6185)", () => {
+    arrangeListing({
+      appliedNames: [],
+      gatewayNames: [],
+      tier: "balanced",
+      agent: "langchain-deepagents-code",
+    });
+    moduleMocks.listPresets.mockImplementation((options) =>
+      options?.agent === "langchain-deepagents-code"
+        ? [
+            { name: "npm", description: "npm and Yarn registry access" },
+            { name: "pypi", description: "Python Package Index access" },
+          ]
+        : POLICY_PRESETS,
+    );
+
+    listSandboxPolicies("test-sandbox");
+
+    expect(moduleMocks.listPresets).toHaveBeenCalledWith({
+      agent: "langchain-deepagents-code",
+    });
+    const output = printedText();
+    expect(output).toContain("○ npm");
+    expect(output).not.toContain("discord");
+    expect(output).not.toContain("telegram");
   });
 
   it.each([

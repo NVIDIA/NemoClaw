@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
+import { testTimeout } from "../../../test/helpers/timeouts";
 import type { OpenShellStateRpcIssue } from "../adapters/openshell/gateway-drift";
 
 type BackupAll = typeof import("./maintenance")["backupAll"];
@@ -114,7 +115,7 @@ describe("gateway drift preflight for maintenance actions", () => {
 
     ({ backupAll } = requireDist("./maintenance.js"));
     ({ upgradeSandboxes } = requireDist("./upgrade-sandboxes.js"));
-  });
+  }, testTimeout(30_000));
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();

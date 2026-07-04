@@ -178,7 +178,9 @@ function isCustomPolicyEntryArray(value: unknown): value is CustomPolicyEntry[] 
         typeof entry === "object" &&
         entry !== null &&
         typeof (entry as { name?: unknown }).name === "string" &&
-        typeof (entry as { content?: unknown }).content === "string",
+        typeof (entry as { content?: unknown }).content === "string" &&
+        ((entry as { pendingContent?: unknown }).pendingContent === undefined ||
+          typeof (entry as { pendingContent?: unknown }).pendingContent === "string"),
     )
   );
 }

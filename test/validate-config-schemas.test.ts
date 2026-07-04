@@ -9,11 +9,11 @@
  * Vitest project.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
+import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { discoverTargets } from "../scripts/validate-configs";
@@ -96,6 +96,7 @@ describe("config validation target discovery", () => {
   const targets = discoverTargets();
   const filesBySchema = new Map(targets.map((target) => [target.schema, target.files]));
   const sandboxPolicyFiles = filesBySchema.get("schemas/sandbox-policy.schema.json") ?? [];
+  const presetFiles = filesBySchema.get("schemas/policy-preset.schema.json") ?? [];
 
   it("includes every binary-scoped sandbox policy family", () => {
     expect(sandboxPolicyFiles).toEqual(
@@ -115,6 +116,42 @@ describe("config validation target discovery", () => {
         "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
       ]),
     );
+  });
+
+  it("discovers channel-owned messaging policy presets", () => {
+    expect(presetFiles).toEqual(
+      expect.arrayContaining([
+        "src/lib/messaging/channels/slack/policy/openclaw.yaml",
+        "src/lib/messaging/channels/slack/policy/hermes.yaml",
+        "src/lib/messaging/channels/telegram/policy/openclaw.yaml",
+        "src/lib/messaging/channels/telegram/policy/hermes.yaml",
+      ]),
+    );
+  });
+
+  it("includes the onboard performance budget config", () => {
+    expect(filesBySchema.get("schemas/onboard-config.schema.json") ?? []).toEqual([
+      "ci/onboard-performance-budget.json",
+    ]);
+  });
+});
+
+// ── Onboard performance budget ──────────────────────────────────────────────
+
+describe("onboard-config.schema.json", () => {
+  const validate = compileSchema("schemas/onboard-config.schema.json");
+  const data = loadJSON(repoPath("ci/onboard-performance-budget.json"));
+
+  it("onboard-performance-budget.json passes schema validation", () => {
+    expectValid(validate, data, "onboard-performance-budget.json");
+  });
+
+  it("rejects invalid threshold shapes", () => {
+    const bad = {
+      ...cloneObject(data),
+      regressionWarning: { minDeltaMs: -1, minPercent: 20 },
+    };
+    expect(validate(bad)).toBe(false);
   });
 });
 
@@ -365,6 +402,172 @@ describe("sandbox-policy.schema.json", () => {
     expectValid(validate, valid, "rest body rewrite policy");
   });
 
+  it("accepts sandbox-policy JSON-RPC and MCP endpoints with explicit L7 matchers", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              protocol: "json-rpc",
+              enforcement: "enforce",
+              json_rpc: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "tools/list", path: "/mcp" } }],
+            },
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              protocol: "mcp",
+              enforcement: "enforce",
+              mcp: { max_body_bytes: 131072, strict_tool_names: true },
+              rules: [
+                {
+                  allow: {
+                    method: "tools/call",
+                    path: "/mcp",
+                    tool: { any: ["search", "read"] },
+                    params: { query: { any: ["safe", "readonly"] } },
+                  },
+                },
+              ],
+              deny_rules: [{ tool: "admin" }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "json-rpc and mcp policy");
+  });
+
+  it("rejects sandbox-policy MCP endpoints without rules or explicit MCP allow-all", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072 },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts sandbox-policy MCP endpoint allow-all without REST access presets", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "host.openshell.internal",
+              port: 31337,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "mcp policy allow-all");
+  });
+
+  it("rejects sandbox-policy JSON-RPC and MCP endpoints above the body-size cap", () => {
+    const oversizedJsonRpc = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/tool" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 1048577 },
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedJsonRpc)).toBe(false);
+
+    const oversizedMcp = {
+      version: 1,
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 1048577, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedMcp)).toBe(false);
+  });
+
+  it("rejects sandbox-policy JSON-RPC and MCP endpoints with REST access presets", () => {
+    const base = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              access: "full",
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(base)).toBe(false);
+
+    const mcp = {
+      version: 1,
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              access: "full",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(mcp)).toBe(false);
+  });
+
   it("rejects sandbox-policy endpoint with protocol websocket but no rules or access", () => {
     const bad = {
       version: 1,
@@ -384,20 +587,13 @@ describe("sandbox-policy.schema.json", () => {
 
 describe("policy-preset.schema.json", () => {
   const validate = compileSchema("schemas/policy-preset.schema.json");
-  const presetsDir = repoPath("nemoclaw-blueprint/policies/presets");
-
-  let presetFiles: string[] = [];
-  try {
-    presetFiles = readdirSync(presetsDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
-  } catch (err) {
-    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
-    if (code !== "ENOENT") throw err;
-    // directory may not exist
-  }
+  const presetFiles =
+    discoverTargets().find((target) => target.schema === "schemas/policy-preset.schema.json")
+      ?.files ?? [];
 
   for (const file of presetFiles) {
     it(`${file} passes schema validation`, () => {
-      const data = loadYAML(join(presetsDir, file));
+      const data = loadYAML(repoPath(file));
       expectValid(validate, data, file);
     });
   }
@@ -491,6 +687,182 @@ describe("policy-preset.schema.json", () => {
       },
     };
     expectValid(validate, valid, "rest body rewrite preset");
+  });
+
+  it("accepts preset JSON-RPC and MCP endpoints with focused option objects", () => {
+    const valid = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "initialize", path: "/mcp" } }],
+            },
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072, allow_all_known_mcp_methods: false },
+              rules: [{ allow: { method: "tools/call", path: "/mcp", tool: "search" } }],
+              deny_rules: [{ params: { mode: "admin" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "json-rpc and mcp preset");
+  });
+
+  it("rejects preset MCP endpoints with missing rules, invalid options, or invalid matchers", () => {
+    const base = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 131072 },
+              rules: [{ allow: { method: "tools/list", path: "/mcp" } }],
+            },
+          ],
+        },
+      },
+    };
+    type McpPresetFixture = {
+      network_policies: {
+        mcp_bridge: {
+          endpoints: Array<{
+            rules?: unknown[];
+            deny_rules?: unknown[];
+            mcp: { allow_all_known_mcp_methods?: unknown };
+          }>;
+        };
+      };
+    };
+    const missingRules = cloneObject(base) as McpPresetFixture;
+    delete missingRules.network_policies.mcp_bridge.endpoints[0]!.rules;
+    expect(validate(missingRules)).toBe(false);
+
+    const invalidOptions = cloneObject(base) as McpPresetFixture;
+    invalidOptions.network_policies.mcp_bridge.endpoints[0]!.mcp.allow_all_known_mcp_methods =
+      "yes";
+    expect(validate(invalidOptions)).toBe(false);
+
+    const invalidMatcher = cloneObject(base) as McpPresetFixture;
+    invalidMatcher.network_policies.mcp_bridge.endpoints[0]!.deny_rules = [{ tool: { any: [] } }];
+    expect(validate(invalidMatcher)).toBe(false);
+  });
+
+  it("accepts preset MCP allow-all and rejects JSON-RPC or MCP access presets", () => {
+    const allowAll = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, allowAll, "mcp preset allow-all");
+
+    const jsonRpcAccess = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "rpc.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              access: "full",
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(jsonRpcAccess)).toBe(false);
+
+    const mcpAccess = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              access: "full",
+              mcp: { allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(mcpAccess)).toBe(false);
+  });
+
+  it("rejects preset JSON-RPC and MCP endpoints above the body-size cap", () => {
+    const oversizedJsonRpc = {
+      preset: { name: "rpc", description: "RPC" },
+      network_policies: {
+        rpc: {
+          name: "RPC",
+          binaries: [{ path: "/usr/local/bin/tool" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "json-rpc",
+              json_rpc: { max_body_bytes: 1048577 },
+              rules: [{ allow: { method: "initialize" } }],
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedJsonRpc)).toBe(false);
+
+    const oversizedMcp = {
+      preset: { name: "mcp", description: "MCP" },
+      network_policies: {
+        mcp_bridge: {
+          name: "MCP Bridge",
+          binaries: [{ path: "/usr/local/bin/mcporter" }],
+          endpoints: [
+            {
+              host: "mcp.example.com",
+              port: 443,
+              protocol: "mcp",
+              mcp: { max_body_bytes: 1048577, allow_all_known_mcp_methods: true },
+            },
+          ],
+        },
+      },
+    };
+    expect(validate(oversizedMcp)).toBe(false);
   });
 
   it("rejects preset endpoint with protocol websocket but no rules", () => {

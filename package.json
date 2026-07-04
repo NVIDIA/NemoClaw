@@ -20,7 +20,9 @@
   },
   "scripts": {
     "preinstall": "node scripts/check-node-version.js",
+    "dev:setup": "bash scripts/dev-setup.sh",
     "dev:doctor": "bash scripts/dev-setup.sh --doctor",
+    "agent": "pi",
     "test": "npm run clean:cli && npm --prefix nemoclaw run clean && npm run build:cli && npm --prefix nemoclaw run build && vitest run --project cli --project integration --project installer-integration --project package-contract --project plugin --project e2e-support",
     "test:spec": "npm test -- --reporter=tree",
     "test:fast": "npm run clean:cli && vitest run --project cli --project plugin --project e2e-support",
@@ -30,6 +32,7 @@
     "test:imports:check": "tsx scripts/checks/no-test-dist-imports.ts",
     "test:projects:check": "tsx scripts/checks/vitest-project-overlap.ts",
     "test:titles:check": "tsx scripts/checks/test-title-style.ts",
+    "bench": "tsx scripts/bench/run.ts",
     "check": "npx prek run --all-files",
     "checks": "tsx scripts/checks/run.ts",
     "lint": "npx @biomejs/biome lint . && npm run checks",
@@ -40,7 +43,7 @@
     "format:ts": "cd nemoclaw && npm run lint:fix && npm run format",
     "check:installer-hash": "bash scripts/check-installer-hash.sh",
     "typecheck": "tsc -p jsconfig.json",
-    "build:cli": "tsc -p tsconfig.src.json && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
+    "build:cli": "tsc -p nemoclaw/tsconfig.shared.json && tsc -p tsconfig.src.json && node dist/lib/cli/generate-oclif-metadata-manifest.js && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "clean:cli": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
@@ -62,8 +65,9 @@
     "docs:live": "FERN_VERSION=$(node -p \"require('./fern/fern.config.json').version\") && cd fern && npx --yes \"fern-api@${FERN_VERSION}\" docs dev",
     "docs:preview:watch": "tsx scripts/watch-fern-preview.ts",
     "docs:clean": "rm -rf .fern-cache fern/.fern-cache docs/_build",
-    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (npm install --omit=dev --ignore-scripts 2>/dev/null || true) && if [ -d .git ]; then bash scripts/npm-link-or-shim.sh; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
-    "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
+    "prepare": "if command -v tsc >/dev/null 2>&1 || [ -x node_modules/.bin/tsc ]; then npm run build:cli; fi && (node -e \"require.resolve('p-retry')\" >/dev/null 2>&1 || npm install --omit=dev --ignore-scripts) && if [ -d .git ]; then bash scripts/npm-link-or-shim.sh; if command -v prek >/dev/null 2>&1; then prek install; else echo \"Skipping git hook setup (prek not installed)\"; fi; fi",
+    "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc",
+    "typecheck:scorecard": "tsc --noEmit --types node --strict scripts/scorecard/analyze-trace-timing.ts"
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "3.1046.0",
@@ -72,7 +76,7 @@
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
     "qrcode-terminal": "^0.12.0",
-    "yaml": "^2.8.3"
+    "yaml": "2.8.3"
   },
   "bundleDependencies": [
     "p-retry"
@@ -81,6 +85,7 @@
     ".version",
     "bin/",
     "dist/",
+    "src/lib/messaging/channels/**/policy/*.{yaml,yml}",
     "nemoclaw/dist/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
@@ -105,6 +110,7 @@
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.0",
     "ajv": "^8.17.0",
+    "fast-check": "^4.8.0",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.9"

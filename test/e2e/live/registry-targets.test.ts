@@ -5,14 +5,22 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { expect, test } from "../fixtures/e2e-test.ts";
-import type { LifecycleProfile } from "../fixtures/phases/index.ts";
+import { HOSTED_INFERENCE_SECRET } from "../fixtures/hosted-inference.ts";
+import {
+  dcodeInvalidCredentialRebuildOptionsFromRegistryEntry,
+  type LifecycleProfile,
+  readRegistrySandboxEntry,
+} from "../fixtures/phases/index.ts";
 import { listTargets } from "../registry/registry.ts";
 import { liveTargetSupport, liveTargetTestName } from "../registry/runtime-support.ts";
 import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import { buildLiveTargetRunPlan } from "./run-plan.ts";
 
-const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set(["post-reboot-recovery"]);
+const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set([
+  "post-reboot-recovery",
+  "dcode-rebuild-invalid-credential",
+]);
 
 function isLifecycleProfile(value: string | undefined): value is LifecycleProfile {
   return value !== undefined && LIFECYCLE_PROFILES.has(value as LifecycleProfile);
@@ -76,14 +84,8 @@ for (const target of listTargets()) {
       // Lifecycle phase runs between onboard and state-validation.
       // Targets opt in by setting `environment.lifecycle` to a
       // whitelisted profile (see SUPPORTED_LIFECYCLES in
-      // runtime-support.ts). Today only `post-reboot-recovery` is
-      // wired, and it dispatches through `LifecyclePhaseFixture` to
-      // `docker stop` the labeled sandbox container and invoke
-      // `nemoclaw <name> status` before the state-validation probes
-      // assert host-side preservation invariants. The gateway is
-      // left healthy; see `definitions/baseline.ts` and the fixture
-      // doc for why a real gateway restart can't be expressed from
-      // `ubuntu-latest`.
+      // runtime-support.ts). Profiles dispatch through
+      // LifecyclePhaseFixture before state validation.
       let lifecycleResult: Awaited<ReturnType<typeof lifecycle.simulate>> | undefined;
       const profile = target.environment.lifecycle;
       if (profile) {
@@ -94,7 +96,17 @@ for (const target of listTargets()) {
               `SUPPORTED_LIFECYCLES whitelist together.`,
           );
         }
-        lifecycleResult = await lifecycle.simulate(profile, instance);
+        lifecycleResult =
+          profile === "dcode-rebuild-invalid-credential"
+            ? await lifecycle.simulate(
+                profile,
+                instance,
+                dcodeInvalidCredentialRebuildOptionsFromRegistryEntry(
+                  readRegistrySandboxEntry(instance.sandboxName),
+                  secrets.required(HOSTED_INFERENCE_SECRET),
+                ),
+              )
+            : await lifecycle.simulate(profile, instance);
       }
 
       const validation = await stateValidation.from(target.expectedStateId, instance);

@@ -142,7 +142,8 @@ This path preserves existing policy entries and is the only NemoClaw-supported f
 $$nemoclaw my-assistant policy-add
 ```
 
-NemoClaw reads the live policy with `openshell policy get --full`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
+NemoClaw reads the round-trippable base policy with `openshell policy get --base`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
+Provider-composed `_provider_*` entries are excluded because OpenShell reserves that namespace and rejects it in `policy set`.
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
@@ -150,20 +151,20 @@ The preset file under `presets/` also persists across sandbox recreations.
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
 Start from the current live policy so the presets layered on at onboarding stay in the file you apply.
-Requires OpenShell 0.0.44+ for `policy get --full` and `policy set --wait` syntax.
+Requires OpenShell 0.0.72+ for the round-trippable `policy get --base` and `policy set --wait` syntax.
 Strip the OpenShell metadata header before editing the file, then validate the raw policy shape before replacing your editable copy.
 The command order below matches the commands NemoClaw emits internally.
 
 ```bash
 # shellcheck shell=bash
 # Source-of-truth review:
-# invalidState: OpenShell 0.0.44 policy get --full emits metadata before the --- YAML header.
+# invalidState: OpenShell 0.0.72 policy get --base emits metadata before the --- YAML header.
 # sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.
 # whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.
 # regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.
 # removalCondition: remove this pipeline after pinned OpenShell emits clean raw YAML.
 tmp_policy=$(mktemp)
-openshell policy get --full my-assistant \
+openshell policy get --base my-assistant \
   | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
   > "$tmp_policy" \
   && grep -q '^version:' "$tmp_policy" \
@@ -203,6 +204,7 @@ For guided post-install examples, refer to [Common Integration Policy Examples](
 
 During onboarding, the [policy tier](../reference/network-policies#policy-tiers) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
+Built-in preset choices are scoped to the sandbox's active agent, so unsupported messaging channel presets do not appear in `policy-list` or the interactive `policy-add` picker for agents without matching channel policy files.
 
 Available presets:
 
@@ -220,6 +222,7 @@ Available presets:
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
+| `tavily` | Tavily Search API |
 | `telegram` | Telegram Bot API |
 | `wechat` | WeChat (personal) iLink Bot API (experimental) |
 | `whatsapp` | WhatsApp Web messaging (experimental) |
@@ -416,7 +419,7 @@ For `unsupported`, surface the limitation to the user without retrying.
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests) for real-time operator approval.
-- [Common Integration Policy Examples](integration-policy-examples) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
+- [Common Integration Policy Examples](integration-policy-examples) for maintained preset examples such as Outlook, messaging, GitHub, Jira, web search, package managers, Hugging Face, and local inference.
 - [Network Policies](../reference/network-policies) for the full baseline policy reference.
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

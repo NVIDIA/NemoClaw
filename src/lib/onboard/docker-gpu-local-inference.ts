@@ -41,6 +41,7 @@ type DockerGpuLocalInferenceConfig = {
 
 type DockerGpuLocalInferenceOptions = {
   dockerDriverGateway: boolean;
+  gatewayPort?: number;
   dockerDesktopWsl?: boolean;
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -137,15 +138,21 @@ export async function enforceDockerGpuPatchPreserveNetwork(
       "loopback is not reachable from the sandbox network namespace, so OpenClaw routes through " +
       "the OpenShell-managed inference path (host networking is not needed for GPU device access).",
   );
-  await (options.reverifyBridgeReachability ?? defaultReverifyBridgeReachability)();
+  await (
+    options.reverifyBridgeReachability ??
+    (() => defaultReverifyBridgeReachability(options.gatewayPort))
+  )();
   return true;
 }
 
 /** Re-run the sandbox→gateway bridge reachability probe (with UFW auto-fix). */
-function defaultReverifyBridgeReachability(): Promise<void> {
+function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> {
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./gateway-sandbox-reachability") as typeof import("./gateway-sandbox-reachability");
-  return verifySandboxBridgeGatewayReachableOrExit(true, { skip: false });
+  return verifySandboxBridgeGatewayReachableOrExit(true, {
+    skip: false,
+    ...(gatewayPort === undefined ? {} : { port: gatewayPort }),
+  });
 }
 
 export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;

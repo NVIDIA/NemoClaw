@@ -52,3 +52,29 @@ export interface ModelValidationFailure extends ValidationFailureLike {
 }
 
 export type ModelValidationResult = ModelValidationSuccess | ModelValidationFailure;
+
+export type OnboardOptions = {
+  nonInteractive?: boolean;
+  recreateSandbox?: boolean;
+  authoritativeResumeConfig?: boolean;
+  /** Internal authoritative rebuild target; never exposed as a public CLI option. */
+  targetGatewayName?: string | null;
+  /** Internal authoritative rebuild target; must match targetGatewayName. */
+  targetGatewayPort?: number | null;
+  /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
+  onboardLockAlreadyHeld?: boolean;
+  /** Internal one-shot handoff for a prevalidated managed DCode replacement. */
+  preparedDcodeRebuild?: import("./prepared-dcode-rebuild").PreparedDcodeRebuildHandoff;
+  resume?: boolean;
+  fresh?: boolean;
+  fromDockerfile?: string | null;
+  sandboxName?: string | null;
+  sandboxGpu?: "enable" | "disable" | null;
+  sandboxGpuDevice?: string | null;
+  acceptThirdPartySoftware?: boolean;
+  agent?: string | null;
+  controlUiPort?: number | null;
+  gpu?: boolean;
+  noGpu?: boolean;
+  autoYes?: boolean;
+};

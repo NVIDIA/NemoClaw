@@ -5,12 +5,15 @@ import { Buffer } from "node:buffer";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 
+export type HermesWebSearchProvider = "tavily";
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
   providerKey: string;
   upstreamProvider: string;
   inferenceApi: string;
+  webSearchProvider: HermesWebSearchProvider | null;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
     placeholder: string;
@@ -31,12 +34,23 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
     upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
+    webSearchProvider: readWebSearchProvider(env),
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {
       brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
       presets: readBase64Json<string[]>(env, "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64", "W10="),
     },
   };
+}
+
+function readWebSearchProvider(env: NodeJS.ProcessEnv): HermesWebSearchProvider | null {
+  if (env.NEMOCLAW_WEB_SEARCH_ENABLED !== "1") return null;
+
+  const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "tavily").trim();
+  if (provider === "tavily") return provider;
+  throw new Error(
+    `Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily", got ${JSON.stringify(provider)}`,
+  );
 }
 
 function readRequiredEnv(env: NodeJS.ProcessEnv, name: string): string {

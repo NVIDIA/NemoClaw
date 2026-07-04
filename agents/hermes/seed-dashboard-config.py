@@ -18,8 +18,9 @@ things break (verified live):
   / ``model.base_url`` are empty so the auto-detect chain finds nothing.
 
 This script mirrors the routing keys (``model``, ``custom_providers``, and the
-informational ``_nemoclaw_upstream``) from the gateway config into the dashboard
-config, preserving every other dashboard-local key. It also copies only the
+informational ``_nemoclaw_upstream``) plus the exact native Tavily backend from
+the gateway config into the dashboard config, preserving every other
+dashboard-local key. It also copies only the
 dashboard-needed dotenv keys (local API server context and managed-tool gateway
 URLs) into the dashboard ``HERMES_HOME`` when paths are supplied, because Hermes
 0.16 moved parts of dashboard chat/model setup behind dotenv loading.
@@ -65,6 +66,10 @@ _DASHBOARD_ENV_ALLOWED_KEYS = frozenset(
         "API_SERVER_HOST",
         "API_SERVER_PORT",
         "API_SERVER_KEY",
+        # This is a resolver placeholder, not a provider credential. It must
+        # remain exact so the dashboard cannot use this mirror to carry a raw
+        # Tavily key across the gateway/dashboard privilege boundary.
+        "TAVILY_API_KEY",
         # Managed tool gateway broker URLs needed by dashboard-launched Hermes
         # code paths. Do not copy messaging/provider/user credentials across
         # this boundary; those stay in the gateway-owned .env.
@@ -77,6 +82,7 @@ _DASHBOARD_ENV_ALLOWED_KEYS = frozenset(
     }
 )
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY"
 
 
 class UnsafeDashboardSeedPathError(Exception):
@@ -313,6 +319,12 @@ def _route_api_mode(gateway: dict) -> str:
 
 def _normalized_routing(gateway: dict) -> dict:
     routing = {key: gateway[key] for key in _ROUTING_KEYS if key in gateway}
+    web = gateway.get("web")
+    if isinstance(web, dict) and web.get("backend") == "tavily":
+        # The backend selector is non-secret and must match the resolver-only
+        # TAVILY_API_KEY mirrored into the dashboard dotenv. Copy no other web
+        # settings across this privilege boundary.
+        routing["web"] = {"backend": "tavily"}
     provider_name = _route_provider_name(gateway)
     provider_key = _provider_key(provider_name)
     model_name = _route_model_name(gateway)
@@ -402,6 +414,13 @@ def _mirror_env(src: str, dst: str) -> bool:
                 file=sys.stderr,
             )
             return False
+        if key == "TAVILY_API_KEY" and value != TAVILY_API_KEY_PLACEHOLDER:
+            print(
+                "[SECURITY] Refusing to seed dashboard env because TAVILY_API_KEY "
+                "is not the canonical OpenShell resolver placeholder",
+                file=sys.stderr,
+            )
+            return False
         mirrored_lines.append(line)
 
     def write_env(dst_handle: TextIO) -> None:
@@ -471,6 +490,18 @@ def main(argv: list[str]) -> int:
         )
         dashboard = {}
 
+    # The seeder owns only web.backend. Merge or remove that field while
+    # preserving unrelated dashboard-local web settings.
+    managed_web = routing.pop("web", None)
+    dashboard_web = dict(dashboard.get("web") if isinstance(dashboard.get("web"), dict) else {})
+    if isinstance(managed_web, dict) and managed_web.get("backend") == "tavily":
+        dashboard_web["backend"] = "tavily"
+    elif dashboard_web.get("backend") == "tavily":
+        dashboard_web.pop("backend", None)
+    if dashboard_web:
+        dashboard["web"] = dashboard_web
+    else:
+        dashboard.pop("web", None)
     dashboard.update(routing)
 
     import yaml

@@ -31,9 +31,11 @@ const UPLOAD_ARTIFACT_ACTION = "actions/upload-artifact@043fb46d1a93c77aae656e7c
 const UPLOAD_ARTIFACT_ACTION_PREFIX = "actions/upload-artifact@";
 const INNER_ALWAYS = "${{ always() }}";
 const CALLER_ALWAYS = "always()";
+const MCP_SCANNED_UPLOAD_CONDITION =
+  "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const EXPECTED_UPLOAD_JOB_COUNT = 74;
-const EXPECTED_DEFAULT_CALLER_COUNT = 65;
+const EXPECTED_UPLOAD_JOB_COUNT = 73;
+const EXPECTED_DEFAULT_CALLER_COUNT = 62;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -60,6 +62,7 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
         "e2e-artifacts/live/${{ matrix.id }}/environment.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/onboarding.result.json",
         "e2e-artifacts/live/${{ matrix.id }}/state-validation.result.json",
+        "e2e-artifacts/live/${{ matrix.id }}/cloud-onboard-trace-timing-summary.json",
         "e2e-artifacts/live/${{ matrix.id }}/actions/",
         "e2e-artifacts/live/${{ matrix.id }}/logs/",
         "e2e-artifacts/live/${{ matrix.id }}/shell/",
@@ -133,6 +136,25 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
       path: "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
     },
   ],
+  [
+    "mcp-bridge",
+    {
+      name: "e2e-mcp-bridge",
+      path: "e2e-artifacts/live/mcp-bridge/",
+    },
+  ],
+  [
+    "mcp-bridge-dev",
+    {
+      name: "e2e-mcp-bridge-dev",
+      path: "e2e-artifacts/live/mcp-bridge-dev/",
+    },
+  ],
+]);
+
+const EXPLICIT_CALLER_CONDITIONS = new Map<string, string>([
+  ["mcp-bridge", MCP_SCANNED_UPLOAD_CONDITION],
+  ["mcp-bridge-dev", MCP_SCANNED_UPLOAD_CONDITION],
 ]);
 
 const EXPECTED_ACTION_INPUTS = {
@@ -300,8 +322,13 @@ export function validateUploadE2eArtifactsInvocations(workflow: WorkflowRecord):
     if (typeof upload.name !== "string" || upload.name.length === 0) {
       errors.push(`${jobName} upload-e2e-artifacts invocation must retain a step name`);
     }
-    if (upload.if !== CALLER_ALWAYS) {
-      errors.push(`${jobName} upload-e2e-artifacts invocation must run with always()`);
+    const expectedCallerCondition = EXPLICIT_CALLER_CONDITIONS.get(jobName) ?? CALLER_ALWAYS;
+    if (upload.if !== expectedCallerCondition) {
+      errors.push(
+        expectedCallerCondition === CALLER_ALWAYS
+          ? `${jobName} upload-e2e-artifacts invocation must run with always()`
+          : `${jobName} upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks`,
+      );
     }
     const stepsAfterUpload = jobSteps.slice(jobSteps.indexOf(upload) + 1);
     if (

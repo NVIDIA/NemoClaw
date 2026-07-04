@@ -73,7 +73,7 @@ export interface VersionCheckOptions {
  * Resolve the agent definition for a sandbox.
  * Falls back to "openclaw" when the sandbox has no agent set.
  */
-export function resolveAgentForSandbox(sandboxName: string): ReturnType<typeof loadAgent> {
+function resolveAgentForSandbox(sandboxName: string): ReturnType<typeof loadAgent> {
   const sb = registry.getSandbox(sandboxName);
   const agentName = sb?.agent || "openclaw";
   return loadAgent(agentName);
@@ -117,7 +117,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
     );
     if (result.status !== 0) return null;
-    return parseVersionFromText(result.stdout);
+    return parseVersionFromText(result.stdout, agent.versionCommand);
   } catch {
     return null;
   } finally {

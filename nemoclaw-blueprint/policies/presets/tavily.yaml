@@ -13,14 +13,19 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        # Hermes sends the resolver placeholder as the JSON `api_key` field.
+        request_body_credential_rewrite: true
         rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
+          - allow: { method: POST, path: "/search" }
+          - allow: { method: POST, path: "/extract" }
     binaries:
-      # OpenShell attributes Deep Agents Code Tavily requests to this managed
-      # Python venv, which its strict Landlock policy mounts read-only.
+      # Agent runtimes: Deep Agents Code's managed Python (including versioned
+      # python3 names), Hermes' exact venv Python, and OpenClaw's Node paths.
       - { path: /opt/venv/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+      # Exact curl paths are used only by onboarding's post-create verifier;
+      # requests remain constrained by the two POST rules above.
       - { path: /usr/local/bin/curl }
       - { path: /usr/bin/curl }

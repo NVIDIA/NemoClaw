@@ -1224,7 +1224,6 @@ describe("Deep Agents Code durable state files", () => {
         "name: note-summarizer\n",
       );
       fs.writeFileSync(path.join(deepAgentsDir, "config.toml"), "generated config\n");
-      fs.writeFileSync(path.join(deepAgentsDir, "hooks.json"), "{}\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".env"), "NVIDIA_API_KEY=should-not-copy\n");
       fs.writeFileSync(path.join(deepAgentsDir, ".mcp.json"), '{"token":"should-not-copy"}\n');
 
@@ -1254,10 +1253,6 @@ fs.appendFileSync(log, JSON.stringify({ cmd }) + "\\n");
 const deepAgentsDir = path.join(root, ".deepagents");
 if (cmd.includes("config.toml") && cmd.includes("cat --")) {
   process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "config.toml")));
-  process.exit(0);
-}
-if (cmd.includes("hooks.json") && cmd.includes("cat --")) {
-  process.stdout.write(fs.readFileSync(path.join(deepAgentsDir, "hooks.json")));
   process.exit(0);
 }
 if (cmd.includes(".env") || cmd.includes(".mcp.json")) {
@@ -1297,15 +1292,12 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("deepagents", { name: "deepagents-state" });
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual([".state", "skills", "agent/skills"]);
-      expect(backup.backedUpFiles).toEqual(["config.toml", "hooks.json"]);
+      expect(backup.backedUpFiles).toEqual(["config.toml"]);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.failedFiles).toEqual([]);
       expect(backup.manifest?.agentType).toBe("langchain-deepagents-code");
       expect(backup.manifest?.stateDirs).toEqual([".state", "skills", "agent/skills"]);
-      expect(backup.manifest?.stateFiles).toEqual([
-        { path: "config.toml", strategy: "copy" },
-        { path: "hooks.json", strategy: "copy" },
-      ]);
+      expect(backup.manifest?.stateFiles).toEqual([{ path: "config.toml", strategy: "copy" }]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, ".state", "thread.json"))).toBe(
         true,
       );
