@@ -596,6 +596,9 @@ describe("pull request and main workflow contracts", () => {
       expect(files.test(representativeInput), include).toBe(true);
     }
     for (const path of [
+      ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+      ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts",
+      ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
       "agents/hermes/generate-config.ts",
       "bin/nemoclaw.ts",
       "scripts/check.ts",
