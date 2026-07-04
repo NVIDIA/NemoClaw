@@ -205,15 +205,15 @@ RUN set -eu; \
     command -v codex-acp >/dev/null
 
 # Upgrade OpenClaw if the base image is stale.
-# Reuse an exact reviewed base install only when its protected provenance marker
-# matches this build target; otherwise reinstall from the reviewed archive.
+# Reuse exact OpenClaw and locked-mcporter base installs only when the protected
+# provenance marker matches this build target; otherwise reinstall both.
 #
 # The GHCR base image (sandbox-base:latest) may lag behind the version pinned in
 # Dockerfile.base, and legacy/custom bases may report the target version without
 # proving which archive and lifecycle produced it. Current official/local bases
-# emit the marker only after installing the verified archive. The final image
-# consumes it before applying NemoClaw patches so it cannot masquerade as a
-# pristine base when reused as a custom BASE_IMAGE.
+# emit the marker only after installing and auditing both dependencies. The
+# final image consumes it before applying NemoClaw patches so it cannot
+# masquerade as a pristine base when reused as a custom BASE_IMAGE.
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
@@ -241,6 +241,14 @@ RUN set -eu; \
     if [ -z "$EXPECTED_INTEGRITY" ]; then \
         echo "ERROR: OpenClaw ${OPENCLAW_VERSION} has no committed npm integrity pin" >&2; exit 1; \
     fi; \
+    MCPORTER_EXPECTED_INTEGRITY=""; \
+    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
+    if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
+    fi; \
+    MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')"; \
+    [ -n "$MCPORTER_LOCK_SHA256" ] \
+        || { echo "ERROR: Could not hash the committed mcporter lockfile" >&2; exit 1; }; \
     pack_reviewed_npm_tarball() { \
         pack_spec="$1"; expected_integrity="$2"; pack_dir="$3"; label="$4"; \
         pack_json="$(npm pack "$pack_spec" --pack-destination "$pack_dir" --json)"; \
@@ -259,31 +267,38 @@ RUN set -eu; \
     }; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || true); \
     CUR_VER="${CUR_VER:-0.0.0}"; \
+    CUR_MCPORTER_VER=$(mcporter --version 2>/dev/null || true); \
+    CUR_MCPORTER_VER="${CUR_MCPORTER_VER:-0.0.0}"; \
     OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1; \
     OPENCLAW_EXPECTED_PROVENANCE="$(mktemp)"; \
     printf '%s\n' \
-        'schema=1' \
+        'schema=2' \
         "package=openclaw@${OPENCLAW_VERSION}" \
         "integrity=${EXPECTED_INTEGRITY}" \
         "tarball=${EXPECTED_TARBALL}" \
         'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        "mcporter-package=mcporter@${MCPORTER_VERSION}" \
+        "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
+        "mcporter-lock-sha256=${MCPORTER_LOCK_SHA256}" \
+        'mcporter-recipe=locked-ci+audit-signatures-v1' \
         > "$OPENCLAW_EXPECTED_PROVENANCE"; \
     TRUSTED_BASE_IMAGE=0; \
     case "$BASE_IMAGE" in \
         ghcr.io/nvidia/nemoclaw/sandbox-base:*|ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:*|nemoclaw-sandbox-base-local|nemoclaw-sandbox-base-local:*) TRUSTED_BASE_IMAGE=1 ;; \
     esac; \
-    USE_REVIEWED_BASE_OPENCLAW=0; \
+    USE_REVIEWED_BASE_RUNTIME=0; \
     if [ "$TRUSTED_BASE_IMAGE" = "1" ] \
         && [ -f "$OPENCLAW_PROVENANCE_PATH" ] \
         && [ ! -L "$OPENCLAW_PROVENANCE_PATH" ] \
         && [ "$(stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH" 2>/dev/null || true)" = "0:0:444" ] \
         && cmp -s "$OPENCLAW_EXPECTED_PROVENANCE" "$OPENCLAW_PROVENANCE_PATH" \
-        && [ "$CUR_VER" = "$OPENCLAW_VERSION" ]; then \
-        USE_REVIEWED_BASE_OPENCLAW=1; \
+        && [ "$CUR_VER" = "$OPENCLAW_VERSION" ] \
+        && [ "$CUR_MCPORTER_VER" = "$MCPORTER_VERSION" ]; then \
+        USE_REVIEWED_BASE_RUNTIME=1; \
     fi; \
     rm -f "$OPENCLAW_EXPECTED_PROVENANCE"; \
     rm -rf "$OPENCLAW_PROVENANCE_PATH"; \
-    if [ "$USE_REVIEWED_BASE_OPENCLAW" = "1" ]; then \
+    if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
         echo "INFO: Reusing reviewed base OpenClaw $CUR_VER with exact provenance"; \
     elif [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ] \
         && [ "$CUR_VER" != "$OPENCLAW_VERSION" ]; then \
@@ -316,27 +331,26 @@ RUN set -eu; \
         esac; \
         rm -rf "$OPENCLAW_PACK_DIR"; \
     fi; \
-    MCPORTER_EXPECTED_INTEGRITY=""; \
-    if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi; \
-    if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        echo "ERROR: mcporter ${MCPORTER_VERSION} has no committed npm integrity pin" >&2; exit 1; \
-    fi; \
-    MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
-    if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
-        echo "ERROR: mcporter ${MCPORTER_VERSION} npm integrity mismatch" >&2; \
-        echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}" >&2; \
-        echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}" >&2; exit 1; \
-    fi; \
-    # Always reinstall from the committed lock. Matching top-level versions can
-    # otherwise hide drift in mcporter's ranged transitive dependencies.
-    echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
-    rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
-    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
-        --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
-    ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
-    test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
-    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \
-    npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures
+    if [ "$USE_REVIEWED_BASE_RUNTIME" = "1" ]; then \
+        echo "INFO: Reusing reviewed base mcporter $CUR_MCPORTER_VER with exact lock provenance"; \
+    else \
+        MCPORTER_REGISTRY_INTEGRITY=$(npm view "mcporter@${MCPORTER_VERSION}" dist.integrity); \
+        if [ "$MCPORTER_REGISTRY_INTEGRITY" != "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
+            echo "ERROR: mcporter ${MCPORTER_VERSION} npm integrity mismatch" >&2; \
+            echo "Expected: ${MCPORTER_EXPECTED_INTEGRITY}" >&2; \
+            echo "Actual:   ${MCPORTER_REGISTRY_INTEGRITY}" >&2; exit 1; \
+        fi; \
+        # Reinstall from the committed lock when exact protected base provenance
+        # is unavailable; matching top-level versions can hide transitive drift.
+        echo "INFO: Installing locked mcporter $MCPORTER_VERSION dependency graph"; \
+        rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime ci \
+            --ignore-scripts --omit=dev --no-audit --no-fund --no-progress; \
+        ln -s /usr/local/lib/nemoclaw/mcporter-runtime/node_modules/.bin/mcporter /usr/local/bin/mcporter; \
+        test "$(mcporter --version)" = "$MCPORTER_VERSION"; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low; \
+        npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures; \
+    fi
 
 # Patch OpenClaw media fetch for proxy-only sandbox (NVIDIA/NemoClaw#1755).
 #
@@ -1071,7 +1085,6 @@ ENV NPM_CONFIG_OFFLINE=true \
 # hadolint ignore=DL3059,DL4006
 RUN NPM_CONFIG_IGNORE_SCRIPTS=true npm_config_ignore_scripts=true \
     openclaw plugins install /opt/nemoclaw \
-    && openclaw plugins enable nemoclaw \
     && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \

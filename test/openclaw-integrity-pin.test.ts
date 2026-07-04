@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,6 +46,16 @@ const PINNED_CODEX_ACP_INTEGRITY =
 const PINNED_MCPORTER_VERSION = "0.7.3";
 const PINNED_MCPORTER_INTEGRITY =
   "sha512-egoPVYqTnWb3NjRIxo+xc8OrAI0dlPrJm9pAiZx0pImuNIV5rKhGtTnIfH/Y1ldGPVu74ibj3KR5c9U/QSdQFA==";
+const MCPORTER_LOCKFILE = path.join(
+  REPO_ROOT,
+  "agents",
+  "openclaw",
+  "mcporter-runtime",
+  "package-lock.json",
+);
+const PINNED_MCPORTER_LOCK_SHA256 = createHash("sha256")
+  .update(fs.readFileSync(MCPORTER_LOCKFILE))
+  .digest("hex");
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
   "sha512-EJt0fjk4bcR3N/9u00f1pL0BJYG5yfC09DV3l6rWDmytpE2vUeBZWpx4pOmFDreGV+7DKxhCbQDgDAmvZGjLag==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
@@ -81,11 +92,15 @@ function openClawBaseProvenance(
   tarball = PINNED_OPENCLAW_TARBALL,
 ): string {
   return [
-    "schema=1",
+    "schema=2",
     `package=openclaw@${version}`,
     `integrity=${integrity}`,
     `tarball=${tarball}`,
     "recipe=ignore-scripts+reviewed-lifecycle-v1",
+    `mcporter-package=mcporter@${PINNED_MCPORTER_VERSION}`,
+    `mcporter-integrity=${PINNED_MCPORTER_INTEGRITY}`,
+    `mcporter-lock-sha256=${PINNED_MCPORTER_LOCK_SHA256}`,
+    "mcporter-recipe=locked-ci+audit-signatures-v1",
     "",
   ].join("\n");
 }
@@ -126,6 +141,7 @@ function runInstallBlock(
     packFilename?: string | null;
     allowLegacyFixture?: boolean;
     installedOpenClawVersion?: string;
+    installedMcporterVersion?: string;
     baseImage?: string;
     baseProvenance?: string | null;
     baseProvenanceMetadata?: string;
@@ -145,6 +161,7 @@ function runInstallBlock(
     packFilename,
     allowLegacyFixture = false,
     installedOpenClawVersion = LEGACY_REBUILD_OPENCLAW_VERSION,
+    installedMcporterVersion = PINNED_MCPORTER_VERSION,
     baseImage = "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     baseProvenance = null,
     baseProvenanceMetadata = "0:0:444",
@@ -157,6 +174,8 @@ function runInstallBlock(
   const mcporterRuntime = path.join(tmp, "mcporter-runtime");
   const mcporterBin = path.join(tmp, "bin", "mcporter");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
+  fs.mkdirSync(mcporterRuntime, { recursive: true });
+  fs.copyFileSync(MCPORTER_LOCKFILE, path.join(mcporterRuntime, "package-lock.json"));
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
   const writeProvenanceFile = () => {
     fs.writeFileSync(provenancePath, baseProvenance as string, { mode: 0o444 });
@@ -191,12 +210,13 @@ function runInstallBlock(
     `MCPORTER_VERSION=${JSON.stringify(PINNED_MCPORTER_VERSION)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(PINNED_MCPORTER_INTEGRITY)}`,
     `installed_openclaw_version=${JSON.stringify(installedOpenClawVersion)}`,
+    `installed_mcporter_version=${JSON.stringify(installedMcporterVersion)}`,
     "node() {",
     '  if [ "${1:-}" = "/usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs" ]; then printf "node %s\\n" "$*" >> "$call_log"; return 0; fi',
     '  "$real_node" "$@"',
     "}",
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw %s\\n' "$installed_openclaw_version"; else return 127; fi; }`,
-    `mcporter() { if [ "\${1:-}" = "--version" ]; then printf '%s\\n' ${JSON.stringify(PINNED_MCPORTER_VERSION)}; else return 127; fi; }`,
+    'mcporter() { if [ "${1:-}" = "--version" ]; then printf "%s\\n" "$installed_mcporter_version"; else return 127; fi; }',
     "codex-acp() { :; }",
     "stat() {",
     '  if [ "${1:-}" = "-c" ] && [ "${3:-}" = "$openclaw_provenance_path" ]; then printf "%s\\n" "$openclaw_provenance_metadata"; return 0; fi',
@@ -204,6 +224,7 @@ function runInstallBlock(
     "}",
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
+    '  [ "${1:-}" != "--prefix" ] || [ "${3:-}" != "ci" ] || installed_mcporter_version="$MCPORTER_VERSION"',
     '  if [ "${1:-}" = "view" ] && [ "${3:-}" = "version" ]; then printf "%s\\n" "$OPENCLAW_VERSION"; return 0; fi',
     `  if [ "\${1:-}" = "view" ] && [ "\${2:-}" = "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}" ] && [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(codexAcpRegistryIntegrity)}; return 0; fi`,
     `  if [ "\${1:-}" = "view" ] && [ "\${2:-}" = "@zed-industries/codex-acp@${PINNED_CODEX_ACP_VERSION}" ] && [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" ${JSON.stringify(codexAcpRegistryTarball)}; return 0; fi`,
@@ -658,7 +679,7 @@ describe("OpenClaw npm integrity pins", () => {
     expect(base.provenanceMode).toBe(0o444);
   });
 
-  it("reuses an exact protected OpenClaw base provenance without registry or install work", () => {
+  it("reuses exact protected OpenClaw and mcporter base provenance without registry work", () => {
     const { result, calls, provenanceExists } = runInstallBlock(
       extractRunBlock(
         DOCKERFILE,
@@ -687,13 +708,17 @@ describe("OpenClaw npm integrity pins", () => {
     expect(calls).not.toContain(
       "node /usr/local/lib/node_modules/openclaw/scripts/postinstall-bundled-plugins.mjs",
     );
-    expect(calls).toContain(`npm view mcporter@${PINNED_MCPORTER_VERSION} dist.integrity`);
+    expect(result.stdout).toContain(
+      `Reusing reviewed base mcporter ${PINNED_MCPORTER_VERSION} with exact lock provenance`,
+    );
+    expect(calls).not.toContain(`npm view mcporter@${PINNED_MCPORTER_VERSION} dist.integrity`);
+    expect(calls).not.toContain("npm --prefix ");
     expect(provenanceExists).toBe(false);
   });
 
   it.each([
     ["missing marker", { baseProvenance: null }],
-    ["wrong schema", { baseProvenance: openClawBaseProvenance().replace("schema=1", "schema=2") }],
+    ["wrong schema", { baseProvenance: openClawBaseProvenance().replace("schema=2", "schema=1") }],
     [
       "wrong version",
       {
@@ -731,6 +756,42 @@ describe("OpenClaw npm integrity pins", () => {
       },
     ],
     [
+      "wrong mcporter package",
+      {
+        baseProvenance: openClawBaseProvenance().replace(
+          `mcporter-package=mcporter@${PINNED_MCPORTER_VERSION}`,
+          "mcporter-package=mcporter@0.7.2",
+        ),
+      },
+    ],
+    [
+      "wrong mcporter integrity",
+      {
+        baseProvenance: openClawBaseProvenance().replace(
+          `mcporter-integrity=${PINNED_MCPORTER_INTEGRITY}`,
+          "mcporter-integrity=sha512-drift",
+        ),
+      },
+    ],
+    [
+      "wrong mcporter lock",
+      {
+        baseProvenance: openClawBaseProvenance().replace(
+          `mcporter-lock-sha256=${PINNED_MCPORTER_LOCK_SHA256}`,
+          `mcporter-lock-sha256=${"0".repeat(64)}`,
+        ),
+      },
+    ],
+    [
+      "wrong mcporter recipe",
+      {
+        baseProvenance: openClawBaseProvenance().replace(
+          "mcporter-recipe=locked-ci+audit-signatures-v1",
+          "mcporter-recipe=locked-ci-only-v1",
+        ),
+      },
+    ],
+    [
       "writable marker",
       { baseProvenance: openClawBaseProvenance(), baseProvenanceMetadata: "0:0:644" },
     ],
@@ -740,6 +801,14 @@ describe("OpenClaw npm integrity pins", () => {
       {
         baseProvenance: openClawBaseProvenance(),
         installedOpenClawVersion: LEGACY_REBUILD_OPENCLAW_VERSION,
+      },
+    ],
+    [
+      "wrong installed mcporter version",
+      {
+        baseProvenance: openClawBaseProvenance(),
+        installedOpenClawVersion: PINNED_OPENCLAW_VERSION,
+        installedMcporterVersion: "0.7.2",
       },
     ],
     [

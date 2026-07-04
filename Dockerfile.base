@@ -300,19 +300,6 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && if [ "$OPENCLAW_INSTALLED_VERSION" != "$OPENCLAW_VERSION" ]; then \
         echo "Error: Installed OpenClaw ${OPENCLAW_INSTALLED_VERSION:-unknown} does not match reviewed target ${OPENCLAW_VERSION}"; exit 1; \
     fi \
-    && OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1 \
-    && OPENCLAW_PROVENANCE_DIR="$(dirname "$OPENCLAW_PROVENANCE_PATH")" \
-    && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \
-    && OPENCLAW_PROVENANCE_TMP="$(mktemp "${OPENCLAW_PROVENANCE_PATH}.tmp.XXXXXX")" \
-    && printf '%s\n' \
-        'schema=1' \
-        "package=openclaw@${OPENCLAW_VERSION}" \
-        "integrity=${EXPECTED_INTEGRITY}" \
-        "tarball=${EXPECTED_TARBALL}" \
-        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
-        > "$OPENCLAW_PROVENANCE_TMP" \
-    && chmod 0444 "$OPENCLAW_PROVENANCE_TMP" \
-    && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && MCPORTER_EXPECTED_INTEGRITY="" \
     && if [ "$MCPORTER_VERSION" = "0.7.3" ]; then MCPORTER_EXPECTED_INTEGRITY="$MCPORTER_0_7_3_INTEGRITY"; fi \
     && if [ -z "$MCPORTER_EXPECTED_INTEGRITY" ]; then \
@@ -331,6 +318,25 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     && test "$(mcporter --version)" = "$MCPORTER_VERSION" \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit --omit=dev --audit-level=low \
     && npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime audit signatures \
+    && MCPORTER_LOCK_SHA256="$(sha256sum /usr/local/lib/nemoclaw/mcporter-runtime/package-lock.json | awk '{print $1}')" \
+    && test -n "$MCPORTER_LOCK_SHA256" \
+    && OPENCLAW_PROVENANCE_PATH=/usr/local/share/nemoclaw/openclaw-base-provenance-v1 \
+    && OPENCLAW_PROVENANCE_DIR="$(dirname "$OPENCLAW_PROVENANCE_PATH")" \
+    && mkdir -p "$OPENCLAW_PROVENANCE_DIR" \
+    && OPENCLAW_PROVENANCE_TMP="$(mktemp "${OPENCLAW_PROVENANCE_PATH}.tmp.XXXXXX")" \
+    && printf '%s\n' \
+        'schema=2' \
+        "package=openclaw@${OPENCLAW_VERSION}" \
+        "integrity=${EXPECTED_INTEGRITY}" \
+        "tarball=${EXPECTED_TARBALL}" \
+        'recipe=ignore-scripts+reviewed-lifecycle-v1' \
+        "mcporter-package=mcporter@${MCPORTER_VERSION}" \
+        "mcporter-integrity=${MCPORTER_EXPECTED_INTEGRITY}" \
+        "mcporter-lock-sha256=${MCPORTER_LOCK_SHA256}" \
+        'mcporter-recipe=locked-ci+audit-signatures-v1' \
+        > "$OPENCLAW_PROVENANCE_TMP" \
+    && chmod 0444 "$OPENCLAW_PROVENANCE_TMP" \
+    && mv -f "$OPENCLAW_PROVENANCE_TMP" "$OPENCLAW_PROVENANCE_PATH" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 

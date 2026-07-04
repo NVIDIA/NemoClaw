@@ -200,6 +200,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   fs.writeFileSync(blueprint, `min_openclaw_version: "${readBlueprintMinOpenClawVersion()}"\n`);
   fs.mkdirSync(openclawInstall, { recursive: true });
   fs.mkdirSync(mcporterInstall, { recursive: true });
+  fs.writeFileSync(path.join(mcporterInstall, "package-lock.json"), "{}");
   fs.writeFileSync(openclawShim, "");
   fs.writeFileSync(mcporterShim, "");
   const command = dockerRunCommandBetween(
@@ -366,13 +367,12 @@ describe("fetch-guard patch regression guard", () => {
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-install-"));
     const inspectMarker = path.join(tmp, "inspected");
-    const enableMarker = path.join(tmp, "enabled");
     const successScript = [
       "openclaw() {",
       '  case "${1:-} ${2:-} ${3:-}" in',
       '    "plugins install /opt/nemoclaw") echo "installed" ;;',
       `    "plugins inspect nemoclaw") : > ${JSON.stringify(inspectMarker)} ;;`,
-      `    "plugins enable nemoclaw") : > ${JSON.stringify(enableMarker)} ;;`,
+      '    "plugins enable nemoclaw") return 43 ;;',
       "  esac",
       "  return 0",
       "}",
@@ -383,7 +383,6 @@ describe("fetch-guard patch regression guard", () => {
       timeout: 5000,
     });
     expect(success.status).toBe(0);
-    expect(fs.existsSync(enableMarker)).toBe(true);
     expect(fs.existsSync(inspectMarker)).toBe(true);
   });
 

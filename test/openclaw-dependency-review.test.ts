@@ -304,9 +304,10 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("`src/lib/state/sandbox.ts` is 100 lines smaller");
     expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
     expect(review).toContain("Deferred #5896 Archive Consolidation Contract");
-    expect(review).toContain("protected exact-version/SRI/tarball/lifecycle provenance marker");
+    expect(review).toContain("protected exact provenance marker");
+    expect(review).toContain("mcporter package, SRI, lockfile SHA-256");
     expect(review).toContain("removes the marker before applying NemoClaw patches");
-    expect(review).toContain("ten fallback states");
+    expect(review).toContain("fifteen fallback states");
     expect(review).toContain("issue #5896 section 2");
     expect(review).toContain("issue #5896 section 9");
     expect(review).toContain("direct source- and target-traversal vectors");
@@ -371,6 +372,10 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
   check_contains "$openclaw_block" 'openclaw-base-provenance-v1' "$dockerfile base provenance path"
   check_contains "$openclaw_block" 'recipe=ignore-scripts+reviewed-lifecycle-v1' "$dockerfile base provenance recipe"
+  check_contains "$openclaw_block" 'mcporter-package=mcporter@' "$dockerfile mcporter provenance package"
+  check_contains "$openclaw_block" 'mcporter-integrity=' "$dockerfile mcporter provenance integrity"
+  check_contains "$openclaw_block" 'mcporter-lock-sha256=' "$dockerfile mcporter provenance lock hash"
+  check_contains "$openclaw_block" 'mcporter-recipe=locked-ci+audit-signatures-v1' "$dockerfile mcporter provenance recipe"
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
