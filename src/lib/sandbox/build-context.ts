@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 export const SANDBOX_BUILD_CONTEXT_PREFIX = "nemoclaw-build-";
+export type SandboxBuildContextOrigin = "custom" | "generated";
 
 export interface StagedBuildContext {
   buildCtx: string;

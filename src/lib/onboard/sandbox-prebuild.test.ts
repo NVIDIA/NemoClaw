@@ -114,7 +114,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs: ["--from", "/other/Dockerfile"],
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -134,7 +134,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "custom",
+        origin: "custom",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -158,7 +158,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -178,7 +178,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -200,7 +200,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -224,7 +224,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -246,7 +246,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -272,7 +272,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -296,7 +296,7 @@ describe("sandbox BuildKit prebuild", () => {
       prebuildSandboxImageIfEligible({
         buildCtx,
         buildId: BUILD_ID,
-        buildContextOrigin: "generated",
+        origin: "generated",
         createArgs,
         sandboxName: "alpha",
         dockerDriverGateway: true,
@@ -316,7 +316,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
-      buildContextOrigin: "generated",
+      origin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
@@ -354,7 +354,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
-      buildContextOrigin: "generated",
+      origin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,
@@ -370,7 +370,7 @@ describe("sandbox BuildKit prebuild", () => {
     const result = await prebuildSandboxImageIfEligible({
       buildCtx,
       buildId: BUILD_ID,
-      buildContextOrigin: "generated",
+      origin: "generated",
       createArgs,
       sandboxName: "alpha",
       dockerDriverGateway: true,

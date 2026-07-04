@@ -10,6 +10,7 @@ import { isErrnoException } from "../core/errno";
 import {
   collectBuildContextStats,
   SANDBOX_BUILD_CONTEXT_PREFIX,
+  type SandboxBuildContextOrigin,
   type StagedBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../sandbox/build-context";
@@ -32,6 +33,7 @@ export interface CreateSandboxBuildContextInput {
 }
 
 export interface CreateSandboxBuildContextResult extends StagedBuildContext {
+  origin: SandboxBuildContextOrigin;
   cleanupBuildCtx(): boolean;
 }
 
@@ -58,6 +60,7 @@ export function stageCreateSandboxBuildContext(
   const warn = input.warn ?? console.warn;
   const error = input.error ?? console.error;
   const exit = input.exit ?? ((code?: number): never => process.exit(code));
+  const origin = input.fromDockerfile ? "custom" : "generated";
 
   let build: StagedBuildContext;
 
@@ -134,6 +137,7 @@ export function stageCreateSandboxBuildContext(
 
   return {
     ...build,
+    origin,
     cleanupBuildCtx: createCleanupBuildContext(build.buildCtx),
   };
 }

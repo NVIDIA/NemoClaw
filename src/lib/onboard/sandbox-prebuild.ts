@@ -6,7 +6,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { dockerSpawn } from "../adapters/docker/exec";
-import { SANDBOX_BUILD_CONTEXT_PREFIX } from "../sandbox/build-context";
+import {
+  SANDBOX_BUILD_CONTEXT_PREFIX,
+  type SandboxBuildContextOrigin,
+} from "../sandbox/build-context";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 const TRUTHY_FLAG_VALUES = new Set(["1", "true", "yes", "on"]);
@@ -23,10 +26,10 @@ const DOCKER_ENV_NAMES = [
 export interface SandboxPrebuildInput {
   buildCtx: string;
   buildId: string;
-  buildContextOrigin: "custom" | "generated";
   createArgs: readonly string[];
   sandboxName: string;
   dockerDriverGateway: boolean;
+  origin: SandboxBuildContextOrigin;
   env?: NodeJS.ProcessEnv;
   buildImage?: (
     args: readonly string[],
@@ -148,7 +151,7 @@ export async function prebuildSandboxImageIfEligible(
   if (!resolveSandboxPrebuildEnabled(env, input.dockerDriverGateway)) {
     return { createArgs, imageRef: null };
   }
-  if (input.buildContextOrigin !== "generated") {
+  if (input.origin !== "generated") {
     log(
       "  Local BuildKit build skipped for a custom Dockerfile; using the gateway builder instead.",
     );

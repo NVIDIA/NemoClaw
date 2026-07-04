@@ -298,11 +298,11 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
-        buildContextOrigin: "generated",
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage,
         log: vi.fn(),
+        origin: "generated",
       },
     });
 
@@ -334,11 +334,11 @@ describe("prepareSandboxCreateLaunchWithPrebuild", () => {
       prebuild: {
         buildCtx,
         buildId: "build-123",
-        buildContextOrigin: "generated",
         dockerDriverGateway: true,
         env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
         buildImage: async () => 1,
         log: vi.fn(),
+        origin: "generated",
       },
     });
 

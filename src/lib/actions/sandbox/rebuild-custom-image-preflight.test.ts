@@ -40,6 +40,7 @@ describe("preflightRebuildImage", () => {
       buildCtx: "/tmp/rebuild-managed-context",
       stagedDockerfile: "/tmp/rebuild-managed-context/Dockerfile",
       cleanupBuildCtx,
+      origin: "generated" as const,
     }));
     const result = await preflightRebuildImage(input(null), {
       stageBuildContext,

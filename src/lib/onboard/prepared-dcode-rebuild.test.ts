@@ -19,6 +19,7 @@ const preparedBuildContext: PreparedSandboxBuildContext = {
   stagedDockerfile: "/tmp/prepared-dcode/Dockerfile",
   buildId: "6195-prepared",
   cleanupBuildCtx: () => true,
+  origin: "generated",
 };
 const preparedOptions: PreparedDcodeRebuildOptions = {
   resume: true,
@@ -119,6 +120,7 @@ describe("prepared DCode rebuild adapter", () => {
       buildCtx: "/tmp/ordinary",
       stagedDockerfile: "/tmp/ordinary/Dockerfile",
       cleanupBuildCtx: () => true,
+      origin: "generated" as const,
     }));
     const onExit = vi.fn();
 

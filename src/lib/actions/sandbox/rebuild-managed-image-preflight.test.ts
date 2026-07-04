@@ -61,6 +61,7 @@ describe("managed DCode rebuild image preflight", () => {
       buildCtx,
       stagedDockerfile,
       cleanupBuildCtx,
+      origin: "generated" as const,
     }));
     const prepareDockerfilePatch = vi.fn(async () => ({
       buildId: "dcode-build-1",
@@ -260,7 +261,12 @@ describe("managed DCode rebuild image preflight", () => {
         return true;
       });
     const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
-      stageBuildContext: vi.fn(() => ({ buildCtx, stagedDockerfile, cleanupBuildCtx })),
+      stageBuildContext: vi.fn(() => ({
+        buildCtx,
+        stagedDockerfile,
+        cleanupBuildCtx,
+        origin: "generated" as const,
+      })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-cleanup",
         resolvedBaseImage: null,
@@ -292,6 +298,7 @@ describe("managed DCode rebuild image preflight", () => {
         buildCtx,
         stagedDockerfile,
         cleanupBuildCtx,
+        origin: "generated" as const,
       })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-failure",

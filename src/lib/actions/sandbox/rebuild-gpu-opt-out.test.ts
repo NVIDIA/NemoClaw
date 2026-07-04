@@ -244,6 +244,7 @@ describe("buildRebuildRecreateOnboardOpts", () => {
         stagedDockerfile: "/tmp/dcode-rebuild/Dockerfile",
         buildId: "dcode-build",
         cleanupBuildCtx: () => true,
+        origin: "generated" as const,
       },
       gatewayName: "nemoclaw",
     };
