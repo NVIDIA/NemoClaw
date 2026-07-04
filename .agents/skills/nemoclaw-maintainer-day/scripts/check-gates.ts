@@ -90,12 +90,6 @@ interface GateOutput {
 const CODERABBIT_LOGINS = new Set(["coderabbitai[bot]", "coderabbitai"]);
 const OPINIONATED_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
 
-function normalizedLogin(identity: PrIdentity | null | undefined): string | null {
-  if (!identity) return null;
-  const login = identity.login?.trim().toLowerCase();
-  return login || null;
-}
-
 function isAutomatedLogin(login: string): boolean {
   return login.endsWith("[bot]") || CODERABBIT_LOGINS.has(login);
 }
@@ -105,6 +99,10 @@ function checkContributorApprovalOverlap(pr: {
   commits?: Array<{ authors?: PrIdentity[] | null }> | null;
   reviews?: PrReview[] | null;
 }): ContributorApprovalAdvisory {
+  const normalizedLogin = (identity: PrIdentity | null | undefined): string | null => {
+    const login = identity?.login?.trim().toLowerCase();
+    return login || null;
+  };
   const contributors = new Set<string>();
   const addContributor = (identity: PrIdentity | null | undefined): void => {
     const login = normalizedLogin(identity);
