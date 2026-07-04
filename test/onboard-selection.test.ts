@@ -8,6 +8,18 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
+import { normalizeProviderBaseUrl } from "../src/lib/core/url-utils.js";
+import {
+  BACK_TO_SELECTION,
+  promptInputModel,
+  promptRemoteModel,
+} from "../src/lib/inference/model-prompts.js";
+import {
+  validateAnthropicModel,
+  validateOpenAiLikeModel,
+} from "../src/lib/inference/provider-models.js";
+import { returningToProviderSelection } from "../src/lib/onboard/credential-navigation.js";
+import { createInferenceSelectionValidationHelpers } from "../src/lib/onboard/inference-selection-validation.js";
 import {
   getWindowsHostOllamaDockerRequirement,
   rejectUnsupportedWindowsHostOllama,
@@ -16,7 +28,12 @@ import { buildInferenceProviderMenu } from "../src/lib/onboard/provider-menu.js"
 import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
 import { reportProviderSelectionFailure } from "../src/lib/onboard/provider-selection-failure.js";
 import { createSetupNimOllamaHandlers } from "../src/lib/onboard/setup-nim-ollama.js";
-import type { SetupNimSelectionState } from "../src/lib/onboard/setup-nim-selection.js";
+import {
+  createRemoteModelValidator,
+  resolveCompatibleEndpointInput,
+  type SetupNimSelectionState,
+} from "../src/lib/onboard/setup-nim-selection.js";
+import { createValidationRecoveryPromptHelpers } from "../src/lib/onboard/validation-recovery-prompt.js";
 import {
   type DetectWindowsHostOllamaDeps,
   detectWindowsHostOllama,
@@ -50,6 +67,108 @@ const TEST_REMOTE_PROVIDER_CONFIG = {
 type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequirement>;
 type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
 type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
+type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0];
+
+const TEST_OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
+const TEST_ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
+const TEST_CUSTOM_OPENAI_CONFIG = {
+  label: "Other OpenAI-compatible endpoint",
+  endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+  helpUrl: null,
+};
+const TEST_CUSTOM_ANTHROPIC_CONFIG = {
+  label: "Other Anthropic-compatible endpoint",
+  endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
+  helpUrl: null,
+};
+const TEST_ANTHROPIC_CONFIG = {
+  label: "Anthropic",
+  endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
+  helpUrl: null,
+};
+
+function makeRemoteSelectionState(
+  overrides: Partial<SetupNimSelectionState> = {},
+): SetupNimSelectionState {
+  return {
+    model: "test-model",
+    provider: "compatible-endpoint",
+    endpointUrl: "https://proxy.example.com/v1",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: null,
+    nimContainer: null,
+    allowToolsIncompatible: false,
+    skipHostInferenceSmoke: false,
+    ...overrides,
+  };
+}
+
+function makeRemoteModelValidatorDeps(
+  overrides: Partial<RemoteModelValidatorDeps> = {},
+): RemoteModelValidatorDeps {
+  return {
+    OPENAI_ENDPOINT_URL: TEST_OPENAI_ENDPOINT_URL,
+    ANTHROPIC_ENDPOINT_URL: TEST_ANTHROPIC_ENDPOINT_URL,
+    requireValue: (value, message) => {
+      if (value === null || value === undefined) throw new Error(message);
+      return value;
+    },
+    isBackToSelection: (_value): _value is never => false,
+    validateCustomOpenAiLikeSelection: async () => ({
+      ok: true as const,
+      api: "openai-completions",
+    }),
+    validateCustomAnthropicSelection: async () => ({
+      ok: true as const,
+      api: "anthropic-messages",
+    }),
+    validateAnthropicSelectionWithRetryMessage: async () => ({
+      ok: true as const,
+      api: "anthropic-messages",
+    }),
+    validateOpenAiLikeSelection: async () => ({
+      ok: true as const,
+      api: "openai-completions",
+    }),
+    shouldRequireResponsesToolCalling: () => false,
+    shouldSkipResponsesProbe: () => false,
+    getProbeAuthMode: () => undefined,
+    ...overrides,
+  };
+}
+
+function makeInteractiveValidationRecovery() {
+  return createValidationRecoveryPromptHelpers({
+    isNonInteractive: () => false,
+    prompt: async () => "",
+    validateNvidiaApiKeyValue: () => null,
+    getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
+    exitOnboardFromPrompt(): never {
+      throw new Error("Unexpected onboarding exit");
+    },
+  });
+}
+
+async function captureConsoleOutput<T>(callback: () => Promise<T>): Promise<{
+  result: T;
+  lines: string[];
+}> {
+  const lines: string[] = [];
+  const log = vi.spyOn(console, "log").mockImplementation((...args) => {
+    lines.push(args.join(" "));
+  });
+  const error = vi.spyOn(console, "error").mockImplementation((...args) => {
+    lines.push(args.join(" "));
+  });
+  try {
+    return { result: await callback(), lines };
+  } finally {
+    error.mockRestore();
+    log.mockRestore();
+  }
+}
 
 function buildWindowsProviderMenu(
   requirement: WindowsRequirement,
@@ -2597,802 +2716,474 @@ const { setupNim } = require(${onboardPath});
     assert.match(pullingLine, sizePattern);
   });
 
-  it("reprompts for an OpenAI Other model when /models validation rejects it", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-model-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "openai-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/models$'; then
-  body='{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}'
-elif echo "$url" | grep -q '/responses$'; then
-  body='{"id":"resp_123"}'
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["2", "5", "bad-model", "gpt-5.4-mini"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENAI_API_KEY = "sk-test";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reprompts for an OpenAI Other model when /models validation rejects it", async () => {
+    const answers = ["5", "bad-model", "gpt-5.4-mini"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const catalogUrls: string[] = [];
+    const model = await promptRemoteModel(
+      "OpenAI",
+      "openai",
+      "gpt-5.4",
+      (candidate) =>
+        validateOpenAiLikeModel("OpenAI", TEST_OPENAI_ENDPOINT_URL, candidate, "sk-test", {
+          runCurlProbeImpl: (argv) => {
+            catalogUrls.push(argv.at(-1) || "");
+            return {
+              ok: true,
+              httpStatus: 200,
+              curlStatus: 0,
+              body: JSON.stringify({ data: [{ id: "gpt-5.4" }, { id: "gpt-5.4-mini" }] }),
+              stderr: "",
+              message: "",
+            };
+          },
+        }),
+      {
+        promptFn: async (message) => {
+          messages.push(message);
+          return answers.shift() || "";
+        },
+        errorLine: (line) => lines.push(line),
+        writeLine: (line) => lines.push(line),
       },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "gpt-5.4-mini");
-    assert.equal(
-      payload.messages.filter((message: string) => /OpenAI model id:/.test(message)).length,
-      2,
     );
-    assert.ok(payload.lines.some((line: string) => line.includes("is not available from OpenAI")));
+
+    assert.equal(model, "gpt-5.4-mini");
+    assert.equal(messages.filter((message) => /OpenAI model id:/.test(message)).length, 2);
+    assert.ok(lines.some((line) => line.includes("is not available from OpenAI")));
+    assert.deepEqual(catalogUrls, [
+      `${TEST_OPENAI_ENDPOINT_URL}/models`,
+      `${TEST_OPENAI_ENDPOINT_URL}/models`,
+    ]);
   });
 
-  it("reprompts for an Anthropic Other model when /v1/models validation rejects it", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-model-retry-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "anthropic-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"data":[{"id":"claude-sonnet-4-6"},{"id":"claude-haiku-4-5"}]}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["4", "4", "claude-bad", "claude-haiku-4-5"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.ANTHROPIC_API_KEY = "anthropic-test";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reprompts for an Anthropic Other model when /v1/models validation rejects it", async () => {
+    const answers = ["4", "claude-bad", "claude-haiku-4-5"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const catalogUrls: string[] = [];
+    const model = await promptRemoteModel(
+      "Anthropic",
+      "anthropic",
+      "claude-sonnet-4-6",
+      (candidate) =>
+        validateAnthropicModel(TEST_ANTHROPIC_ENDPOINT_URL, candidate, "anthropic-test", {
+          runCurlProbeImpl: (argv) => {
+            catalogUrls.push(argv.at(-1) || "");
+            return {
+              ok: true,
+              httpStatus: 200,
+              curlStatus: 0,
+              body: JSON.stringify({
+                data: [{ id: "claude-sonnet-4-6" }, { id: "claude-haiku-4-5" }],
+              }),
+              stderr: "",
+              message: "",
+            };
+          },
+        }),
+      {
+        promptFn: async (message) => {
+          messages.push(message);
+          return answers.shift() || "";
+        },
+        errorLine: (line) => lines.push(line),
+        writeLine: (line) => lines.push(line),
       },
-    });
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "claude-haiku-4-5");
-    assert.equal(
-      payload.messages.filter((message: string) => /Anthropic model id:/.test(message)).length,
-      2,
-    );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("is not available from Anthropic")),
-    );
+    assert.equal(model, "claude-haiku-4-5");
+    assert.equal(messages.filter((message) => /Anthropic model id:/.test(message)).length, 2);
+    assert.ok(lines.some((line) => line.includes("is not available from Anthropic")));
+    assert.deepEqual(catalogUrls, [
+      `${TEST_ANTHROPIC_ENDPOINT_URL}/v1/models`,
+      `${TEST_ANTHROPIC_ENDPOINT_URL}/v1/models`,
+    ]);
   });
 
-  it("returns to provider selection when Anthropic live validation fails interactively", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-validation-retry-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "anthropic-validation-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"invalid model"}}'
-status="400"
-outfile=""
-url=""
-args="$*"
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"claude-sonnet-4-6"},{"id":"claude-haiku-4-5"}]}'
-  status="200"
-elif echo "$url" | grep -q '/v1/messages$' && printf '%s' "$args" | grep -q 'claude-haiku-4-5'; then
-  body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["4", "", "4", "2"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.ANTHROPIC_API_KEY = "anthropic-test";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("returns to provider selection when Anthropic live validation fails interactively", async () => {
+    const recovery = makeInteractiveValidationRecovery();
+    const probedModels: string[] = [];
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "anthropic-test",
+      probeAnthropicEndpoint: (_endpointUrl, model) => {
+        probedModels.push(model);
+        return model === "claude-haiku-4-5"
+          ? { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" }
+          : {
+              ok: false,
+              message: "invalid model",
+              failures: [
+                { name: "Anthropic Messages API", httpStatus: 400, message: "invalid model" },
+              ],
+            };
       },
+      promptValidationRecovery: recovery.promptValidationRecovery,
+    });
+    const state = makeRemoteSelectionState({
+      model: "claude-sonnet-4-6",
+      provider: "anthropic-prod",
+      endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
+      credentialEnv: "ANTHROPIC_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateAnthropicSelectionWithRetryMessage:
+          validation.validateAnthropicSelectionWithRetryMessage,
+      }),
+    );
+
+    const { result, lines } = await captureConsoleOutput(async () => {
+      const first = await validateSelectedRemoteModel({
+        selected: { key: "anthropic" },
+        remoteConfig: TEST_ANTHROPIC_CONFIG,
+        state,
+        selectedCredentialEnv: "ANTHROPIC_API_KEY",
+      });
+      state.model = "claude-haiku-4-5";
+      const second = await validateSelectedRemoteModel({
+        selected: { key: "anthropic" },
+        remoteConfig: TEST_ANTHROPIC_CONFIG,
+        state,
+        selectedCredentialEnv: "ANTHROPIC_API_KEY",
+      });
+      return { first, second };
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "anthropic-prod");
-    assert.equal(payload.result.model, "claude-haiku-4-5");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Anthropic endpoint validation failed")),
-    );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Please choose a provider/model again")),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    assert.deepEqual(result, { first: "retry-selection", second: "selected" });
+    assert.equal(state.provider, "anthropic-prod");
+    assert.equal(state.model, "claude-haiku-4-5");
+    assert.equal(state.preferredInferenceApi, "anthropic-messages");
+    assert.deepEqual(probedModels, ["claude-sonnet-4-6", "claude-haiku-4-5"]);
+    assert.ok(lines.some((line) => line.includes("Anthropic endpoint validation failed")));
+    assert.ok(lines.some((line) => line.includes("Please choose a provider/model again")));
   });
 
-  it("supports Other Anthropic-compatible endpoint with live validation", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-compatible-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "anthropic-compatible-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
-status="200"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-sonnet-proxy"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_ANTHROPIC_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("supports Other Anthropic-compatible endpoint with live validation", async () => {
+    const messages: string[] = [];
+    const endpointInput = await resolveCompatibleEndpointInput({
+      kind: "anthropic",
+      envUrl: null,
+      recoveredEndpointUrl: null,
+      nonInteractive: false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "https://proxy.example.com/v1/messages?token=secret#frag";
       },
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
-    assert.equal(payload.result.model, "claude-sonnet-proxy");
-    assert.equal(payload.result.endpointUrl, "https://proxy.example.com");
-    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
-    assert.match(payload.messages[1], /Anthropic-compatible base URL/);
-    assert.match(payload.messages[2], /Other Anthropic-compatible endpoint model/);
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Anthropic Messages API available")),
+    const endpointUrl = normalizeProviderBaseUrl(endpointInput, "anthropic");
+    const model = await promptInputModel(
+      TEST_CUSTOM_ANTHROPIC_CONFIG.label,
+      "claude-sonnet-4-6",
+      null,
+      {
+        promptFn: async (message) => {
+          messages.push(message);
+          return "claude-sonnet-proxy";
+        },
+      },
     );
+    assert.equal(model, "claude-sonnet-proxy");
+    const recovery = makeInteractiveValidationRecovery();
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "proxy-key",
+      probeAnthropicEndpoint: () => ({
+        ok: true,
+        api: "anthropic-messages",
+        label: "Anthropic Messages API",
+      }),
+      promptValidationRecovery: recovery.promptValidationRecovery,
+    });
+    const state = makeRemoteSelectionState({
+      model,
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl,
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomAnthropicSelection: validation.validateCustomAnthropicSelection,
+      }),
+    );
+
+    const { result, lines } = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "anthropicCompatible" },
+        remoteConfig: TEST_CUSTOM_ANTHROPIC_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      }),
+    );
+
+    assert.equal(result, "selected");
+    assert.equal(state.provider, "compatible-anthropic-endpoint");
+    assert.equal(state.model, "claude-sonnet-proxy");
+    assert.equal(state.endpointUrl, "https://proxy.example.com");
+    assert.equal(state.preferredInferenceApi, "anthropic-messages");
+    assert.match(messages[0], /Anthropic-compatible base URL/);
+    assert.match(messages[1], /Other Anthropic-compatible endpoint model/);
+    assert.ok(lines.some((line) => line.includes("Anthropic Messages API available")));
   });
 
-  it("reprompts only for model name when Other OpenAI-compatible endpoint validation fails", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-openai-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad model"}}'
-status="400"
-outfile=""
-body_arg=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) body_arg="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/responses$' && echo "$body_arg" | grep -q 'good-model'; then
-  body='{"id":"resp_123","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}'
-  status="200"
-elif echo "$url" | grep -q '/chat/completions$' && echo "$body_arg" | grep -q 'good-model'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "bad-model", "good-model"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reprompts only for model name when Other OpenAI-compatible endpoint validation fails", async () => {
+    const messages: string[] = [];
+    const modelAnswers = ["bad-model", "good-model"];
+    const endpointInput = await resolveCompatibleEndpointInput({
+      kind: "openai",
+      envUrl: null,
+      recoveredEndpointUrl: null,
+      nonInteractive: false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "https://proxy.example.com/v1/chat/completions?token=secret#frag";
       },
     });
+    const state = makeRemoteSelectionState({
+      endpointUrl: normalizeProviderBaseUrl(endpointInput, "openai"),
+    });
+    const recovery = makeInteractiveValidationRecovery();
+    const probedModels: string[] = [];
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "proxy-key",
+      probeOpenAiLikeEndpoint: (_endpointUrl, model) => {
+        probedModels.push(model);
+        return model === "good-model"
+          ? { ok: true, api: "openai-responses", label: "Responses API" }
+          : {
+              ok: false,
+              message: "bad model",
+              failures: [{ name: "Responses API", httpStatus: 400, message: "bad model" }],
+            };
+      },
+      promptValidationRecovery: recovery.promptValidationRecovery,
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
+      }),
+    );
+    const promptModel = () =>
+      promptInputModel(TEST_CUSTOM_OPENAI_CONFIG.label, "custom-model", null, {
+        promptFn: async (message) => {
+          messages.push(message);
+          return modelAnswers.shift() || "";
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-endpoint");
-    assert.equal(payload.result.model, "good-model");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    const { result, lines } = await captureConsoleOutput(async () => {
+      state.model = await promptModel();
+      const first = await validateSelectedRemoteModel({
+        selected: { key: "custom" },
+        remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_API_KEY",
+      });
+      state.model = await promptModel();
+      const second = await validateSelectedRemoteModel({
+        selected: { key: "custom" },
+        remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_API_KEY",
+      });
+      return { first, second };
+    });
+
+    assert.deepEqual(result, { first: "retry-model", second: "selected" });
+    assert.equal(state.provider, "compatible-endpoint");
+    assert.equal(state.model, "good-model");
+    assert.equal(state.endpointUrl, "https://proxy.example.com/v1");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.deepEqual(probedModels, ["bad-model", "good-model"]);
     assert.ok(
-      payload.lines.some((line: string) =>
+      lines.some((line) =>
         line.includes("Other OpenAI-compatible endpoint endpoint validation failed"),
       ),
     );
     assert.ok(
-      payload.lines.some((line: string) =>
+      lines.some((line) =>
         line.includes("Please enter a different Other OpenAI-compatible endpoint model name."),
       ),
     );
     assert.equal(
-      payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
-        .length,
+      messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message: string) =>
-        /Other OpenAI-compatible endpoint model/.test(message),
-      ).length,
+      messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length,
       2,
     );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
-  it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-fallback-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-openai-responses-fallback-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad request"}}'
-status="400"
-outfile=""
-body_arg=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) body_arg="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/responses$'; then
-  body='{"id":"resp_123","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}'
-  status="200"
-elif echo "$url" | grep -q '/chat/completions$'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://proxy.example.com/v1", "custom-model"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const recovery = makeInteractiveValidationRecovery();
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "proxy-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: recovery.promptValidationRecovery,
     });
+    const state = makeRemoteSelectionState({ model: "custom-model" });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
+      }),
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-endpoint");
-    assert.equal(payload.result.model, "custom-model");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    const { result, lines } = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "custom" },
+        remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_API_KEY",
+      }),
+    );
+
+    assert.equal(result, "selected");
+    assert.equal(state.provider, "compatible-endpoint");
+    assert.equal(state.model, "custom-model");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.ok(lines.some((line) => line.includes("Chat Completions API available")));
+    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+      "https://proxy.example.com/v1",
+      "custom-model",
+      "proxy-key",
+      {
+        requireResponsesToolCalling: true,
+        skipResponsesProbe: false,
+        probeStreaming: true,
+      },
     );
   });
 
-  it("forces chat completions for custom OpenAI-compatible endpoints even when /responses returns valid tool calls (#1932)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-force-completions-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-openai-responses-force-completions-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    // Mock curl: /v1/responses returns a VALID response with tool calls
-    // (simulates Ollama 0.20+ which exposes /v1/responses successfully)
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad request"}}'
-status="400"
-outfile=""
-body_arg=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) body_arg="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/responses$'; then
-  body='{"id":"resp_123","output":[{"id":"fc_1","type":"function_call","name":"read","arguments":"{\\"path\\":\\"/tmp/test\\"}"},{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
-  status="200"
-elif echo "$url" | grep -q '/chat/completions$'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://ollama.local:11434/v1", "my-model"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "ollama-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("forces chat completions for custom OpenAI-compatible endpoints even when /responses returns valid tool calls (#1932)", async () => {
+    const previousPreferredApi = process.env.NEMOCLAW_PREFERRED_API;
+    delete process.env.NEMOCLAW_PREFERRED_API;
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-responses",
+      label: "Responses API",
+    }));
+    const recovery = makeInteractiveValidationRecovery();
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "ollama-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: recovery.promptValidationRecovery,
     });
+    const state = makeRemoteSelectionState({
+      model: "my-model",
+      endpointUrl: "https://ollama.local:11434/v1",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
+      }),
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-endpoint");
-    assert.equal(payload.result.model, "my-model");
-    // Even though /v1/responses returned valid tool calls, we must force
-    // chat completions because many backends (Ollama, vLLM, LiteLLM) do not
-    // correctly handle the developer role used by the Responses API.
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    // Verify the wizard selected chat completions (either via our forced
-    // override or via the streaming fallback — both are correct).
-    assert.ok(payload.lines.some((line: string) => line.includes("openai-completions")));
+    try {
+      const { result, lines } = await captureConsoleOutput(() =>
+        validateSelectedRemoteModel({
+          selected: { key: "custom" },
+          remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
+          state,
+          selectedCredentialEnv: "COMPATIBLE_API_KEY",
+        }),
+      );
+
+      assert.equal(result, "selected");
+      assert.equal(state.provider, "compatible-endpoint");
+      assert.equal(state.model, "my-model");
+      assert.equal(state.preferredInferenceApi, "openai-completions");
+      assert.ok(lines.some((line) => line.includes("Using chat completions API")));
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://ollama.local:11434/v1",
+        "my-model",
+        "ollama-key",
+        {
+          requireResponsesToolCalling: true,
+          skipResponsesProbe: false,
+          probeStreaming: true,
+        },
+      );
+    } finally {
+      if (previousPreferredApi === undefined) delete process.env.NEMOCLAW_PREFERRED_API;
+      else process.env.NEMOCLAW_PREFERRED_API = previousPreferredApi;
+    }
   });
 
-  it("honors NEMOCLAW_PREFERRED_API=openai-responses override for custom OpenAI-compatible endpoints (#1932)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-custom-openai-responses-override-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-openai-responses-override-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    // Mock curl: /v1/responses returns a valid response (probe passes)
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad request"}}'
-status="400"
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/responses$'; then
-  body='{"id":"resp_123","output":[{"id":"msg_1","type":"message","status":"completed","role":"assistant","content":[{"type":"output_text","text":"OK"}]}]}'
-  status="200"
-elif echo "$url" | grep -q '/chat/completions$'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://openai-proxy.example.com/v1", "gpt-4o"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "sk-test";
-  // Explicit override: user knows their backend supports the Responses API
-  process.env.NEMOCLAW_PREFERRED_API = "openai-responses";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("honors NEMOCLAW_PREFERRED_API=openai-responses override for custom OpenAI-compatible endpoints (#1932)", async () => {
+    const previousPreferredApi = process.env.NEMOCLAW_PREFERRED_API;
+    process.env.NEMOCLAW_PREFERRED_API = "openai-responses";
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-responses",
+      label: "Responses API",
+    }));
+    const recovery = makeInteractiveValidationRecovery();
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "sk-test",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: recovery.promptValidationRecovery,
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-endpoint");
-    assert.equal(payload.result.model, "gpt-4o");
-    // With NEMOCLAW_PREFERRED_API=openai-responses, the code path that
-    // forces openai-completions is bypassed: our override check sees the
-    // env var and uses validation.api instead. In this test, the mock
-    // curl doesn't support SSE streaming, so the probe's streaming
-    // fallback returns openai-completions regardless. A real backend with
-    // proper streaming would yield openai-responses here.
-    // The important thing: the env var is read and the forced-completions
-    // override does NOT fire, proving the escape hatch works.
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    // Verify the forced-override message was NOT printed (env var bypassed it)
-    assert.ok(
-      !payload.lines.some((line: string) =>
-        line.includes("compatible endpoints may not support the Responses API developer role"),
-      ),
+    const state = makeRemoteSelectionState({
+      model: "gpt-4o",
+      endpointUrl: "https://openai-proxy.example.com/v1",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
+      }),
     );
+
+    try {
+      const { result, lines } = await captureConsoleOutput(() =>
+        validateSelectedRemoteModel({
+          selected: { key: "custom" },
+          remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
+          state,
+          selectedCredentialEnv: "COMPATIBLE_API_KEY",
+        }),
+      );
+
+      assert.equal(result, "selected");
+      assert.equal(state.provider, "compatible-endpoint");
+      assert.equal(state.model, "gpt-4o");
+      assert.equal(state.preferredInferenceApi, "openai-responses");
+      assert.ok(
+        !lines.some((line) =>
+          line.includes("compatible endpoints may not support the Responses API developer role"),
+        ),
+      );
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://openai-proxy.example.com/v1",
+        "gpt-4o",
+        "sk-test",
+        {
+          requireResponsesToolCalling: true,
+          skipResponsesProbe: false,
+          probeStreaming: true,
+        },
+      );
+    } finally {
+      if (previousPreferredApi === undefined) delete process.env.NEMOCLAW_PREFERRED_API;
+      else process.env.NEMOCLAW_PREFERRED_API = previousPreferredApi;
+    }
   });
 
   it("returns to provider selection instead of exiting on blank custom endpoint input", () => {
@@ -3474,191 +3265,135 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("reprompts only for model name when Other Anthropic-compatible endpoint validation fails", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-retry-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-anthropic-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad model"}}'
-status="400"
-outfile=""
-body_arg=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) body_arg="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/v1/messages$' && echo "$body_arg" | grep -q 'good-claude'; then
-  body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "bad-claude", "good-claude"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_ANTHROPIC_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reprompts only for model name when Other Anthropic-compatible endpoint validation fails", async () => {
+    const messages: string[] = [];
+    const modelAnswers = ["bad-claude", "good-claude"];
+    const endpointInput = await resolveCompatibleEndpointInput({
+      kind: "anthropic",
+      envUrl: null,
+      recoveredEndpointUrl: null,
+      nonInteractive: false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "https://proxy.example.com/v1/messages?token=secret#frag";
       },
     });
+    const state = makeRemoteSelectionState({
+      provider: "compatible-anthropic-endpoint",
+      endpointUrl: normalizeProviderBaseUrl(endpointInput, "anthropic"),
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    });
+    const recovery = makeInteractiveValidationRecovery();
+    const probedModels: string[] = [];
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "proxy-key",
+      probeAnthropicEndpoint: (_endpointUrl, model) => {
+        probedModels.push(model);
+        return model === "good-claude"
+          ? { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" }
+          : {
+              ok: false,
+              message: "bad model",
+              failures: [{ name: "Anthropic Messages API", httpStatus: 400, message: "bad model" }],
+            };
+      },
+      promptValidationRecovery: recovery.promptValidationRecovery,
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateCustomAnthropicSelection: validation.validateCustomAnthropicSelection,
+      }),
+    );
+    const promptModel = () =>
+      promptInputModel(TEST_CUSTOM_ANTHROPIC_CONFIG.label, "claude-proxy", null, {
+        promptFn: async (message) => {
+          messages.push(message);
+          return modelAnswers.shift() || "";
+        },
+      });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
-    assert.equal(payload.result.model, "good-claude");
-    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
+    const { result, lines } = await captureConsoleOutput(async () => {
+      state.model = await promptModel();
+      const first = await validateSelectedRemoteModel({
+        selected: { key: "anthropicCompatible" },
+        remoteConfig: TEST_CUSTOM_ANTHROPIC_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      });
+      state.model = await promptModel();
+      const second = await validateSelectedRemoteModel({
+        selected: { key: "anthropicCompatible" },
+        remoteConfig: TEST_CUSTOM_ANTHROPIC_CONFIG,
+        state,
+        selectedCredentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      });
+      return { first, second };
+    });
+
+    assert.deepEqual(result, { first: "retry-model", second: "selected" });
+    assert.equal(state.provider, "compatible-anthropic-endpoint");
+    assert.equal(state.model, "good-claude");
+    assert.equal(state.endpointUrl, "https://proxy.example.com");
+    assert.equal(state.preferredInferenceApi, "anthropic-messages");
+    assert.deepEqual(probedModels, ["bad-claude", "good-claude"]);
     assert.ok(
-      payload.lines.some((line: string) =>
+      lines.some((line) =>
         line.includes("Other Anthropic-compatible endpoint endpoint validation failed"),
       ),
     );
     assert.ok(
-      payload.lines.some((line: string) =>
+      lines.some((line) =>
         line.includes("Please enter a different Other Anthropic-compatible endpoint model name."),
       ),
     );
     assert.equal(
-      payload.messages.filter((message: string) => /Anthropic-compatible base URL/.test(message))
-        .length,
+      messages.filter((message) => /Anthropic-compatible base URL/.test(message)).length,
       1,
     );
     assert.equal(
-      payload.messages.filter((message: string) =>
-        /Other Anthropic-compatible endpoint model/.test(message),
-      ).length,
+      messages.filter((message) => /Other Anthropic-compatible endpoint model/.test(message))
+        .length,
       2,
     );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
   });
 
-  it("lets users type back at a lower-level model prompt to return to provider selection", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-model-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "model-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://proxy.example.com/v1", "back", "1", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("lets users type back at a lower-level model prompt to return to provider selection", async () => {
+    const messages: string[] = [];
+    await resolveCompatibleEndpointInput({
+      kind: "openai",
+      envUrl: null,
+      recoveredEndpointUrl: null,
+      nonInteractive: false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "https://proxy.example.com/v1";
       },
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    const { result, lines } = await captureConsoleOutput(async () => {
+      const model = await promptInputModel(TEST_CUSTOM_OPENAI_CONFIG.label, "custom-model", null, {
+        promptFn: async (message) => {
+          messages.push(message);
+          return "back";
+        },
+      });
+      const returned = returningToProviderSelection(model, () => {
+        throw new Error("Unexpected onboarding exit");
+      });
+      return { model, returned };
+    });
+
+    assert.deepEqual(result.model, BACK_TO_SELECTION);
+    assert.equal(result.returned, true);
+    assert.ok(lines.some((line) => line.includes("Returning to provider selection.")));
     assert.equal(
-      payload.messages.filter((message: string) => /OpenAI-compatible base URL/.test(message))
-        .length,
+      messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      1,
+    );
+    assert.equal(
+      messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length,
       1,
     );
   });
