@@ -6,6 +6,7 @@ import fs from "node:fs";
 import type { ToolDisclosure } from "../tool-disclosure";
 
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
+const O_NONBLOCK = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
 
 type DockerfileOpenOperation = "open" | "patch";
 
@@ -25,19 +26,12 @@ export function openExistingRegularDockerfileNoFollow(
       `Refusing to ${operation} Dockerfile: O_NOFOLLOW is unavailable on this platform.`,
     );
   }
-  // Bind the opened fd to the leaf identity sampled immediately before open.
-  // This catches a mutable ancestor or leaf being retargeted around openSync;
-  // O_NOFOLLOW independently rejects a symlink leaf.
-  const expectedFile = fs.lstatSync(dockerfilePath);
-  if (expectedFile.isSymbolicLink()) {
-    throw new Error(`Refusing to ${operation} Dockerfile through a symlink: ${dockerfilePath}`);
-  }
-  if (!expectedFile.isFile()) {
-    throw new Error(`Refusing to ${operation} non-regular Dockerfile path: ${dockerfilePath}`);
-  }
   let fd: number;
   try {
-    fd = fs.openSync(dockerfilePath, flags | O_NOFOLLOW, 0o600);
+    // Open before inspecting the path so all later I/O consumes the inode that
+    // was actually validated. O_NONBLOCK prevents a FIFO substitution from
+    // hanging before fstat can reject the descriptor.
+    fd = fs.openSync(dockerfilePath, flags | O_NOFOLLOW | O_NONBLOCK, 0o600);
   } catch (err) {
     if (errnoCode(err) === "ELOOP") {
       throw new Error(`Refusing to ${operation} Dockerfile through a symlink: ${dockerfilePath}`);
@@ -46,17 +40,23 @@ export function openExistingRegularDockerfileNoFollow(
   }
   try {
     const fileStat = fs.fstatSync(fd);
-    if (
-      !fileStat.isFile() ||
-      fileStat.dev !== expectedFile.dev ||
-      fileStat.ino !== expectedFile.ino
-    ) {
-      if (fileStat.isFile()) {
-        throw new Error(
-          `Refusing to ${operation} Dockerfile because it changed during validation: ${dockerfilePath}`,
-        );
-      }
+    if (!fileStat.isFile()) {
       throw new Error(`Refusing to ${operation} non-regular Dockerfile path: ${dockerfilePath}`);
+    }
+    // Patch callers use a private mkdtemp build root; read-only custom paths
+    // are copied into that root and validated again before patching. This
+    // post-open check catches a swap around openSync without introducing a
+    // check-then-open race; subsequent reads/writes use the pinned fd.
+    const pathAfterOpen = fs.lstatSync(dockerfilePath);
+    if (
+      pathAfterOpen.isSymbolicLink() ||
+      !pathAfterOpen.isFile() ||
+      fileStat.dev !== pathAfterOpen.dev ||
+      fileStat.ino !== pathAfterOpen.ino
+    ) {
+      throw new Error(
+        `Refusing to ${operation} Dockerfile because it changed during validation: ${dockerfilePath}`,
+      );
     }
     return fd;
   } catch (err) {

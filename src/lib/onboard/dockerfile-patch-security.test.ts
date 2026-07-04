@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -100,6 +101,20 @@ describe("dockerfile patch security guards", () => {
       /Refusing to open Dockerfile through a symlink/,
     );
   });
+
+  it.skipIf(process.platform === "win32" || typeof fs.constants.O_NONBLOCK !== "number")(
+    "rejects a Dockerfile FIFO without blocking during validation",
+    () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-fifo-test-"));
+      tmpRoots.push(dir);
+      const fifo = path.join(dir, "Dockerfile");
+      execFileSync("mkfifo", [fifo]);
+
+      expect(() => assertToolDisclosureDockerfileContract(fifo, "progressive")).toThrow(
+        /Custom Dockerfile path is not a file/,
+      );
+    },
+  );
 
   it("rejects an ancestor directory swap around the Dockerfile open", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-parent-swap-test-"));
