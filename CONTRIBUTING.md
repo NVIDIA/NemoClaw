@@ -161,16 +161,15 @@ The exposure command prefers `npm link` and falls back to a managed `~/.local/bi
 
 ## Main Tasks
 
-These are the primary `make` and `npm` targets for day-to-day development:
+These are the primary npm scripts for day-to-day development:
 
 | Task | Purpose |
 |------|---------|
 | `npm run dev:setup` | Install or repair repository-local contributor tooling |
 | `npm run dev:doctor` | Run read-only contributor environment readiness checks |
 | `npm run agent` | Launch the repository-pinned Pi coding agent |
-| `make check` | Run all linters (TypeScript + Python) |
-| `make lint` | Same as `make check` |
-| `make format` | Auto-format TypeScript and Python source |
+| `npm run check` | Run all repository checks |
+| `npm run format` | Auto-format Biome-supported source files |
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
 | `npm test` | Build package artifacts and run every non-live Vitest project |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
@@ -220,7 +219,7 @@ manually before opening a PR.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
-`make check` remains the primary documented linter entry point.
+`npm run check` is the primary command for running repository checks.
 
 For doc-only changes, you do not need to run the full test suite by default.
 Commit and push normally so the hooks run, then run the docs build:

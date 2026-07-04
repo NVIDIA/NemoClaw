@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import { prepareRebuildRecreateOptions } from "./rebuild-target-staging";
 
@@ -22,6 +23,21 @@ const REGISTRY_ROUTE: RegistryInferenceRoute = {
   source: "registry",
 };
 
+const BASE_IMAGE_RESOLUTION_HINT: SandboxBaseImageResolutionMetadata = {
+  schema: 1,
+  key: "base-resolution-key",
+  imageName: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+  ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc",
+  digest: "sha256:abc",
+  source: "version-tag",
+  imageId: "sha256:image",
+  os: "linux",
+  architecture: "amd64",
+  glibcVersion: "2.41",
+  requireOpenshellSandboxAbi: true,
+  minGlibcVersion: "2.39",
+};
+
 const bail = (message: string): never => {
   throw new Error(message);
 };
@@ -35,9 +51,11 @@ describe("prepareRebuildRecreateOptions", () => {
       null,
       REGISTRY_ROUTE,
       true,
+      BASE_IMAGE_RESOLUTION_HINT,
       bail,
     );
 
+    expect(options?.baseImageResolutionHint).toBe(BASE_IMAGE_RESOLUTION_HINT);
     expect(options?.rebuildRegistryInferenceRoute).toEqual({
       sandboxName: "alpha",
       route: REGISTRY_ROUTE,
@@ -55,9 +73,11 @@ describe("prepareRebuildRecreateOptions", () => {
       null,
       null,
       true,
+      null,
       bail,
     );
 
+    expect(options?.baseImageResolutionHint).toBeNull();
     expect(options).not.toHaveProperty("rebuildRegistryInferenceRoute");
   });
 });

@@ -7,6 +7,7 @@ import {
   createRebuildRouteHandoff,
   type RegistryInferenceRoute,
 } from "../../onboard/rebuild-route-handoff";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
 import {
@@ -27,6 +28,7 @@ export function prepareRebuildRecreateOptions(
   storedFromDockerfile: string | null,
   registryInferenceRoute: RegistryInferenceRoute | null,
   autoYes: boolean,
+  baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null,
   bail: RebuildBail,
 ): RebuildRecreateOnboardOpts | null {
   try {
@@ -35,6 +37,7 @@ export function prepareRebuildRecreateOptions(
       rebuildAgent,
       storedFromDockerfile,
       autoYes,
+      baseImageResolutionHint,
       usageNoticeAccepted: true,
     });
     return registryInferenceRoute

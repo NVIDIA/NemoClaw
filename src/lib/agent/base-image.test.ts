@@ -4,6 +4,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeAgent, withMockedDocker } from "../../../test/helpers/base-image-test-harness";
+import type { SandboxBaseImageResolutionMetadata } from "../sandbox-base-image";
+
+function makeResolutionMetadata(
+  overrides: Partial<SandboxBaseImageResolutionMetadata> = {},
+): SandboxBaseImageResolutionMetadata {
+  return {
+    schema: 1,
+    key: "resolution-key",
+    imageName: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base",
+    ref: "nemoclaw-hermes-sandbox-base-local:compatible",
+    digest: null,
+    source: "local",
+    imageId: `sha256:${"a".repeat(64)}`,
+    os: "linux",
+    architecture: "amd64",
+    glibcVersion: process.platform === "linux" ? "2.41" : null,
+    requireOpenshellSandboxAbi: process.platform === "linux",
+    minGlibcVersion: "2.39",
+    ...overrides,
+  };
+}
 
 describe("agent base image provisioning", () => {
   beforeEach(() => {
@@ -19,11 +40,25 @@ describe("agent base image provisioning", () => {
         resolveSandboxBaseImageMock,
         root,
       }) => {
-        const result = ensureAgentBaseImage(makeAgent());
+        const resolutionHint = makeResolutionMetadata({ key: "cached-resolution-key" });
+        const resolvedMetadata = makeResolutionMetadata({ key: "fresh-resolution-key" });
+        resolveSandboxBaseImageMock.mockReturnValue({
+          ref: resolvedMetadata.ref,
+          digest: resolvedMetadata.digest,
+          source: resolvedMetadata.source,
+          glibcVersion: resolvedMetadata.glibcVersion,
+          metadata: resolvedMetadata,
+        });
+
+        const result = ensureAgentBaseImage(makeAgent(), {
+          resolutionHint,
+          forceBaseImageRefresh: true,
+        });
 
         expect(result).toEqual({
           imageTag: "nemoclaw-hermes-sandbox-base-local:compatible",
           built: false,
+          resolutionMetadata: resolvedMetadata,
         });
         expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -32,6 +67,8 @@ describe("agent base image provisioning", () => {
             envVar: "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF",
             label: "Hermes Agent sandbox base image",
             requireOpenshellSandboxAbi: process.platform === "linux",
+            resolutionHint,
+            forceRefresh: true,
             rootDir: root,
             validateImage: expect.any(Function),
             validationDescription: "the required MCP Streamable HTTP runtime",
@@ -56,11 +93,28 @@ describe("agent base image provisioning", () => {
         root,
       }) => {
         dockerImageInspectMock.mockReturnValue({ status: 0 });
+        dockerImageInspectFormatMock.mockImplementation((format: string) =>
+          format === "{{json .}}"
+            ? JSON.stringify({
+                Id: `sha256:${"a".repeat(64)}`,
+                Os: "linux",
+                Architecture: "amd64",
+                RepoDigests: [],
+              })
+            : `sha256:${"a".repeat(64)}`,
+        );
 
         const result = ensureAgentBaseImage(makeAgent(), { forceBaseImageRebuild: true });
 
         expect(result.imageTag).toBe(`nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`);
         expect(result.built).toBe(true);
+        expect(result.resolutionMetadata).toEqual(
+          expect.objectContaining({
+            ref: result.imageTag,
+            source: "local",
+            imageId: `sha256:${"a".repeat(64)}`,
+          }),
+        );
         expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
           expect.objectContaining({
             localTag: result.imageTag,
@@ -68,6 +122,8 @@ describe("agent base image provisioning", () => {
               NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF: result.imageTag,
               NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
             }),
+            validateImage: expect.any(Function),
+            validationDescription: "the required MCP Streamable HTTP runtime",
           }),
         );
         expect(dockerImageInspectMock).not.toHaveBeenCalled();
@@ -106,11 +162,55 @@ describe("agent base image provisioning", () => {
     });
   });
 
+  it("attaches resolution metadata to non-Linux local build and cache fallbacks", () => {
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    try {
+      withMockedDocker(
+        ({
+          ensureAgentBaseImage,
+          dockerBuildMock,
+          dockerImageInspectFormatMock,
+          dockerImageInspectMock,
+          resolveSandboxBaseImageMock,
+        }) => {
+          resolveSandboxBaseImageMock.mockReturnValue(null);
+          dockerImageInspectMock.mockReturnValueOnce({ status: 1 }).mockReturnValue({ status: 0 });
+          dockerImageInspectFormatMock.mockImplementation((format: string) =>
+            format === "{{json .}}"
+              ? JSON.stringify({
+                  Id: `sha256:${"b".repeat(64)}`,
+                  Os: "linux",
+                  Architecture: "amd64",
+                  RepoDigests: [],
+                })
+              : "",
+          );
+          const agent = makeAgent({ name: "custom", displayName: "Custom Agent" });
+
+          expect(ensureAgentBaseImage(agent)).toEqual({
+            imageTag: "ghcr.io/nvidia/nemoclaw/custom-sandbox-base:latest",
+            built: true,
+            resolutionMetadata: expect.objectContaining({ source: "local" }),
+          });
+          expect(ensureAgentBaseImage(agent)).toEqual({
+            imageTag: "ghcr.io/nvidia/nemoclaw/custom-sandbox-base:latest",
+            built: false,
+            resolutionMetadata: expect.objectContaining({ source: "local" }),
+          });
+          expect(dockerBuildMock).toHaveBeenCalledOnce();
+        },
+      );
+    } finally {
+      platform.mockRestore();
+    }
+  });
+
   it("pins different image IDs to different recreate refs at the same source revision", () => {
     withMockedDocker(
       ({ ensureAgentBaseImage, dockerImageInspectFormatMock, resolveSandboxBaseImageMock }) => {
         dockerImageInspectFormatMock
           .mockReturnValueOnce(`sha256:${"a".repeat(64)}`)
+          .mockReturnValueOnce("")
           .mockReturnValueOnce(`sha256:${"b".repeat(64)}`);
         resolveSandboxBaseImageMock.mockImplementation((options) => ({
           ref: options.env?.[options.envVar],
