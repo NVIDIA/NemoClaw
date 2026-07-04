@@ -12,6 +12,16 @@ interface ComplianceFixture {
   body: string;
   commitOutput?: string;
   commitAuthorLogins?: string[];
+  contributorCommitPages?: Array<
+    Array<{ authors: Array<{ login: string }>; authorCount?: number }>
+  >;
+  contributorReviewPages?: Array<
+    Array<{
+      author: { login: string };
+      state: string;
+      submittedAt?: string | null;
+    }>
+  >;
   reviews?: Array<{
     author: { login: string };
     state: string;
@@ -57,21 +67,38 @@ function runGate(fixture: ComplianceFixture) {
     mergeStateStatus: "CLEAN",
     headRefOid: "abc123",
     author: { login: fixture.prAuthorLogin ?? "contributor" },
-    commits: [
-      {
-        authors: (fixture.commitAuthorLogins ?? ["contributor"]).map((login) => ({
-          login,
-        })),
-      },
-    ],
-    reviews: fixture.reviews ?? [
+  };
+  const contributorCommitPages = (
+    fixture.contributorCommitPages ?? [
+      [
+        {
+          authors: (fixture.commitAuthorLogins ?? ["contributor"]).map((login) => ({
+            login,
+          })),
+        },
+      ],
+    ]
+  ).map((page) =>
+    page.map((commit) => ({
+      ...commit,
+      authorCount: commit.authorCount ?? commit.authors.length,
+    })),
+  );
+  const contributorReviewPages = fixture.contributorReviewPages ?? [
+    fixture.reviews ?? [
       {
         author: { login: "reviewer" },
         state: "APPROVED",
         submittedAt: "2026-01-01T00:00:00Z",
       },
     ],
-  };
+  ];
+  const contributorCommitOutput = contributorCommitPages
+    .map((page) => JSON.stringify(page))
+    .join("\n");
+  const contributorReviewOutput = contributorReviewPages
+    .map((page) => JSON.stringify(page))
+    .join("\n");
   const commit = {
     sha: "abc123",
     verified: fixture.verified,
@@ -83,11 +110,13 @@ function runGate(fixture: ComplianceFixture) {
     ghPath,
     `#!/usr/bin/env bash
 set -euo pipefail
-case "$1 $2" in
-  "pr view") printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
-  "api graphql") printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
-  "api repos/NVIDIA/NemoClaw/issues/42/comments") printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
-  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(commitOutput)} ;;
+case "$*" in
+  "pr view"*) printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
+  *"ContributorCommits"*) printf '%s' ${shellSingleQuote(contributorCommitOutput)} ;;
+  *"ContributorReviews"*) printf '%s' ${shellSingleQuote(contributorReviewOutput)} ;;
+  "api graphql"*) printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
+  "api repos/NVIDIA/NemoClaw/issues/42/comments"*) printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
+  "api repos/NVIDIA/NemoClaw/pulls/42/commits"*) printf '%s' ${shellSingleQuote(commitOutput)} ;;
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
 `,
@@ -254,6 +283,102 @@ describe("maintainer merge-gate contributor compliance", () => {
       actors: ["opener"],
       uncertainActors: [],
     });
+    expect(output.allPass).toBe(true);
+  });
+
+  it("uses contributors and approvals from every paginated GitHub page (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      contributorCommitPages: [
+        [{ authors: [{ login: "first-page-contributor" }] }],
+        [{ authors: [{ login: "later-page-contributor" }] }],
+      ],
+      contributorReviewPages: [
+        [
+          {
+            author: { login: "first-page-reviewer" },
+            state: "APPROVED",
+            submittedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        [
+          {
+            author: { login: "later-page-contributor" },
+            state: "APPROVED",
+            submittedAt: "2026-01-02T00:00:00Z",
+          },
+        ],
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: ["later-page-contributor"],
+      uncertainActors: [],
+    });
+    expect(output.allPass).toBe(true);
+  });
+
+  it("uses a later review page to supersede an earlier approval (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      contributorReviewPages: [
+        [
+          {
+            author: { login: "contributor" },
+            state: "APPROVED",
+            submittedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        [
+          {
+            author: { login: "contributor" },
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2026-01-02T00:00:00Z",
+          },
+        ],
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "clear",
+      actors: [],
+      uncertainActors: [],
+    });
+    expect(output.allPass).toBe(true);
+  });
+
+  it("warns when a commit author page is incomplete (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      contributorCommitPages: [[{ authors: [{ login: "contributor" }], authorCount: 101 }]],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: [],
+    });
+    expect(output.advisories.contributorApprovalOverlap.details).toContain(
+      "complete paginated commit and review history",
+    );
     expect(output.allPass).toBe(true);
   });
 

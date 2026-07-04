@@ -48,6 +48,16 @@ interface PrReview {
   submittedAt?: string | null;
 }
 
+interface PrCommit {
+  authors: PrIdentity[];
+  authorCount: number;
+}
+
+interface ContributorApprovalHistory {
+  commits: PrCommit[];
+  reviews: PrReview[];
+}
+
 interface ContributorApprovalAdvisory {
   status: "clear" | "warning";
   details: string;
@@ -94,11 +104,96 @@ function isAutomatedLogin(login: string): boolean {
   return login.endsWith("[bot]") || CODERABBIT_LOGINS.has(login);
 }
 
-function checkContributorApprovalOverlap(pr: {
-  author?: PrIdentity | null;
-  commits?: Array<{ authors?: PrIdentity[] | null }> | null;
-  reviews?: PrReview[] | null;
-}): ContributorApprovalAdvisory {
+function parsePaginatedNodePages<T>(raw: string): T[] | null {
+  if (!raw) return null;
+
+  const nodes: T[] = [];
+  try {
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const page = JSON.parse(trimmed) as unknown;
+      if (!Array.isArray(page)) return null;
+      nodes.push(...(page as T[]));
+    }
+  } catch {
+    return null;
+  }
+  return nodes;
+}
+
+function fetchContributorApprovalHistory(
+  repo: string,
+  number: number,
+): ContributorApprovalHistory | null {
+  const [owner, name, extra] = repo.split("/");
+  if (!owner || !name || extra) return null;
+
+  const variables = ["-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${number}`];
+  const commitsRaw = run("gh", [
+    "api",
+    "graphql",
+    "--paginate",
+    ...variables,
+    "-f",
+    `query=query ContributorCommits($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          commits(first: 100, after: $endCursor) {
+            nodes { commit { authors(first: 100) { totalCount nodes { user { login } } } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`,
+    "--jq",
+    "[.data.repository.pullRequest.commits.nodes[] | {authors: [.commit.authors.nodes[] | {login: (.user.login // null)}], authorCount: .commit.authors.totalCount}]",
+  ]);
+  const reviewsRaw = run("gh", [
+    "api",
+    "graphql",
+    "--paginate",
+    ...variables,
+    "-f",
+    `query=query ContributorReviews($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+      repository(owner: $owner, name: $name) {
+        pullRequest(number: $number) {
+          reviews(first: 100, after: $endCursor) {
+            nodes { author { login } state submittedAt }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`,
+    "--jq",
+    ".data.repository.pullRequest.reviews.nodes",
+  ]);
+
+  const commits = parsePaginatedNodePages<PrCommit>(commitsRaw);
+  const reviews = parsePaginatedNodePages<PrReview>(reviewsRaw);
+  const completeCommitAuthors = commits?.every(
+    (commit) =>
+      Array.isArray(commit.authors) &&
+      Number.isInteger(commit.authorCount) &&
+      commit.authorCount === commit.authors.length,
+  );
+  return commits && reviews && completeCommitAuthors ? { commits, reviews } : null;
+}
+
+function checkContributorApprovalOverlap(
+  pr: { author?: PrIdentity | null },
+  history: ContributorApprovalHistory | null,
+): ContributorApprovalAdvisory {
+  if (!history) {
+    return {
+      status: "warning",
+      details:
+        "Could not retrieve complete paginated commit and review history, so contributor/approver overlap could not be determined. This warning is advisory and does not change allPass.",
+      actors: [],
+      uncertainActors: [],
+    };
+  }
+
   const normalizedLogin = (identity: PrIdentity | null | undefined): string | null => {
     const login = identity?.login?.trim().toLowerCase();
     return login || null;
@@ -110,12 +205,12 @@ function checkContributorApprovalOverlap(pr: {
   };
 
   addContributor(pr.author);
-  for (const commit of pr.commits ?? []) {
-    for (const author of commit.authors ?? []) addContributor(author);
+  for (const commit of history.commits) {
+    for (const author of commit.authors) addContributor(author);
   }
 
   const invalidTimestampLogins = new Set<string>();
-  const reviews = (pr.reviews ?? [])
+  const reviews = history.reviews
     .map((review, sequence) => ({
       login: normalizedLogin(review.author),
       state: review.state?.toUpperCase() ?? "",
@@ -608,7 +703,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,author,commits,reviews",
+    "number,title,url,body,files,statusCheckRollup,mergeStateStatus,headRefOid,author",
   ]) as {
     number: number;
     title: string;
@@ -619,8 +714,6 @@ function main(): void {
     mergeStateStatus: string;
     headRefOid: string;
     author: PrIdentity | null;
-    commits: Array<{ authors?: PrIdentity[] | null }>;
-    reviews: PrReview[];
   } | null;
 
   if (!prData) {
@@ -634,7 +727,11 @@ function main(): void {
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
   const prAdvisor = checkPrAdvisor(repo, prNumber, prData.headRefOid ?? "");
   const contributorCompliance = checkContributorCompliance(repo, prNumber, prData.body ?? "");
-  const contributorApprovalOverlap = checkContributorApprovalOverlap(prData);
+  const contributorApprovalHistory = fetchContributorApprovalHistory(repo, prNumber);
+  const contributorApprovalOverlap = checkContributorApprovalOverlap(
+    prData,
+    contributorApprovalHistory,
+  );
 
   const output: GateOutput = {
     pr: prNumber,
