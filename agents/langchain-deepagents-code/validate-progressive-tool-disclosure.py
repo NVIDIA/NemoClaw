@@ -679,9 +679,7 @@ def _validate_reserved_name_collisions() -> None:
         transport="http",
         tools=(MCPToolInfo(name="safe_echo", description="activates disclosure"),),
     )
-    original_cli_factory = getattr(
-        agent_module, "_nemoclaw_original_create_cli_agent"
-    )
+    original_cli_factory = agent_module._nemoclaw_original_create_cli_agent
     reached_original: list[str] = []
 
     def forbidden_original(*args: Any, **kwargs: Any) -> None:
@@ -689,7 +687,7 @@ def _validate_reserved_name_collisions() -> None:
         reached_original.append("called")
         raise AssertionError("reserved-name validation ran too late")
 
-    setattr(agent_module, "_nemoclaw_original_create_cli_agent", forbidden_original)
+    agent_module._nemoclaw_original_create_cli_agent = forbidden_original
     try:
         errors: list[str] = []
         for tools, info in (([], mcp_collision), ([regular_read_collision], safe_mcp)):
@@ -705,11 +703,7 @@ def _validate_reserved_name_collisions() -> None:
             else:
                 raise AssertionError("reserved core tool name collision was accepted")
     finally:
-        setattr(
-            agent_module,
-            "_nemoclaw_original_create_cli_agent",
-            original_cli_factory,
-        )
+        agent_module._nemoclaw_original_create_cli_agent = original_cli_factory
 
     assert reached_original == []
     assert len(errors) == 2
