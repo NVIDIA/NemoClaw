@@ -152,6 +152,34 @@ export function extractOpenClawAgentText(output: string): string {
   return "";
 }
 
+function collectOpenClawPayloadText(value: unknown): string[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const record = value as Record<string, unknown>;
+  const result =
+    record.result && typeof record.result === "object" && !Array.isArray(record.result)
+      ? (record.result as Record<string, unknown>)
+      : null;
+  const payloads = Array.isArray(record.payloads)
+    ? record.payloads
+    : Array.isArray(result?.payloads)
+      ? result.payloads
+      : [];
+  return payloads.flatMap((payload) => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return [];
+    const text = (payload as Record<string, unknown>).text;
+    return typeof text === "string" && text.trim() ? [text.trim()] : [];
+  });
+}
+
+/** Read only OpenClaw's agent-output payloads, excluding echoed request messages. */
+export function extractOpenClawAgentPayloadText(output: string): string {
+  for (let start = output.indexOf("{"); start >= 0; start = output.indexOf("{", start + 1)) {
+    const text = collectOpenClawPayloadText(parseJsonObjectAt(output, start));
+    if (text.length > 0) return text.join("\n");
+  }
+  return "";
+}
+
 export function responseBodyAndStatus(raw: string): { body: string; status: string } {
   const match = raw.match(/\n__NEMOCLAW_HTTP_STATUS__=(\d{3})\s*$/u);
   return { body: match ? raw.slice(0, match.index).trim() : raw, status: match?.[1] ?? "000" };

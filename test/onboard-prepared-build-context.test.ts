@@ -158,6 +158,7 @@ const preparedBuildContext = {
   buildCtx,
   stagedDockerfile: buildCtx + "/Dockerfile",
   buildId,
+  origin: "generated",
   cleanupBuildCtx: () => {
     cleanupCalls += 1;
     fs.rmSync(buildCtx, { recursive: true, force: true });

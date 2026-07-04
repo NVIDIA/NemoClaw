@@ -61,6 +61,7 @@ describe("preflightRebuildImage", () => {
       buildCtx,
       stagedDockerfile,
       cleanupBuildCtx,
+      origin: "generated" as const,
     }));
     try {
       const result = successful(
