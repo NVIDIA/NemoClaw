@@ -582,8 +582,10 @@ describe("pull request and main workflow contracts", () => {
 
   it("scopes pre-push typechecks to project and transitive inputs", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
     const cliTypecheck = hooks.find((candidate) => candidate.id === "tsc-cli");
     const jsTypecheck = hooks.find((candidate) => candidate.id === "tsc-js");
+    const pluginFiles = new RegExp(pluginTypecheck?.files ?? "(?!)", "u");
     const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
     const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
 
@@ -594,7 +596,6 @@ describe("pull request and main workflow contracts", () => {
       expect(files.test(representativeInput), include).toBe(true);
     }
     for (const path of [
-      ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts",
       "agents/hermes/generate-config.ts",
       "bin/nemoclaw.ts",
       "scripts/check.ts",
@@ -602,8 +603,6 @@ describe("pull request and main workflow contracts", () => {
       "src/lib/runner.ts",
       "test/runner.test.ts",
       "tools/e2e/workflow-boundary.mts",
-      "nemoclaw/src/lib/subprocess-env.ts",
-      "nemoclaw/src/blueprint/private-networks.ts",
       "nemoclaw-blueprint/scripts/render.ts",
       "src/lib/actions/sandbox/credentials.json",
       "package.json",
@@ -614,12 +613,22 @@ describe("pull request and main workflow contracts", () => {
       expect(files.test(path), path).toBe(true);
     }
     for (const path of [
+      ".agents/skills/example/scripts/unchecked.ts",
       "agents/hermes/start.sh",
       "docs/get-started/quickstart.mdx",
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
       "scripts/check.js",
     ]) {
       expect(files.test(path), path).toBe(false);
     }
+    for (const path of [
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
+    ]) {
+      expect(pluginFiles.test(path), path).toBe(true);
+    }
+    expect(pluginFiles.test(".agents/skills/example/scripts/unchecked.ts")).toBe(false);
     for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
       expect(jsFiles.test(path), path).toBe(true);
     }
