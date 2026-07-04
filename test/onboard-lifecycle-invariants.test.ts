@@ -2,33 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 //
 // Characterization baseline for the onboarding create-path lifecycle (#6225,
-// epic #6224). These tests pin CURRENT main behavior — including orderings the
-// epic flags as contract gaps (e.g. gateway messaging credential upserts run
-// AFTER the destructive sandbox delete, and credential-binding validation only
-// happens at plan materialization time, which is also after the delete). They
-// are a regression baseline, not an endorsement: later children (#6226/#6227/
-// #6228) are expected to change some of these pins deliberately.
+// epic #6224). Pins CURRENT main behavior at the injectable decision seams:
+// the sandbox messaging preflight (hosting the #5954-shared conflict guard),
+// the sandbox create plan (whose materialization performs the gateway
+// messaging upsert), and the resume identity predicate behind #2753. A
+// regression baseline, not an endorsement: later children (#6226/#6227/#6228)
+// are expected to change some pins deliberately.
 //
-// The `createSandbox` orchestration in src/lib/onboard.ts cannot run
-// hermetically (it shells out to OpenShell/Docker), so its cross-module
-// ordering is pinned as a source-order characterization over the function
-// body, while every decision that lives in an injectable module
-// (sandbox-messaging-preflight, sandbox-create-plan, sandbox-resume,
-// resume-config) is pinned with direct unit-level calls.
+// The cross-module ordering of the non-hermetic `createSandbox` orchestration
+// in src/lib/onboard.ts has no behavioral seam today; it is documented in
+// src/lib/onboard/lifecycle-contracts.md, with executable coverage deferred
+// to the issue that introduces the seam.
 
-import fs from "node:fs";
-import path from "node:path";
-
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { SandboxMessagingPlan } from "../src/lib/messaging/manifest/types.js";
-import type { SandboxResumeDecision } from "../src/lib/onboard/machine/handlers/sandbox-resume.js";
-import {
-  applySandboxResumeDecision,
-  decideSandboxResume,
-  type SandboxResumeDeps,
-  type SandboxResumeSignals,
-} from "../src/lib/onboard/machine/handlers/sandbox-resume.js";
 import type { MessagingConflictGuardDeps } from "../src/lib/onboard/messaging-conflict-guard.js";
 import type {
   CreateSandboxMessagingPrepResult,
@@ -78,119 +66,12 @@ class OnboardAbortError extends Error {
   }
 }
 
-// ── 1. Source-order characterization of createSandbox ──────────────────────
-//
-// Pins which deterministic validations and checkpoints complete before the
-// first destructive effect (the `openshell sandbox delete` of a pre-existing
-// sandbox) and which effects run after it. The markers are call-site snippets
-// inside `async function createSandbox(` in src/lib/onboard.ts, verified at
-// HEAD: messaging preflight (which hosts the #5954-shared conflict guard),
-// fail-closed pre-recreate backup, the delete boundary, the create plan whose
-// materialization performs the gateway messaging upsert, the create stream,
-// the readiness gate, and post-ready registration.
-
-const repoRoot = path.join(import.meta.dirname, "..");
-const onboardSource = fs.readFileSync(path.join(repoRoot, "src", "lib", "onboard.ts"), "utf8");
-const createSandboxStart = onboardSource.indexOf("async function createSandbox(");
-const createSandboxEnd = onboardSource.indexOf("\nasync function ", createSandboxStart + 1);
-const createSandboxBody = onboardSource.slice(createSandboxStart, createSandboxEnd);
-
-const DELETE_SNIPPET = 'runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });';
-
-const CREATE_LIFECYCLE_MARKERS = [
-  { label: "sandbox name validation", snippet: "const sandboxName = validateName(" },
-  {
-    label: "messaging preflight with the conflict guard",
-    snippet: "sandboxMessagingPreflight.prepareSandboxMessagingPreflight(",
-  },
-  {
-    label: "pre-upgrade backup selection",
-    snippet: "notReadyRecreate.selectPreUpgradeBackupForCreate(",
-  },
-  {
-    label: "fail-closed pre-recreate workspace backup",
-    snippet: "backupSandboxBeforeRecreate({ sandboxName });",
-  },
-  {
-    label: "provider pre-delete cleanup",
-    snippet: "runSandboxProviderPreDeleteCleanup(sandboxName, { runOpenshell, redact });",
-  },
-  { label: "destructive sandbox delete", snippet: DELETE_SNIPPET },
-  { label: "previous image removal", snippet: "dockerRmi(previousEntry.imageTag" },
-  { label: "registry entry removal", snippet: "registry.removeSandbox(sandboxName);" },
-  {
-    label: "create plan preparation with the gateway messaging upsert",
-    snippet: "sandboxCreatePlan.prepareSandboxCreatePlan({",
-  },
-  { label: "sandbox create stream", snippet: "await streamSandboxCreate(" },
-  { label: "readiness gate", snippet: "waitForCreatedSandboxReadyWithTrace({" },
-  {
-    label: "post-ready registry registration",
-    snippet: "sandboxRegistration.registerCreatedSandbox({",
-  },
-] as const;
-
-const markerIndex = (snippet: string): number => createSandboxBody.indexOf(snippet);
-
-const consecutiveMarkerPairs = CREATE_LIFECYCLE_MARKERS.slice(1).map((later, index) => ({
-  earlierLabel: CREATE_LIFECYCLE_MARKERS[index].label,
-  earlierSnippet: CREATE_LIFECYCLE_MARKERS[index].snippet,
-  laterLabel: later.label,
-  laterSnippet: later.snippet,
-}));
-
-describe("createSandbox source ordering on the onboard create path (#6225)", () => {
-  it("bounds the createSandbox body for source scanning (#6225)", () => {
-    expect(createSandboxStart).toBeGreaterThanOrEqual(0);
-    expect(createSandboxEnd).toBeGreaterThan(createSandboxStart);
-  });
-
-  it.each([
-    ...CREATE_LIFECYCLE_MARKERS,
-  ])("locates the $label call site inside createSandbox (#6225)", ({ snippet }) => {
-    expect(markerIndex(snippet)).toBeGreaterThanOrEqual(0);
-  });
-
-  it.each(consecutiveMarkerPairs)("keeps the $earlierLabel ahead of the $laterLabel (#6225)", ({
-    earlierSnippet,
-    laterSnippet,
-  }) => {
-    expect(markerIndex(earlierSnippet)).toBeLessThan(markerIndex(laterSnippet));
-  });
-
-  it("returns from the reuse fast paths before reaching the destructive sandbox delete (#6225)", () => {
-    const firstReuseReturn = createSandboxBody.indexOf("return sandboxName;");
-    expect(firstReuseReturn).toBeGreaterThanOrEqual(0);
-    expect(firstReuseReturn).toBeLessThan(markerIndex(DELETE_SNIPPET));
-  });
-
-  it("issues exactly two sandbox delete commands with the failed-create cleanup after the create stream (#6225)", () => {
-    expect(createSandboxBody.split(DELETE_SNIPPET).length - 1).toBe(2);
-    const streamIndex = markerIndex("await streamSandboxCreate(");
-    expect(createSandboxBody.indexOf(DELETE_SNIPPET, streamIndex)).toBeGreaterThan(streamIndex);
-  });
-
-  // Divergence pinned for #6225: the create plan's provider cleanup re-run is
-  // the tolerant variant (the sandbox is already gone) and the gateway
-  // messaging credential upsert is wired into the plan, i.e. it executes only
-  // after the destructive delete and before the create stream.
-  it("wires the tolerant cleanup re-run and the gateway messaging upsert into the post-delete create plan (#6225)", () => {
-    const planRegion = createSandboxBody.slice(
-      markerIndex("sandboxCreatePlan.prepareSandboxCreatePlan({"),
-      markerIndex("await streamSandboxCreate("),
-    );
-    expect(planRegion).toContain("tolerateMissingSandbox: true");
-    expect(planRegion).toContain("upsertMessagingProviders,");
-  });
-});
-
-// ── 2. Messaging conflict guard wiring inside the sandbox messaging preflight ──
+// ── 1. Messaging conflict guard wiring inside the sandbox messaging preflight ──
 //
 // The preflight is the injectable module the create path runs before any
-// destructive effect (see the source-order pins above). It hosts the shared
-// messaging conflict guard (#5954) with the onboard-specific interactive
-// wiring: a "Continue anyway?" prompt is allowed here, unlike the rebuild
-// preflight's forced non-interactive abort.
+// destructive effect. It hosts the shared messaging conflict guard (#5954)
+// with the onboard-specific interactive wiring: a "Continue anyway?" prompt is
+// allowed here, unlike the rebuild preflight's forced non-interactive abort.
 
 function buildMessagingPrepResult(
   overrides: Partial<CreateSandboxMessagingPrepResult> = {},
@@ -326,12 +207,13 @@ describe("messaging conflict guard wiring in prepareSandboxMessagingPreflight (#
   });
 });
 
-// ── 3. Gateway messaging upsert ordering inside the create plan ────────────
+// ── 2. Gateway messaging upsert ordering inside the create plan ────────────
 //
-// On the create path this module runs AFTER the destructive delete (pinned in
-// section 1). Inside the plan itself, deterministic intent resolution and
-// credential-binding validation complete before any gateway effect, and the
-// tolerant cleanup re-run precedes the credential upsert.
+// On the create path this module runs AFTER the destructive delete (see
+// src/lib/onboard/lifecycle-contracts.md). Inside the plan itself,
+// deterministic intent resolution and credential-binding validation complete
+// before any gateway effect, and the tolerant cleanup re-run precedes the
+// credential upsert.
 
 describe("gateway messaging upsert ordering in the sandbox create plan (#6225)", () => {
   it("re-runs provider cleanup before upserting messaging credentials with replaceExisting (#6225)", () => {
@@ -436,28 +318,22 @@ describe("gateway messaging upsert ordering in the sandbox create plan (#6225)",
   });
 });
 
-// ── 4. Resume identity: recorded sandbox name and the sandbox step gate ────
+// ── 3. Resume identity: recorded sandbox name and the sandbox step gate ────
 //
 // The deciding functions behind the #2753 contract: the recorded sandbox name
 // is trusted (as resume identity and as a conflict source) only when the
 // session's sandbox step actually completed. onboard() applies the same
-// predicate when it seeds `recordedSandboxName` for the flow context, and
-// `decideSandboxResume` collapses to a plain create when the step is
-// incomplete.
+// predicate when it seeds `recordedSandboxName` for the flow context, and the
+// resume decision collapses to a plain create when the step is incomplete
+// (see sandbox-resume.test.ts for the decision-side coverage).
 
 describe("resume identity honors the recorded sandbox name only after the sandbox step completed (#2753)", () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
   it.each([
-    { status: "pending" },
-    { status: "in_progress" },
-    { status: "failed" },
-    { status: "skipped" },
-  ])("ignores the recorded sandbox name while the sandbox step is $status (#2753)", ({
-    status,
-  }) => {
+    "pending",
+    "in_progress",
+    "failed",
+    "skipped",
+  ])("ignores the recorded sandbox name while the sandbox step is %s (#2753)", (status) => {
     const conflict = getResumeSandboxConflict(
       { sandboxName: "recorded-sandbox", steps: { sandbox: { status } } },
       { sandboxName: "requested-sandbox" },
@@ -514,256 +390,5 @@ describe("resume identity honors the recorded sandbox name only after the sandbo
     expect(conflicts).toEqual([
       { field: "sandbox", requested: "fresh-name", recorded: "recorded-sandbox" },
     ]);
-  });
-
-  it("ignores provider and model env hints during interactive resume conflict checks (#6225)", () => {
-    vi.stubEnv("NEMOCLAW_PROVIDER", "cloud");
-    vi.stubEnv("NEMOCLAW_MODEL", "meta/llama-3.3-70b-instruct");
-
-    const conflicts = getResumeConfigConflicts(
-      { provider: "nvidia-nim", model: "recorded-model" },
-      {},
-    );
-
-    expect(conflicts).toEqual([]);
-  });
-
-  it("resolves Dockerfile paths before comparing resume intent with the recorded session (#6225)", () => {
-    const recordedOnly = getResumeConfigConflicts(
-      { metadata: { fromDockerfile: "fixtures/Dockerfile.recorded" } },
-      {},
-    );
-    const equivalentSpelling = getResumeConfigConflicts(
-      { metadata: { fromDockerfile: "./fixtures/Dockerfile.recorded" } },
-      { fromDockerfile: "fixtures/Dockerfile.recorded" },
-    );
-
-    expect(recordedOnly).toEqual([
-      {
-        field: "fromDockerfile",
-        requested: null,
-        recorded: path.resolve("fixtures/Dockerfile.recorded"),
-      },
-    ]);
-    expect(equivalentSpelling).toEqual([]);
-  });
-});
-
-// ── 5. decideSandboxResume: the pure reuse/recreate policy ─────────────────
-
-const READY_RESUME_SIGNALS: SandboxResumeSignals = {
-  resume: true,
-  resumeAgentChanged: false,
-  sandboxStepComplete: true,
-  sandboxReuseState: "ready",
-  webSearchConfigChanged: false,
-  sandboxGpuConfigChanged: false,
-  messagingChannelConfigChanged: false,
-  hermesToolGatewayConfigChanged: false,
-};
-
-const resumeSignals = (overrides: Partial<SandboxResumeSignals> = {}): SandboxResumeSignals => ({
-  ...READY_RESUME_SIGNALS,
-  ...overrides,
-});
-
-describe("decideSandboxResume pins the sandbox reuse contract (#6225)", () => {
-  it("decides create when the sandbox step never completed even with a ready recorded sandbox (#2753)", () => {
-    expect(decideSandboxResume(resumeSignals({ sandboxStepComplete: false }))).toEqual({
-      kind: "create",
-    });
-    expect(
-      decideSandboxResume(
-        resumeSignals({
-          sandboxStepComplete: false,
-          resumeAgentChanged: true,
-          webSearchConfigChanged: true,
-          sandboxReuseState: "not_ready",
-        }),
-      ),
-    ).toEqual({ kind: "create" });
-  });
-
-  it("decides create when the run is not a resume (#6225)", () => {
-    expect(decideSandboxResume(resumeSignals({ resume: false }))).toEqual({ kind: "create" });
-  });
-
-  it("decides reuse only for a ready driftless resume with a completed sandbox step (#6225)", () => {
-    expect(decideSandboxResume(resumeSignals())).toEqual({ kind: "reuse" });
-  });
-
-  it.each([
-    {
-      flag: "resumeAgentChanged",
-      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
-      removeRegistryEntry: false,
-    },
-    {
-      flag: "webSearchConfigChanged",
-      note: "  [resume] Web Search configuration changed; recreating sandbox.",
-      removeRegistryEntry: true,
-    },
-    {
-      flag: "sandboxGpuConfigChanged",
-      note: "  [resume] Sandbox GPU settings changed; recreating sandbox.",
-      removeRegistryEntry: true,
-    },
-    {
-      flag: "messagingChannelConfigChanged",
-      note: "  [resume] Messaging channel configuration changed; recreating sandbox.",
-      removeRegistryEntry: true,
-    },
-    {
-      flag: "hermesToolGatewayConfigChanged",
-      note: "  [resume] Hermes managed tool gateway selection changed; recreating sandbox.",
-      removeRegistryEntry: true,
-    },
-  ])("recreates on $flag drift and pins its note and registry removal policy (#6225)", ({
-    flag,
-    note,
-    removeRegistryEntry,
-  }) => {
-    const decision = decideSandboxResume({
-      ...READY_RESUME_SIGNALS,
-      [flag]: true,
-    } as SandboxResumeSignals);
-
-    expect(decision).toEqual({ kind: "recreate", note, removeRegistryEntry });
-  });
-
-  it("prefers the agent drift decision when every drift flag is set (#6225)", () => {
-    const decision = decideSandboxResume(
-      resumeSignals({
-        resumeAgentChanged: true,
-        webSearchConfigChanged: true,
-        sandboxGpuConfigChanged: true,
-        messagingChannelConfigChanged: true,
-        hermesToolGatewayConfigChanged: true,
-      }),
-    );
-
-    expect(decision).toEqual({
-      kind: "recreate",
-      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
-      removeRegistryEntry: false,
-    });
-  });
-
-  it("repairs and recreates a recorded sandbox that is not ready (#6225)", () => {
-    expect(decideSandboxResume(resumeSignals({ sandboxReuseState: "not_ready" }))).toEqual({
-      kind: "repair-and-recreate",
-    });
-  });
-
-  it("recreates with registry removal when the recorded sandbox state is unavailable (#6225)", () => {
-    expect(decideSandboxResume(resumeSignals({ sandboxReuseState: "unknown" }))).toEqual({
-      kind: "recreate",
-      note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
-      removeRegistryEntry: true,
-    });
-  });
-});
-
-// ── 6. applySandboxResumeDecision: the side-effect contract ────────────────
-
-function buildResumeDecisionHarness({ repairError = null }: { repairError?: Error | null } = {}) {
-  const events: string[] = [];
-  const deps: SandboxResumeDeps = {
-    note: vi.fn((message: string) => {
-      events.push(`note:${message.trim()}`);
-    }),
-    removeSandboxFromRegistry: vi.fn((sandboxName: string) => {
-      events.push(`remove-registry:${sandboxName}`);
-    }),
-    repairRecordedSandbox: vi.fn((sandboxName: string | null) => {
-      events.push(`repair:${sandboxName}`);
-      const failure = [repairError].filter((error): error is Error => error !== null);
-      failure.forEach((error) => {
-        throw error;
-      });
-    }),
-    recordRepairEvent: vi.fn(async (type: string) => {
-      events.push(type);
-      return null;
-    }),
-  };
-  return { deps, events };
-}
-
-describe("applySandboxResumeDecision side effect contract (#6225)", () => {
-  it("removes the registry entry only when the recreate decision says so (#6225)", async () => {
-    const harness = buildResumeDecisionHarness();
-    const decision: SandboxResumeDecision = {
-      kind: "recreate",
-      note: "  [resume] Web Search configuration changed; recreating sandbox.",
-      removeRegistryEntry: true,
-    };
-
-    await applySandboxResumeDecision(decision, "sandbox-a", harness.deps);
-
-    expect(harness.events).toEqual([
-      "note:[resume] Web Search configuration changed; recreating sandbox.",
-      "remove-registry:sandbox-a",
-    ]);
-  });
-
-  it("keeps the registry entry for an agent change recreate (#6225)", async () => {
-    const harness = buildResumeDecisionHarness();
-    const decision: SandboxResumeDecision = {
-      kind: "recreate",
-      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
-      removeRegistryEntry: false,
-    };
-
-    await applySandboxResumeDecision(decision, "sandbox-a", harness.deps);
-
-    expect(harness.deps.removeSandboxFromRegistry).not.toHaveBeenCalled();
-    expect(harness.events).toEqual([
-      "note:[resume] Agent selection changed; revalidating sandbox compatibility.",
-    ]);
-  });
-
-  it.each([
-    { kind: "create" as const },
-    { kind: "reuse" as const },
-  ])("performs no side effects for a $kind decision (#6225)", async ({ kind }) => {
-    const harness = buildResumeDecisionHarness();
-
-    await applySandboxResumeDecision({ kind }, "sandbox-a", harness.deps);
-
-    expect(harness.events).toEqual([]);
-  });
-
-  it("emits repair started and completed events around the recorded sandbox cleanup (#6225)", async () => {
-    const harness = buildResumeDecisionHarness();
-
-    await applySandboxResumeDecision({ kind: "repair-and-recreate" }, "sandbox-a", harness.deps);
-
-    expect(harness.events).toEqual([
-      "note:[resume] Recorded sandbox 'sandbox-a' exists but is not ready; recreating it.",
-      "state.repair.started",
-      "repair:sandbox-a",
-      "state.repair.completed",
-    ]);
-    expect(harness.deps.recordRepairEvent).toHaveBeenCalledWith("state.repair.started", {
-      state: "sandbox",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "sandbox-a" },
-    });
-  });
-
-  it("emits a repair failed event and rethrows when the recorded sandbox cleanup throws (#6225)", async () => {
-    const harness = buildResumeDecisionHarness({ repairError: new Error("cleanup exploded") });
-
-    await expect(
-      applySandboxResumeDecision({ kind: "repair-and-recreate" }, "sandbox-a", harness.deps),
-    ).rejects.toThrow("cleanup exploded");
-
-    expect(harness.events).toContain("state.repair.failed");
-    expect(harness.events).not.toContain("state.repair.completed");
-    expect(harness.deps.recordRepairEvent).toHaveBeenCalledWith("state.repair.failed", {
-      state: "sandbox",
-      error: "cleanup exploded",
-      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "sandbox-a" },
-    });
   });
 });

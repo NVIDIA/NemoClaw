@@ -122,4 +122,4 @@ The FSM migration is considered complete when:
 
 ## Characterization traces
 
-`transition-traces.test.ts` in this directory pins the machine event and transition traces for the fresh, resume, recreate, success, and failure paths as they behave today (#6225). Those traces are a regression baseline: update them deliberately, in the same PR as an intentional behavior change (for example #6226, #6227, or #6228), never as a side effect. The journey-level lifecycle contract map, shared vocabulary, and destructive-boundary inventory live in `../AGENTS.md` (`src/lib/onboard/AGENTS.md`).
+`transition-traces.test.ts` in this directory pins a small set of path-level machine traces that the unit suites (`transitions.test.ts`, `runtime.test.ts`, `runner.test.ts`) do not already cover (#6225). Update a pinned trace only in the same PR as an intentional behavior change (for example #6226, #6227, or #6228), never as a side effect. The journey-level lifecycle contract map lives in [`../lifecycle-contracts.md`](../lifecycle-contracts.md).

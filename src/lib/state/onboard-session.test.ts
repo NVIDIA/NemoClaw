@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -529,6 +530,66 @@ describe("onboard session", () => {
     expect(loaded.model).toBe("gpt-4o-mini");
     expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
     expect(loaded.provider).toBe("openai");
+  });
+
+  // ── Session secret boundary, consolidated from #6225 (epic #6224) ──
+
+  it("persists migratedLegacyValueHashes as sha256 hex digests only, dropping non-string entries (#6225)", () => {
+    // Digest shape mirrors legacyValueHash() in src/lib/onboard.ts, the only
+    // production writer of this map. Only the digest may reach disk.
+    const legacyValue = "nvapi-sentinel6225-legacy-value-do-not-persist";
+    const digest = createHash("sha256").update(legacyValue).digest("hex");
+    session.saveSession(session.createSession());
+    expect(
+      JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).migratedLegacyValueHashes,
+    ).toBeNull();
+
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      migratedLegacyValueHashes: {
+        NVIDIA_API_KEY: digest,
+        BROKEN_NUMERIC: 123,
+        BROKEN_NULL: null,
+      } as unknown as Record<string, string>,
+    });
+
+    const raw = fs.readFileSync(session.SESSION_FILE, "utf8");
+    expect(raw).not.toContain(legacyValue);
+    expect(raw).not.toContain("BROKEN_NUMERIC");
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.migratedLegacyValueHashes).toEqual({ NVIDIA_API_KEY: digest });
+    expect(loaded.migratedLegacyValueHashes?.NVIDIA_API_KEY).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("serializes unset and explicitly-declined credentialEnv identically as null (#6224)", () => {
+    // #6224 contract gap: on disk, "never prompted" and "user declined" both
+    // collapse to credentialEnv: null, so a resume cannot tell them apart.
+    session.saveSession(session.createSession());
+    const unset = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
+
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", { credentialEnv: null });
+    const declined = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8")).credentialEnv;
+
+    expect(unset).toBeNull();
+    expect(declined).toBeNull();
+    expect(declined).toBe(unset);
+    expect(requireLoadedSession(session.loadSession()).credentialEnv).toBeNull();
+  });
+
+  it.fails("redacts token-shaped values under benign endpoint query param names (#6224)", () => {
+    // DESIRED behavior, not yet implemented: redactUrl() only masks
+    // sensitive-NAMED query params, so a token-shaped value under a benign
+    // name persists verbatim today. Flip to a plain `it` once epic #6224
+    // adds value-shape redaction for parseable URLs.
+    const tokenValue = "nvapi-pending6224-token-shaped-value";
+    session.saveSession(session.createSession());
+    markStepCompleteLegacy(session, stepMutation, "provider_selection", {
+      endpointUrl: `https://api.example.com/v1?model=${tokenValue}`,
+    });
+
+    expect(fs.readFileSync(session.SESSION_FILE, "utf8")).not.toContain(tokenValue);
   });
 
   it("only persists known Hermes auth methods", () => {

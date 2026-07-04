@@ -36,7 +36,6 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 Package-specific guides:
 
 - Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md)
-- Onboarding and runtime lifecycle contract map: [`src/lib/onboard/AGENTS.md`](src/lib/onboard/AGENTS.md)
 
 ## Quick Reference
 
