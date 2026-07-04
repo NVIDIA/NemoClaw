@@ -43,7 +43,9 @@ describe("MCP CLI input validation", () => {
           stderr: "",
         }),
       }),
-    ).toThrow(/expected 0\.0\.72, actual 0\.0\.73 \(version mismatch\)/);
+    ).toThrow(
+      /expected 0\.0\.72, actual 0\.0\.73 \(version mismatch\)\. Install OpenShell 0\.0\.72, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry\./,
+    );
   });
 
   it("fails closed when the runtime OpenShell binary is missing", () => {

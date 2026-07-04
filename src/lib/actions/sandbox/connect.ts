@@ -59,7 +59,10 @@ import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-st
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
-import { sanitizeHermesMcpReconciliationDetail } from "./mcp-bridge-hermes-reconciliation";
+import {
+  hermesMcpReconciliationRemediationLines,
+  sanitizeHermesMcpReconciliationDetail,
+} from "./mcp-bridge-hermes-reconciliation";
 import {
   checkAndRecoverSandboxProcesses,
   executeSandboxExecCommand,
@@ -253,12 +256,9 @@ function exitOnMcpReconciliationRefusal(
   console.error(
     `  ${contextLabel} failed: refused to confirm ${agentName} gateway in '${sandboxName}' — ${sanitizedDetail}.`,
   );
-  console.error(
-    `  Run \`nemoclaw ${sandboxName} mcp restart\` to restore the managed MCP configuration, then retry.`,
-  );
-  console.error(
-    `  If the sandbox has an old helper or missing runtime metadata, run \`nemoclaw ${sandboxName} rebuild --yes\` instead.`,
-  );
+  for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
+    console.error(`  ${line}`);
+  }
   process.exit(1);
 }
 

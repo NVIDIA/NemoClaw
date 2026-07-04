@@ -57,16 +57,18 @@ function runOpenshellVersionCommand(binary: string): OpenshellVersionCommandResu
 
 function credentialBoundaryVersionError(actual: string, detail: string): McpBridgeError {
   return new McpBridgeError(
-    `OpenShell credential boundary runtime version check failed: expected ${EXPECTED_OPENSHELL_VERSION}, actual ${actual} (${detail}).`,
+    `OpenShell credential boundary runtime version check failed: expected ${EXPECTED_OPENSHELL_VERSION}, actual ${actual} (${detail}). Install OpenShell ${EXPECTED_OPENSHELL_VERSION}, or point NEMOCLAW_OPENSHELL_BIN to that version, then retry.`,
   );
 }
 
 /**
  * Bind the static child-visible credential manifest to the host OpenShell CLI
- * that will perform the provider mutation. Lifecycle boundaries call this once
- * immediately before their first credential/provider side effect; deliberately
- * avoiding a cache ensures a long-running CLI process cannot retain stale
- * approval after the binary changes.
+ * that will establish a provider credential. Credential-establishing lifecycle
+ * boundaries call this once immediately before their first side effect;
+ * deliberately avoiding a cache ensures a long-running CLI process cannot
+ * retain stale approval after the binary changes. Teardown skips this check so
+ * a version mismatch cannot strand detach/delete cleanup that only revokes
+ * credential access.
  */
 export function assertMcpCredentialBoundaryRuntimeVersion(
   deps: McpCredentialBoundaryRuntimeDeps = {},

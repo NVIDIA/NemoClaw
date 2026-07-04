@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+const MATCHING_OPENSHELL_VERSION_CLAUSE = `if [ "$1" = "--version" ]; then printf '%s\\n' 'openshell 0.0.72'; exit 0; fi`;
 
 const PRESET = `network_policies:
   example:
@@ -27,7 +28,7 @@ function runApply(
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\n${
@@ -77,7 +78,7 @@ function runContentMatch(liveName: string) {
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: ${liveName}\n    endpoints: []\n'
 `,
     { mode: 0o755 },
@@ -107,7 +108,7 @@ function runFailedPolicyMutation(operation: "apply" | "remove") {
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
   exit 0
@@ -172,7 +173,7 @@ function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
   fs.writeFileSync(
     path.join(binDir, "openshell"),
     `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 if [ "$1 $2" = "policy get" ]; then
   printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
 fi
@@ -288,7 +289,7 @@ describe("MCP-generated network policy ownership", () => {
     fs.writeFileSync(
       path.join(binDir, "openshell"),
       `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'
@@ -375,7 +376,7 @@ bridge.addMcpBridge("alpha", {
     fs.writeFileSync(
       path.join(binDir, "openshell"),
       `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\n' 'openshell 0.0.72'; exit 0; fi
+${MATCHING_OPENSHELL_VERSION_CLAUSE}
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
   printf '%s\n' 'ready'

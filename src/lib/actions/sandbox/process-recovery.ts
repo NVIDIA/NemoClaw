@@ -92,6 +92,31 @@ function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
   return results.some((result) => result.recovered === true);
 }
 
+type McpReconciliationRefusalRecoveryResult = {
+  checked: true;
+  wasRunning: boolean;
+  recovered: false;
+  forwardRecovered: false;
+  forwardRecoveryFailed?: undefined;
+  forwardRecoveryFailureDetail?: undefined;
+  mcpReconciliationRefused: true;
+  mcpReconciliationReason: string;
+};
+
+function mcpReconciliationRefusalResult(
+  wasRunning: boolean,
+  reason: string,
+): McpReconciliationRefusalRecoveryResult {
+  return {
+    checked: true,
+    wasRunning,
+    recovered: false,
+    forwardRecovered: false,
+    mcpReconciliationRefused: true,
+    mcpReconciliationReason: reason,
+  };
+}
+
 function resolveSandboxExecTimeout(timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS): number {
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   return Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
@@ -764,14 +789,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const reconciliation = inspectHermesMcpRuntimeIntent(sandboxName);
     if (!reconciliation.ok) {
-      return {
-        checked: true,
-        wasRunning: true,
-        recovered: false,
-        forwardRecovered: false,
-        mcpReconciliationRefused: true,
-        mcpReconciliationReason: reconciliation.detail,
-      };
+      return mcpReconciliationRefusalResult(true, reconciliation.detail);
     }
   }
   if (running) {
@@ -926,14 +944,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     }
     const reconciliation = inspectHermesMcpRuntimeIntent(sandboxName);
     if (!reconciliation.ok) {
-      return {
-        checked: true,
-        wasRunning: false,
-        recovered: false,
-        forwardRecovered: false,
-        mcpReconciliationRefused: true,
-        mcpReconciliationReason: reconciliation.detail,
-      };
+      return mcpReconciliationRefusalResult(false, reconciliation.detail);
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);

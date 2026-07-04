@@ -70,7 +70,10 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       printGatewayWedgeDiagnostics: vi.fn(() => false),
-      inspectHermesMcpRuntimeIntent: vi.fn(() => ({ ok: true as const, state: "matched" })),
+      inspectHermesMcpRuntimeIntent: vi.fn(() => ({
+        ok: true as const,
+        state: "matched" as const,
+      })),
       ...overrides,
     };
   }
@@ -88,7 +91,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         getSandbox: () => ({ name: "alpha", agent: "hermes" }),
         inspectHermesMcpRuntimeIntent: vi.fn(() => ({
           ok: false,
-          state: "mismatch",
+          state: "mismatch" as const,
           detail: "Hermes MCP config does not match persisted managed intent",
         })),
       });
@@ -116,7 +119,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
         getSandbox: () => ({ name: "alpha", agent: "hermes" }),
         inspectHermesMcpRuntimeIntent: vi.fn(() => ({
           ok: false,
-          state: "mismatch",
+          state: "mismatch" as const,
           detail: "\x1b[31mintegrity pending\x1b[0m\nFORGED SUCCESS ghp_0123456789abcdefghij",
         })),
       });

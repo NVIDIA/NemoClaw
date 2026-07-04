@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runOpenshellProviderCommand } from "../../actions/global";
+import { redactFull } from "../../security/redact";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { redactFull } from "../../security/redact";
 import { buildHermesMcpIntentPayload } from "./mcp-bridge-adapter-status";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -25,6 +25,13 @@ export type HermesMcpReconciliationResult =
 export interface HermesMcpReconciliationOptions {
   entries?: readonly McpBridgeEntry[];
   managedServerNames?: readonly string[];
+}
+
+export function hermesMcpReconciliationRemediationLines(sandboxName: string): readonly string[] {
+  return [
+    `Run \`nemoclaw ${sandboxName} mcp restart\` to restore the managed MCP configuration, then retry.`,
+    `If the sandbox has an old helper or missing runtime metadata, run \`nemoclaw ${sandboxName} rebuild --yes\` instead.`,
+  ];
 }
 
 function bridgeEntries(sandbox: SandboxEntry): McpBridgeEntry[] {

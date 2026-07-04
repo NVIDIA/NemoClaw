@@ -20,7 +20,7 @@ function fixtureSnapshot(paths: readonly string[]): Record<string, string> {
   );
 }
 
-it("refuses gateway post-restart mutation when the real Hermes integrity boundary detects drift", () => {
+it("detects real Hermes config/hash drift without mutating the inspected fixture", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-gateway-drift-"));
   const hermesDir = path.join(root, ".hermes");
   const configPath = path.join(hermesDir, "config.yaml");
@@ -112,7 +112,13 @@ raise SystemExit(transaction.main())
     expect(inspection.status).toBe(2);
     expect(inspection.stderr).toContain("Hermes config hash does not match persisted inputs");
     expect(fixtureSnapshot(fixturePaths)).toEqual(driftedFixture);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
+it("sanitizes an injected Hermes reconciliation refusal before post-restart mutations", () => {
+  try {
     const postReconciliationMutations = [
       vi.fn(() => true),
       vi.fn(() => null),
@@ -137,8 +143,9 @@ raise SystemExit(transaction.main())
       printGatewayWedgeDiagnostics: vi.fn(() => false),
       inspectHermesMcpRuntimeIntent: vi.fn(() => ({
         ok: false as const,
-        state: "mismatch",
-        detail: `${inspection.stderr}\x1b[32mFORGED SUCCESS\x1b[0m ghp_0123456789abcdefghij`,
+        state: "mismatch" as const,
+        detail:
+          "Hermes config hash does not match persisted inputs\n\x1b[32mFORGED SUCCESS\x1b[0m ghp_0123456789abcdefghij",
       })),
     };
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -148,7 +155,6 @@ raise SystemExit(transaction.main())
       failureLayer: "MCP reconciliation refusal",
       detail: "Hermes config hash does not match persisted inputs FORGED SUCCESS <REDACTED>",
     });
-    expect(fixtureSnapshot(fixturePaths)).toEqual(driftedFixture);
     expect(postReconciliationMutations[0]).not.toHaveBeenCalled();
     expect(postReconciliationMutations[1]).not.toHaveBeenCalled();
     expect(postReconciliationMutations[2]).not.toHaveBeenCalled();
@@ -156,6 +162,5 @@ raise SystemExit(transaction.main())
     expect(error.mock.calls.flat().join("\n")).not.toMatch(/\x1b|ghp_0123456789abcdefghij/u);
   } finally {
     vi.restoreAllMocks();
-    fs.rmSync(root, { recursive: true, force: true });
   }
 });

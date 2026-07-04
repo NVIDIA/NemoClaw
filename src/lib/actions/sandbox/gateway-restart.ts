@@ -5,7 +5,11 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFull } from "../../security/redact";
-import { sanitizeHermesMcpReconciliationDetail } from "./mcp-bridge-hermes-reconciliation";
+import {
+  type HermesMcpReconciliationResult,
+  hermesMcpReconciliationRemediationLines,
+  sanitizeHermesMcpReconciliationDetail,
+} from "./mcp-bridge-hermes-reconciliation";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -79,9 +83,7 @@ export type GatewayRestartDeps = {
     sandboxName: string,
     exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
   ) => boolean;
-  inspectHermesMcpRuntimeIntent: (
-    sandboxName: string,
-  ) => { ok: true; state: string } | { ok: false; state: string; detail: string };
+  inspectHermesMcpRuntimeIntent: (sandboxName: string) => HermesMcpReconciliationResult;
 };
 
 export type RestartSandboxGatewayOptions = {
@@ -188,10 +190,9 @@ export function printGatewayRestartFailure(
     console.error(`  ${line}`);
   }
   if (layer === "MCP reconciliation refusal") {
-    console.error(`  Run \`nemoclaw ${sandboxName} mcp restart\` to restore managed MCP state.`);
-    console.error(
-      `  If the sandbox has an old helper or missing runtime metadata, run \`nemoclaw ${sandboxName} rebuild --yes\` instead.`,
-    );
+    for (const line of hermesMcpReconciliationRemediationLines(sandboxName)) {
+      console.error(`  ${line}`);
+    }
   }
 }
 
