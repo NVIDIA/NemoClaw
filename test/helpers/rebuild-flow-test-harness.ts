@@ -30,6 +30,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
   const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const dockerInspect = requireDist("../../adapters/docker/inspect.js");
   const sandboxList = requireDist("../../openshell-sandbox-list.js");
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const agentDefs = requireDist("../../agent/defs.js");
@@ -75,9 +76,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     state: overrides.staleRecovery ? "missing" : "present",
     output: "",
   });
-  vi.spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage").mockReturnValue(
-    overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
-  );
+  const ensureRebuildAgentBaseImageSpy = vi
+    .spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage")
+    .mockReturnValue(
+      overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
+    );
+  if (overrides.sandboxBaseImageLabelsOutput !== undefined) {
+    vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
+      () => overrides.sandboxBaseImageLabelsOutput,
+    );
+  }
   const ensureTargetGatewaySpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildTargetGatewaySelected")
     .mockResolvedValue(true);
@@ -289,6 +297,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
+    ensureRebuildAgentBaseImageSpy,
     ensureTargetGatewaySpy,
     ensureValidatedBraveSearchCredentialSpy,
     logSpy,

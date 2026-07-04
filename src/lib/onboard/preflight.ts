@@ -15,6 +15,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
 import {
   assessNvidiaCdiHost,
@@ -27,6 +28,7 @@ import {
   extractCdiMismatchFilePath,
   getNvidiaCdiSpecPath,
 } from "./docker-cdi";
+import { printUnderProvisionedRuntimeWarning } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import {
   isWslDockerDesktopRuntime,
@@ -395,19 +397,15 @@ export async function checkContainerRuntimeResources(
     return;
   }
 
-  warn(
-    `  ⚠ Container runtime under-provisioned: ${detected.join(" / ") || "unknown"} detected ` +
-      `(recommended: ${MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
+  printUnderProvisionedRuntimeWarning(
+    {
+      detectedStr: detected.join(" / ") || "unknown",
+      runtime: host.runtime,
+      recommendedCpus: MIN_RECOMMENDED_DOCKER_CPUS,
+      recommendedMemGib: MIN_RECOMMENDED_DOCKER_MEM_GIB,
+    },
+    warn,
   );
-  warn("    The sandbox build will be slow and may stall on default Colima settings.");
-  if (host.runtime === "colima") {
-    warn(
-      `    Suggested: colima stop && colima start --cpu ${MIN_RECOMMENDED_DOCKER_CPUS} --memory ${MIN_RECOMMENDED_DOCKER_MEM_GIB}`,
-    );
-  } else if (host.runtime === "docker-desktop") {
-    warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
-  }
-  warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
   if (options.nonInteractive) {
     warn("    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.");
     return;
@@ -731,7 +729,9 @@ export function assertCdiNvidiaGpuSpecPresent(
   )
     return;
   console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
   );
   printRemediationActions(planHostRemediation(host));
   exitProcess(1);

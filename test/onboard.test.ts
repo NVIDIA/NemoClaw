@@ -2453,8 +2453,8 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
@@ -2664,8 +2664,8 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get hermes-sandbox")) return "";
   if (_n(command).includes("sandbox list")) return "hermes-sandbox Ready";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
   return "";
@@ -2858,8 +2858,8 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
@@ -2960,8 +2960,8 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";
@@ -3063,8 +3063,8 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // Custom port: dashboard readiness curl uses 19000 (DASHBOARD_PORT from env)
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 19000 12345 running";
   return "";
@@ -3299,10 +3299,10 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -3411,10 +3411,10 @@ runner.runCapture = (command) => {
   if (cmd.includes("sandbox list")) return "my-assistant Ready";
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -3555,10 +3555,10 @@ runner.runCapture = (command) => {
   if (cmd.includes("sandbox list")) return "my-assistant Ready";
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -3681,10 +3681,10 @@ runner.runCapture = (command) => {
   }
   if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -3820,10 +3820,10 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -4089,10 +4089,10 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -4214,10 +4214,10 @@ runner.runCapture = (command) => {
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command, {
       defaultCurlOutput: "ok",
     });
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    if (mockedCapture !== null) return mockedCapture;
   }
   return "";
 };
@@ -4352,8 +4352,8 @@ runner.runCapture = (command) => {
     return sandboxListCalls >= 2 ? "my-assistant Ready" : "my-assistant Pending";
   }
   {
-    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
-    if (sandboxExecCurl !== null) return sandboxExecCurl;
+    const mockedCapture = require(${onboardScriptMocksPath}).mockOnboardRunCapture(command);
+    if (mockedCapture !== null) return mockedCapture;
   }
   if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   return "";

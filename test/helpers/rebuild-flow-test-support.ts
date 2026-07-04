@@ -45,6 +45,7 @@ export type RebuildFlowOverrides = {
   restoreMcpBridgesAfterRebuild?: () => Promise<void>;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
+  sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   defaultSandbox?: string | null;
@@ -83,6 +84,7 @@ export type RebuildFlowHarness = {
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
+  ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   logSpy: MockInstance;

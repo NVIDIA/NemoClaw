@@ -9,6 +9,7 @@ import {
 } from "../../onboard/gateway-binding";
 import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 
 export type RebuildGpuOptOutEntry = {
   sandboxGpuMode?: string | null;
@@ -86,6 +87,7 @@ export type RebuildRecreateOnboardOpts = {
   onboardLockAlreadyHeld: true;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
+  baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
   noGpu?: true;
 };
 
@@ -95,6 +97,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
   storedFromDockerfile: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
   autoYes: boolean;
+  baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
   usageNoticeAccepted: true;
 }): RebuildRecreateOnboardOpts {
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
@@ -135,6 +138,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     onboardLockAlreadyHeld: true,
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
+    baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };
 }

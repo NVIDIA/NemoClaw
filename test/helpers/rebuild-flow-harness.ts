@@ -70,6 +70,7 @@ export type RebuildFlowOverrides = {
   reconciledSandboxGatewayState?: Record<string, unknown>;
   dcodeImageVerificationResults?: boolean[];
   dcodeBaseImageIds?: string[];
+  sandboxBaseImageLabelsOutput?: string;
   dcodeImageResult?:
     | { ok: true; prepared: Record<string, unknown> & { cleanupBuildCtx: () => boolean } }
     | { ok: false; detail: string };
@@ -89,6 +90,7 @@ export type RebuildFlowHarness = {
   backupSandboxStateSpy: MockInstance;
   disposePreparedDcodeRebuildImageSpy: MockInstance;
   errorSpy: MockInstance;
+  ensureAgentBaseImageSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
   logSpy: MockInstance;
@@ -265,12 +267,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
   const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
-  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
-    () => dcodeBaseImageIds.shift() ?? "sha256:dcode-base",
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation((...args: unknown[]) =>
+    args[0] === "{{json .Config.Labels}}" && overrides.sandboxBaseImageLabelsOutput !== undefined
+      ? overrides.sandboxBaseImageLabelsOutput
+      : (dcodeBaseImageIds.shift() ?? "sha256:dcode-base"),
   );
   vi.spyOn(dockerImage, "dockerRmi").mockReturnValue({ status: 0 });
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
-  vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
+  const ensureAgentBaseImageSpy = vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockReturnValue({
     imageTag: `nemoclaw-${agentName}-base:test`,
     built: true,
   });
@@ -506,6 +510,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     backupSandboxStateSpy,
     disposePreparedDcodeRebuildImageSpy,
     errorSpy,
+    ensureAgentBaseImageSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
     logSpy,

@@ -3,6 +3,8 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { isSandboxBaseImageRefreshRequested } from "../../onboard/base-image-resolution-flow";
+import { readSandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as registry from "../../state/registry";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
@@ -59,11 +61,14 @@ export async function prepareRebuildTargetPreflights(args: {
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
+  const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
+  const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(
     sandboxEntry,
     rebuildAgent,
     fromDockerfile,
     autoYes,
+    baseImageResolutionHint,
     bail,
   );
   if (!recreateOptions) return null;
@@ -108,7 +113,10 @@ export async function prepareRebuildTargetPreflights(args: {
   const rebuildsDcodeSandbox = isDcodeRebuildAgent(rebuildAgent);
   const baseImagePreflight = rebuildsDcodeSandbox
     ? { ok: true, imageRef: null, overrideEnvVar: null }
-    : ensureRebuildAgentBaseImage(rebuildAgent, bail);
+    : ensureRebuildAgentBaseImage(rebuildAgent, bail, {
+        resolutionHint: baseImageResolutionHint,
+        forceBaseImageRefresh,
+      });
   if (!baseImagePreflight.ok) return null;
   const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
   let targetRuntimeReady = false;
