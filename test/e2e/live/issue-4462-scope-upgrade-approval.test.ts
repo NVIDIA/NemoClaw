@@ -116,7 +116,8 @@ import json, os
 from pathlib import Path
 state=json.load(os.fdopen(3))
 def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
+def is_cli(e):
+    return e.get('clientId') == 'cli' and e.get('clientMode') == 'cli'
 def roles(e): return {norm(r) for r in (e.get('roles') or [e.get('role')]) if norm(r)}
 def scopes(e):
     result={norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
@@ -176,7 +177,8 @@ for dev in sorted([e for e in state.get('paired') or [] if isinstance(e, dict)],
     if (
         norm(dev.get('deviceId')) == identity_id
         and norm(dev.get('publicKey')) == identity_key
-        and norm(dev.get('clientMode')).lower() == 'cli'
+        and dev.get('clientId') == 'cli'
+        and dev.get('clientMode') == 'cli'
         and roles(dev) == {'operator'}
         and device_scopes == {'operator.pairing'}
         and approved_scopes == {'operator.pairing'}
@@ -256,9 +258,20 @@ def is_compatible(value, device_id, public_key):
     return bool(
         norm(value.get('requestId')) and norm(value.get('deviceId')) == device_id
         and norm(value.get('publicKey')) == public_key
-        and norm(value.get('clientMode')).lower() == 'cli'
+        and value.get('clientId') == 'cli'
+        and value.get('clientMode') == 'cli'
         and roles(value) == {'operator'} and scopes is not None
         and 'operator.pairing' in scopes
+    )
+def is_safe_repair(value, device_id, public_key):
+    scopes=requested_scopes(value)
+    return bool(
+        value.get('isRepair') is True
+        and norm(value.get('requestId')) and norm(value.get('deviceId')) == device_id
+        and norm(value.get('publicKey')) == public_key
+        and value.get('clientId') == 'cli'
+        and value.get('clientMode') == 'cli'
+        and roles(value) == {'operator'} and scopes is not None
     )
 
 identity=load(identity_path)
@@ -354,18 +367,23 @@ try:
     staged.append(auth_tmp)
     pending_tmp=stage_json(pending_path, pending, 0o600)
     staged.append(pending_tmp)
-    os.replace(pending_tmp, pending_path)
+    # Publish the paired baseline and its matching client credential before
+    # clearing the old pending request. nemoclaw-start may still be polling in
+    # this live sandbox; pending-first leaves a window where that poll can
+    # create a stale isRepair=false request before the paired file is visible.
     os.replace(paired_tmp, paired_path)
     os.replace(auth_tmp, auth_path)
+    os.replace(pending_tmp, pending_path)
 finally:
     for tmp in staged:
         tmp.unlink(missing_ok=True)
 
-if any(
-    isinstance(item, dict) and norm(item.get('deviceId')) == device_id
-    for item in load(pending_path).values()
-):
-    raise SystemExit('temporary pairing seed left a same-device request pending')
+remaining_same_device=[
+    item for item in load(pending_path).values()
+    if isinstance(item, dict) and norm(item.get('deviceId')) == device_id
+]
+if any(not is_safe_repair(item, device_id, public_key) for item in remaining_same_device):
+    raise SystemExit('temporary pairing seed left an unsafe same-device request pending')
 seeded=load(paired_path).get(device_id)
 seeded_auth=load(auth_path)
 if (
@@ -494,7 +512,8 @@ if paired_device is None:
     raise SystemExit('rotated device is missing from paired state')
 if (
     norm(paired_device.get('publicKey')) != identity_key
-    or norm(paired_device.get('clientMode')).lower() != 'cli'
+    or paired_device.get('clientId') != 'cli'
+    or paired_device.get('clientMode') != 'cli'
     or roles(paired_device) != {'operator'}
     or scopes(paired_device.get('scopes') or []) != {'operator.pairing'}
     or scopes(paired_device.get('approvedScopes') or []) != {'operator.pairing'}
@@ -577,7 +596,8 @@ import json, os, sys
 state=json.load(os.fdopen(3))
 expected_device_id=sys.argv[1]
 def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
+def is_cli(e):
+    return e.get('clientId') == 'cli' and e.get('clientMode') == 'cli'
 def scopes(e): return {norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
 def approved(e): return {norm(s) for s in (e.get('approvedScopes') or e.get('scopes') or []) if norm(s)}
 paired={norm(e.get('deviceId')): e for e in state.get('paired') or [] if isinstance(e, dict)}
@@ -588,7 +608,9 @@ for req in sorted([e for e in state.get('pending') or [] if isinstance(e, dict)]
     p=paired.get(request_device_id)
     requested=scopes(req)
     is_upgrade = p is None or not requested.issubset(approved(p))
-    if is_cli(req) and {'operator.write','operator.read'}.intersection(requested) and is_upgrade and norm(req.get('requestId')):
+    if (is_cli(req) and req.get('isRepair') is True
+            and {'operator.write','operator.read'}.intersection(requested)
+            and is_upgrade and norm(req.get('requestId'))):
         print(norm(req.get('requestId')))
         raise SystemExit(0)
 raise SystemExit(1)
@@ -609,7 +631,8 @@ import json, os, sys
 state=json.load(os.fdopen(3))
 expected_device_id=sys.argv[1]
 def norm(v): return str(v or '').strip()
-def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli'
+def is_cli(e):
+    return e.get('clientId') == 'cli' and e.get('clientMode') == 'cli'
 def scopes(e): return {norm(s) for s in (e.get('approvedScopes') or e.get('scopes') or []) if norm(s)}
 for dev in state.get('paired') or []:
     if not isinstance(dev, dict) or not is_cli(dev) or norm(dev.get('deviceId')) != expected_device_id:
@@ -671,8 +694,12 @@ request=next((item for item in pending.values() if isinstance(item, dict) and no
 if request is None: raise SystemExit(f'missing pending request {want}')
 device_id=norm(request.get('deviceId'))
 public_key=norm(request.get('publicKey'))
-is_cli=norm(request.get('clientMode')).lower() == 'cli'
-if not device_id or not public_key or not is_cli or roles(request) != {'operator'}:
+is_cli=(
+    request.get('clientId') == 'cli'
+    and request.get('clientMode') == 'cli'
+)
+if (not device_id or not public_key or not is_cli or request.get('isRepair') is not True
+        or roles(request) != {'operator'}):
     raise SystemExit('refusing non-CLI/non-operator pairing request')
 requested=canonical_scopes(request, ('scopes','requestedScopes'), 'requested')
 
@@ -704,6 +731,7 @@ PY
     rm -f "$snapshot"
     return 1
   fi
+  echo "ISSUE_4462_APPROVAL_CONTEXT=validated-repair-cli"
   set +e
   approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
   approve_rc=$?
@@ -756,7 +784,7 @@ if device is None or norm(device.get('publicKey')) != snapshot['publicKey']:
     fail('approval did not produce the exact requested device')
 if roles(device) != {'operator'}:
     fail('approved device has a non-operator role')
-is_cli=norm(device.get('clientMode')).lower() == 'cli'
+is_cli=device.get('clientId') == 'cli' and device.get('clientMode') == 'cli'
 if not is_cli: fail('approved device is not a CLI client')
 expected=set(snapshot['expectedScopes'])
 if canonical_scopes(device, ('scopes','approvedScopes')) != expected:

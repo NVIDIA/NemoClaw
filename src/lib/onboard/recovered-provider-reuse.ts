@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type EndpointFlavor, normalizeProviderBaseUrl } from "../core/url-utils";
+import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
 import { isSafeModelId } from "../validation";
 import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
 
 const MAX_PROVIDER_LENGTH = 128;
 const MAX_MODEL_LENGTH = 512;
-const MAX_ENDPOINT_LENGTH = 2048;
 const SUPPORTED_INFERENCE_APIS_BY_SELECTION: Readonly<Record<string, ReadonlySet<string>>> = {
   openai: new Set(["openai-completions", "openai-responses"]),
   gemini: new Set(["openai-completions", "openai-responses"]),
@@ -81,27 +80,6 @@ function completeModel(value: string | null | undefined): string | null {
   return normalized.length > 0 && normalized.length <= MAX_MODEL_LENGTH && isSafeModelId(normalized)
     ? normalized
     : null;
-}
-
-function canonicalEndpoint(
-  value: string | null | undefined,
-  flavor: EndpointFlavor,
-): string | null {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw || raw.length > MAX_ENDPOINT_LENGTH) return null;
-  try {
-    const parsed = new URL(raw);
-    if (
-      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
-      parsed.username ||
-      parsed.password
-    ) {
-      return null;
-    }
-    return normalizeProviderBaseUrl(parsed, flavor);
-  } catch {
-    return null;
-  }
 }
 
 /**

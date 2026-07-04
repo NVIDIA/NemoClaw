@@ -97,6 +97,7 @@ export type RebuildFlowHarness = {
   registryUpdateSpy: MockInstance;
   setDefaultSpy: MockInstance;
   setDefault: (name: string) => boolean;
+  registerSandboxEntry: (name: string) => void;
   getDefaultSelectionState: () => {
     defaultSandbox: string | null;
     defaultSelectionRevision: number;

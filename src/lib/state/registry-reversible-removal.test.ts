@@ -163,6 +163,8 @@ describe("reversible registry removal", () => {
   });
 
   it("restores two removals without letting the second restore clobber the reclaimed default", () => {
+    // Interleaving 2: two removals restore in reverse order without the later
+    // restore clobbering the default already reclaimed by the first.
     const alpha = entry("alpha", "alpha-model");
     const beta = entry("beta", "beta-model");
     const removedAlpha = removeSandboxFromRegistry(registry([alpha, beta], "alpha"), "alpha");
@@ -215,6 +217,8 @@ describe("reversible registry removal", () => {
   });
 
   it("reclaims the removed default only while its removal-selected fallback remains current", () => {
+    // Interleaving 1: another write advances the selection revision, so the
+    // removed default may be restored as a row but cannot reclaim ownership.
     const alpha = entry("alpha", "old-model");
     const beta = entry("beta");
     const gamma = entry("gamma");
@@ -238,6 +242,8 @@ describe("reversible registry removal", () => {
   });
 
   it("preserves an explicit same-fallback choice made after removal", () => {
+    // Interleaving 3: an explicit write re-selecting the same fallback still
+    // advances the revision and must survive restoration of the removed row.
     const alpha = entry("alpha", "old-model");
     const beta = entry("beta");
     const removed = removeSandboxFromRegistry(registry([alpha, beta], "alpha", 7), "alpha");

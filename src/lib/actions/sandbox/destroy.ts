@@ -20,6 +20,7 @@ import {
   emitProviderDetachResidualHint,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
+import { validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -136,6 +137,13 @@ export function cleanupSandboxServices(
   { stopHostServices = false }: { stopHostServices?: boolean } = {},
   deps: CleanupSandboxServicesDeps = {},
 ): void {
+  // Source boundary: this exported helper can be called independently of CLI
+  // dispatch, including from forced local recovery. Validate once before every
+  // host and provider cleanup side effect, then derive the PID path from that
+  // same RFC 1123 name. Remove only when the helper accepts a validated-name
+  // type that cannot be constructed from unchecked input.
+  const validatedSandboxName = validateName(sandboxName, "sandbox name");
+  const servicesPidDir = path.resolve("/tmp", `nemoclaw-services-${validatedSandboxName}`);
   const getSandbox = deps.getSandbox ?? registry.getSandbox;
   const stopAll =
     deps.stopAll ??
@@ -166,19 +174,19 @@ export function cleanupSandboxServices(
   if (stopHostServices) {
     // `stopAll()` already runs `unloadOllamaModels()` unconditionally —
     // see src/lib/tunnel/services.ts. Don't double-call here.
-    stopAll({ sandboxName });
+    stopAll({ sandboxName: validatedSandboxName });
   } else {
     // No global stop, so `stopAll()` did not run; explicitly free Ollama
     // models for this sandbox if its provider used Ollama. Without this
     // branch a single-sandbox destroy would leave models loaded on the GPU.
-    const sb = getSandbox(sandboxName);
+    const sb = getSandbox(validatedSandboxName);
     if (sb?.provider?.includes("ollama")) {
       unloadOllamaModels();
     }
   }
 
   try {
-    rmSync(`/tmp/nemoclaw-services-${sandboxName}`, {
+    rmSync(servicesPidDir, {
       recursive: true,
       force: true,
     });
@@ -193,7 +201,7 @@ export function cleanupSandboxServices(
   // `src/lib/onboard/sandbox-provider-cleanup.ts` so the two paths can't
   // drift on which providers count as per-sandbox state.
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
-    runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
+    runOpenshell(["provider", "delete", `${validatedSandboxName}-${suffix}`], {
       ignoreError: true,
       stdio: ["ignore", "ignore", "ignore"],
     });

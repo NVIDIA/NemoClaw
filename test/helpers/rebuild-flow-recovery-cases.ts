@@ -224,6 +224,41 @@ export function registerRebuildFlowRecoveryTests(): void {
       });
     });
 
+    it("preserves replacement registry metadata after a custom removal receipt", async () => {
+      let harness!: ReturnType<typeof createRebuildFlowHarness>;
+      harness = createRebuildFlowHarness({
+        defaultSandbox: "alpha",
+        defaultSelectionRevision: 10,
+        removeSandboxRegistryEntryWithReceipt: () => ({
+          entry: { name: "alpha", model: "old-model" },
+          wasDefault: true,
+          fallbackDefault: "beta",
+          postRemovalDefaultSelectionRevision: 11,
+        }),
+        onboard: () => {
+          expect(harness.getDefaultSelectionState()).toEqual({
+            defaultSandbox: "beta",
+            defaultSelectionRevision: 11,
+          });
+          harness.registerSandboxEntry("alpha");
+          throw new Error("recreate failed after replacement registration");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.restoreSandboxEntryIfMissingSpy).toHaveReturnedWith(false);
+      expect(harness.getDefaultSelectionState()).toEqual({
+        defaultSandbox: "beta",
+        defaultSelectionRevision: 11,
+      });
+      expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+        "Recreate failed: kept the replacement registry metadata already present",
+      );
+    });
+
     it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
       const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
       const harness = createRebuildFlowHarness({

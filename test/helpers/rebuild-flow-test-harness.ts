@@ -81,11 +81,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockReturnValue(
       overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
     );
-  if (overrides.sandboxBaseImageLabelsOutput !== undefined) {
-    vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
-      () => overrides.sandboxBaseImageLabelsOutput,
-    );
-  }
+  vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockReturnValue(
+    overrides.sandboxBaseImageLabelsOutput ?? "",
+  );
   const ensureTargetGatewaySpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildTargetGatewaySelected")
     .mockResolvedValue(true);
@@ -147,6 +145,9 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const preDeleteSandboxEntry = overrides.preDeleteSandboxEntry ?? sandboxEntry;
   let currentDefaultSandbox = initialDefaultSandbox;
   let currentDefaultSelectionRevision = initialDefaultSelectionRevision;
+  const currentRegistryEntryNames = new Set([String(sandboxEntry.name)]);
+  if (initialDefaultSandbox) currentRegistryEntryNames.add(initialDefaultSandbox);
+  if (preDeleteDefaultSandbox) currentRegistryEntryNames.add(preDeleteDefaultSandbox);
   vi.spyOn(registry, "getDefault").mockImplementation(() => currentDefaultSandbox);
   const setDefaultSpy = vi
     .spyOn(registry, "setDefault")
@@ -180,6 +181,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const restoreSandboxEntrySpy = vi
     .spyOn(registry, "restoreSandboxEntry")
     .mockImplementation((...args: unknown[]) => {
+      currentRegistryEntryNames.add(String((args[0] as { name: string }).name));
       const options = (args[1] ?? {}) as Record<string, unknown>;
       const transition = options.defaultTransition as
         | { from: string | null; to: string; expectedRevision: number }
@@ -197,12 +199,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(registry, "restoreSandboxEntryIfMissing")
     .mockImplementation((...args: unknown[]) => {
       const receipt = args[0] as Record<string, unknown>;
-      if (
+      const entryName = String((receipt.entry as { name: string }).name);
+      if (currentRegistryEntryNames.has(entryName)) return false;
+      currentRegistryEntryNames.add(entryName);
+      const shouldReclaimDefault =
         receipt.wasDefault === true &&
         currentDefaultSandbox === receipt.fallbackDefault &&
-        currentDefaultSelectionRevision === receipt.postRemovalDefaultSelectionRevision
-      ) {
-        currentDefaultSandbox = String((receipt.entry as { name: string }).name);
+        currentDefaultSelectionRevision === receipt.postRemovalDefaultSelectionRevision;
+      const currentDefaultIsValid =
+        currentDefaultSandbox !== null && currentRegistryEntryNames.has(currentDefaultSandbox);
+      if (shouldReclaimDefault || !currentDefaultIsValid) {
+        currentDefaultSandbox = entryName;
         currentDefaultSelectionRevision++;
       }
       return true;
@@ -280,10 +287,15 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .spyOn(destroy, "removeSandboxRegistryEntryWithReceipt")
     .mockImplementation(() => {
       const overridden = overrides.removeSandboxRegistryEntryWithReceipt?.();
-      if (overridden !== undefined) return overridden;
       const receipt =
-        overrides.removalReceipt === undefined ? defaultRemovalReceipt : overrides.removalReceipt;
+        overridden !== undefined
+          ? overridden
+          : overrides.removalReceipt === undefined
+            ? defaultRemovalReceipt
+            : overrides.removalReceipt;
       if (receipt) {
+        currentRegistryEntryNames.delete(String(receipt.entry.name));
+        if (receipt.fallbackDefault) currentRegistryEntryNames.add(receipt.fallbackDefault);
         currentDefaultSandbox = receipt.wasDefault
           ? receipt.fallbackDefault
           : currentDefaultSandbox;
@@ -374,6 +386,13 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     registryUpdateSpy,
     setDefaultSpy,
     setDefault: (name: string) => registry.setDefault(name),
+    registerSandboxEntry: (name: string) => {
+      currentRegistryEntryNames.add(name);
+      if (currentDefaultSandbox === null) {
+        currentDefaultSandbox = name;
+        currentDefaultSelectionRevision++;
+      }
+    },
     getDefaultSelectionState: () => ({
       defaultSandbox: currentDefaultSandbox,
       defaultSelectionRevision: currentDefaultSelectionRevision,

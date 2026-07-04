@@ -232,6 +232,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const processRecovery = requireDist("./process-recovery.js");
   const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
   const messaging = requireDist("../../messaging/index.js");
+  const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
   const rebuildInference = requireDist("./rebuild-inference-preflight.js");
   const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
   const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
@@ -254,6 +255,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   });
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(dockerImage, "dockerBuild").mockReturnValue({ status: 0 });
+  vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue({
+    ok: true,
+    imageTag: null,
+  });
   const dcodeBaseImageIds = [...(overrides.dcodeBaseImageIds ?? [])];
   vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation((...args: unknown[]) =>
     args[0] === "{{json .Config.Labels}}" && overrides.sandboxBaseImageLabelsOutput !== undefined
