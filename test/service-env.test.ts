@@ -7,16 +7,20 @@ import {
   execSync,
 } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { resolveOpenshell } from "../src/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
@@ -62,6 +66,35 @@ function extractRuntimeShellEnvShimSnippet() {
     );
   }
   return `${src.slice(start, end).trimEnd()}\nensure_runtime_shell_env_shim`;
+}
+
+function extractToolRedirectsSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("_TOOL_REDIRECTS=(");
+  const loop = src.indexOf("for _redir", start);
+  const endMarker = "\ndone";
+  const end = src.indexOf(endMarker, loop);
+  if (start === -1 || loop === -1 || end === -1 || end <= loop) {
+    throw new Error(
+      "Failed to extract _TOOL_REDIRECTS from scripts/nemoclaw-start.sh — " +
+        "the array may have been moved or renamed",
+    );
+  }
+  return src.slice(start, end + endMarker.length);
+}
+
+function extractProxyVarsSnippet() {
+  const src = readFileSync(NEMOCLAW_START_SCRIPT, "utf-8");
+  const start = src.indexOf("PROXY_HOST=");
+  const endMarker = 'export no_proxy="$_NO_PROXY_VAL"';
+  const end = src.indexOf(endMarker, start);
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(
+      "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
+        "the PROXY_HOST..no_proxy block may have been moved or renamed",
+    );
+  }
+  return src.slice(start, end + endMarker.length);
 }
 
 describe("service environment", () => {
@@ -257,7 +290,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDir]);
+          rmSync(fakeDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -301,7 +334,7 @@ describe("service environment", () => {
         expect(envFile).toContain(fakeCaBundle);
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -310,7 +343,7 @@ describe("service environment", () => {
 
     it("proxy-env.sh omits GIT_SSL_CAINFO when not set", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-git-ssl-noop-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-git-ssl-noop-env-${process.pid}.sh`);
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
@@ -337,7 +370,8 @@ describe("service environment", () => {
         expect(envFile).not.toContain("GIT_SSL_CAINFO");
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
         } catch {
           /* ignore */
         }
@@ -381,11 +415,7 @@ describe("service environment", () => {
 
     it("a sandbox-connect shell sourcing the emitted proxy-env reports both npm offline env vars as false", () => {
       const persistBlock = extractRuntimeShellEnvSnippet();
-      const toolRedirects = execFileSync(
-        "sed",
-        ["-n", "/^_TOOL_REDIRECTS=/,/^done$/p", NEMOCLAW_START_SCRIPT],
-        { encoding: "utf-8" },
-      ).trimEnd();
+      const toolRedirects = extractToolRedirectsSnippet();
       const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
       const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-connect-npm-online-"));
       const tmpFile = join(tmpdir(), `nemoclaw-connect-npm-online-${process.pid}.sh`);
@@ -412,7 +442,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -470,7 +500,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeTmp]);
+          rmSync(fakeTmp, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -483,33 +513,8 @@ describe("service environment", () => {
     // shared library. Wrappers that execute the extracted block must source it.
     const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
 
-    function extractToolRedirects() {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const block = execFileSync("sed", ["-n", "/^_TOOL_REDIRECTS=/,/^done$/p", scriptPath], {
-        encoding: "utf-8",
-      });
-      if (!block.trim()) {
-        throw new Error(
-          "Failed to extract _TOOL_REDIRECTS from scripts/nemoclaw-start.sh — " +
-            "the array may have been moved or renamed",
-        );
-      }
-      return block.trimEnd();
-    }
-
-    function extractProxyVars(env = {}) {
-      const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
-      const proxyBlock = execFileSync(
-        "sed",
-        ["-n", "/^PROXY_HOST=/,/^export no_proxy=/p", scriptPath],
-        { encoding: "utf-8" },
-      );
-      if (!proxyBlock.trim()) {
-        throw new Error(
-          "Failed to extract proxy configuration from scripts/nemoclaw-start.sh — " +
-            "the PROXY_HOST..no_proxy block may have been moved or renamed",
-        );
-      }
+    function extractProxyVars(env: Record<string, string> = {}) {
+      const proxyBlock = extractProxyVarsSnippet();
       const wrapper = [
         "#!/usr/bin/env bash",
         proxyBlock.trimEnd(),
@@ -542,30 +547,40 @@ describe("service environment", () => {
       }
     }
 
+    let defaultProxyVars: Record<string, string>;
+    let hostOverrideProxyVars: Record<string, string>;
+    let portOverrideProxyVars: Record<string, string>;
+
+    beforeAll(() => {
+      defaultProxyVars = extractProxyVars();
+      hostOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_HOST: "192.168.64.1" });
+      portOverrideProxyVars = extractProxyVars({ NEMOCLAW_PROXY_PORT: "8080" });
+    });
+
     it("sets HTTP_PROXY to default gateway address", () => {
-      const vars = extractProxyVars();
+      const vars = defaultProxyVars;
       expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:3128");
     });
 
     it("sets HTTPS_PROXY to default gateway address", () => {
-      const vars = extractProxyVars();
+      const vars = defaultProxyVars;
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:3128");
     });
 
     it("NEMOCLAW_PROXY_HOST overrides default gateway IP", () => {
-      const vars = extractProxyVars({ NEMOCLAW_PROXY_HOST: "192.168.64.1" });
+      const vars = hostOverrideProxyVars;
       expect(vars.HTTP_PROXY).toBe("http://192.168.64.1:3128");
       expect(vars.HTTPS_PROXY).toBe("http://192.168.64.1:3128");
     });
 
     it("NEMOCLAW_PROXY_PORT overrides default proxy port", () => {
-      const vars = extractProxyVars({ NEMOCLAW_PROXY_PORT: "8080" });
+      const vars = portOverrideProxyVars;
       expect(vars.HTTP_PROXY).toBe("http://10.200.0.1:8080");
       expect(vars.HTTPS_PROXY).toBe("http://10.200.0.1:8080");
     });
 
     it("NO_PROXY includes loopback only, not inference.local", () => {
-      const vars = extractProxyVars();
+      const vars = defaultProxyVars;
       const noProxy = vars.NO_PROXY.split(",");
       expect(noProxy).toContain("localhost");
       expect(noProxy).toContain("127.0.0.1");
@@ -574,12 +589,12 @@ describe("service environment", () => {
     });
 
     it("NO_PROXY includes OpenShell gateway IP", () => {
-      const vars = extractProxyVars();
+      const vars = defaultProxyVars;
       expect(vars.NO_PROXY).toContain("10.200.0.1");
     });
 
     it("exports lowercase proxy variants for undici/gRPC compatibility", () => {
-      const vars = extractProxyVars();
+      const vars = defaultProxyVars;
       expect(vars.http_proxy).toBe("http://10.200.0.1:3128");
       expect(vars.https_proxy).toBe("http://10.200.0.1:3128");
       const noProxy = vars.no_proxy.split(",");
@@ -589,11 +604,11 @@ describe("service environment", () => {
 
     it("entrypoint writes proxy-env.sh to writable data dir", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-data-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-proxyenv-write-test-${process.pid}.sh`);
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
-        const toolRedirects = extractToolRedirects();
+        const toolRedirects = extractToolRedirectsSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           sandboxInitSource,
@@ -639,18 +654,8 @@ describe("service environment", () => {
         // ad-hoc `npx -y` invocations inside the sandbox.
         expect(envFile).toContain("npm_config_offline=false");
         expect(envFile).toContain("NPM_CONFIG_OFFLINE=false");
-        // Permission should be 444 (hardened via emit_sandbox_sourced_file)
-        // Cross-platform: Linux uses stat -c '%a', macOS uses stat -f '%Lp'
-        let perms: string;
-        try {
-          perms = execFileSync("stat", ["-c", "%a", join(fakeDataDir, "proxy-env.sh")], {
-            encoding: "utf-8",
-          }).trim();
-        } catch {
-          perms = execFileSync("stat", ["-f", "%Lp", join(fakeDataDir, "proxy-env.sh")], {
-            encoding: "utf-8",
-          }).trim();
-        }
+        // Permission should be 444 (hardened via emit_sandbox_sourced_file).
+        const perms = (lstatSync(join(fakeDataDir, "proxy-env.sh")).mode & 0o777).toString(8);
         expect(perms).toBe("444");
 
         const connectedValue = execFileSync(
@@ -671,7 +676,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -731,7 +736,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeHome]);
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -785,7 +790,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeHome]);
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -833,7 +838,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeHome]);
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -849,7 +854,7 @@ describe("service environment", () => {
       try {
         writeFileSync(rcPath, "# clean bashrc\n", { mode: 0o444 });
         writeFileSync(profilePath, "# clean profile\n", { mode: 0o444 });
-        execFileSync("chmod", ["555", fakeHome]);
+        chmodSync(fakeHome, 0o555);
 
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -868,7 +873,7 @@ describe("service environment", () => {
         expect(readFileSync(profilePath, "utf-8")).toBe("# clean profile\n");
       } finally {
         try {
-          execFileSync("chmod", ["755", fakeHome]);
+          chmodSync(fakeHome, 0o755);
         } catch {
           /* ignore */
         }
@@ -878,7 +883,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeHome]);
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -906,7 +911,7 @@ describe("service environment", () => {
             { mode: 0o444 },
           );
         }
-        execFileSync("chmod", ["555", fakeHome]);
+        chmodSync(fakeHome, 0o555);
 
         const wrapper = [
           "#!/usr/bin/env bash",
@@ -929,7 +934,7 @@ describe("service environment", () => {
         }
       } finally {
         try {
-          execFileSync("chmod", ["755", fakeHome]);
+          chmodSync(fakeHome, 0o755);
         } catch {
           /* ignore */
         }
@@ -939,7 +944,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeHome]);
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1019,7 +1024,8 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir, fakeHome]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(fakeHome, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1028,12 +1034,12 @@ describe("service environment", () => {
 
     it("entrypoint overwrites proxy-env.sh cleanly on repeated invocations", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-idempotent-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-idempotent-write-test-${process.pid}.sh`);
       const chownLog = join(fakeDataDir, "chown.log");
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
-        const toolRedirects = extractToolRedirects();
+        const toolRedirects = extractToolRedirectsSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           'id() { if [ "${1:-}" = "-u" ]; then printf "0\\n"; else command id "$@"; fi; }',
@@ -1075,7 +1081,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1084,11 +1090,11 @@ describe("service environment", () => {
 
     it("entrypoint replaces stale proxy values on restart", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-replace-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-replace-write-test-${process.pid}.sh`);
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
-        const toolRedirects = extractToolRedirects();
+        const toolRedirects = extractToolRedirectsSnippet();
         const makeWrapper = (host: string) =>
           [
             "#!/usr/bin/env bash",
@@ -1120,7 +1126,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1135,8 +1141,8 @@ describe("service environment", () => {
         const sensitiveFile = join(fakeDataDir, "sensitive");
         writeFileSync(sensitiveFile, "SECRET_DATA");
         const proxyEnvPath = join(fakeDataDir, "proxy-env.sh");
-        execFileSync("ln", ["-sf", sensitiveFile, proxyEnvPath]);
-        const toolRedirects = extractToolRedirects();
+        symlinkSync(sensitiveFile, proxyEnvPath);
+        const toolRedirects = extractToolRedirectsSnippet();
         const wrapper = [
           "#!/usr/bin/env bash",
           sandboxInitSource,
@@ -1159,7 +1165,7 @@ describe("service environment", () => {
           /* ignore */
         }
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1199,7 +1205,7 @@ describe("service environment", () => {
         expect(out).toContain("no_proxy=localhost,127.0.0.1,::1,10.200.0.1");
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
         } catch {
           /* ignore */
         }
@@ -1208,7 +1214,7 @@ describe("service environment", () => {
 
     it("includes NODE_OPTIONS --require in proxy-env.sh when NODE_USE_ENV_PROXY=1 (#2109)", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-http-fix-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
       const fakeFixPath = "/tmp/nemoclaw-http-proxy-fix.js";
       try {
@@ -1243,7 +1249,8 @@ describe("service environment", () => {
         expect(envFile).toContain(fakeFixPath);
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
         } catch {
           /* ignore */
         }
@@ -1252,7 +1259,7 @@ describe("service environment", () => {
 
     it("omits NODE_OPTIONS from proxy-env.sh when NODE_USE_ENV_PROXY is unset (#2109)", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-http-noop-test-${process.pid}`);
-      execFileSync("mkdir", ["-p", fakeDataDir]);
+      mkdirSync(fakeDataDir, { recursive: true });
       const tmpFile = join(tmpdir(), `nemoclaw-http-noop-env-${process.pid}.sh`);
       try {
         const persistBlock = extractRuntimeShellEnvSnippet();
@@ -1284,7 +1291,8 @@ describe("service environment", () => {
         expect(envFile).toContain("nemotron-inference-fix");
       } finally {
         try {
-          execFileSync("rm", ["-rf", fakeDataDir, tmpFile]);
+          rmSync(fakeDataDir, { recursive: true, force: true });
+          rmSync(tmpFile, { force: true });
         } catch {
           /* ignore */
         }
