@@ -9,6 +9,7 @@ import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
+import { ISSUE_4462_WATCHER_QUIESCENCE_PY } from "../fixtures/issue-4462-watcher-quiescence.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -26,10 +27,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     ...buildAvailabilityProbeEnv(),
     PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30",
-    NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
-    NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
-    NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -94,7 +91,53 @@ case "\${OPENCLAW_GATEWAY_URL:-}" in
   *) echo "BAD_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL:-unset}" >&2; exit 4 ;;
 esac
 seed_token_proof=/tmp/issue4462-seed-token.sha256
-trap 'rm -f -- "$seed_token_proof"' EXIT
+auto_pair_watcher_pid=""
+auto_pair_watcher_start=""
+
+stop_auto_pair_watcher_at_idle() {
+  python3 - /tmp/auto-pair.log /proc 15 <<'PY'
+${ISSUE_4462_WATCHER_QUIESCENCE_PY}
+run_cli()
+PY
+}
+
+resume_auto_pair_watcher() {
+  local resume_rc=0
+  if [ -z "$auto_pair_watcher_pid" ] && [ -z "$auto_pair_watcher_start" ]; then
+    return 0
+  fi
+  if [ -z "$auto_pair_watcher_pid" ] || [ -z "$auto_pair_watcher_start" ]; then
+    echo "INCOMPLETE_AUTO_PAIR_WATCHER_IDENTITY" >&2
+    return 1
+  fi
+  python3 - /tmp/auto-pair.log /proc "$auto_pair_watcher_pid" "$auto_pair_watcher_start" 5 <<'PY'
+${ISSUE_4462_WATCHER_QUIESCENCE_PY}
+run_resume_cli()
+PY
+  resume_rc=$?
+  if [ "$resume_rc" -ne 0 ]; then
+    return "$resume_rc"
+  fi
+  auto_pair_watcher_pid=""
+  auto_pair_watcher_start=""
+}
+
+issue_4462_exit_cleanup() {
+  local original_rc=$? resume_rc=0
+  trap - EXIT
+  set +e
+  if [ -n "$auto_pair_watcher_pid" ] || [ -n "$auto_pair_watcher_start" ]; then
+    resume_auto_pair_watcher
+    resume_rc=$?
+  fi
+  rm -f -- "$seed_token_proof"
+  if [ "$original_rc" -eq 0 ] && [ "$resume_rc" -ne 0 ]; then
+    original_rc=$resume_rc
+  fi
+  exit "$original_rc"
+}
+
+trap issue_4462_exit_cleanup EXIT
 
 state_json() {
 python3 - <<'PY'
@@ -621,6 +664,19 @@ PY
 
 initial_list_rc=0
 seeded_initial=0
+echo "ISSUE_4462_STAGE=stop-auto-pair-watcher-at-idle"
+watcher_stop_output="$(stop_auto_pair_watcher_at_idle)"
+read -r auto_pair_watcher_pid auto_pair_watcher_start watcher_stop_extra <<EOF
+$watcher_stop_output
+EOF
+if [ -z "$auto_pair_watcher_pid" ] || [ -z "$auto_pair_watcher_start" ] || [ -n "\${watcher_stop_extra:-}" ]; then
+  echo "INVALID_AUTO_PAIR_WATCHER_IDENTITY" >&2
+  exit 4
+fi
+case "$auto_pair_watcher_pid:$auto_pair_watcher_start" in
+  *[!0-9:]*|:*|*:) echo "INVALID_AUTO_PAIR_WATCHER_IDENTITY" >&2; exit 4 ;;
+esac
+echo "ISSUE_4462_AUTO_PAIR_WATCHER_QUIESCED pid=$auto_pair_watcher_pid"
 echo "ISSUE_4462_STAGE=direct-local-bootstrap"
 (
   unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
@@ -661,6 +717,8 @@ if [ -z "$request_id" ]; then
     elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log \
       && contains_integer_42 </tmp/issue4462-trigger-agent.log; then
       echo "TRIGGER_COMPLETED_WITHOUT_PENDING_SCOPE_UPGRADE"
+      echo "ISSUE_4462_STAGE=resume-auto-pair-watcher"
+      resume_auto_pair_watcher
       echo "ISSUE_4462_SCOPE_UPGRADE_OK device=trigger-completed request=not-reproduced"
       exit 0
     else
@@ -698,6 +756,8 @@ if ! contains_integer_42 </tmp/issue4462-final-agent.log; then
   cat /tmp/issue4462-final-agent.log >&2
   exit 8
 fi
+echo "ISSUE_4462_STAGE=resume-auto-pair-watcher"
+resume_auto_pair_watcher
 echo "ISSUE_4462_SCOPE_UPGRADE_OK device=$(cat /tmp/issue4462-final-device.txt) request=\${request_id:-auto}"
 `;
 }
