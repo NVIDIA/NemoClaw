@@ -6,23 +6,35 @@ import os from "node:os";
 import path from "node:path";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
+import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
-import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
+import {
+  type SandboxClient,
+  trustedSandboxShellScript,
+  validateSandboxName,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { maximumOutputSilenceMs, readOnboardTraceWindow } from "../fixtures/onboard-performance.ts";
 import {
   assertSecurityPosture,
   securityPostureEnabled,
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import type { ShellProbeOutputEvent, ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { extractOpenClawAgentText } from "./agent-turn-latency-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-full";
 const LIVE_TIMEOUT_MS = 50 * 60_000;
+const FIRST_TURN_TIMEOUT_MS =
+  Number(process.env.NEMOCLAW_E2E_FIRST_TURN_TIMEOUT_SECS ?? 240) * 1_000;
+const ONBOARD_BUDGET_SECS = Number(process.env.NEMOCLAW_E2E_ONBOARD_BUDGET_SECS ?? 180);
+const MAX_SILENCE_SECS = Number(process.env.NEMOCLAW_E2E_MAX_SILENCE_SECS ?? 60);
+const MEASURE_COLD_ONBOARD = process.env.E2E_TARGET_ID === "full-e2e";
 const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
 process.env.NEMOCLAW_CLI_BIN ??= CLI_ENTRYPOINT;
@@ -97,6 +109,92 @@ function parseReplyCommand(): string {
   return String.raw`python3 -c 'import json,sys; d=json.load(sys.stdin); m=d["choices"][0]["message"]; print((m.get("content") or m.get("reasoning_content") or "").strip())'`;
 }
 
+function readAndDeleteTrace(traceFile: string, traceDirectory: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(traceFile, "utf8")) as unknown;
+  } finally {
+    fs.rmSync(traceDirectory, { recursive: true, force: true });
+  }
+}
+
+async function assertColdOnboardPerformance(input: {
+  apiKey: string;
+  artifacts: ArtifactSink;
+  install: ShellProbeResult;
+  outputEvents: readonly ShellProbeOutputEvent[];
+  sandbox: SandboxClient;
+  traceDirectory: string;
+  traceFile: string;
+}): Promise<void> {
+  const traceWindow = readOnboardTraceWindow(
+    readAndDeleteTrace(input.traceFile, input.traceDirectory),
+  );
+  const ansiSgr = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+  const plain = resultText(input.install).replace(ansiSgr, "");
+  const heartbeatCount = (plain.match(/Still working on /g) ?? []).length;
+  const buildKitFallback =
+    /Local BuildKit build (?:could not start|failed)[^\n]*using the gateway builder instead\./u.test(
+      plain,
+    );
+  const usedBuildKitPrebuild =
+    /Building sandbox image with BuildKit/u.test(plain) && !buildKitFallback;
+  const classicBuildSteps = (plain.match(/Step \d+\/\d+ :/gu) ?? []).length;
+  const maxSilenceMs = maximumOutputSilenceMs(traceWindow, input.outputEvents);
+  const maxSilenceSecs = Math.ceil(maxSilenceMs / 1_000);
+
+  const turn = await input.sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(
+      "openclaw agent --agent main --json --thinking off --session-id e2e-6002 " +
+        "-m 'Reply with a short acknowledgement.'",
+    ),
+    {
+      artifactName: "phase-1-first-agent-turn",
+      env: env(),
+      redactionValues: [input.apiKey],
+      timeoutMs: FIRST_TURN_TIMEOUT_MS,
+    },
+  );
+  const totalMs = Date.now() - traceWindow.startedAtMs;
+  const totalSecs = Math.ceil(totalMs / 1_000);
+  const turnText = resultText(turn);
+  const responseChars = extractOpenClawAgentText(turnText).trim().length;
+
+  await input.artifacts.writeJson("onboard-progress-budget.json", {
+    sandbox: SANDBOX_NAME,
+    installExitCode: input.install.exitCode,
+    firstTurnExitCode: turn.exitCode,
+    onboardSecs: Math.ceil(traceWindow.durationMs / 1_000),
+    totalMs,
+    totalSecs,
+    budgetSecs: ONBOARD_BUDGET_SECS,
+    heartbeatCount,
+    maxSilenceSecs,
+    maxSilenceBudgetSecs: MAX_SILENCE_SECS,
+    buildKitFallback,
+    usedBuildKitPrebuild,
+    classicBuildSteps,
+    responseChars,
+  });
+
+  expect(plain, "expected literal wizard step [1/8] in installer output").toContain("[1/8]");
+  expect(buildKitFallback, "expected no fallback from BuildKit to the gateway builder").toBe(false);
+  expect(usedBuildKitPrebuild, "expected the cold install to use BuildKit").toBe(true);
+  expect(classicBuildSteps, "expected no classic per-instruction build steps").toBe(0);
+  expect(
+    maxSilenceSecs,
+    `longest silent gap ${maxSilenceSecs}s exceeds the ${MAX_SILENCE_SECS}s guarantee`,
+  ).toBeLessThanOrEqual(MAX_SILENCE_SECS);
+  expect(turn.exitCode, turnText).toBe(0);
+  expect(responseChars, `expected a non-empty first agent reply, got: ${turnText}`).toBeGreaterThan(
+    0,
+  );
+  expect(
+    totalMs,
+    `[1/8]-to-first-response took ${totalSecs}s, over the ${ONBOARD_BUDGET_SECS}s budget`,
+  ).toBeLessThanOrEqual(ONBOARD_BUDGET_SECS * 1_000);
+}
+
 liveTest(
   "full e2e: install, onboard, inference, cli operations, and cleanup",
   { timeout: LIVE_TIMEOUT_MS },
@@ -133,14 +231,43 @@ liveTest(
     cleanupRegistry.add("remove full-e2e sandbox", () => cleanup(host, sandbox));
     await cleanup(host, sandbox);
 
+    const traceDirectory = MEASURE_COLD_ONBOARD
+      ? fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-full-e2e-trace-"))
+      : null;
+    const traceFile = traceDirectory ? path.join(traceDirectory, "onboard.json") : null;
+    if (traceDirectory) {
+      cleanupRegistry.add("remove raw full-e2e trace", async () => {
+        fs.rmSync(traceDirectory, { recursive: true, force: true });
+      });
+    }
+    const outputEvents: ShellProbeOutputEvent[] = [];
+
     const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-1-install-sh",
       cwd: REPO_ROOT,
-      env: env({ ...hosted.env, NVIDIA_INFERENCE_API_KEY: hosted.apiKey }),
+      env: env({
+        ...hosted.env,
+        NVIDIA_INFERENCE_API_KEY: hosted.apiKey,
+        ...(traceFile ? { NEMOCLAW_TRACE_FILE: traceFile } : {}),
+      }),
+      ...(MEASURE_COLD_ONBOARD
+        ? { onOutput: (event: ShellProbeOutputEvent) => outputEvents.push(event) }
+        : {}),
       redactionValues,
       timeoutMs: 25 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
+    if (traceDirectory && traceFile) {
+      await assertColdOnboardPerformance({
+        apiKey: hosted.apiKey,
+        artifacts,
+        install,
+        outputEvents,
+        sandbox,
+        traceDirectory,
+        traceFile,
+      });
+    }
 
     const pathProbe = await host.command(
       "bash",

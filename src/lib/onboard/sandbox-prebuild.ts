@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { dockerSpawn } from "../adapters/docker/exec";
 import { buildSubprocessEnv } from "../subprocess-env";
 
@@ -32,6 +36,51 @@ export interface SandboxPrebuildInput {
 export interface SandboxPrebuildResult {
   createArgs: string[];
   imageRef: string | null;
+}
+
+interface TrustedStagedBuildContext {
+  buildCtx: string;
+  dockerfile: string;
+}
+
+/**
+ * Resolve the private staged context before handing it to the host Docker daemon.
+ * The context stagers create direct children of the OS temp directory with this
+ * prefix; fail closed if a future caller supplies anything else.
+ */
+function resolveTrustedStagedBuildContext(buildCtx: string): TrustedStagedBuildContext | null {
+  let descriptor: number | undefined;
+  try {
+    const temporaryRoot = fs.realpathSync(os.tmpdir());
+    const resolvedBuildCtx = fs.realpathSync(buildCtx);
+    if (
+      path.dirname(resolvedBuildCtx) !== temporaryRoot ||
+      !path.basename(resolvedBuildCtx).startsWith("nemoclaw-build-") ||
+      !fs.statSync(resolvedBuildCtx).isDirectory()
+    ) {
+      return null;
+    }
+
+    const dockerfile = path.join(resolvedBuildCtx, "Dockerfile");
+    const entry = fs.lstatSync(dockerfile);
+    const resolvedDockerfile = fs.realpathSync(dockerfile);
+    if (path.dirname(resolvedDockerfile) !== resolvedBuildCtx) return null;
+    if (entry.isSymbolicLink() || !entry.isFile()) return null;
+
+    const noFollow = fs.constants.O_NOFOLLOW;
+    if (typeof noFollow !== "number") return null;
+    const nonBlocking = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+
+    descriptor = fs.openSync(dockerfile, fs.constants.O_RDONLY | noFollow | nonBlocking);
+    const opened = fs.fstatSync(descriptor);
+    if (!opened.isFile() || opened.dev !== entry.dev || opened.ino !== entry.ino) return null;
+
+    return { buildCtx: resolvedBuildCtx, dockerfile: resolvedDockerfile };
+  } catch {
+    return null;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
 }
 
 /** Restrict the host Docker build to environment values used by Docker itself. */
@@ -98,7 +147,16 @@ export async function prebuildSandboxImageIfEligible(
     return { createArgs, imageRef: null };
   }
   const fromIndex = createArgs.indexOf("--from");
-  if (fromIndex < 0 || createArgs[fromIndex + 1] !== `${input.buildCtx}/Dockerfile`) {
+  const fromDockerfile = createArgs[fromIndex + 1];
+  if (
+    fromIndex < 0 ||
+    !fromDockerfile ||
+    path.resolve(fromDockerfile) !== path.resolve(input.buildCtx, "Dockerfile")
+  ) {
+    return { createArgs, imageRef: null };
+  }
+  const trustedContext = resolveTrustedStagedBuildContext(input.buildCtx);
+  if (!trustedContext) {
     return { createArgs, imageRef: null };
   }
 
@@ -123,8 +181,8 @@ export async function prebuildSandboxImageIfEligible(
         "-t",
         imageRef,
         "-f",
-        `${input.buildCtx}/Dockerfile`,
-        input.buildCtx,
+        trustedContext.dockerfile,
+        trustedContext.buildCtx,
       ],
       {
         env: { ...dockerBuildSubprocessEnv(), DOCKER_BUILDKIT: "1" },
