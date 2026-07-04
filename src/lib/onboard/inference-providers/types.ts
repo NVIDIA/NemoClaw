@@ -72,7 +72,7 @@ export type PromptValidationRecovery = (
   classification: any,
   credentialEnv: any,
   helpUrl: any,
-) => Promise<string>;
+) => Promise<"credential" | "selection" | "retry" | "model">;
 
 export type ClassifyApplyFailure = (message: string) => any;
 

@@ -396,9 +396,6 @@ const {
   createValidationRecoveryPromptHelpers,
 }: typeof import("./onboard/validation-recovery-prompt") = require("./onboard/validation-recovery-prompt");
 const {
-  createLocalInferenceRouteApplier,
-}: typeof import("./onboard/local-inference-route") = require("./onboard/local-inference-route");
-const {
   createOpenshellCliHelpers,
 }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
@@ -839,6 +836,8 @@ const {
   checkHermesProviderStoreReachable,
 } = hermesAuth.createHermesAuthHelpers({
   isNonInteractive,
+  error: (message) => console.error(message),
+  exitProcess: (code) => process.exit(code),
   note,
   prompt,
   getNavigationChoice,
@@ -858,16 +857,6 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
   getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
   exitOnboardFromPrompt,
-});
-
-const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
-  runOpenshell,
-  isNonInteractive,
-  promptValidationRecovery,
-  classifyApplyFailure,
-  compactText,
-  redact,
-  localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
 });
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
@@ -4198,7 +4187,6 @@ function getSetupInferenceDeps() {
     validateLocalProvider,
     getLocalProviderHealthCheck,
     getLocalProviderBaseUrl,
-    applyLocalInferenceRoute,
     run,
     vllmLocalCredentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
     getOllamaWarmupCommand,

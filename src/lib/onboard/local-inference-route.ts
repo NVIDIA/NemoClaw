@@ -70,7 +70,7 @@ export function createLocalInferenceRouteApplier(deps: LocalInferenceRouteDeps) 
           "  No sandbox was created. Fix the inference route and re-run " +
             "`nemoclaw onboard --resume` to continue, or choose a different provider/model.",
         );
-        exitProcess(applyResult.status || 1);
+        return exitProcess(applyResult.status || 1);
       }
       const retry = await deps.promptValidationRecovery(
         label,

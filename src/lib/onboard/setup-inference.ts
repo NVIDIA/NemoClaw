@@ -12,6 +12,7 @@ import type {
   VllmDeps,
 } from "./inference-providers";
 import * as inferenceProviders from "./inference-providers";
+import { createLocalInferenceRouteApplier } from "./local-inference-route";
 import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-inference";
 
 type ProviderBranchDeps = Omit<
@@ -19,6 +20,7 @@ type ProviderBranchDeps = Omit<
   | "registry"
   | "run"
   | "runOpenshell"
+  | "applyLocalInferenceRoute"
   | "LOCAL_INFERENCE_TIMEOUT_SECS"
   | "VLLM_LOCAL_CREDENTIAL_ENV"
   | "OLLAMA_PROXY_CREDENTIAL_ENV"
@@ -34,10 +36,28 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   vllmLocalCredentialEnv: string;
   ollamaProxyCredentialEnv: string;
   isRoutedInferenceProvider: (provider: string) => boolean;
+  applyLocalInferenceRoute?: VllmDeps["applyLocalInferenceRoute"];
   log: (message: string) => void;
   error: (message: string) => void;
   exitProcess: (code: number) => never;
 };
+
+function resolveLocalInferenceRouteApplier(deps: SetupInferenceDeps) {
+  return (
+    deps.applyLocalInferenceRoute ??
+    createLocalInferenceRouteApplier({
+      runOpenshell: deps.runOpenshell,
+      isNonInteractive: deps.isNonInteractive,
+      promptValidationRecovery: deps.promptValidationRecovery,
+      classifyApplyFailure: deps.classifyApplyFailure,
+      compactText: deps.compactText,
+      redact: deps.redact,
+      localInferenceTimeoutSecs: deps.localInferenceTimeoutSecs,
+      error: deps.error,
+      exitProcess: deps.exitProcess,
+    })
+  );
+}
 
 export type SetupInference = (
   sandboxName: string | null,
@@ -142,7 +162,7 @@ export function createSetupInference(
           validateLocalProvider: deps.validateLocalProvider,
           getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
           getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: deps.applyLocalInferenceRoute,
+          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps),
           run: deps.run,
           VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
         },
@@ -155,7 +175,7 @@ export function createSetupInference(
           ...commonDeps,
           validateLocalProvider: deps.validateLocalProvider,
           getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: deps.applyLocalInferenceRoute,
+          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps),
           getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
           run: deps.run,
           shouldFrontOllamaWithProxy: deps.shouldFrontOllamaWithProxy,

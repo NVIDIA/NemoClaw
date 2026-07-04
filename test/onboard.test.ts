@@ -1255,22 +1255,9 @@ const { onboard } = require(${onboardPath});
     );
   });
   it("surfaces a contextual error and exits when ollama-local inference set fails after the proxy-ready warning (#4257)", async () => {
-    const errLog: string[] = [];
-    let exitCode: number | null = null;
-    let harness: ReturnType<typeof createDirectSetupInferenceHarness>;
-    const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
-      runOpenshell: (args, options) => harness.runOpenshell(args, options),
-      isNonInteractive: () => true,
-      promptValidationRecovery: async () => "selection",
-      classifyApplyFailure: () => ({}) as never,
-      compactText: (value) => value.trim(),
-      redact: (value) => value,
-      localInferenceTimeoutSecs: 120,
-      error: (message) => errLog.push(message),
-      exitProcess: (code): never => {
-        exitCode = code;
-        throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
-      },
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
     });
     const commandRouter = createDirectCommandRouter([
       {
@@ -1284,7 +1271,7 @@ const { onboard } = require(${onboardPath});
         results: [{ status: 7, stdout: "", stderr: "openshell: route apply failed" }],
       },
     ]);
-    harness = createDirectSetupInferenceHarness({
+    const harness = createDirectSetupInferenceHarness({
       runOpenshell: commandRouter.runOpenshell,
       overrides: {
         isNonInteractive: () => true,
@@ -1298,7 +1285,9 @@ const { onboard } = require(${onboardPath});
         isProxyHealthy: () => true,
         getOllamaProxyToken: () => "proxy-token",
         persistAndProbeOllamaProxy: async () => {},
-        applyLocalInferenceRoute,
+        applyLocalInferenceRoute: undefined,
+        error,
+        exitProcess,
       },
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -1320,28 +1309,15 @@ const { onboard } = require(${onboardPath});
       true,
       "ollama-local inference set must use ignoreError so onboard can recover",
     );
-    const combinedErr = errLog.join("\n");
+    const combinedErr = error.mock.calls.flat().join("\n");
+    assert.equal(exitProcess.mock.calls.length, 1);
+    assert.equal(exitProcess.mock.calls[0]?.[0], 7);
     assert.match(combinedErr, /No sandbox was created/);
     assert.match(combinedErr, /nemoclaw onboard --resume/);
-    assert.equal(exitCode, 7, "non-interactive onboard must exit with the openshell status");
   });
   it("surfaces a contextual error and exits when vllm-local inference set fails (#4257)", async () => {
-    const errLog: string[] = [];
-    let exitCode: number | null = null;
-    let harness: ReturnType<typeof createDirectSetupInferenceHarness>;
-    const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
-      runOpenshell: (args, options) => harness.runOpenshell(args, options),
-      isNonInteractive: () => true,
-      promptValidationRecovery: async () => "selection",
-      classifyApplyFailure: () => ({}) as never,
-      compactText: (value) => value.trim(),
-      redact: (value) => value,
-      localInferenceTimeoutSecs: 120,
-      error: (message) => errLog.push(message),
-      exitProcess: (code): never => {
-        exitCode = code;
-        throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
-      },
+    const exitProcess = vi.fn((code: number): never => {
+      throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
     });
     const commandRouter = createDirectCommandRouter([
       {
@@ -1355,11 +1331,12 @@ const { onboard } = require(${onboardPath});
         results: [{ status: 13, stdout: "", stderr: "openshell: vllm route apply failed" }],
       },
     ]);
-    harness = createDirectSetupInferenceHarness({
+    const harness = createDirectSetupInferenceHarness({
       runOpenshell: commandRouter.runOpenshell,
       overrides: {
         isNonInteractive: () => true,
-        applyLocalInferenceRoute,
+        applyLocalInferenceRoute: undefined,
+        exitProcess,
       },
     });
 
@@ -1377,10 +1354,11 @@ const { onboard } = require(${onboardPath});
       true,
       "vllm-local inference set must use ignoreError so onboard can recover",
     );
-    const combinedErr = errLog.join("\n");
+    const combinedErr = harness.errors.join("\n");
+    assert.equal(exitProcess.mock.calls.length, 1);
+    assert.equal(exitProcess.mock.calls[0]?.[0], 13);
     assert.match(combinedErr, /No sandbox was created/);
     assert.match(combinedErr, /nemoclaw onboard --resume/);
-    assert.equal(exitCode, 13, "non-interactive onboard must exit with the openshell status");
   });
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
