@@ -732,11 +732,13 @@ def _anonymous_managed_mcp_snapshot(payload: bytes) -> int:
             try:
                 os.close(writer)
             except OSError:
+                # Best-effort teardown must not replace the primary result or error.
                 pass
         if reader is not None and not complete:
             try:
                 os.close(reader)
             except OSError:
+                # Best-effort teardown must not replace the primary result or error.
                 pass
 
 
