@@ -3,7 +3,58 @@
 
 import { describe, expect, it } from "vitest";
 
-import { redactForLog } from "./redact.js";
+import { redact, redactForLog, redactUrl } from "./redact.js";
+
+describe("URL redaction", () => {
+  it.each([
+    ["SOCKS", "socks5://socks-user:socks-password@proxy.example:1080"],
+    ["mixed-case FTP", "FtP://ftp-user:ftp-password@files.example/path"],
+    ["mixed-case HTTPS", "HTTPS://https-user:https-password@secure.example:8443"],
+  ])("redacts embedded credentials from %s URLs", (_label, value) => {
+    const result = redact(value);
+
+    expect(result).toContain("****:****@");
+    expect(result).not.toContain("-user");
+    expect(result).not.toContain("-password");
+  });
+
+  it("redacts a bracket-wrapped SOCKS URL without breaking its closing delimiter", () => {
+    const result = redact(
+      "proxy [socks5://bracket-user:bracket-password@proxy.example:1080] failed",
+    );
+
+    expect(result).toContain("socks5://****:****@proxy.example:1080]");
+    expect(result).not.toContain("bracket-user");
+    expect(result).not.toContain("bracket-password");
+  });
+
+  it("bounds malformed wrapper parsing before falling back to userinfo redaction", () => {
+    const wrappers = "]".repeat(4_096);
+    const result = redact(
+      `proxy [socks5://bounded-user:bounded-password@proxy.example:1080${wrappers}`,
+    );
+
+    expect(result).toContain("socks5://****:****@proxy.example:1080");
+    expect(result).not.toContain("bounded-user");
+    expect(result).not.toContain("bounded-password");
+  });
+
+  it("preserves a credentialed IPv6 host while redacting its userinfo", () => {
+    const result = redact("proxy https://ipv6-user:ipv6-password@[::1]:8443/path failed");
+
+    expect(result).toContain("https://****:****@[::1]:8443/path");
+    expect(result).not.toContain("ipv6-user");
+    expect(result).not.toContain("ipv6-password");
+  });
+
+  it("fully removes generic-scheme userinfo and sensitive query values", () => {
+    const result = redactUrl(
+      "FtP://ftp-user:ftp-password@files.example/path?token=secret-value#fragment",
+    );
+
+    expect(result).toBe("ftp://files.example/path?token=%3CREDACTED%3E");
+  });
+});
 
 describe("redactForLog", () => {
   it("redacts sensitive object keys recursively while preserving safe fields", () => {
