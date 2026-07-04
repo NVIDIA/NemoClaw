@@ -8,7 +8,6 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
-const SUPERVISOR_LIB = path.join(REPO_ROOT, "scripts", "lib", "gateway-supervisor.sh");
 const CONTROL_HELPER = path.join(REPO_ROOT, "scripts", "gateway-control.sh");
 const NONCE = "a".repeat(64);
 
@@ -36,18 +35,17 @@ describe("gateway supervisor MCP failure contract (#6257)", () => {
           [
             "set -eu",
             'export NEMOCLAW_GATEWAY_CONTROL_DIR="$1"',
-            '. "$2"',
-            'GATEWAY_CONTROL_NONCE="$3"',
-            'gateway_control_fail "$4" 4242',
+            ". scripts/lib/gateway-supervisor.sh",
+            'GATEWAY_CONTROL_NONCE="$2"',
+            'gateway_control_fail "$3" 4242',
             'cat "$NEMOCLAW_GATEWAY_CONTROL_STATUS"',
           ].join("\n"),
           "gateway-supervisor-mcp-failure-contract",
           controlDir,
-          SUPERVISOR_LIB,
           NONCE,
           failureCode,
         ],
-        { encoding: "utf8" },
+        { cwd: REPO_ROOT, encoding: "utf8" },
       );
 
       expect(result.status, result.stderr).toBe(0);

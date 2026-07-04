@@ -141,11 +141,8 @@ it("sanitizes an injected Hermes reconciliation refusal before post-restart muta
       recoverMessagingHostForward: postReconciliationMutations[2],
       recoverDeclaredAgentForwardPorts: postReconciliationMutations[3],
       printGatewayWedgeDiagnostics: vi.fn(() => false),
-      inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-        ok: false as const,
-        state: "mismatch" as const,
-        detail:
-          "Hermes config hash does not match persisted inputs\n\x1b[32mFORGED SUCCESS\x1b[0m ghp_0123456789abcdefghij",
+      inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
+        detail: "Hermes config hash does not match persisted inputs FORGED SUCCESS <REDACTED>",
       })),
     };
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);

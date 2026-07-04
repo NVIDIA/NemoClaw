@@ -30,9 +30,7 @@ def main() -> int:
     args = parser.parse_args()
 
     guard = _load_guard(args.guard)
-    canonicalizer = cast(
-        Callable[[str], str], getattr(guard, "_canonical_mcp_servers_digest")
-    )
+    canonicalizer = cast(Callable[[str], str], guard._canonical_mcp_servers_digest)
     print(canonicalizer(args.config.read_text(encoding="utf-8")))
     return 0
 

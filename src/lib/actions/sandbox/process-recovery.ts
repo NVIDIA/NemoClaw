@@ -42,8 +42,10 @@ import {
 } from "./gateway-restart";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
-import { inspectHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
-import { mcpReconciliationRefusalResult } from "./process-recovery-mcp-refusal";
+import {
+  inspectHermesMcpReconciliationRefusal,
+  processRecoveryMcpReconciliationRefusal,
+} from "./mcp-bridge-recovery";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -549,7 +551,7 @@ export function restartSandboxGateway(
         recoverMessagingHostForward,
         recoverDeclaredAgentForwardPorts,
         printGatewayWedgeDiagnostics,
-        inspectHermesMcpRuntimeIntent,
+        inspectHermesMcpReconciliationRefusal,
         ...deps,
       },
     }),
@@ -763,10 +765,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         secretBoundaryReason: enforcement.reason,
       };
     }
-    const reconciliation = inspectHermesMcpRuntimeIntent(sandboxName);
-    if (!reconciliation.ok) {
-      return mcpReconciliationRefusalResult(true, reconciliation.detail);
-    }
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, true);
+    if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
@@ -918,10 +918,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
-    const reconciliation = inspectHermesMcpRuntimeIntent(sandboxName);
-    if (!reconciliation.ok) {
-      return mcpReconciliationRefusalResult(false, reconciliation.detail);
-    }
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
+    if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });

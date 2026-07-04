@@ -1372,6 +1372,10 @@ def refresh_hashes(
     # Hash refresh is an atomic rename, so directory write authority is what
     # matters; a correctly shields-locked compatibility file is itself 0444.
     compat_writable = os.access(hermes_dir, os.W_OK)
+    if mcp_transition == "apply" and mode == "compat" and not compat_writable:
+        raise UnsafePathError(
+            "Hermes compatibility MCP applied-state commit requires a writable directory"
+        )
     if mode == "both" or (mode == "compat" and compat_writable):
         assert_inputs_stable()
         _write_hash(compat_hash, hash_text)
@@ -1565,12 +1569,6 @@ def _parse_config_hash(
     )
 
 
-def _parse_two_file_hash(text: str, config_path: str, env_path: str) -> tuple[str, str]:
-    """Compatibility wrapper for callers that need only input digests."""
-    config_digest, env_digest, _state = _parse_config_hash(text, config_path, env_path)
-    return config_digest, env_digest
-
-
 def _without_single_generated_api_server_key(text: str) -> str:
     retained: list[str] = []
     removed = 0
@@ -1673,7 +1671,7 @@ def _reconcile_nonroot_startup_api_key_hash(
     actual_text, config_snapshot, env_snapshot = _hash_text(
         config_path, env_path, strict_mcp_state
     )
-    actual_config_sha256, _actual_env_sha256 = _parse_two_file_hash(
+    actual_config_sha256, _actual_env_sha256, _actual_mcp_state = _parse_config_hash(
         actual_text, config_path, env_path
     )
 

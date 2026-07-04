@@ -73,10 +73,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       printGatewayWedgeDiagnostics: vi.fn(() => false),
-      inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-        ok: true as const,
-        state: "matched" as const,
-      })),
+      inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
       ...overrides,
     };
   }

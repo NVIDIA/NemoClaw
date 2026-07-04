@@ -5,11 +5,8 @@ import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { redactFull } from "../../security/redact";
-import {
-  type HermesMcpReconciliationResult,
-  hermesMcpReconciliationRemediationLines,
-  sanitizeHermesMcpReconciliationDetail,
-} from "./mcp-bridge-hermes-reconciliation";
+import { hermesMcpReconciliationRemediationLines } from "./mcp-bridge-hermes-reconciliation";
+import { inspectHermesMcpReconciliationRefusal } from "./mcp-bridge-recovery";
 
 export type GatewayRestartCommandResult = {
   status: number;
@@ -83,7 +80,7 @@ export type GatewayRestartDeps = {
     sandboxName: string,
     exec: (sandboxName: string, command: string) => GatewayRestartCommandResult | null,
   ) => boolean;
-  inspectHermesMcpRuntimeIntent: (sandboxName: string) => HermesMcpReconciliationResult;
+  inspectHermesMcpReconciliationRefusal: typeof inspectHermesMcpReconciliationRefusal;
 };
 
 export type RestartSandboxGatewayOptions = {
@@ -314,9 +311,9 @@ export function restartSandboxGatewayWithDeps(
   }
 
   if (agentName === "hermes") {
-    const reconciliation = deps.inspectHermesMcpRuntimeIntent(sandboxName);
-    if (!reconciliation.ok) {
-      const detail = sanitizeHermesMcpReconciliationDetail(reconciliation.detail);
+    const refusal = deps.inspectHermesMcpReconciliationRefusal(sandboxName);
+    if (refusal) {
+      const { detail } = refusal;
       printGatewayRestartFailure(sandboxName, "MCP reconciliation refusal", detail);
       return {
         ok: false,

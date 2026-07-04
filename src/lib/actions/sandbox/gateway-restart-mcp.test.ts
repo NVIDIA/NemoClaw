@@ -36,10 +36,7 @@ function baseDeps(overrides: Partial<GatewayRestartDeps> = {}): GatewayRestartDe
     recoverMessagingHostForward: vi.fn(() => null),
     recoverDeclaredAgentForwardPorts: vi.fn(() => null),
     printGatewayWedgeDiagnostics: vi.fn(() => false),
-    inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-      ok: true as const,
-      state: "matched" as const,
-    })),
+    inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
     ...overrides,
   };
 }
@@ -49,9 +46,7 @@ describe("Hermes MCP gateway restart", () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
-        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-          ok: false as const,
-          state: "mismatch" as const,
+        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
           detail: "Hermes MCP config does not match persisted managed intent",
         })),
       });
@@ -71,10 +66,8 @@ describe("Hermes MCP gateway restart", () => {
     const restore = silenceConsole();
     try {
       const deps = baseDeps({
-        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-          ok: false as const,
-          state: "mismatch" as const,
-          detail: "\x1b[31mintegrity pending\x1b[0m\nFORGED SUCCESS ghp_0123456789abcdefghij",
+        inspectHermesMcpReconciliationRefusal: vi.fn(() => ({
+          detail: "integrity pending FORGED SUCCESS <REDACTED>",
         })),
       });
 

@@ -172,6 +172,73 @@ print(json.dumps({"current": current, "pending": pending, "misuse": misuse}))
     expect(JSON.parse(result.stdout)).toEqual({ current: 0, pending: 10, misuse: 1 });
   });
 
+  it("fails a compat applied-state commit when its anchor directory is not writable", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import contextlib, importlib.util, io, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+root = tempfile.mkdtemp(prefix="hermes-mcp-compat-apply-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+anchor = os.path.join(hermes, ".config-hash")
+open(config, "w", encoding="utf-8").write("model: test\n")
+open(env, "w", encoding="utf-8").write("SAFE=1\n")
+hash_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(anchor, hash_text)
+open(config, "w", encoding="utf-8").write(
+    "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n"
+)
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="intend")
+pending_text = open(anchor, encoding="utf-8").read()
+guard.os.access = lambda *_args: False
+sys.argv = [
+    "runtime-config-guard.py",
+    "commit-mcp-applied",
+    "--hermes-dir", hermes,
+    "--hash-file", anchor,
+    "--mode", "compat",
+    "--startup-owner",
+]
+stdout = io.StringIO()
+stderr = io.StringIO()
+try:
+    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        guard.main()
+except SystemExit as error:
+    status = error.code
+else:
+    status = 0
+print(json.dumps({
+    "status": status,
+    "stdout": stdout.getvalue(),
+    "stderr": stderr.getvalue(),
+    "unchanged": open(anchor, encoding="utf-8").read() == pending_text,
+}))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      status: 1,
+      stdout: "",
+      stderr:
+        "[SECURITY] Hermes compatibility MCP applied-state commit requires a writable directory\n",
+      unchanged: true,
+    });
+  });
+
   it("runs startup-owned MCP inspection as a direct child", () => {
     const source = fs.readFileSync(START, "utf-8");
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-parent-"));
