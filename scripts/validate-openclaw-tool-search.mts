@@ -12,6 +12,10 @@ const RUNTIME_FUNCTION_NAMES = [
   "createOpenClawCodingTools",
   "applyToolSearchCatalog",
 ] as const;
+const RUNTIME_MODULE_FILE_PATTERNS = new Map<string, RegExp>([
+  ["2026.5.27", /^pi-tools-.*\.js$/],
+  ["2026.6.10", /^agent-tools-.*\.js$/],
+]);
 type RuntimeFunctionName = (typeof RUNTIME_FUNCTION_NAMES)[number];
 type ExpectedMode = "progressive" | "direct";
 interface JsonRecord {
@@ -147,7 +151,15 @@ function countFunctionDeclarations(source: string, functionName: RuntimeFunction
   return [...source.matchAll(new RegExp(`\\bfunction\\s+${escapedName}\\s*\\(`, "g"))].length;
 }
 
-function readRuntimeCandidates(distDir: string): RuntimeCandidate[] {
+function runtimeModuleFilePattern(expectedVersion: string): RegExp {
+  const pattern = RUNTIME_MODULE_FILE_PATTERNS.get(expectedVersion);
+  if (pattern === undefined) {
+    fail(`no compiled runtime module layout is registered for OpenClaw ${expectedVersion}`);
+  }
+  return pattern;
+}
+
+function readRuntimeCandidates(distDir: string, expectedVersion: string): RuntimeCandidate[] {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(distDir, { withFileTypes: true });
@@ -155,9 +167,10 @@ function readRuntimeCandidates(distDir: string): RuntimeCandidate[] {
     fail(`could not read OpenClaw dist directory ${distDir}: ${errorMessage(error)}`);
   }
 
+  const filePattern = runtimeModuleFilePattern(expectedVersion);
   const candidates: RuntimeCandidate[] = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !/^pi-tools-.*\.js$/.test(entry.name)) continue;
+    if (!entry.isFile() || !filePattern.test(entry.name)) continue;
     const filePath = path.join(distDir, entry.name);
     let source: string;
     try {
@@ -172,11 +185,11 @@ function readRuntimeCandidates(distDir: string): RuntimeCandidate[] {
   return candidates;
 }
 
-function locateRuntimeModule(distDir: string): RuntimeCandidate {
-  const candidates = readRuntimeCandidates(distDir);
+function locateRuntimeModule(distDir: string, expectedVersion: string): RuntimeCandidate {
+  const candidates = readRuntimeCandidates(distDir, expectedVersion);
   if (candidates.length !== 1) {
     fail(
-      `expected exactly one pi-tools-*.js module containing ${RUNTIME_FUNCTION_NAMES.join(
+      `expected exactly one registered OpenClaw ${expectedVersion} runtime module containing ${RUNTIME_FUNCTION_NAMES.join(
         ", ",
       )}; found ${candidates.length}`,
     );
@@ -561,7 +574,7 @@ export async function validateOpenClawToolSearchRuntime({
   const version = assertExpectedVersion(resolvedDist, expectedVersion);
   const config = readJson(resolvedConfigPath, "generated OpenClaw config");
   readToolSearchConfig(config, validatedMode, resolvedConfigPath);
-  const { filePath, source } = locateRuntimeModule(resolvedDist);
+  const { filePath, source } = locateRuntimeModule(resolvedDist, version);
   const aliases = parseRuntimeExportAliases(source, filePath);
   const runtime = await importRuntimeFunctions(filePath, aliases);
   assertResolvedConfig(runtime.resolveToolSearchConfig, config, validatedMode);

@@ -156,6 +156,7 @@ export {
 
 interface FixtureOptions {
   config?: unknown;
+  runtimeFileName?: string;
   source?: string;
   version?: string;
   secondSource?: string;
@@ -183,7 +184,7 @@ function writeFixture(options: FixtureOptions = {}) {
     JSON.stringify({ type: "module", version: options.version ?? EXPECTED_VERSION }),
   );
   const runtimeSources: ReadonlyArray<readonly [string, string]> = [
-    ["pi-tools-fixture.js", options.source ?? RUNTIME_FIXTURE_SOURCE],
+    [options.runtimeFileName ?? "pi-tools-fixture.js", options.source ?? RUNTIME_FIXTURE_SOURCE],
     ...(options.secondSource === undefined
       ? []
       : [["pi-tools-second.js", options.secondSource] as const]),
@@ -224,6 +225,16 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
     expect(result.visibleToolNames).toEqual(["nemoclaw_runtime_validator_probe"]);
   });
 
+  it("selects the exact 2026.6.10 agent-tools runtime layout", async () => {
+    const fixture = writeFixture({
+      runtimeFileName: "agent-tools-fixture.js",
+      version: "2026.6.10",
+    });
+    const result = await validateFixture(fixture, "progressive", "2026.6.10");
+
+    expect(result.runtimeModulePath).toMatch(/agent-tools-fixture\.js$/);
+  });
+
   it("fails closed when package metadata does not match the expected pin", async () => {
     const fixture = writeFixture({ version: "2026.5.28" });
 
@@ -240,7 +251,7 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
       ),
     });
     await expect(validateFixture(missingFunction, "progressive")).rejects.toThrow(
-      /expected exactly one pi-tools-.*found 0/,
+      /expected exactly one registered OpenClaw 2026\.5\.27 runtime module.*found 0/,
     );
 
     const missingExport = writeFixture({
@@ -252,7 +263,15 @@ describe("OpenClaw Tool Search pinned-runtime validator", () => {
 
     const duplicate = writeFixture({ secondSource: RUNTIME_FIXTURE_SOURCE });
     await expect(validateFixture(duplicate, "progressive")).rejects.toThrow(
-      /expected exactly one pi-tools-.*found 2/,
+      /expected exactly one registered OpenClaw 2026\.5\.27 runtime module.*found 2/,
+    );
+  });
+
+  it("fails closed when the pinned version has no reviewed runtime layout", async () => {
+    const fixture = writeFixture({ version: "2026.6.11" });
+
+    await expect(validateFixture(fixture, "progressive", "2026.6.11")).rejects.toThrow(
+      /no compiled runtime module layout is registered for OpenClaw 2026\.6\.11/,
     );
   });
 
