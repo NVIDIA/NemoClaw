@@ -171,7 +171,8 @@ There is no host listener, persistent control socket, MCP relay, or service for 
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
 The managed image pins Deep Agents Code `0.1.30` and keeps NemoClaw definitions in `/sandbox/.deepagents/.nemoclaw-mcp.json`.
-The launcher validates canonical HTTPS endpoints and exact OpenShell credential placeholders, then supplies an immutable snapshot across Deep Agents Code server starts and restarts.
+The launcher validates canonical HTTPS endpoints and exact OpenShell credential placeholders, then supplies Deep Agents Code with a process-local, integrity-bound snapshot for server starts and restarts.
+It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
 NemoClaw never auto-loads the user-owned `/sandbox/.deepagents/.mcp.json` or project MCP files into the managed configuration.
 
 ```json

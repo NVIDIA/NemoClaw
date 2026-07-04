@@ -832,11 +832,12 @@ while [ "$arg_index" -lt "${#dcode_args[@]}" ]; do
 done
 
 extra_args=(--sandbox none --no-mcp)
-# The patched Python entrypoint opens, validates, canonicalizes, and seals the
-# dedicated NemoClaw MCP projection inside this long-lived process. A shell
+# The patched Python entrypoint opens, validates, canonicalizes, and snapshots
+# the dedicated NemoClaw MCP projection inside this long-lived process. A shell
 # command substitution cannot own that descriptor: its subprocess would close
-# the memfd before Deep Agents Code or its LangGraph child could consume it.
+# the process-local snapshot before Deep Agents Code or its LangGraph child
+# could consume it.
 # `--no-mcp` also keeps upstream auto-discovery fail-closed until the managed
-# entrypoint replaces it with the sealed /proc/self/fd path.
+# entrypoint replaces it with the integrity-bound /proc/self/fd path.
 
 run_dcode "${extra_args[@]}" "$@"

@@ -330,6 +330,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(wrapper).toContain(s);
     }
     for (const s of [
+      "managed-dcode-runtime.py",
       "patch-managed-deepagents-code.py",
       "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
       "LANGSMITH_TRACING=false",
@@ -370,19 +371,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("keeps NemoClaw MCP state separate from user discovery", () => {
     const requirements = readAgentFile("requirements.lock");
     const wrapper = readAgentFile("dcode-wrapper.sh");
+    const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const manifest = readAgentFile("manifest.yaml");
     const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 
     // The pinned release's user/project .mcp.json files remain user-authored.
-    // Managed images suppress discovery and pass only a sealed snapshot of
-    // NemoClaw's dedicated projection.
+    // Managed images suppress discovery and pass only an integrity-bound
+    // snapshot of NemoClaw's dedicated projection.
     expect(requirements).toContain("deepagents-code==0.1.30");
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
-    expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
+    expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
-    expect(patcher).toContain("if not servers:\n        return None");
-    expect(patcher).toContain("or descriptor != _MANAGED_MCP_FD");
+    expect(managedRuntime).toContain("if not servers:\n        return None");
+    expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
     expect(manifest).toContain("- .deepagents/.mcp.json");

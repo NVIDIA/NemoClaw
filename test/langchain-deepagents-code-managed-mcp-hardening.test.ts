@@ -7,20 +7,18 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const patcherPath = path.join(
+const managedRuntimePath = path.join(
   process.cwd(),
   "agents",
   "langchain-deepagents-code",
-  "patch-managed-deepagents-code.py",
+  "managed-dcode-runtime.py",
 );
 
 function runManagedHelper(source: string) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-managed-mcp-"));
   const helperPath = path.join(tempDir, "_nemoclaw_managed.py");
-  const patcher = fs.readFileSync(patcherPath, "utf-8");
-  const helperSource = patcher.match(/HELPER_SOURCE = r'''([\s\S]*?)\n'''/)?.[1];
-  expect(helperSource).toBeTypeOf("string");
-  fs.writeFileSync(helperPath, helperSource as string, "utf-8");
+  const helperSource = fs.readFileSync(managedRuntimePath, "utf-8");
+  fs.writeFileSync(helperPath, helperSource, "utf-8");
   try {
     return spawnSync("python3", ["-I", "-c", source, helperPath], {
       encoding: "utf-8",
@@ -86,9 +84,12 @@ spec.loader.exec_module(managed)
 raw = b'{"mcpServers":{"github":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_TOKEN"}}}}'
 payload = managed._canonicalize_managed_mcp_config(raw)
 assert payload is not None
-local_descriptor = managed._sealed_managed_mcp_snapshot(payload)
-foreign_descriptor = managed._sealed_managed_mcp_snapshot(payload)
+local_descriptor, local_binding = managed._managed_mcp_snapshot(payload)
+foreign_descriptor, foreign_binding = managed._managed_mcp_snapshot(payload)
+assert local_binding["kind"] == managed._MCP_SEALED_KIND
+assert foreign_binding["kind"] == managed._MCP_SEALED_KIND
 managed._MANAGED_MCP_FD = local_descriptor
+managed._MANAGED_MCP_BINDING = local_binding
 managed._MANAGED_MCP_READY = True
 local_path = f"/proc/self/fd/{local_descriptor}"
 foreign_path = f"/proc/self/fd/{foreign_descriptor}"
@@ -111,5 +112,178 @@ print("descriptor-provenance-ok")
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("descriptor-provenance-ok");
+  });
+
+  it("falls back on blocked memfd with repeatable digest-bound child reads", () => {
+    const result = runManagedHelper(String.raw`
+import errno
+import fcntl
+import importlib.util
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+
+raw = b'{"mcpServers":{"github":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_TOKEN"}}}}'
+payload = managed._canonicalize_managed_mcp_config(raw)
+assert payload is not None
+
+def blocked_memfd(*_args, **_kwargs):
+    raise PermissionError(errno.EPERM, "blocked by seccomp")
+
+with tempfile.TemporaryDirectory() as tempdir:
+    managed._MCP_CONFIG_FILE = Path(tempdir) / ".nemoclaw-mcp.json"
+    managed._read_managed_mcp_config = lambda: raw
+    managed.os.memfd_create = blocked_memfd
+    snapshot_path = managed.managed_mcp_config_path()
+    assert snapshot_path is not None
+    descriptor = int(snapshot_path.removeprefix("/proc/self/fd/"))
+    binding = managed._MANAGED_MCP_BINDING
+    assert binding is not None
+    assert binding["kind"] == managed._MCP_ANONYMOUS_KIND
+    metadata = os.fstat(descriptor)
+    assert metadata.st_nlink == 0
+    assert metadata.st_mode & 0o777 == 0
+    assert fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+    assert managed.managed_mcp_config_bytes(snapshot_path) == payload
+    assert managed.managed_mcp_config_bytes(snapshot_path) == payload
+
+    bound_descriptor, child_binding = managed.managed_mcp_server_binding(snapshot_path)
+    assert bound_descriptor == descriptor
+    child_code = """
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed_child", sys.argv[1])
+child = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(child)
+assert child.managed_mcp_config_bytes(sys.argv[2]) == child.managed_mcp_config_bytes(sys.argv[2])
+assert child._MCP_CHILD_BINDING_ENV not in os.environ
+print(child.managed_mcp_config_bytes(sys.argv[2]).decode(), end="")
+"""
+    child_env = os.environ.copy()
+    child_env[managed._MCP_CHILD_BINDING_ENV] = child_binding
+    for _start_or_restart in range(2):
+        result = subprocess.run(
+            [sys.executable, "-I", "-c", child_code, sys.argv[1], snapshot_path],
+            pass_fds=(descriptor,),
+            env=child_env,
+            capture_output=True,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+        assert result.stdout == payload
+
+    os.environ[managed._MCP_CHILD_BINDING_ENV] = child_binding
+    child_spec = importlib.util.spec_from_file_location("_nemoclaw_managed_child", sys.argv[1])
+    child = importlib.util.module_from_spec(child_spec)
+    child_spec.loader.exec_module(child)
+    assert child.managed_mcp_config_bytes(snapshot_path) == payload
+    assert child.managed_mcp_config_bytes(snapshot_path) == payload
+    assert managed._MCP_CHILD_BINDING_ENV not in os.environ
+
+    foreign_descriptor = managed._anonymous_managed_mcp_snapshot(payload)
+    foreign_path = f"/proc/self/fd/{foreign_descriptor}"
+    try:
+        managed.managed_mcp_server_binding(foreign_path)
+    except RuntimeError as exc:
+        assert "not process-local" in str(exc)
+    else:
+        raise AssertionError("foreign anonymous descriptor was accepted by parent")
+    try:
+        child.managed_mcp_config_bytes(foreign_path)
+    except RuntimeError as exc:
+        assert "binding does not match" in str(exc)
+    else:
+        raise AssertionError("foreign anonymous descriptor was accepted by child")
+    os.close(foreign_descriptor)
+
+    os.fchmod(descriptor, 0o600)
+    writer = os.open(snapshot_path, os.O_RDWR | os.O_CLOEXEC)
+    os.pwrite(writer, b"!" + payload[1:], 0)
+    os.close(writer)
+    os.fchmod(descriptor, 0)
+    tampered_child = subprocess.run(
+        [sys.executable, "-I", "-c", child_code, sys.argv[1], snapshot_path],
+        pass_fds=(descriptor,),
+        env=child_env,
+        capture_output=True,
+    )
+    assert tampered_child.returncode != 0
+    assert b"contents changed" in tampered_child.stderr
+    try:
+        managed.managed_mcp_config_bytes(snapshot_path)
+    except RuntimeError as exc:
+        assert "contents changed" in str(exc)
+    else:
+        raise AssertionError("same-size anonymous descriptor overwrite was accepted")
+    os.close(descriptor)
+print("anonymous-fallback-ok")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("anonymous-fallback-ok");
+  });
+
+  it("fails closed without O_TMPFILE and does not mask unrelated memfd errors", () => {
+    const result = runManagedHelper(String.raw`
+import errno
+import importlib.util
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("_nemoclaw_managed", sys.argv[1])
+managed = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(managed)
+raw = b'{"mcpServers":{"github":{"type":"http","url":"https://example.test/mcp","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_TOKEN"}}}}'
+managed._read_managed_mcp_config = lambda: raw
+
+def blocked_memfd(*_args, **_kwargs):
+    raise PermissionError(errno.EPERM, "blocked by seccomp")
+
+with tempfile.TemporaryDirectory() as tempdir:
+    managed._MCP_CONFIG_FILE = Path(tempdir) / ".nemoclaw-mcp.json"
+    managed.os.memfd_create = blocked_memfd
+    real_open = managed.os.open
+    before = set(os.listdir("/proc/self/fd"))
+
+    def unsupported_tmpfile(path, flags, *args, **kwargs):
+        if flags & os.O_TMPFILE:
+            raise OSError(errno.EOPNOTSUPP, "O_TMPFILE unavailable")
+        return real_open(path, flags, *args, **kwargs)
+
+    managed.os.open = unsupported_tmpfile
+    try:
+        managed.managed_mcp_config_path()
+    except RuntimeError as exc:
+        assert "anonymous O_TMPFILE support" in str(exc)
+    else:
+        raise AssertionError("linked temporary fallback was used")
+    finally:
+        managed.os.open = real_open
+    assert set(os.listdir("/proc/self/fd")) == before
+    assert managed._MANAGED_MCP_FD is None
+    assert managed._MANAGED_MCP_BINDING is None
+    assert managed._MANAGED_MCP_READY is False
+
+    def exhausted_memfd(*_args, **_kwargs):
+        raise OSError(errno.EMFILE, "too many open files")
+
+    managed.os.memfd_create = exhausted_memfd
+    try:
+        managed.managed_mcp_config_path()
+    except RuntimeError as exc:
+        assert "sealed memfd support" in str(exc)
+    else:
+        raise AssertionError("unexpected memfd error was masked by fallback")
+print("fallback-fail-closed-ok")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("fallback-fail-closed-ok");
   });
 });

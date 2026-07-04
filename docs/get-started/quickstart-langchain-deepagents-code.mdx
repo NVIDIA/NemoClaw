@@ -75,7 +75,8 @@ Project and user-defined subagents remain available, but they inherit the manage
 MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
 Project and user MCP files are never auto-loaded.
 Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`; remove, rebuild, and destroy can still scrub exact registry-owned legacy entries without claiming unrelated user content.
-Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders, then gives Deep Agents Code an immutable snapshot that remains valid across server starts and restarts.
+Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders, then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
+It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
 Stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
 For authenticated MCP setup and credential rotation, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
