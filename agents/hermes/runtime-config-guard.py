@@ -728,6 +728,7 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     startup_actions = {
         "commit-mcp-applied",
         "ensure-api-key",
+        "inspect-mcp-integrity",
         "refresh-hashes",
         "provider-placeholders",
         "publish-startup-ready",

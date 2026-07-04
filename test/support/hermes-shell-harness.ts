@@ -10,6 +10,16 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+export function bashPrintfQ(value: string): string {
+  const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
+    encoding: "utf-8",
+    timeout: 5000,
+    env: process.env,
+  });
+  if (result.status !== 0) throw new Error(`bash printf %q failed: ${result.stderr}`);
+  return result.stdout;
+}
+
 export function extractShellFunction(source: string, name: string): string {
   const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
   if (!match) throw new Error(`Expected shell function ${name}`);

@@ -1686,7 +1686,8 @@ inspect_hermes_mcp_integrity() {
   }
   if ! output="$("$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mcp-integrity \
     --hermes-dir "$HERMES_DIR" \
-    --hash-file "$hash_file" 2>&1)"; then
+    --hash-file "$hash_file" \
+    --startup-owner 2>&1)"; then
     printf '%s\n' "$output" >&2
     HERMES_MCP_INTEGRITY_FAILED=1
     echo "[SECURITY] HERMES_MCP_CONFIG_DRIFT: MCP intent cannot be matched to the persisted gateway state; rebuild the sandbox from its NemoClaw registry state" >&2
@@ -2508,6 +2509,12 @@ prepare_hermes_nonroot_runtime() {
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     return 1
   fi
+  # Classify raw .env material at its dedicated boundary before the MCP
+  # integrity guard authenticates the full config/env snapshot. Otherwise a
+  # mutable default with a raw secret fails as generic MCP drift and bypasses
+  # the actionable, redacted secret-boundary refusal. Repeat after the trusted
+  # startup mutations below so their outputs remain covered as well.
+  validate_hermes_env_secret_boundary || return 1
   inspect_hermes_mcp_integrity "${HERMES_DIR}/.config-hash" || return 1
   ensure_hermes_runtime_api_server_key compat || return 1
   apply_shields_up_runtime_env || return 1

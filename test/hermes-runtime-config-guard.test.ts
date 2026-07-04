@@ -992,6 +992,20 @@ except guard.UnsafePathError:
 else:
     startup_without_owner_allowed = True
 
+try:
+    guard._validate_action_readiness("inspect-mcp-integrity", True)
+except guard.UnsafePathError:
+    inspect_allowed = False
+else:
+    inspect_allowed = True
+
+try:
+    guard._validate_action_readiness("inspect-mcp-integrity", False)
+except guard.UnsafePathError:
+    inspect_without_owner_allowed = False
+else:
+    inspect_without_owner_allowed = True
+
 guard._startup_ready_marker_absent = lambda: False
 try:
     guard._validate_action_readiness("seal-restart", False)
@@ -1002,6 +1016,8 @@ else:
 
 print(json.dumps({
     "host_allowed": host_allowed,
+    "inspect_allowed": inspect_allowed,
+    "inspect_without_owner_allowed": inspect_without_owner_allowed,
     "startup_allowed": startup_allowed,
     "startup_without_owner_allowed": startup_without_owner_allowed,
     "stale_marker_error": stale_marker_error,
@@ -1011,6 +1027,8 @@ print(json.dumps({
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       host_allowed: true,
+      inspect_allowed: true,
+      inspect_without_owner_allowed: false,
       startup_allowed: true,
       startup_without_owner_allowed: false,
       stale_marker_error: "Hermes runtime config guard refuses mutation under a foreign PID 1",
