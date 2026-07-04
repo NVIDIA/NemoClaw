@@ -52,6 +52,7 @@ interface ContributorApprovalAdvisory {
   status: "clear" | "warning";
   details: string;
   actors: string[];
+  uncertainActors: string[];
 }
 
 interface CodeRabbitThread {
@@ -86,10 +87,17 @@ interface GateOutput {
   };
 }
 
+const CODERABBIT_LOGINS = new Set(["coderabbitai[bot]", "coderabbitai"]);
+const OPINIONATED_REVIEW_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"]);
+
 function normalizedLogin(identity: PrIdentity | null | undefined): string | null {
   if (!identity) return null;
   const login = identity.login?.trim().toLowerCase();
   return login || null;
+}
+
+function isAutomatedLogin(login: string): boolean {
+  return login.endsWith("[bot]") || CODERABBIT_LOGINS.has(login);
 }
 
 function checkContributorApprovalOverlap(pr: {
@@ -100,7 +108,7 @@ function checkContributorApprovalOverlap(pr: {
   const contributors = new Set<string>();
   const addContributor = (identity: PrIdentity | null | undefined): void => {
     const login = normalizedLogin(identity);
-    if (login) contributors.add(login);
+    if (login && !isAutomatedLogin(login)) contributors.add(login);
   };
 
   addContributor(pr.author);
@@ -108,35 +116,83 @@ function checkContributorApprovalOverlap(pr: {
     for (const author of commit.authors ?? []) addContributor(author);
   }
 
-  const reviews = [...(pr.reviews ?? [])].sort(
-    (left, right) => Date.parse(left.submittedAt ?? "") - Date.parse(right.submittedAt ?? ""),
-  );
-  const latestOpinionByLogin = new Map<string, string>();
+  const invalidTimestampLogins = new Set<string>();
+  const reviews = (pr.reviews ?? [])
+    .map((review, sequence) => ({
+      login: normalizedLogin(review.author),
+      state: review.state?.toUpperCase() ?? "",
+      submittedAt: Date.parse(review.submittedAt ?? ""),
+      sequence,
+    }))
+    .filter(
+      (review) =>
+        review.login &&
+        !isAutomatedLogin(review.login) &&
+        OPINIONATED_REVIEW_STATES.has(review.state),
+    );
   for (const review of reviews) {
-    const login = normalizedLogin(review.author);
-    const state = review.state?.toUpperCase() ?? "";
-    if (login && ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].includes(state)) {
-      latestOpinionByLogin.set(login, state);
+    if (!Number.isFinite(review.submittedAt) && review.login) {
+      invalidTimestampLogins.add(review.login);
     }
   }
+  const orderedReviews = reviews
+    .filter((review) => Number.isFinite(review.submittedAt))
+    .sort((left, right) => left.submittedAt - right.submittedAt || left.sequence - right.sequence);
+  const ambiguousLatestOpinionLogins = new Set<string>();
+  const latestOpinionByLogin = new Map<string, { state: string; submittedAt: number }>();
+  for (const review of orderedReviews) {
+    if (!review.login) continue;
+    const latest = latestOpinionByLogin.get(review.login);
+    if (!latest || review.submittedAt > latest.submittedAt) {
+      latestOpinionByLogin.set(review.login, {
+        state: review.state,
+        submittedAt: review.submittedAt,
+      });
+      ambiguousLatestOpinionLogins.delete(review.login);
+    } else if (review.submittedAt === latest.submittedAt && review.state !== latest.state) {
+      ambiguousLatestOpinionLogins.add(review.login);
+    }
+  }
+  const uncertainOpinionLogins = new Set([
+    ...invalidTimestampLogins,
+    ...ambiguousLatestOpinionLogins,
+  ]);
   const approvingLogins = new Set(
-    [...latestOpinionByLogin].filter(([, state]) => state === "APPROVED").map(([login]) => login),
+    [...latestOpinionByLogin]
+      .filter(
+        ([login, opinion]) => opinion.state === "APPROVED" && !uncertainOpinionLogins.has(login),
+      )
+      .map(([login]) => login),
   );
   const actors = [...approvingLogins].filter((login) => contributors.has(login)).sort();
+  const uncertainActors = [...uncertainOpinionLogins]
+    .filter((login) => contributors.has(login))
+    .sort();
 
-  if (actors.length === 0) {
+  if (actors.length === 0 && uncertainActors.length === 0) {
     return {
       status: "clear",
-      details: "No author/approver overlap found in the current PR snapshot",
+      details:
+        "No author/approver overlap detected among accounts not recognized as automated in the current PR snapshot; this is not proof of independent approval",
       actors: [],
+      uncertainActors: [],
     };
   }
 
   const mentions = actors.map((actor) => `@${actor}`).join(", ");
+  const uncertainMentions = uncertainActors.map((actor) => `@${actor}`).join(", ");
+  const confirmedDetails = actors.length
+    ? `${mentions} both contributed to and approved this PR.`
+    : "";
+  const uncertainDetails = uncertainActors.length
+    ? `The latest opinion from ${uncertainMentions} could not be determined because review timestamps were missing, invalid, or conflicting.`
+    : "";
   return {
     status: "warning",
-    details: `${mentions} both contributed to and approved this PR. This warning is advisory; it does not invalidate approval, require another reviewer, or change allPass.`,
+    details:
+      `${confirmedDetails} ${uncertainDetails} This warning is advisory; it does not prove or disprove independent approval, invalidate approval, require another reviewer, or change allPass.`.trim(),
     actors,
+    uncertainActors,
   };
 }
 
@@ -233,7 +289,6 @@ const SEVERITY_MARKERS = {
   minor: ["🟡 Minor", "_🟡 Minor_"],
 } as const;
 
-const CODERABBIT_LOGINS = new Set(["coderabbitai[bot]", "coderabbitai"]);
 const ADDRESSED_MARKERS = ["✅ Addressed in commit", "<review_comment_addressed>"];
 
 function detectSeverity(body: string): "critical" | "major" | "minor" | "unknown" {

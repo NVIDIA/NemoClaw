@@ -12,7 +12,11 @@ interface ComplianceFixture {
   body: string;
   commitOutput?: string;
   commitAuthorLogins?: string[];
-  reviews?: Array<{ author: { login: string }; state: string; submittedAt: string }>;
+  reviews?: Array<{
+    author: { login: string };
+    state: string;
+    submittedAt?: string | null;
+  }>;
   prAuthorLogin?: string;
   verified: boolean;
   reason?: string;
@@ -189,7 +193,11 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap).toMatchObject({
       status: "clear",
       actors: [],
+      uncertainActors: [],
     });
+    expect(output.advisories.contributorApprovalOverlap.details).toContain(
+      "not proof of independent approval",
+    );
     expect(output.allPass).toBe(true);
   });
 
@@ -218,9 +226,302 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.advisories.contributorApprovalOverlap).toMatchObject({
       status: "warning",
       actors: ["apurvvkumaria"],
+      uncertainActors: [],
     });
     expect(output.advisories.contributorApprovalOverlap.details).toContain("advisory");
     expect(output.allPass).toBe(true);
+  });
+
+  it("warns when the PR opener approved their own PR (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["coauthor"],
+      prAuthorLogin: "opener",
+      reviews: [
+        {
+          author: { login: "opener" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: ["opener"],
+      uncertainActors: [],
+    });
+    expect(output.allPass).toBe(true);
+  });
+
+  it("matches multiple commit authors and co-authors case-insensitively (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["PrimaryAuthor", "CoAuthor"],
+      prAuthorLogin: "opener",
+      reviews: [
+        {
+          author: { login: "coauthor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "PRIMARYAUTHOR" },
+          state: "APPROVED",
+          submittedAt: "2026-01-02T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: ["coauthor", "primaryauthor"],
+      uncertainActors: [],
+    });
+  });
+
+  it("ignores automated contributor and reviewer identities (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["dependabot[bot]", "coderabbitai"],
+      prAuthorLogin: "human-author",
+      reviews: [
+        {
+          author: { login: "dependabot[bot]" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "coderabbitai" },
+          state: "APPROVED",
+          submittedAt: "2026-01-02T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "clear",
+      actors: [],
+      uncertainActors: [],
+    });
+  });
+
+  it("clears overlap when approval is superseded by requested changes (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-01-02T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "clear",
+      actors: [],
+      uncertainActors: [],
+    });
+  });
+
+  it("warns when approval supersedes requested changes regardless of input order (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-02T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: ["contributor"],
+      uncertainActors: [],
+    });
+  });
+
+  it("clears overlap when approval is superseded by dismissal (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "DISMISSED",
+          submittedAt: "2026-01-02T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "clear",
+      actors: [],
+      uncertainActors: [],
+    });
+  });
+
+  it("reports uncertainty when a contributor review timestamp is malformed (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "not-a-timestamp",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const advisory = JSON.parse(result.stdout).advisories.contributorApprovalOverlap;
+    expect(advisory).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
+    expect(advisory.details).toContain("could not be determined");
+  });
+
+  it("reports uncertainty when a contributor review timestamp is missing (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const advisory = JSON.parse(result.stdout).advisories.contributorApprovalOverlap;
+    expect(advisory).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
+    expect(advisory.details).toContain("missing");
+  });
+
+  it("does not confirm approval when a later opinion has a malformed timestamp (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "not-a-timestamp",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
+  });
+
+  it("does not confirm approval when an earlier input opinion has a malformed timestamp (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "not-a-timestamp",
+        },
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
+  });
+
+  it("reports uncertainty for conflicting opinions with equal timestamps (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
   });
 
   it("fails closed when the PR body lacks the DCO declaration", () => {
