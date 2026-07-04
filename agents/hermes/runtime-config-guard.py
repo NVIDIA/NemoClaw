@@ -155,6 +155,28 @@ class McpHashState:
     applied: str
 
 
+# invalidState: managed-state inspection authenticates one config snapshot, then
+# reopens mutable config and accidentally compares different bytes to host intent.
+# sourceBoundary: this guard owns the authenticated config/env/hash snapshots;
+# the transaction helper may parse the returned config text, but must revalidate
+# this opaque snapshot immediately before reporting a managed-state match.
+# whyNotSourceFix: the Hermes config has no runtime-provided authenticated read
+# API, so host reconciliation must bind its comparison to the local trust anchor.
+# regressionTest: hermes-mcp-integrity-state mutates config after authentication
+# and proves the final snapshot validation refuses the raced managed-state match.
+# removalCondition: remove this snapshot token only when Hermes exposes an
+# authenticated applied-config digest and exact config bytes through one API.
+@dataclass(frozen=True)
+class McpIntegritySnapshot:
+    state: str
+    config_text: str
+    config_path: str
+    config_snapshot: FileSnapshot
+    env_path: str
+    env_snapshot: FileSnapshot
+    hash_snapshots: tuple[tuple[str, FileSnapshot], ...]
+
+
 class OpenFile:
     def __init__(self, path: str, fd: int, snapshot: FileSnapshot):
         self.path = path
@@ -1157,7 +1179,7 @@ def _hash_text_and_mcp_digest(
     config_path: str,
     env_path: str,
     mcp_state: McpHashState | None = None,
-) -> tuple[str, FileSnapshot, FileSnapshot, str]:
+) -> tuple[str, FileSnapshot, FileSnapshot, str, str]:
     config_text, config_snapshot = _read_text(config_path, MAX_CONFIG_INPUT_BYTES)
     config_digest = hashlib.sha256(config_text.encode("utf-8")).hexdigest()
     config_entry = f"{config_digest}  {config_path}\n"
@@ -1172,6 +1194,7 @@ def _hash_text_and_mcp_digest(
         config_snapshot,
         env_snapshot,
         current_mcp,
+        config_text,
     )
 
 
@@ -1180,9 +1203,13 @@ def _hash_text(
     env_path: str,
     mcp_state: McpHashState | None = None,
 ) -> tuple[str, FileSnapshot, FileSnapshot]:
-    text, config_snapshot, env_snapshot, _current_mcp = _hash_text_and_mcp_digest(
-        config_path, env_path, mcp_state
-    )
+    (
+        text,
+        config_snapshot,
+        env_snapshot,
+        _current_mcp,
+        _config_text,
+    ) = _hash_text_and_mcp_digest(config_path, env_path, mcp_state)
     return text, config_snapshot, env_snapshot
 
 
@@ -1327,19 +1354,70 @@ def refresh_hashes(
     assert_inputs_stable()
 
 
-def inspect_mcp_integrity(hermes_dir: str, hash_file: str) -> str:
+def inspect_mcp_integrity_snapshot(
+    hermes_dir: str,
+    hash_file: str,
+    compatibility_hash_file: str | None = None,
+) -> McpIntegritySnapshot:
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
-    text = _read_hash_file(hash_file)
+    text, hash_snapshot = _read_text(hash_file, MAX_HASH_BYTES)
+    hash_snapshots = [(hash_file, hash_snapshot)]
+    if compatibility_hash_file is not None:
+        compatibility_text, compatibility_snapshot = _read_text(
+            compatibility_hash_file, MAX_HASH_BYTES
+        )
+        if not secrets.compare_digest(compatibility_text, text):
+            raise UnsafePathError(
+                "Hermes strict and compatibility MCP integrity anchors differ"
+            )
+        hash_snapshots.append((compatibility_hash_file, compatibility_snapshot))
     _config_digest, _env_digest, state = _parse_config_hash(text, config_path, env_path)
-    actual, _config_snapshot, _env_snapshot, current_mcp = _hash_text_and_mcp_digest(
-        config_path, env_path, state
-    )
+    (
+        actual,
+        config_snapshot,
+        env_snapshot,
+        current_mcp,
+        config_text,
+    ) = _hash_text_and_mcp_digest(config_path, env_path, state)
     if not secrets.compare_digest(actual, text):
         raise UnsafePathError("Hermes config hash does not match persisted inputs")
     if not secrets.compare_digest(current_mcp, state.intended):
         raise UnsafePathError("Hermes MCP config differs from persisted intended state")
-    return "pending" if state.intended != state.applied else "current"
+    return McpIntegritySnapshot(
+        state="pending" if state.intended != state.applied else "current",
+        config_text=config_text,
+        config_path=config_path,
+        config_snapshot=config_snapshot,
+        env_path=env_path,
+        env_snapshot=env_snapshot,
+        hash_snapshots=tuple(hash_snapshots),
+    )
+
+
+def assert_mcp_integrity_snapshot_current(snapshot: McpIntegritySnapshot) -> None:
+    for path, expected in (
+        (snapshot.config_path, snapshot.config_snapshot),
+        (snapshot.env_path, snapshot.env_snapshot),
+        *snapshot.hash_snapshots,
+    ):
+        try:
+            opened = _open_regular(path)
+        except OSError as exc:
+            raise UnsafePathError(
+                "refusing raced Hermes MCP integrity snapshot"
+            ) from exc
+        try:
+            if opened.snapshot != expected:
+                raise UnsafePathError("refusing raced Hermes MCP integrity snapshot")
+        finally:
+            opened.close()
+
+
+def inspect_mcp_integrity(hermes_dir: str, hash_file: str) -> str:
+    snapshot = inspect_mcp_integrity_snapshot(hermes_dir, hash_file)
+    assert_mcp_integrity_snapshot_current(snapshot)
+    return snapshot.state
 
 
 def _inode_metadata(st: os.stat_result) -> dict[str, int]:

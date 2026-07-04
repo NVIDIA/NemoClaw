@@ -440,10 +440,15 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     hash_path = (
         STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
     )
-    if guard.inspect_mcp_integrity(HERMES_DIR, hash_path) != "current":
+    compatibility_hash_path = (
+        os.path.join(HERMES_DIR, ".config-hash") if privileged else None
+    )
+    integrity = guard.inspect_mcp_integrity_snapshot(
+        HERMES_DIR, hash_path, compatibility_hash_path
+    )
+    if integrity.state != "current":
         raise RuntimeError("Hermes MCP config does not match applied gateway state")
-    config_text, _snapshot = guard._read_text(CONFIG_PATH)
-    parsed = yaml.safe_load(config_text)
+    parsed = yaml.safe_load(integrity.config_text)
     if parsed is None:
         parsed = {}
     if not isinstance(parsed, dict):
@@ -461,6 +466,7 @@ def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
     matches = matches and all(name not in servers for name in absent)
     if not matches:
         raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+    guard.assert_mcp_integrity_snapshot_current(integrity)
     return {"ok": True, "state": "matched"}
 
 

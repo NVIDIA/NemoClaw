@@ -121,11 +121,13 @@ payload = {"present": {"safe": candidate}, "absent": []}
 outcomes = {}
 for integrity_state in ("current", "pending"):
     module._load_guard = lambda state=integrity_state: types.SimpleNamespace(
-        inspect_mcp_integrity=lambda *_args: state,
-        _read_text=lambda *_args: (
-            yaml.safe_dump({"mcp_servers": {"safe": candidate}}, sort_keys=False),
-            None,
+        inspect_mcp_integrity_snapshot=lambda *_args: types.SimpleNamespace(
+            state=state,
+            config_text=yaml.safe_dump(
+                {"mcp_servers": {"safe": candidate}}, sort_keys=False
+            ),
         ),
+        assert_mcp_integrity_snapshot_current=lambda *_args: None,
     )
     try:
         outcomes[integrity_state] = module.inspect_managed_config(payload)
@@ -142,6 +144,82 @@ print(json.dumps(outcomes))
     expect(JSON.parse(result.stdout)).toEqual({
       current: { ok: true, state: "matched" },
       pending: "Hermes MCP config does not match applied gateway state",
+    });
+  });
+
+  it("refuses diverged root anchors and config races after integrity verification", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import importlib.util, json, os, sys, tempfile, yaml
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+transaction = load("mcp_tx", sys.argv[1])
+guard = load("hermes_guard", sys.argv[2])
+root = tempfile.mkdtemp(prefix="hermes-mcp-inspect-race-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+strict = os.path.join(root, "strict-hash")
+compat = os.path.join(hermes, ".config-hash")
+candidate = transaction._managed_candidate({
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+})
+with open(config, "w", encoding="utf-8") as handle:
+    handle.write(yaml.safe_dump({"mcp_servers": {"safe": candidate}}, sort_keys=False))
+with open(env, "w", encoding="utf-8") as handle:
+    handle.write("SAFE=1\n")
+hash_text, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(strict, hash_text)
+guard._write_hash(compat, "diverged\n")
+
+transaction.HERMES_DIR = hermes
+transaction.CONFIG_PATH = config
+transaction.STRICT_HASH_PATH = strict
+transaction.os.geteuid = lambda: 0
+transaction._load_guard = lambda: guard
+try:
+    transaction.inspect_managed_config({"present": {"safe": candidate}, "absent": []})
+except Exception as error:
+    diverged = str(error)
+guard._write_hash(compat, hash_text)
+original_inspect = guard.inspect_mcp_integrity_snapshot
+def race_after_authentication(*args):
+    inspection = original_inspect(*args)
+    changed = {**candidate, "url": "https://attacker.example.test/mcp"}
+    with open(config, "w", encoding="utf-8") as handle:
+        handle.write(yaml.safe_dump({"mcp_servers": {"safe": changed}}, sort_keys=False))
+    return inspection
+guard.inspect_mcp_integrity_snapshot = race_after_authentication
+
+try:
+    raced = transaction.inspect_managed_config(
+        {"present": {"safe": candidate}, "absent": []}
+    )
+except Exception as error:
+    raced = str(error)
+print(json.dumps({"diverged": diverged, "raced": raced}))
+`,
+        TRANSACTION,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      diverged: "Hermes strict and compatibility MCP integrity anchors differ",
+      raced: "refusing raced Hermes MCP integrity snapshot",
     });
   });
 
