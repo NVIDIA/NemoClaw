@@ -603,6 +603,8 @@ describe("pull request and main workflow contracts", () => {
       "src/lib/runner.ts",
       "test/runner.test.ts",
       "tools/e2e/workflow-boundary.mts",
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
       "nemoclaw-blueprint/scripts/render.ts",
       "src/lib/actions/sandbox/credentials.json",
       "package.json",
@@ -616,8 +618,7 @@ describe("pull request and main workflow contracts", () => {
       ".agents/skills/example/scripts/unchecked.ts",
       "agents/hermes/start.sh",
       "docs/get-started/quickstart.mdx",
-      "nemoclaw/src/lib/subprocess-env.ts",
-      "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw/src/commands/status.ts",
       "scripts/check.js",
     ]) {
       expect(files.test(path), path).toBe(false);
@@ -625,6 +626,7 @@ describe("pull request and main workflow contracts", () => {
     for (const path of [
       "nemoclaw/src/lib/subprocess-env.ts",
       "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw/src/commands/status.ts",
     ]) {
       expect(pluginFiles.test(path), path).toBe(true);
     }
