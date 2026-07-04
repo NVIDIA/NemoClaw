@@ -260,9 +260,10 @@ export function resolveSandboxBaseImage(
   } else {
     const rootDir = options.rootDir || ROOT;
     const inputPaths = [options.dockerfilePath];
+    const preferPinnedRemoteRef = options.preferPinnedRemoteRef === true;
     if (baseImageInputsDirty(rootDir, env, inputPaths)) return resolveChangedInputs();
 
-    if (options.preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (preferPinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,
@@ -286,7 +287,7 @@ export function resolveSandboxBaseImage(
 
     if (baseImageInputsChangedSinceMain(rootDir, env, inputPaths)) return resolveChangedInputs();
 
-    if (!options.preferPinnedRemoteRef && options.pinnedRemoteRef) {
+    if (!preferPinnedRemoteRef && options.pinnedRemoteRef) {
       const resolved = resolvePulledCandidate(
         options.imageName,
         options.pinnedRemoteRef,

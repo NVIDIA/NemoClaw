@@ -51,7 +51,7 @@ export function createSandboxBaseImageResolutionKey(options: ResolveBaseImageOpt
     imageName: options.imageName,
     override,
     pinnedRemoteRef: options.pinnedRemoteRef || null,
-    preferPinnedRemoteRef: options.preferPinnedRemoteRef === true,
+    ...(options.preferPinnedRemoteRef === true ? { preferPinnedRemoteRef: true } : {}),
     versionTags: getVersionedBaseImageTags(rootDir, env),
     sourceTags: getSourceShortShaTags(rootDir, env),
     localTag: options.localTag,
