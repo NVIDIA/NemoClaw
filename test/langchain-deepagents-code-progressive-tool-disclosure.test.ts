@@ -336,7 +336,10 @@ print(json.dumps({
   return JSON.parse(result.stdout) as Record<string, unknown>;
 }
 
-function runHarness(scenario: "behavior" | "persistence" | "isolation", target = middlewarePath) {
+function runHarness(
+  scenario: "behavior" | "overflow" | "persistence" | "isolation",
+  target = middlewarePath,
+) {
   const result = spawnSync("python3", [harnessPath, scenario, target], { encoding: "utf8" });
   expect(result.status, result.stderr).toBe(0);
   return JSON.parse(result.stdout) as Record<string, unknown>;
@@ -355,6 +358,37 @@ describe("Deep Agents progressive tool disclosure", () => {
       "read_file",
     ]);
     expect(result.max_query_length).toBe(256);
+    expect(result.provider_native_preserved).toBe(true);
+  });
+
+  it("bounds broad catalog output, persisted discovery, and visible schemas deterministically", () => {
+    const result = runHarness("overflow");
+    expect(result.result_limit).toBe(20);
+    expect(result.description_chars).toBe(256);
+    expect(result.output_bytes_limit).toBe(8192);
+    expect(result.output_bytes).toBeLessThanOrEqual(8192);
+    expect(result.discovered_count).toBe(20);
+    expect(result.discovery_limit).toBe(64);
+    expect(result.discovery_name_bytes).toBe(120);
+    expect(result.discovery_state_bytes_limit).toBe(8192);
+    expect(result.discovery_state_bytes).toBeLessThanOrEqual(8192);
+    expect(result.long_state_count).toBe(64);
+    expect(result.state_count).toBe(64);
+    expect(result.single_schema_bytes_limit).toBe(16384);
+    expect(result.visible_schema_bytes_limit).toBe(131072);
+    expect(result.visible_schema_count).toBeGreaterThan(0);
+    expect(result.visible_schema_count).toBeLessThan(64);
+    expect(result.oversized_schema_omitted).toBe(true);
+    expect(result.state_blocked).toBe(true);
+    expect(result.schema_blocked).toBe(true);
+    expect(result.search_to_request_consistent).toBe(true);
+    expect(result.core_schema_limits_exempt).toBe(true);
+    expect(result.reducer_associative).toBe(true);
+    expect(result.concurrent_response_bounded).toBe(true);
+    expect(result.sequential_visibility_monotonic).toBe(true);
+    expect(result.duplicate_first_wins).toBe(true);
+    expect(result.empty_names_preserved).toBe(true);
+    expect(result.provider_native_preserved).toBe(true);
   });
 
   it("restores discovered tools after compaction and session reconstruction", () => {

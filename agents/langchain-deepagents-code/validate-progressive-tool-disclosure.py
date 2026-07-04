@@ -12,10 +12,19 @@ from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
+from deepagents_code import progressive_tool_disclosure as disclosure
 from deepagents_code.agent import create_cli_agent
 from deepagents_code.mcp_tools import MCPServerInfo, MCPToolInfo
 from deepagents_code.progressive_tool_disclosure import (
+    MAX_DISCOVERED_STATE_BYTES,
+    MAX_DISCOVERED_TOOL_NAME_BYTES,
+    MAX_DISCOVERED_TOOLS,
+    MAX_SEARCH_DESCRIPTION_CHARS,
+    MAX_SEARCH_OUTPUT_BYTES,
     MAX_SEARCH_QUERY_LENGTH,
+    MAX_SEARCH_RESULTS,
+    MAX_SINGLE_TOOL_SCHEMA_BYTES,
+    MAX_VISIBLE_DISCOVERED_SCHEMA_BYTES,
     ProgressiveToolDisclosureMiddleware,
     SearchToolsInput,
     progressive_tool_disclosure_enabled,
@@ -239,6 +248,394 @@ def _validate_versions_and_schema() -> None:
     public_args = ProgressiveToolDisclosureMiddleware().tools[0].args
     assert set(public_args) == {"query"}
     assert public_args["query"]["maxLength"] == MAX_SEARCH_QUERY_LENGTH
+    description = ProgressiveToolDisclosureMiddleware().tools[0].description
+    for limit in (
+        MAX_SEARCH_RESULTS,
+        MAX_SEARCH_DESCRIPTION_CHARS,
+        MAX_SEARCH_OUTPUT_BYTES,
+        MAX_DISCOVERED_TOOLS,
+        MAX_DISCOVERED_TOOL_NAME_BYTES,
+        MAX_DISCOVERED_STATE_BYTES,
+        MAX_SINGLE_TOOL_SCHEMA_BYTES,
+        MAX_VISIBLE_DISCOVERED_SCHEMA_BYTES,
+    ):
+        assert str(limit) in description
+
+
+class _RequestProbe:
+    """Minimal request shape for exact middleware filtering validation."""
+
+    def __init__(self, tools: list[Any], state: dict[str, Any]) -> None:
+        self.tools = tools
+        self.state = state
+
+    def override(self, **changes: Any) -> _RequestProbe:
+        return _RequestProbe(
+            changes.get("tools", self.tools), changes.get("state", self.state)
+        )
+
+
+class _RuntimeProbe:
+    """Minimal runtime shape for exact search result validation."""
+
+    def __init__(self, tools: list[Any], state: dict[str, Any] | None = None) -> None:
+        self.tools = tools
+        self.state = state or {}
+        self.tool_call_id = "bounded-search"
+
+
+def _validate_bounded_catalog_and_provider_native_tools() -> None:
+    middleware = ProgressiveToolDisclosureMiddleware()
+    description = "bulk capability " + ("🧰" * 1024)
+    catalog = [
+        {
+            "type": "function",
+            "function": {
+                "name": f"bulk_{index:04d}",
+                "description": description,
+            },
+        }
+        for index in range(1000)
+    ]
+    provider_native = {"type": "provider-native", "opaque": object()}
+    tools: list[Any] = [*catalog, middleware.tools[0], provider_native]
+
+    result = middleware._search_tools(  # noqa: SLF001
+        "bulk capability", _RuntimeProbe(tools)
+    )
+    reversed_result = middleware._search_tools(  # noqa: SLF001
+        "bulk capability", _RuntimeProbe(list(reversed(tools)))
+    )
+    expected = [f"bulk_{index:04d}" for index in range(MAX_SEARCH_RESULTS)]
+    assert result.update["discovered_tools"] == expected
+    assert reversed_result.update["discovered_tools"] == expected
+    content = result.update["messages"][0].content
+    assert reversed_result.update["messages"][0].content == content
+    assert len(content.encode("utf-8")) <= MAX_SEARCH_OUTPUT_BYTES
+    assert "Search output truncated" in content
+    assert ("🧰" * MAX_SEARCH_DESCRIPTION_CHARS) not in content
+    first_state = disclosure._merge_discovered_tools(  # noqa: SLF001
+        None, result.update["discovered_tools"]
+    )
+    first_visible = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(tools, {"discovered_tools": first_state})
+    )
+    assert set(expected).issubset(
+        {_tool_name(tool_value) for tool_value in first_visible.tools}
+    )
+
+    all_names = [f"bulk_{index:04d}" for index in range(1000)]
+    bounded_state = disclosure._merge_discovered_tools(None, all_names)  # noqa: SLF001
+    assert bounded_state == all_names[:MAX_DISCOVERED_TOOLS]
+    assert (
+        disclosure._discovered_state_bytes(bounded_state)  # noqa: SLF001
+        <= MAX_DISCOVERED_STATE_BYTES
+    )
+    assert (
+        disclosure._merge_discovered_tools(  # noqa: SLF001
+            None, list(reversed(all_names))
+        )
+        == bounded_state
+    )
+    assert (
+        disclosure._merge_discovered_tools(  # noqa: SLF001
+            all_names[:40], all_names[40:100]
+        )
+        == disclosure._merge_discovered_tools(  # noqa: SLF001
+            all_names[40:100], all_names[:40]
+        )
+        == bounded_state
+    )
+    long_names = [f"long_{index:04d}_" + ("🧰" * 25) for index in range(64)]
+    long_state = disclosure._merge_discovered_tools(None, long_names)  # noqa: SLF001
+    assert len(long_state) == MAX_DISCOVERED_TOOLS
+    assert (
+        disclosure._discovered_state_bytes(long_state)  # noqa: SLF001
+        <= MAX_DISCOVERED_STATE_BYTES
+    )
+    overlong_name = "🧰" * ((MAX_DISCOVERED_TOOL_NAME_BYTES // 4) + 1)
+    assert disclosure._merge_discovered_tools(None, [overlong_name]) == []  # noqa: SLF001
+    part_a, part_b, part_c = all_names[:50], all_names[50:100], all_names[100:150]
+    assert (
+        disclosure._merge_discovered_tools(  # noqa: SLF001
+            disclosure._merge_discovered_tools(part_a, part_b),  # noqa: SLF001
+            part_c,
+        )
+        == disclosure._merge_discovered_tools(  # noqa: SLF001
+            part_a,
+            disclosure._merge_discovered_tools(part_b, part_c),  # noqa: SLF001
+        )
+        == disclosure._merge_discovered_tools(  # noqa: SLF001
+            None, [*part_a, *part_b, *part_c]
+        )
+    )
+    varying_a = [f"b{index:02d}_" + ("x" * (index % 80)) for index in range(64)]
+    varying_b = ["z"]
+    varying_c = ["a"]
+    assert (
+        disclosure._merge_discovered_tools(  # noqa: SLF001
+            disclosure._merge_discovered_tools(varying_a, varying_b),  # noqa: SLF001
+            varying_c,
+        )
+        == disclosure._merge_discovered_tools(  # noqa: SLF001
+            varying_a,
+            disclosure._merge_discovered_tools(varying_b, varying_c),  # noqa: SLF001
+        )
+        == disclosure._merge_discovered_tools(  # noqa: SLF001
+            None, [*varying_a, *varying_b, *varying_c]
+        )
+    )
+
+    prepared = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(tools, {"discovered_tools": all_names})
+    )
+    visible_schemas = [
+        tool_value
+        for tool_value in prepared.tools
+        if _tool_name(tool_value).startswith("bulk_")
+    ]
+    assert 0 < len(visible_schemas) < MAX_DISCOVERED_TOOLS
+    assert (
+        sum(
+            disclosure._serialized_tool_schema_bytes(tool_value) or 0  # noqa: SLF001
+            for tool_value in visible_schemas
+        )
+        <= MAX_VISIBLE_DISCOVERED_SCHEMA_BYTES
+    )
+    reversed_prepared = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(list(reversed(tools)), {"discovered_tools": all_names})
+    )
+    assert sorted(_tool_name(tool_value) for tool_value in prepared.tools) == sorted(
+        _tool_name(tool_value) for tool_value in reversed_prepared.tools
+    )
+    assert prepared.tools[-1] is provider_native
+    initial = middleware._prepare_request(_RequestProbe(tools, {}))  # noqa: SLF001
+    assert initial.tools[-1] is provider_native
+
+    state_blocked = middleware._search_tools(  # noqa: SLF001
+        "bulk_0999", _RuntimeProbe(tools, {"discovered_tools": bounded_state})
+    )
+    assert "discovered_tools" not in state_blocked.update
+    assert (
+        "thread discovery state is limited"
+        in state_blocked.update["messages"][0].content
+    )
+    high_state = [f"z_current_{index:04d}" for index in range(64)]
+    earlier_state_tool = {
+        "type": "function",
+        "function": {
+            "name": "a_earlier",
+            "description": "earlier state candidate",
+        },
+    }
+    high_state_tools = [
+        *[
+            {
+                "type": "function",
+                "function": {"name": name, "description": "existing"},
+            }
+            for name in high_state
+        ],
+        earlier_state_tool,
+        middleware.tools[0],
+    ]
+    earlier_state_blocked = middleware._search_tools(  # noqa: SLF001
+        "a_earlier",
+        _RuntimeProbe(high_state_tools, {"discovered_tools": high_state}),
+    )
+    assert "discovered_tools" not in earlier_state_blocked.update
+    assert (
+        disclosure._merge_discovered_tools(  # noqa: SLF001
+            high_state, earlier_state_blocked.update.get("discovered_tools")
+        )
+        == high_state
+    )
+
+    schema_full_state = all_names[: len(visible_schemas)]
+    schema_blocked = middleware._search_tools(  # noqa: SLF001
+        all_names[len(visible_schemas)],
+        _RuntimeProbe(tools, {"discovered_tools": schema_full_state}),
+    )
+    assert "discovered_tools" not in schema_blocked.update
+    assert (
+        "discovered schemas are limited" in schema_blocked.update["messages"][0].content
+    )
+    earlier_schema = {
+        "type": "function",
+        "function": {"name": "aaa_schema", "description": description},
+    }
+    earlier_tools = [earlier_schema, *tools]
+    earlier_blocked = middleware._search_tools(  # noqa: SLF001
+        "aaa_schema",
+        _RuntimeProbe(earlier_tools, {"discovered_tools": schema_full_state}),
+    )
+    assert "discovered_tools" not in earlier_blocked.update
+    assert (
+        "discovered schemas are limited"
+        in earlier_blocked.update["messages"][0].content
+    )
+
+    oversized_schema = {
+        "type": "function",
+        "function": {
+            "name": "oversized_schema",
+            "description": "oversized capability",
+            "parameters": {
+                "properties": {
+                    "payload": {"const": "x" * MAX_SINGLE_TOOL_SCHEMA_BYTES}
+                },
+                "type": "object",
+            },
+        },
+    }
+    overlong_tool = {
+        "type": "function",
+        "function": {
+            "name": overlong_name,
+            "description": "overlong capability",
+            "parameters": {"properties": {}, "type": "object"},
+        },
+    }
+    unserializable_schema = {
+        "type": "function",
+        "function": {
+            "name": "unserializable_schema",
+            "description": "unserializable capability",
+            "parameters": {
+                "properties": {"payload": {"const": object()}},
+                "type": "object",
+            },
+        },
+    }
+    ineligible_tools = [
+        oversized_schema,
+        overlong_tool,
+        unserializable_schema,
+        middleware.tools[0],
+        provider_native,
+    ]
+    for query, name in (
+        ("oversized capability", "oversized_schema"),
+        ("overlong capability", overlong_name),
+        ("unserializable capability", "unserializable_schema"),
+    ):
+        omitted = middleware._search_tools(  # noqa: SLF001
+            query, _RuntimeProbe(ineligible_tools)
+        )
+        assert "discovered_tools" not in omitted.update
+        assert "No hidden tools matched" in omitted.update["messages"][0].content
+        filtered = middleware._prepare_request(  # noqa: SLF001
+            _RequestProbe(ineligible_tools, {"discovered_tools": [name]})
+        )
+        assert oversized_schema not in filtered.tools
+        assert overlong_tool not in filtered.tools
+        assert unserializable_schema not in filtered.tools
+        assert filtered.tools[-1] is provider_native
+
+    oversized_core = {
+        "name": "ls",
+        "description": "oversized core",
+        "parameters": {
+            "properties": {"payload": {"const": "x" * MAX_SINGLE_TOOL_SCHEMA_BYTES}},
+            "type": "object",
+        },
+    }
+    unserializable_core = {
+        "name": "read_file",
+        "description": "unserializable core",
+        "parameters": {
+            "properties": {"payload": {"const": object()}},
+            "type": "object",
+        },
+    }
+    core_request = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(
+            [oversized_core, unserializable_core, middleware.tools[0]],
+            {},
+        )
+    )
+    assert core_request.tools[0] is oversized_core
+    assert core_request.tools[1] is unserializable_core
+
+    duplicate_first = {
+        "type": "function",
+        "function": {
+            "name": "duplicate_probe",
+            "description": "first duplicate description",
+        },
+    }
+    duplicate_second = {
+        "type": "function",
+        "function": {
+            "name": "duplicate_probe",
+            "description": "second duplicate description",
+        },
+    }
+    duplicate_tools = [duplicate_first, duplicate_second, middleware.tools[0]]
+    duplicate_result = middleware._search_tools(  # noqa: SLF001
+        "duplicate_probe", _RuntimeProbe(duplicate_tools)
+    )
+    duplicate_content = duplicate_result.update["messages"][0].content
+    assert "first duplicate description" in duplicate_content
+    assert "second duplicate description" not in duplicate_content
+    duplicate_visible = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(duplicate_tools, {"discovered_tools": ["duplicate_probe"]})
+    )
+    assert duplicate_visible.tools[0] is duplicate_first
+    assert duplicate_second not in duplicate_visible.tools
+
+    empty_top_level = {"name": "", "description": "empty top-level name"}
+    empty_nested = {"type": "function", "function": {"name": ""}}
+    empty_visible = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe([empty_top_level, empty_nested, middleware.tools[0]], {})
+    )
+    assert empty_visible.tools[0] is empty_top_level
+    assert empty_visible.tools[1] is empty_nested
+
+    concurrent_state = [f"base_{index:04d}" for index in range(63)]
+    concurrent_tools = [
+        *[
+            {
+                "type": "function",
+                "function": {"name": name, "description": "existing"},
+            }
+            for name in concurrent_state
+        ],
+        {
+            "type": "function",
+            "function": {"name": "a_new", "description": "concurrent capacity"},
+        },
+        {
+            "type": "function",
+            "function": {"name": "z_new", "description": "concurrent capacity"},
+        },
+        middleware.tools[0],
+    ]
+    concurrent_results = [
+        middleware._search_tools(  # noqa: SLF001
+            name,
+            _RuntimeProbe(concurrent_tools, {"discovered_tools": concurrent_state}),
+        )
+        for name in ("a_new", "z_new")
+    ]
+    assert all(
+        "exposing" not in result.update["messages"][0].content
+        for result in concurrent_results
+    )
+    concurrent_updates = disclosure._merge_discovered_tools(  # noqa: SLF001
+        concurrent_results[0].update.get("discovered_tools"),
+        concurrent_results[1].update.get("discovered_tools"),
+    )
+    concurrent_merged = disclosure._merge_discovered_tools(  # noqa: SLF001
+        concurrent_state, concurrent_updates
+    )
+    assert len(concurrent_merged) == MAX_DISCOVERED_TOOLS
+    concurrent_visible = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(concurrent_tools, {"discovered_tools": concurrent_merged})
+    )
+    assert {
+        _tool_name(tool_value) for tool_value in concurrent_visible.tools
+    }.issuperset(concurrent_merged)
 
 
 def _validate_guessed_tool_execution() -> None:
@@ -452,6 +849,7 @@ def _validate_local_subagent_isolation() -> None:
 
 def main() -> None:
     _validate_versions_and_schema()
+    _validate_bounded_catalog_and_provider_native_tools()
     _validate_guessed_tool_execution()
     _validate_direct_mode_execution()
     _validate_checkpoints_and_threads()
