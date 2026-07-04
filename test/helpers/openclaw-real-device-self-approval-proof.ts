@@ -228,6 +228,596 @@ function requireExactScopes(value: unknown, expected: string[], label: string): 
   );
 }
 
+type PairingStateSide = "pending" | "paired";
+
+interface PairingTransactionFixture {
+  beforePaired: Record<string, unknown>;
+  beforePending: Record<string, unknown>;
+  deviceId: string;
+  journalPath: string;
+  pairedPath: string;
+  pendingPath: string;
+  publicKey: string;
+  requestId: string;
+  stateDir: string;
+}
+
+interface PreparedPairingJournal {
+  afterPaired: Record<string, unknown>;
+  afterPending: Record<string, unknown>;
+  beforePaired: Record<string, unknown>;
+  beforePending: Record<string, unknown>;
+}
+
+function requireJsonEqual(actual: unknown, expected: unknown, label: string): void {
+  requireLiveProof(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${label}: JSON state did not match`,
+  );
+}
+
+function requireExactObjectKeys(
+  value: Record<string, unknown>,
+  expected: string[],
+  label: string,
+): void {
+  requireLiveProof(
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort()),
+    `${label}: object keys did not match`,
+  );
+}
+
+function requireIdlePairingJournal(journalPath: string, label: string): void {
+  const journal = readJsonObject(journalPath, label);
+  requireExactObjectKeys(journal, ["version", "kind", "phase"], label);
+  requireLiveProof(
+    journal.version === 1 && journal.kind === "nemoclaw-self-approval" && journal.phase === "idle",
+    `${label}: expected an idle v1 self-approval journal`,
+  );
+}
+
+function requirePreparedPairingJournal(
+  fixture: PairingTransactionFixture,
+  label: string,
+): PreparedPairingJournal {
+  const journal = readJsonObject(fixture.journalPath, label);
+  requireExactObjectKeys(
+    journal,
+    ["version", "kind", "phase", "requestId", "deviceId", "before", "after"],
+    label,
+  );
+  requireLiveProof(
+    journal.version === 1 &&
+      journal.kind === "nemoclaw-self-approval" &&
+      journal.phase === "prepared" &&
+      journal.requestId === fixture.requestId &&
+      journal.deviceId === fixture.deviceId,
+    `${label}: expected the exact prepared self-approval transaction`,
+  );
+  const before = asRecord(journal.before);
+  const after = asRecord(journal.after);
+  requireLiveProof(before && after, `${label}: before/after snapshots missing`);
+  requireExactObjectKeys(before, ["pendingById", "pairedByDeviceId"], `${label} before`);
+  requireExactObjectKeys(after, ["pendingById", "pairedByDeviceId"], `${label} after`);
+  const beforePending = asRecord(before.pendingById);
+  const beforePaired = asRecord(before.pairedByDeviceId);
+  const afterPending = asRecord(after.pendingById);
+  const afterPaired = asRecord(after.pairedByDeviceId);
+  requireLiveProof(
+    beforePending && beforePaired && afterPending && afterPaired,
+    `${label}: state snapshots must be plain records`,
+  );
+  requireJsonEqual(beforePending, fixture.beforePending, `${label} pending before-image`);
+  requireJsonEqual(beforePaired, fixture.beforePaired, `${label} paired before-image`);
+  requireLiveProof(
+    !(fixture.requestId in afterPending),
+    `${label}: pending after-image retained the approved request`,
+  );
+  const pairedAfter = asRecord(afterPaired[fixture.deviceId]);
+  requireLiveProof(
+    pairedAfter?.deviceId === fixture.deviceId && pairedAfter.publicKey === fixture.publicKey,
+    `${label}: paired after-image identity changed`,
+  );
+  const operatorAfter = requireOperatorToken(pairedAfter, `${label} paired after-image`);
+  const pairedBefore = asRecord(fixture.beforePaired[fixture.deviceId]);
+  requireLiveProof(pairedBefore, `${label}: paired before-image device missing`);
+  const operatorBefore = requireOperatorToken(pairedBefore, `${label} paired before-image`);
+  requireLiveProof(
+    typeof operatorAfter.token === "string" &&
+      operatorAfter.token.length > 0 &&
+      operatorAfter.token !== operatorBefore.token,
+    `${label}: paired after-image did not rotate the operator token`,
+  );
+  requireExactScopes(
+    operatorAfter.scopes,
+    ["operator.pairing", "operator.read", "operator.write"],
+    `${label} paired after-image operator scopes`,
+  );
+  requireJsonEqual(
+    afterPending.unrelated,
+    fixture.beforePending.unrelated,
+    `${label} unrelated pending after-image`,
+  );
+  requireJsonEqual(
+    afterPaired["unrelated-device"],
+    fixture.beforePaired["unrelated-device"],
+    `${label} unrelated paired after-image`,
+  );
+  return { beforePending, beforePaired, afterPending, afterPaired };
+}
+
+function requirePairingState(
+  fixture: PairingTransactionFixture,
+  expectedPending: Record<string, unknown>,
+  expectedPaired: Record<string, unknown>,
+  label: string,
+): void {
+  requireJsonEqual(readJsonObject(fixture.pendingPath, `${label} pending`), expectedPending, label);
+  requireJsonEqual(readJsonObject(fixture.pairedPath, `${label} paired`), expectedPaired, label);
+}
+
+function createPairingTransactionFixture(
+  tmp: string,
+  label: string,
+  journalBasename: string,
+): PairingTransactionFixture {
+  const stateDir = path.join(tmp, `device-approval-transaction-${label}`);
+  const devicesDir = path.join(stateDir, "devices");
+  fs.rmSync(stateDir, { force: true, recursive: true });
+  fs.mkdirSync(devicesDir, { recursive: true });
+  const requestId = `transaction-request-${label}`;
+  const deviceId = `transaction-device-${label}`;
+  const publicKey = `transaction-public-key-${label}`;
+  const now = Date.now();
+  const beforePending = {
+    [requestId]: {
+      requestId,
+      deviceId,
+      publicKey,
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.write"],
+      isRepair: true,
+      ts: now,
+    },
+    unrelated: {
+      requestId: "unrelated",
+      deviceId: "unrelated-device",
+      publicKey: "unrelated-public-key",
+      clientId: "cli",
+      clientMode: "cli",
+      role: "operator",
+      roles: ["operator"],
+      scopes: ["operator.pairing"],
+      ts: now,
+    },
+  };
+  const pairedDevice = (id: string, key: string, token: string) => ({
+    deviceId: id,
+    publicKey: key,
+    clientId: "cli",
+    clientMode: "cli",
+    role: "operator",
+    roles: ["operator"],
+    scopes: ["operator.pairing"],
+    approvedScopes: ["operator.pairing"],
+    tokens: {
+      operator: {
+        token,
+        role: "operator",
+        scopes: ["operator.pairing"],
+        createdAtMs: now,
+      },
+    },
+    createdAtMs: now,
+    approvedAtMs: now,
+  });
+  const beforePaired = {
+    [deviceId]: pairedDevice(deviceId, publicKey, `baseline-token-${label}`),
+    "unrelated-device": pairedDevice(
+      "unrelated-device",
+      "unrelated-public-key",
+      `unrelated-token-${label}`,
+    ),
+  };
+  const pendingPath = path.join(devicesDir, "pending.json");
+  const pairedPath = path.join(devicesDir, "paired.json");
+  fs.writeFileSync(pendingPath, JSON.stringify(beforePending));
+  fs.writeFileSync(pairedPath, JSON.stringify(beforePaired));
+  return {
+    beforePaired,
+    beforePending,
+    deviceId,
+    journalPath: path.join(devicesDir, journalBasename),
+    pairedPath,
+    pendingPath,
+    publicKey,
+    requestId,
+    stateDir,
+  };
+}
+
+function discoverSelfApprovalJournalBasename(source: string): string {
+  const candidates = [...source.matchAll(/["']([^"']*nemoclaw-self-approval-journal)["']/g)].map(
+    (match) => match[1] as string,
+  );
+  const suffixes = [
+    ...new Set(candidates.filter((candidate) => /^\.[a-z0-9.-]+$/.test(candidate))),
+  ];
+  requireLiveProof(
+    suffixes.length === 1,
+    `self-approval journal contract: expected one safe suffix literal, found ${suffixes.length}`,
+  );
+  return `pending.json${suffixes[0]}`;
+}
+
+function requireCompletedPairingApproval(fixture: PairingTransactionFixture, label: string): void {
+  const pending = readJsonObject(fixture.pendingPath, `${label} pending`);
+  const paired = readJsonObject(fixture.pairedPath, `${label} paired`);
+  requireExactObjectKeys(pending, ["unrelated"], `${label} pending`);
+  requireExactObjectKeys(paired, [fixture.deviceId, "unrelated-device"], `${label} paired`);
+  requireJsonEqual(
+    pending.unrelated,
+    fixture.beforePending.unrelated,
+    `${label} unrelated pending request`,
+  );
+  requireJsonEqual(
+    paired["unrelated-device"],
+    fixture.beforePaired["unrelated-device"],
+    `${label} unrelated paired device`,
+  );
+  const pairedAfter = asRecord(paired[fixture.deviceId]);
+  const pairedBefore = asRecord(fixture.beforePaired[fixture.deviceId]);
+  requireLiveProof(
+    pairedAfter?.deviceId === fixture.deviceId &&
+      pairedAfter.publicKey === fixture.publicKey &&
+      pairedBefore,
+    `${label}: approved device identity changed`,
+  );
+  const operatorAfter = requireOperatorToken(pairedAfter, `${label} approved device`);
+  const operatorBefore = requireOperatorToken(pairedBefore, `${label} baseline device`);
+  requireLiveProof(
+    typeof operatorAfter.token === "string" &&
+      operatorAfter.token.length > 0 &&
+      operatorAfter.token !== operatorBefore.token,
+    `${label}: approval did not rotate the operator token`,
+  );
+  requireExactScopes(
+    operatorAfter.scopes,
+    ["operator.pairing", "operator.read", "operator.write"],
+    `${label} approved operator scopes`,
+  );
+  requireIdlePairingJournal(fixture.journalPath, `${label} journal`);
+}
+
+function runPairingCrashDirectionProof(
+  options: ProofOptions,
+  deviceBootstrapUrl: string,
+  journalBasename: string,
+  durableSide: PairingStateSide,
+): void {
+  const fixture = createPairingTransactionFixture(
+    options.tmp,
+    `crash-${durableSide}`,
+    journalBasename,
+  );
+  const durablePath = durableSide === "pending" ? fixture.pendingPath : fixture.pairedPath;
+  const interruptedPath = durableSide === "pending" ? fixture.pairedPath : fixture.pendingPath;
+  const crash = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import fs from "node:fs";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+const requireEnv = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error("missing " + name);
+  return value;
+};
+const stateDir = requireEnv("NEMOCLAW_DEVICE_APPROVAL_STATE");
+const durablePath = path.resolve(requireEnv("NEMOCLAW_DURABLE_STATE_PATH"));
+const interruptedPath = path.resolve(requireEnv("NEMOCLAW_INTERRUPTED_STATE_PATH"));
+const promises = fs.promises;
+const rename = promises.rename.bind(promises);
+let resolveDurable;
+let rejectDurable;
+const durableCompleted = new Promise((resolve, reject) => {
+  resolveDurable = resolve;
+  rejectDurable = reject;
+});
+let durableSeen = false;
+let interruptedSeen = false;
+Object.defineProperty(promises, "rename", {
+  configurable: true,
+  writable: true,
+  value: async (source, destination) => {
+    const target = path.resolve(String(destination));
+    if (target === durablePath && !durableSeen) {
+      durableSeen = true;
+      try {
+        await rename(source, destination);
+        resolveDurable();
+        return;
+      } catch (error) {
+        rejectDurable(error);
+        throw error;
+      }
+    }
+    if (target === interruptedPath && !interruptedSeen) {
+      interruptedSeen = true;
+      await durableCompleted;
+      await delay(100);
+      process.kill(process.pid, "SIGKILL");
+      await new Promise(() => {});
+    }
+    return await rename(source, destination);
+  },
+});
+const { approveDevicePairing } = await import(requireEnv("NEMOCLAW_DEVICE_BOOTSTRAP_URL"));
+const result = await approveDevicePairing(requireEnv("NEMOCLAW_REQUEST_ID"), {
+  callerScopes: ["operator.pairing"],
+  nemoclawSelfApprovalIdentity: {
+    deviceId: requireEnv("NEMOCLAW_DEVICE_ID"),
+    publicKey: requireEnv("NEMOCLAW_PUBLIC_KEY"),
+    role: "operator",
+    clientId: "cli",
+    clientMode: "cli",
+  },
+}, stateDir);
+if (result?.status !== "approved") throw new Error("injected crash path escaped approval");
+throw new Error("injected crash did not terminate the process");
+`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_DEVICE_APPROVAL_STATE: fixture.stateDir,
+        NEMOCLAW_DEVICE_BOOTSTRAP_URL: deviceBootstrapUrl,
+        NEMOCLAW_DEVICE_ID: fixture.deviceId,
+        NEMOCLAW_DURABLE_STATE_PATH: durablePath,
+        NEMOCLAW_INTERRUPTED_STATE_PATH: interruptedPath,
+        NEMOCLAW_PUBLIC_KEY: fixture.publicKey,
+        NEMOCLAW_REQUEST_ID: fixture.requestId,
+        OPENCLAW_STATE_DIR: fixture.stateDir,
+      },
+      timeout: options.timeoutMs,
+    },
+  );
+  requireLiveProof(
+    crash.status === null && crash.signal === "SIGKILL",
+    `real-dist ${durableSide}-first transaction: expected the injected SIGKILL`,
+  );
+
+  const prepared = requirePreparedPairingJournal(
+    fixture,
+    `real-dist ${durableSide}-first transaction journal`,
+  );
+  requirePairingState(
+    fixture,
+    durableSide === "pending" ? prepared.afterPending : prepared.beforePending,
+    durableSide === "paired" ? prepared.afterPaired : prepared.beforePaired,
+    `real-dist ${durableSide}-first mixed transaction`,
+  );
+
+  const restart = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import fs from "node:fs";
+const requireEnv = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error("missing " + name);
+  return value;
+};
+const stateDir = requireEnv("NEMOCLAW_DEVICE_APPROVAL_STATE");
+const pendingPath = requireEnv("NEMOCLAW_PENDING_STATE_PATH");
+const pairedPath = requireEnv("NEMOCLAW_PAIRED_STATE_PATH");
+const journalPath = requireEnv("NEMOCLAW_JOURNAL_PATH");
+const { listDevicePairing } = await import(requireEnv("NEMOCLAW_DEVICE_BOOTSTRAP_URL"));
+if (typeof listDevicePairing !== "function") throw new Error("reviewed pairing list export missing");
+await listDevicePairing(stateDir);
+const first = [pendingPath, pairedPath, journalPath].map((file) => fs.readFileSync(file, "utf8"));
+const journal = JSON.parse(first[2]);
+if (journal?.version !== 1 || journal?.kind !== "nemoclaw-self-approval" || journal?.phase !== "idle") {
+  throw new Error("fresh restart did not leave an idle transaction journal");
+}
+await listDevicePairing(stateDir);
+const second = [pendingPath, pairedPath, journalPath].map((file) => fs.readFileSync(file, "utf8"));
+if (JSON.stringify(first) !== JSON.stringify(second)) throw new Error("second recovery pass changed state");
+`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_DEVICE_APPROVAL_STATE: fixture.stateDir,
+        NEMOCLAW_DEVICE_BOOTSTRAP_URL: deviceBootstrapUrl,
+        NEMOCLAW_JOURNAL_PATH: fixture.journalPath,
+        NEMOCLAW_PAIRED_STATE_PATH: fixture.pairedPath,
+        NEMOCLAW_PENDING_STATE_PATH: fixture.pendingPath,
+        OPENCLAW_STATE_DIR: fixture.stateDir,
+      },
+      timeout: options.timeoutMs,
+    },
+  );
+  requireSuccess(restart, `recover real-dist ${durableSide}-first transaction`);
+  requirePairingState(
+    fixture,
+    fixture.beforePending,
+    fixture.beforePaired,
+    `real-dist ${durableSide}-first rollback`,
+  );
+  requireIdlePairingJournal(fixture.journalPath, `real-dist ${durableSide}-first rollback journal`);
+
+  const retry = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+const requireEnv = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error("missing " + name);
+  return value;
+};
+const stateDir = requireEnv("NEMOCLAW_DEVICE_APPROVAL_STATE");
+const { approveDevicePairing, listDevicePairing } = await import(requireEnv("NEMOCLAW_DEVICE_BOOTSTRAP_URL"));
+await listDevicePairing(stateDir);
+const result = await approveDevicePairing(requireEnv("NEMOCLAW_REQUEST_ID"), {
+  callerScopes: ["operator.pairing"],
+  nemoclawSelfApprovalIdentity: {
+    deviceId: requireEnv("NEMOCLAW_DEVICE_ID"),
+    publicKey: requireEnv("NEMOCLAW_PUBLIC_KEY"),
+    role: "operator",
+    clientId: "cli",
+    clientMode: "cli",
+  },
+}, stateDir);
+if (result?.status !== "approved") throw new Error("approval retry did not succeed");
+await listDevicePairing(stateDir);
+`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_DEVICE_APPROVAL_STATE: fixture.stateDir,
+        NEMOCLAW_DEVICE_BOOTSTRAP_URL: deviceBootstrapUrl,
+        NEMOCLAW_DEVICE_ID: fixture.deviceId,
+        NEMOCLAW_PUBLIC_KEY: fixture.publicKey,
+        NEMOCLAW_REQUEST_ID: fixture.requestId,
+        OPENCLAW_STATE_DIR: fixture.stateDir,
+      },
+      timeout: options.timeoutMs,
+    },
+  );
+  requireSuccess(retry, `retry real-dist ${durableSide}-first transaction`);
+  requireCompletedPairingApproval(fixture, `real-dist ${durableSide}-first transaction retry`);
+}
+
+function runRejectedRenameRollbackProof(
+  options: ProofOptions,
+  deviceBootstrapUrl: string,
+  journalBasename: string,
+): void {
+  const fixture = createPairingTransactionFixture(options.tmp, "rejected-rename", journalBasename);
+  const proof = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+import fs from "node:fs";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+const requireEnv = (name) => {
+  const value = process.env[name];
+  if (!value) throw new Error("missing " + name);
+  return value;
+};
+const stateDir = requireEnv("NEMOCLAW_DEVICE_APPROVAL_STATE");
+const pendingPath = requireEnv("NEMOCLAW_PENDING_STATE_PATH");
+const pairedPath = requireEnv("NEMOCLAW_PAIRED_STATE_PATH");
+const journalPath = requireEnv("NEMOCLAW_JOURNAL_PATH");
+const canonicalJson = (file) => JSON.stringify(JSON.parse(fs.readFileSync(file, "utf8")));
+const pendingBefore = canonicalJson(pendingPath);
+const pairedBefore = canonicalJson(pairedPath);
+const promises = fs.promises;
+const rename = promises.rename.bind(promises);
+let rejectedOnce = false;
+let delayedOnce = false;
+let delayedCompleted = false;
+Object.defineProperty(promises, "rename", {
+  configurable: true,
+  writable: true,
+  value: async (source, destination) => {
+    const target = path.resolve(String(destination));
+    if (target === path.resolve(pendingPath) && !rejectedOnce) {
+      rejectedOnce = true;
+      const error = new Error("injected state rename rejection");
+      error.code = "EIO";
+      throw error;
+    }
+    if (target === path.resolve(pairedPath) && !delayedOnce) {
+      delayedOnce = true;
+      await delay(150);
+      await rename(source, destination);
+      delayedCompleted = true;
+      return;
+    }
+    return await rename(source, destination);
+  },
+});
+const { approveDevicePairing, listDevicePairing } = await import(requireEnv("NEMOCLAW_DEVICE_BOOTSTRAP_URL"));
+let rejected = false;
+try {
+  await approveDevicePairing(requireEnv("NEMOCLAW_REQUEST_ID"), {
+    callerScopes: ["operator.pairing"],
+    nemoclawSelfApprovalIdentity: {
+      deviceId: requireEnv("NEMOCLAW_DEVICE_ID"),
+      publicKey: requireEnv("NEMOCLAW_PUBLIC_KEY"),
+      role: "operator",
+      clientId: "cli",
+      clientMode: "cli",
+    },
+  }, stateDir);
+} catch {
+  rejected = true;
+}
+if (!rejected) throw new Error("injected rename rejection did not reject approval");
+if (!delayedCompleted) throw new Error("approval rejected before the sibling rename settled");
+if (canonicalJson(pendingPath) !== pendingBefore || canonicalJson(pairedPath) !== pairedBefore) {
+  throw new Error("rename rejection was not rolled back before approval rejected");
+}
+const journalBeforeList = fs.readFileSync(journalPath, "utf8");
+const journal = JSON.parse(journalBeforeList);
+if (journal?.version !== 1 || journal?.kind !== "nemoclaw-self-approval" || journal?.phase !== "idle") {
+  throw new Error("rename rejection did not leave an idle transaction journal");
+}
+await listDevicePairing(stateDir);
+await listDevicePairing(stateDir);
+if (
+  canonicalJson(pendingPath) !== pendingBefore ||
+  canonicalJson(pairedPath) !== pairedBefore ||
+  fs.readFileSync(journalPath, "utf8") !== journalBeforeList
+) throw new Error("idle restart changed the rejected transaction rollback");
+`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NEMOCLAW_DEVICE_APPROVAL_STATE: fixture.stateDir,
+        NEMOCLAW_DEVICE_BOOTSTRAP_URL: deviceBootstrapUrl,
+        NEMOCLAW_DEVICE_ID: fixture.deviceId,
+        NEMOCLAW_JOURNAL_PATH: fixture.journalPath,
+        NEMOCLAW_PAIRED_STATE_PATH: fixture.pairedPath,
+        NEMOCLAW_PENDING_STATE_PATH: fixture.pendingPath,
+        NEMOCLAW_PUBLIC_KEY: fixture.publicKey,
+        NEMOCLAW_REQUEST_ID: fixture.requestId,
+        OPENCLAW_STATE_DIR: fixture.stateDir,
+      },
+      timeout: options.timeoutMs,
+    },
+  );
+  requireSuccess(proof, "reject and roll back a one-sided real-dist state rename");
+  requirePairingState(
+    fixture,
+    fixture.beforePending,
+    fixture.beforePaired,
+    "real-dist rejected-rename rollback",
+  );
+  requireIdlePairingJournal(fixture.journalPath, "real-dist rejected-rename rollback journal");
+}
+
 async function reserveLoopbackPort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = net.createServer();
@@ -546,6 +1136,20 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
     "function resolveApprovePairingScopesForRequest(request, paired)",
     "nemoclaw: reach gateway for bounded same-device scope approval",
   ]);
+  const pairingStateSource = requireExactlyOneDistSource(
+    sources,
+    "patched transactional device pairing state runtime",
+    [
+      "nemoclaw: validate bounded self-approval inside pairing lock",
+      "nemoclaw: recover bounded self-approval state transaction",
+      'await persistState(state, baseDir, "both")',
+    ],
+  );
+  requireExactlyOneDistSource(sources, "atomic JSON state rename runtime", [
+    "async function renameWithRetry(params)",
+    "await params.fsModule.rename(params.src, params.dest)",
+  ]);
+  const journalBasename = discoverSelfApprovalJournalBasename(pairingStateSource.source);
   requireRealStoredDeviceAuthLinkage(sources, cliSource);
   const cliProofFile = path.join(options.dist, ".nemoclaw-device-cli-proof.mjs");
   fs.writeFileSync(
@@ -648,9 +1252,19 @@ export async function runRealOpenClawDeviceSelfApprovalProof(options: ProofOptio
   fs.writeFileSync(path.join(devicesDir, "pending.json"), JSON.stringify(pending));
   fs.writeFileSync(path.join(devicesDir, "paired.json"), JSON.stringify(paired));
 
-  const deviceBootstrapUrl = pathToFileURL(
-    path.join(options.dist, "plugin-sdk", "device-bootstrap.js"),
-  ).href;
+  const deviceBootstrapFile = path.join(options.dist, "plugin-sdk", "device-bootstrap.js");
+  const deviceBootstrapSource = fs.readFileSync(deviceBootstrapFile, "utf8");
+  for (const marker of [
+    `from "../${path.basename(pairingStateSource.file)}"`,
+    "listDevicePairing",
+    "approveDevicePairing",
+  ]) {
+    requireLiveProof(
+      deviceBootstrapSource.includes(marker),
+      `real device bootstrap linkage: expected marker ${marker}`,
+    );
+  }
+  const deviceBootstrapUrl = pathToFileURL(deviceBootstrapFile).href;
   const runtimeProof = spawnSync(
     process.execPath,
     [
@@ -817,5 +1431,8 @@ if (!["operator.pairing", "operator.read", "operator.write"].every((scope) => sc
   } finally {
     fs.rmSync(cliProofFile, { force: true });
   }
+  runPairingCrashDirectionProof(options, deviceBootstrapUrl, journalBasename, "pending");
+  runPairingCrashDirectionProof(options, deviceBootstrapUrl, journalBasename, "paired");
+  runRejectedRenameRollbackProof(options, deviceBootstrapUrl, journalBasename);
   await runLiveConfigTokenSelfApprovalProof(options);
 }

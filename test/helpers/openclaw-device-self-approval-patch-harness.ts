@@ -233,10 +233,98 @@ const deviceHandlers = {
 
 function stateFixture(): string {
   return compiledIndent(`
+const PENDING_TTL_MS = 300 * 1e3;
 const OPERATOR_ROLE = "operator";
 const withLock = createAsyncLock();
-function createAsyncLock() { return async (fn) => await fn(); }
-async function loadState() { return { pendingById: {}, pairedByDeviceId: {} }; }
+const files = new Map();
+const writes = [];
+let delayedPairedWrite = null;
+let failNextPendingWrite = false;
+let failCommittedJournalAfterWrite = false;
+let driftOnBuild = null;
+function cloneJson(value) { return value === null || value === undefined ? value : JSON.parse(JSON.stringify(value)); }
+function createAsyncLock() {
+  let tail = Promise.resolve();
+  return async (fn) => {
+    const previous = tail;
+    let release;
+    tail = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try { return await fn(); } finally { release(); }
+  };
+}
+function resolvePairingPaths(baseDir) {
+  const root = baseDir ?? "/fixture";
+  return { pendingPath: \`\${root}/pending.json\`, pairedPath: \`\${root}/paired.json\` };
+}
+function coercePairingStateRecord(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }
+function pruneExpiredPending() {}
+async function readJsonIfExists(file) { return files.has(file) ? cloneJson(files.get(file)) : null; }
+async function writeJson(file, value, options) {
+  writes.push({ file, value: cloneJson(value), options: cloneJson(options) });
+  const { pendingPath, pairedPath } = resolvePairingPaths("/fixture", "devices");
+  if (file === pendingPath && failNextPendingWrite) {
+    failNextPendingWrite = false;
+    throw new Error("pending publication failed");
+  }
+  if (file === pairedPath && delayedPairedWrite?.armed) {
+    const delayed = delayedPairedWrite;
+    delayed.armed = false;
+    delayed.started();
+    await delayed.gate;
+  }
+  files.set(file, cloneJson(value));
+  if (file.endsWith(".nemoclaw-self-approval-journal") && value?.phase === "committed" && failCommittedJournalAfterWrite) {
+    failCommittedJournalAfterWrite = false;
+    throw new Error("committed journal durability acknowledgement failed");
+  }
+}
+function setPairingState(pendingById, pairedByDeviceId, baseDir = "/fixture") {
+  const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");
+  files.set(pendingPath, cloneJson(pendingById));
+  files.set(pairedPath, cloneJson(pairedByDeviceId));
+}
+function setFile(file, value) { files.set(file, cloneJson(value)); }
+function getFile(file) { return files.has(file) ? cloneJson(files.get(file)) : null; }
+function getPairingPaths(baseDir = "/fixture") {
+  const paths = resolvePairingPaths(baseDir, "devices");
+  return { ...paths, journalPath: \`\${paths.pendingPath}.nemoclaw-self-approval-journal\` };
+}
+function armLateWriterFailure() {
+  failNextPendingWrite = true;
+  let release;
+  let started;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const startedPromise = new Promise((resolve) => { started = resolve; });
+  delayedPairedWrite = { armed: true, gate, release, started };
+  return startedPromise;
+}
+function releaseLateWriter() { delayedPairedWrite?.release(); }
+function armCommittedJournalFailure() { failCommittedJournalAfterWrite = true; }
+function armStateDrift(file, value) { driftOnBuild = { file, value: cloneJson(value) }; }
+async function loadState(baseDir) {
+  const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");
+  const [pending, paired] = await Promise.all([readJsonIfExists(pendingPath), readJsonIfExists(pairedPath)]);
+  const state = {
+    pendingById: coercePairingStateRecord(pending),
+    pairedByDeviceId: coercePairingStateRecord(paired)
+  };
+  pruneExpiredPending(state.pendingById, Date.now(), PENDING_TTL_MS);
+  return state;
+}
+async function persistState(state, baseDir, target) {
+  const { pendingPath, pairedPath } = resolvePairingPaths(baseDir, "devices");
+  if (target === "pending") {
+    await writeJson(pendingPath, state.pendingById);
+    return;
+  }
+  if (target === "paired") {
+    await writeJson(pairedPath, state.pairedByDeviceId);
+    return;
+  }
+  await Promise.all([writeJson(pendingPath, state.pendingById), writeJson(pairedPath, state.pairedByDeviceId)]);
+}
+function normalizeDeviceId(deviceId) { return deviceId.trim(); }
 function mergeRoles(...values) { return values.flat().filter(Boolean); }
 function normalizeDeviceAuthScopes(scopes) { return scopes ?? []; }
 function resolveScopeOutsideRequestedRoles() { return null; }
@@ -245,8 +333,28 @@ function resolveApprovedTokenScopes({ pending }) { return pending.scopes; }
 function resolveRoleScopedDeviceTokenScopes(_role, scopes) { return scopes; }
 function resolveMissingRequestedScope({ requestedScopes, allowedScopes }) { return requestedScopes.find((scope) => !allowedScopes.includes(scope)); }
 function newToken() { return "token"; }
-function buildApprovedPairedDevice({ pending }) { return pending; }
-async function persistState() {}
+function buildApprovedPairedDevice({ pending, roles, approvedScopes, tokens, now }) {
+  if (driftOnBuild) {
+    files.set(driftOnBuild.file, cloneJson(driftOnBuild.value));
+    driftOnBuild = null;
+  }
+  return { ...pending, roles, approvedScopes, scopes: approvedScopes, tokens, approvedAtMs: now };
+}
+async function listDevicePairing(baseDir) {
+  const state = await loadState(baseDir);
+  return {
+    pending: Object.values(state.pendingById).toSorted((a, b) => b.ts - a.ts),
+    paired: Object.values(state.pairedByDeviceId).toSorted((a, b) => b.approvedAtMs - a.approvedAtMs)
+  };
+}
+/** Return one paired device by normalized device id. */
+async function getPairedDevice(deviceId, baseDir) {
+  return (await loadState(baseDir)).pairedByDeviceId[normalizeDeviceId(deviceId)] ?? null;
+}
+/** Return one pending pairing request by request id. */
+async function getPendingDevicePairing(requestId, baseDir) {
+  return (await loadState(baseDir)).pendingById[requestId] ?? null;
+}
 async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir) {
   const options = typeof optionsOrBaseDir === "string" || optionsOrBaseDir === void 0 ? void 0 : optionsOrBaseDir;
   const baseDir = typeof optionsOrBaseDir === "string" ? optionsOrBaseDir : maybeBaseDir;
@@ -282,11 +390,33 @@ async function approveDevicePairing(requestId, optionsOrBaseDir, maybeBaseDir) {
         if (missingScope) return { status: "forbidden", reason: "caller-missing-scope", scope: missingScope };
       }
     }
+    for (const [roleForToken, nextScopes] of nextTokenScopesByRole) {
+      tokens[roleForToken] = { token: newToken(), role: roleForToken, scopes: nextScopes };
+    }
+    const device = buildApprovedPairedDevice({ pending, roles, approvedScopes, tokens, now });
+    delete state.pendingById[requestId];
+    state.pairedByDeviceId[device.deviceId] = device;
     await persistState(state, baseDir, "both");
-    return { status: "approved", requestId, device: pending, now, roles, approvedScopes, tokens, nextTokenScopesByRole };
+    return {
+      status: "approved",
+      requestId,
+      device
+    };
   });
 }
-void persistState;
+async function approveBootstrapDevicePairing(requestId, bootstrapProfile, optionsOrBaseDir, maybeBaseDir) {
+  const baseDir = typeof optionsOrBaseDir === "string" ? optionsOrBaseDir : maybeBaseDir;
+  return await withLock(async () => {
+    const state = await loadState(baseDir);
+    const pending = state.pendingById[requestId];
+    if (!pending) return null;
+    const device = { ...pending, bootstrapProfile, approvedAtMs: Date.now() };
+    delete state.pendingById[requestId];
+    state.pairedByDeviceId[device.deviceId] = device;
+    await persistState(state, baseDir, "both");
+    return { status: "approved", requestId, device };
+  });
+}
 `);
 }
 
