@@ -9,16 +9,11 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { normalizeProviderBaseUrl } from "../src/lib/core/url-utils.js";
-import {
-  BACK_TO_SELECTION,
-  promptInputModel,
-  promptRemoteModel,
-} from "../src/lib/inference/model-prompts.js";
+import { promptInputModel, promptRemoteModel } from "../src/lib/inference/model-prompts.js";
 import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
 } from "../src/lib/inference/provider-models.js";
-import { returningToProviderSelection } from "../src/lib/onboard/credential-navigation.js";
 import { createInferenceSelectionValidationHelpers } from "../src/lib/onboard/inference-selection-validation.js";
 import {
   getWindowsHostOllamaDockerRequirement,
@@ -3021,53 +3016,6 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", async () => {
-    const probeOpenAiLikeEndpoint = vi.fn(() => ({
-      ok: true,
-      api: "openai-completions",
-      label: "Chat Completions API",
-    }));
-    const recovery = makeInteractiveValidationRecovery();
-    const validation = createInferenceSelectionValidationHelpers({
-      isNonInteractive: () => false,
-      agentProductName: () => "OpenClaw",
-      getCredential: () => "proxy-key",
-      probeOpenAiLikeEndpoint,
-      promptValidationRecovery: recovery.promptValidationRecovery,
-    });
-    const state = makeRemoteSelectionState({ model: "custom-model" });
-    const { validateSelectedRemoteModel } = createRemoteModelValidator(
-      makeRemoteModelValidatorDeps({
-        validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
-      }),
-    );
-
-    const { result, lines } = await captureConsoleOutput(() =>
-      validateSelectedRemoteModel({
-        selected: { key: "custom" },
-        remoteConfig: TEST_CUSTOM_OPENAI_CONFIG,
-        state,
-        selectedCredentialEnv: "COMPATIBLE_API_KEY",
-      }),
-    );
-
-    assert.equal(result, "selected");
-    assert.equal(state.provider, "compatible-endpoint");
-    assert.equal(state.model, "custom-model");
-    assert.equal(state.preferredInferenceApi, "openai-completions");
-    assert.ok(lines.some((line) => line.includes("Chat Completions API available")));
-    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
-      "https://proxy.example.com/v1",
-      "custom-model",
-      "proxy-key",
-      {
-        requireResponsesToolCalling: true,
-        skipResponsesProbe: false,
-        probeStreaming: true,
-      },
-    );
-  });
-
   it("forces chat completions for custom OpenAI-compatible endpoints even when /responses returns valid tool calls (#1932)", async () => {
     const previousPreferredApi = process.env.NEMOCLAW_PREFERRED_API;
     delete process.env.NEMOCLAW_PREFERRED_API;
@@ -3359,43 +3307,91 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("lets users type back at a lower-level model prompt to return to provider selection", async () => {
-    const messages: string[] = [];
-    await resolveCompatibleEndpointInput({
-      kind: "openai",
-      envUrl: null,
-      recoveredEndpointUrl: null,
-      nonInteractive: false,
-      prompt: async (message) => {
-        messages.push(message);
-        return "https://proxy.example.com/v1";
-      },
-    });
+  it("lets users type back at a lower-level model prompt to return to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-model-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "model-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
-    const { result, lines } = await captureConsoleOutput(async () => {
-      const model = await promptInputModel(TEST_CUSTOM_OPENAI_CONFIG.label, "custom-model", null, {
-        promptFn: async (message) => {
-          messages.push(message);
-          return "back";
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeAlwaysOkCurl(fakeBin);
+
+    const script = String.raw`
+for (const key of [
+  "NVIDIA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY", "COMPATIBLE_ANTHROPIC_API_KEY", "NOUS_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY",
+  "NEMOCLAW_NON_INTERACTIVE", "NEMOCLAW_PROVIDER", "NEMOCLAW_MODEL", "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API", "NEMOCLAW_EXPERIMENTAL",
+]) delete process.env[key];
+
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["3", "https://proxy.example.com/v1", "back", "1", ""];
+const messages = [];
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  process.env.COMPATIBLE_API_KEY = "proxy-key";
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    try {
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
         },
+        timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
       });
-      const returned = returningToProviderSelection(model, () => {
-        throw new Error("Unexpected onboarding exit");
-      });
-      return { model, returned };
-    });
 
-    assert.deepEqual(result.model, BACK_TO_SELECTION);
-    assert.equal(result.returned, true);
-    assert.ok(lines.some((line) => line.includes("Returning to provider selection.")));
-    assert.equal(
-      messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
-      1,
-    );
-    assert.equal(
-      messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length,
-      1,
-    );
+      assert.equal(result.status, 0, result.stderr);
+      const payload = JSON.parse(result.stdout.trim());
+      assert.equal(payload.result.provider, "nvidia-prod");
+      assert.ok(
+        payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+      );
+      const promptCount = (pattern: RegExp) =>
+        payload.messages.filter((message: string) => pattern.test(message)).length;
+      assert.equal(promptCount(/Choose \[/), 2);
+      assert.equal(promptCount(/OpenAI-compatible base URL/), 1);
+      assert.equal(promptCount(/Other OpenAI-compatible endpoint model/), 1);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it("lets users type back at a secret provider credential prompt to return to provider selection", () => {

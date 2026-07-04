@@ -102,6 +102,7 @@ export function createSetupInference(
           requireValue: deps.requireValue,
           redact: deps.redact,
           compactText: deps.compactText,
+          lookup: deps.lookup,
         },
       );
     }

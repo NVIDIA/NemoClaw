@@ -768,6 +768,56 @@ exit 28
     );
   });
 
+  it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", () => {
+    const script = `#!/usr/bin/env bash
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w|-d|--config) shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$url" > "${HARNESS_TMPDIR}/request-$n-url.txt"
+if echo "$url" | grep -q '/responses$'; then
+  printf '%s' '{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}' > "$outfile"
+else
+  printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$outfile"
+fi
+printf '200'
+`;
+
+    withFakeCurlProbe(
+      { script, dirPrefix: "nemoclaw-responses-tool-fallback-" },
+      ({ counter, tmpDir }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "https://proxy.example.com/v1",
+          "custom-model",
+          "proxy-key",
+          { requireResponsesToolCalling: true },
+        );
+
+        expect(result).toMatchObject({
+          ok: true,
+          api: "openai-completions",
+          label: "Chat Completions API",
+        });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        expect(fs.readFileSync(path.join(tmpDir, "request-1-url.txt"), "utf8")).toBe(
+          "https://proxy.example.com/v1/responses",
+        );
+        expect(fs.readFileSync(path.join(tmpDir, "request-2-url.txt"), "utf8")).toBe(
+          "https://proxy.example.com/v1/chat/completions",
+        );
+      },
+    );
+  });
+
   // PR #5975 review note PRA-14 (Nemotron). Pins the silent fallback so a
   // future SGLang fix that removes the workaround stays observable.
   it("falls back to chat-completions when /responses streaming lacks required events", () => {
