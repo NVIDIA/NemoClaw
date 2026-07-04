@@ -5,6 +5,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+export const SANDBOX_BUILD_CONTEXT_PREFIX = "nemoclaw-build-";
+export type SandboxBuildContextOrigin = "custom" | "generated";
+
 export interface StagedBuildContext {
   buildCtx: string;
   stagedDockerfile: string;
@@ -18,7 +21,7 @@ export interface BuildContextStats {
 type BuildContextStatsFilter = (entryPath: string) => boolean;
 
 function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
-  return fs.mkdtempSync(path.join(tmpDir, "nemoclaw-build-"));
+  return fs.mkdtempSync(path.join(tmpDir, SANDBOX_BUILD_CONTEXT_PREFIX));
 }
 
 function normalizeReadModesForDockerCopy(rootDir: string): void {

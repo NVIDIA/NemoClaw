@@ -342,6 +342,12 @@ If the staged context is larger than 100 MB, onboarding prints a warning before 
 Move the Dockerfile into a smaller dedicated directory or add `.dockerignore` entries for generated artifacts to shrink the context.
 If the directory contains unreadable files (for example, Windows system files visible in WSL), onboarding exits with an error suggesting you move the Dockerfile to a dedicated directory.
 
+<Note>
+NemoClaw builds user-supplied `--from` contexts with the OpenShell gateway builder.
+The host-side local BuildKit prebuild is limited to build contexts generated entirely by NemoClaw.
+On a local Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and onboarding continues with the custom image.
+</Note>
+
 ```bash
 nemohermes onboard --from path/to/Dockerfile
 ```
@@ -400,6 +406,7 @@ Combining `--from <Dockerfile>` with non-interactive onboarding requires one of 
 
 Use a custom Dockerfile for the sandbox image.
 This variant of `nemohermes onboard` accepts a `--from <Dockerfile>` argument to build the sandbox from a user-supplied Dockerfile instead of the default NemoClaw image.
+The user-supplied context uses the OpenShell gateway builder instead of NemoClaw's host-side local BuildKit prebuild.
 
 ```bash
 nemohermes onboard --from ./Dockerfile.custom
