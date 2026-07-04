@@ -63,6 +63,7 @@ export function registerRebuildFlowTargetImageTests(): void {
         stagedDockerfile: preparedDockerfile,
         cleanupBuildCtx,
         buildId: "source-link-prepared",
+        origin: "custom" as const,
         contextFingerprint: fingerprintBuildContext(preparedDir),
         verifyBuildCtx: createBuildContextVerifier(
           preparedDir,
@@ -123,6 +124,7 @@ export function registerRebuildFlowTargetImageTests(): void {
         stagedDockerfile: preparedDockerfile,
         cleanupBuildCtx,
         buildId: "mutated-prepared",
+        origin: "custom" as const,
         contextFingerprint: fingerprintBuildContext(preparedDir),
         verifyBuildCtx: createBuildContextVerifier(
           preparedDir,
@@ -178,6 +180,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           stagedDockerfile: preparedDockerfile,
           cleanupBuildCtx,
           buildId: "special-mode-mutated-prepared",
+          origin: "custom" as const,
           contextFingerprint,
           verifyBuildCtx: createBuildContextVerifier(preparedDir, contextFingerprint),
           rebuildTarget: { agentName: null, fromDockerfile: sourceDockerfile },

@@ -41,6 +41,7 @@ const preparedImageBuildContext: PreparedSandboxBuildContext = {
   stagedDockerfile: "/tmp/prepared-custom/Dockerfile",
   buildId: "custom-prepared",
   cleanupBuildCtx: () => true,
+  origin: "custom",
   verifyBuildCtx: () => true,
   rebuildTarget: {
     agentName: null,
