@@ -59,6 +59,9 @@ const unusedCommonInferenceDeps = {
   verifyOnboardInferenceSmoke: vi.fn(),
   isNonInteractive: () => true,
   registry: { updateSandbox: vi.fn() },
+  exitProcess: (code: number): never => {
+    throw new Error(`EXIT_CALLED:${code}`);
+  },
 };
 
 const localProviderScenarios = [

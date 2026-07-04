@@ -76,6 +76,7 @@ export function createSetupInference(
       verifyOnboardInferenceSmoke: deps.verifyOnboardInferenceSmoke,
       isNonInteractive: deps.isNonInteractive,
       registry: { updateSandbox: deps.updateSandbox },
+      exitProcess: deps.exitProcess,
     };
 
     if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {

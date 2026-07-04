@@ -40,6 +40,7 @@ export async function setupRemoteProviderInference(
     verifyOnboardInferenceSmoke,
     isNonInteractive,
     registry,
+    exitProcess,
     REMOTE_PROVIDER_CONFIG,
     hydrateCredentialEnv,
     promptValidationRecovery,
@@ -56,7 +57,7 @@ export async function setupRemoteProviderInference(
       : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
   if (!config) {
     console.error(`  Unsupported provider configuration: ${provider}`);
-    process.exit(1);
+    return exitProcess(1);
   }
   const bedrockSetup = await bedrockRuntimeOnboard.setupBedrockRuntimeInference({
     sandboxName,
@@ -115,7 +116,7 @@ export async function setupRemoteProviderInference(
     if (!providerResult.ok) {
       console.error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
-        process.exit(providerResult.status || 1);
+        exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
         config.label,
@@ -129,7 +130,7 @@ export async function setupRemoteProviderInference(
       if (retry === "selection" || retry === "model") {
         return { done: true, result: { retry: "selection" } };
       }
-      process.exit(providerResult.status || 1);
+      exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
     if (config.skipVerify) {
@@ -148,7 +149,7 @@ export async function setupRemoteProviderInference(
       `Failed to configure inference provider '${provider}'.`;
     console.error(`  ${message}`);
     if (isNonInteractive()) {
-      process.exit(applyResult.status || 1);
+      exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
       config.label,
@@ -162,7 +163,7 @@ export async function setupRemoteProviderInference(
     if (retry === "selection" || retry === "model") {
       return { done: true, result: { retry: "selection" } };
     }
-    process.exit(applyResult.status || 1);
+    exitProcess(applyResult.status || 1);
   }
   return { done: false };
 }

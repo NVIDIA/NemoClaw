@@ -38,6 +38,33 @@ describe("setupInference dependency failures", () => {
     vi.restoreAllMocks();
   });
 
+  it("fails through the injected exit boundary when a known remote provider has no config", async () => {
+    const exitProcess = vi.fn((code: number): never => {
+      throw new Error(`EXIT_CALLED:${code}`);
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hydrateCredentialEnv = vi.fn();
+    const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        REMOTE_PROVIDER_CONFIG: {},
+        exitProcess,
+        hydrateCredentialEnv,
+        bedrockRuntimeOnboard: { setupBedrockRuntimeInference },
+      },
+    });
+
+    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(error).toHaveBeenCalledWith("  Unsupported provider configuration: openai-api");
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(setupBedrockRuntimeInference).not.toHaveBeenCalled();
+    expect(hydrateCredentialEnv).not.toHaveBeenCalled();
+    expectNoPostFailureSideEffects(harness);
+  });
+
   it("fails closed before provider registration when local vLLM validation fails", async () => {
     const exit = stubProcessExit();
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

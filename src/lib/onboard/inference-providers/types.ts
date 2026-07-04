@@ -87,6 +87,7 @@ export type CommonDeps = {
   verifyOnboardInferenceSmoke: VerifyOnboardInferenceSmoke;
   isNonInteractive: () => boolean;
   registry: Registry;
+  exitProcess: (code: number) => never;
 };
 
 export type RemoteProviderDeps = CommonDeps & {
