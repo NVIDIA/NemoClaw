@@ -101,6 +101,25 @@ describe("ensureRebuildAgentBaseImage", () => {
     });
   });
 
+  it("reports a forced Hermes base-image failure before rebuild can continue", () => {
+    const { ensureAgentBaseImage } = setup();
+    ensureAgentBaseImage.mockImplementation(() => {
+      throw new Error("Failed to build Hermes Agent base image (exit 23)");
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
+
+    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
+      "Failed to build Hermes Agent base image (exit 23)",
+    );
+
+    const output = error.mock.calls.flat().join("\n");
+    expect(output).toContain("Rebuild preflight failed");
+    expect(output).toContain("agent base image could not be built");
+    expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+    expect(output).toContain("Sandbox is untouched");
+  });
+
   it("forwards force refresh with the sandbox-specific hint (#4680)", () => {
     const { agent, ensureAgentBaseImage } = setup();
     const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();

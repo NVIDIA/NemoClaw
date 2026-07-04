@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as openshellResolve from "../../adapters/openshell/resolve";
+import * as sandboxSession from "../../state/sandbox-session";
 import {
   confirmSandboxRebuildIfNeeded,
   countActiveSandboxSessionsForRebuild,
@@ -77,6 +78,15 @@ describe("rebuild preflight guards", () => {
 
   it("treats an unavailable OpenShell session detector as zero active sessions", () => {
     vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue(null);
+    expect(countActiveSandboxSessionsForRebuild("alpha")).toBe(0);
+  });
+
+  it("treats a session detector failure as zero active sessions", () => {
+    vi.spyOn(openshellResolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+    vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockImplementation(() => {
+      throw new Error("session detector unavailable");
+    });
+
     expect(countActiveSandboxSessionsForRebuild("alpha")).toBe(0);
   });
 });

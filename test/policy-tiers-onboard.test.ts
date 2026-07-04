@@ -75,7 +75,7 @@ function createPromptHarness({
     },
     selectFromNumberedMenuOrExit: (_rawChoice, defaultIdx, options) => {
       const selected = options[defaultIdx - 1];
-      if (selected === undefined) throw new Error("numbered menu default is out of range");
+      assert.ok(selected !== undefined, "numbered menu default is out of range");
       return selected;
     },
     makeOnboardCancelExit: (_rollback, cleanup) => () => cleanup(),

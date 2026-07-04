@@ -182,27 +182,6 @@ describe("rebuild agent base image preflight", () => {
     expect(result).toEqual({ ok: true, imageRef, overrideEnvVar });
   });
 
-  it("reports a forced Hermes base-image failure before rebuild can continue", () => {
-    const agentDefs = requireDist("../../agent/defs.js");
-    const agentOnboard = requireDist("../../agent/onboard.js");
-    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ name: "hermes" });
-    vi.spyOn(agentOnboard, "ensureAgentBaseImage").mockImplementation(() => {
-      throw new Error("Failed to build Hermes Agent base image (exit 23)");
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
-
-    expect(() => ensureRebuildAgentBaseImage("hermes", makeBail())).toThrow(
-      "Failed to build Hermes Agent base image (exit 23)",
-    );
-
-    const output = error.mock.calls.flat().join("\n");
-    expect(output).toContain("Rebuild preflight failed");
-    expect(output).toContain("agent base image could not be built");
-    expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
-    expect(output).toContain("Sandbox is untouched");
-  });
-
   it("resolves an explicit caller override instead of replacing it during preflight", () => {
     process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:caller";
     const mutableRef = "nemoclaw-hermes-sandbox-base-local:resolved";
