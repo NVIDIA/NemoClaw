@@ -10,6 +10,7 @@ import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agen
 import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import { parseGatewayInference } from "../../inference/config";
 import {
+  buildInferenceGatewaySubprobe,
   type ProviderHealthProbeOptions,
   type ProviderHealthStatus,
   probeProviderHealth,
@@ -227,16 +228,10 @@ export async function collectSandboxStatusSnapshot(
   if (inferenceHealth && lookup.state === "present" && currentProvider !== "unknown") {
     const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
     if (gatewayChain) {
-      const gatewaySubprobe: ProviderHealthStatus = {
-        ok: gatewayChain.ok,
-        probed: true,
-        providerLabel: "Inference gateway chain",
-        endpoint: gatewayChain.endpoint,
-        detail: gatewayChain.detail,
-        probeLabel: "gateway",
-        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
-      };
-      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
+      inferenceHealth.subprobes = [
+        ...(inferenceHealth.subprobes ?? []),
+        buildInferenceGatewaySubprobe(gatewayChain),
+      ];
     }
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");

@@ -38,6 +38,27 @@ export interface ProviderHealthStatus {
   subprobes?: ProviderHealthStatus[];
 }
 
+/**
+ * Build the `inference.local` gateway-chain subprobe rendered alongside the
+ * provider health probe. Shared by `status` and `doctor` so the subprobe shape
+ * stays in sync across both call sites (#3265, #6192).
+ */
+export function buildInferenceGatewaySubprobe(gateway: {
+  ok: boolean;
+  endpoint: string;
+  detail: string;
+}): ProviderHealthStatus {
+  return {
+    ok: gateway.ok,
+    probed: true,
+    providerLabel: "Inference gateway chain",
+    endpoint: gateway.endpoint,
+    detail: gateway.detail,
+    probeLabel: "gateway",
+    ...(gateway.ok ? {} : { failureLabel: "unreachable" as const }),
+  };
+}
+
 export interface ProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   model?: string | null;

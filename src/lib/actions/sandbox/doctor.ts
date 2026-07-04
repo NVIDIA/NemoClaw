@@ -15,7 +15,11 @@ import {
   recoverNamedGatewayRuntime,
 } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
-import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
+import {
+  buildInferenceGatewaySubprobe,
+  type ProviderHealthStatus,
+  probeProviderHealth,
+} from "../../inference/health";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
@@ -352,18 +356,7 @@ async function collectInferenceSubprobes(
   if (!sandboxReachable) return [...existing, skippedInferenceGatewayProbe()];
   const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
   if (!gateway) return existing;
-  return [
-    ...existing,
-    {
-      ok: gateway.ok,
-      probed: true,
-      providerLabel: "Inference gateway chain",
-      endpoint: gateway.endpoint,
-      detail: gateway.detail,
-      probeLabel: "gateway",
-      ...(gateway.ok ? {} : { failureLabel: "unreachable" as const }),
-    },
-  ];
+  return [...existing, buildInferenceGatewaySubprobe(gateway)];
 }
 
 async function collectInferenceChecks(

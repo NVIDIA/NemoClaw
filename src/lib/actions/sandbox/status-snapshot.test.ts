@@ -72,9 +72,11 @@ function createSnapshotHarness(options: {
           getSandbox: (() => sandboxEntry) as never,
           reconcile: async () => presentLookup,
           // Upstream provider reachability is healthy on its own; the broken
-          // in-sandbox route must still be surfaced.
+          // in-sandbox route must still be surfaced. Return a fresh clone each
+          // call: collectSandboxStatusSnapshot appends `subprobes` in place, so
+          // sharing the module-level fixture would leak state across runs.
           probeProviderHealthImpl: (provider: string) =>
-            provider === "unknown" ? null : reachableCloudHealth,
+            provider === "unknown" ? null : { ...reachableCloudHealth },
         },
       }),
   };
