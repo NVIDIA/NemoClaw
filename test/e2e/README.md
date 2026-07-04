@@ -52,3 +52,23 @@ Slack/GitHub scorecard comparison remains tied to the dedicated `cloud-onboard`
 artifact so baseline aggregation stays stable.
 Older issue references to Vitest target artifacts under `e2e-artifacts/vitest/`
 map to this consolidated `e2e-artifacts/live/` registry-target artifact layout.
+
+## Onboard performance budget
+
+The scheduled/manual scorecard evaluates the trusted `cloud-onboard` timing
+summary against `ci/onboard-performance-budget.json`. The budget covers the
+warm-system path and is advisory: exceeding the total-duration cap or a
+regression threshold emits a GitHub Actions warning and adds details to the run
+summary, but does not fail the scorecard job.
+
+The config separates the absolute total-duration budget from total and phase
+regression thresholds. Phase regressions are diagnostic and are only compared
+when the current run and prior-release baseline contain the same known onboard
+phase names. Cold image pulls, first-time model downloads, provider outages,
+and runner or network incidents can still affect the signal, so maintainers
+should inspect the timing table before acting on a warning.
+
+For PRs, E2E Advisor deterministically recommends the `cloud-onboard` target
+when changes affect onboard behavior, trace timing, scorecard analysis, budget
+configuration, or the unified E2E workflow. The scorecard remains the source
+of truth for threshold evaluation.
