@@ -11,7 +11,7 @@ import {
   TOOL_DISCLOSURE_ENV,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { assertToolDisclosureDockerfileContract } from "./dockerfile-patch";
+import { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 import type { SandboxLifecycleHelpers } from "./sandbox-lifecycle";
 
 export function applyOnboardToolDisclosureRequest(value: unknown): ToolDisclosure | null {

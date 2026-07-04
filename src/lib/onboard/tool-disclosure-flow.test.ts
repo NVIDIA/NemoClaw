@@ -17,7 +17,7 @@ vi.mock("../state/onboard-session", () => ({
 vi.mock("../state/registry", () => ({
   removeSandbox: mocks.removeSandbox,
 }));
-vi.mock("./dockerfile-patch", () => ({
+vi.mock("./dockerfile-tool-disclosure-contract", () => ({
   assertToolDisclosureDockerfileContract: mocks.assertDockerfileContract,
 }));
 
