@@ -880,8 +880,10 @@ This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
 <Warning>
-This command permanently deletes the sandbox **and its persistent volume**.
-All [workspace files](../manage-sandboxes/workspace-files) (SOUL.md, USER.md, IDENTITY.md, AGENTS.md, MEMORY.md, and daily memory notes) are lost.
+This command attempts to wipe the manifest-defined agent state while its persistent volume is mounted, then removes the sandbox.
+OpenShell can retain the per-name persistent volume after sandbox deletion.
+If the wipe cannot complete, onboarding with the same name can resurface old files.
+Do not rely on a retained volume as a backup.
 Back up your workspace first with `nemohermes <name> snapshot create` or refer to [Backup and Restore](../manage-sandboxes/backup-restore).
 If you want to upgrade the sandbox while preserving state, use `nemohermes <name> rebuild` instead.
 </Warning>
@@ -900,6 +902,12 @@ If hardening fails, the command refuses deletion and leaves the timer authority 
 If deletion fails after hardening, the command keeps the surviving sandbox's locked shields state instead of cleaning it up as though deletion succeeded.
 By default, `destroy` preserves the shared NemoClaw gateway.
 Pass `--cleanup-gateway` to remove the shared gateway when destroying the last sandbox, or `--no-cleanup-gateway` to force preservation when environment defaults request cleanup.
+If the pre-delete workspace wipe cannot run, use a different sandbox name for a clean start.
+When this is the last sandbox, pass `--cleanup-gateway` to purge the shared cluster volume that retains the per-name persistent volume.
+If the OpenShell gateway is unreachable and the sandbox has no managed MCP ownership state, `--force` removes only NemoClaw's local registry entry and local artifacts.
+Gateway-side deletion remains unconfirmed, shared host-service and gateway teardown are skipped, and the sandbox and retained volume may still exist if the gateway returns.
+Start the gateway with `nemohermes <name> status` and retry destroy when you need a confirmed deletion.
+Managed MCP ownership disables the local-only fallback because exact provider cleanup requires the retained ownership state, and other delete failures remain fatal.
 
 ```bash
 nemohermes my-assistant destroy [--yes|-y|--force] [--cleanup-gateway|--no-cleanup-gateway]
@@ -1529,6 +1537,8 @@ Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
 The sandbox must be running for the backup step to succeed.
 If an archive command reports partial output while still producing usable data, `rebuild` keeps the captured backup entries and reports only the manifest-defined paths that could not be archived.
 If any required state path still cannot be backed up, `rebuild` exits before destroying the original sandbox.
+Before backup or deletion, rebuild checks the staged messaging configuration for credentials or channel resources already used by another registered sandbox.
+A conflict aborts with the original sandbox registered and intact so you can resolve the conflict before retrying.
 When rebuild starts with shields up, NemoClaw opens a 30-minute shields-down window for backup and recreation.
 A detached auto-lock timer remains active until NemoClaw commits a successful shields-up state, so it can attempt to restore lockdown if the host rebuild process exits unexpectedly.
 

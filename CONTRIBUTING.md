@@ -178,6 +178,7 @@ These are the primary npm scripts for day-to-day development:
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
+| [`npm run bench`](scripts/bench/README.md) | Run the advisory inference and trace-backed value benchmark |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
 | `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
