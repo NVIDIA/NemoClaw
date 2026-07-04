@@ -1,19 +1,137 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 
 import type { ToolDisclosure } from "../tool-disclosure";
 
 const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
 const O_NONBLOCK = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
+const O_DIRECTORY = typeof fs.constants.O_DIRECTORY === "number" ? fs.constants.O_DIRECTORY : 0;
 
 type DockerfileOpenOperation = "open" | "patch";
+
+interface FileIdentity {
+  dev: number;
+  ino: number;
+}
+
+export interface DockerfilePatchSnapshot {
+  content: string;
+  file: FileIdentity & { mode: number };
+  parent: FileIdentity & { path: string };
+}
 
 function errnoCode(err: unknown): string | null {
   return typeof err === "object" && err !== null && "code" in err
     ? String((err as { code?: unknown }).code)
     : null;
+}
+
+function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function openRealDockerfileParent(
+  dockerfilePath: string,
+  operation: DockerfileOpenOperation,
+): { fd: number; identity: FileIdentity & { path: string } } {
+  if (typeof O_NOFOLLOW !== "number") {
+    throw new Error(
+      `Refusing to ${operation} Dockerfile: O_NOFOLLOW is unavailable on this platform.`,
+    );
+  }
+  const parentPath = path.dirname(path.resolve(dockerfilePath));
+  let fd: number;
+  try {
+    fd = fs.openSync(parentPath, fs.constants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
+  } catch (err) {
+    let parentIsSymlink = false;
+    try {
+      parentIsSymlink = fs.lstatSync(parentPath).isSymbolicLink();
+    } catch {
+      // Preserve the original open error when the parent disappeared.
+    }
+    if (parentIsSymlink || errnoCode(err) === "ELOOP") {
+      throw new Error(
+        `Refusing to ${operation} Dockerfile through a symlinked parent: ${parentPath}`,
+      );
+    }
+    throw err;
+  }
+  try {
+    const directoryStat = fs.fstatSync(fd);
+    const pathStat = fs.lstatSync(parentPath);
+    if (
+      !directoryStat.isDirectory() ||
+      pathStat.isSymbolicLink() ||
+      !pathStat.isDirectory() ||
+      !sameIdentity(directoryStat, pathStat)
+    ) {
+      throw new Error(
+        `Refusing to ${operation} Dockerfile because its parent changed during validation: ${parentPath}`,
+      );
+    }
+    return {
+      fd,
+      identity: { path: parentPath, dev: directoryStat.dev, ino: directoryStat.ino },
+    };
+  } catch (err) {
+    fs.closeSync(fd);
+    throw err;
+  }
+}
+
+function assertParentIdentity(
+  parent: FileIdentity & { path: string },
+  fd: number,
+  operation: DockerfileOpenOperation,
+): void {
+  const descriptorStat = fs.fstatSync(fd);
+  const pathStat = fs.lstatSync(parent.path);
+  if (
+    !descriptorStat.isDirectory() ||
+    pathStat.isSymbolicLink() ||
+    !pathStat.isDirectory() ||
+    !sameIdentity(parent, descriptorStat) ||
+    !sameIdentity(parent, pathStat)
+  ) {
+    throw new Error(
+      `Refusing to ${operation} Dockerfile because its parent changed during validation: ${parent.path}`,
+    );
+  }
+}
+
+function assertPatchDestination(
+  dockerfilePath: string,
+  expected: FileIdentity,
+  operation: DockerfileOpenOperation,
+): void {
+  const destinationStat = fs.lstatSync(dockerfilePath);
+  if (
+    destinationStat.isSymbolicLink() ||
+    !destinationStat.isFile() ||
+    destinationStat.nlink !== 1 ||
+    !sameIdentity(expected, destinationStat)
+  ) {
+    throw new Error(
+      `Refusing to ${operation} Dockerfile because it changed during validation: ${dockerfilePath}`,
+    );
+  }
+}
+
+function assertPrivateTemporaryFile(temporaryPath: string, expected: FileIdentity): void {
+  const stagedStat = fs.lstatSync(temporaryPath);
+  if (
+    stagedStat.isSymbolicLink() ||
+    !stagedStat.isFile() ||
+    stagedStat.nlink !== 1 ||
+    !sameIdentity(expected, stagedStat)
+  ) {
+    throw new Error(`Refusing to patch Dockerfile because its temporary file changed.`);
+  }
 }
 
 export function openExistingRegularDockerfileNoFollow(
@@ -43,6 +161,9 @@ export function openExistingRegularDockerfileNoFollow(
     if (!fileStat.isFile()) {
       throw new Error(`Refusing to ${operation} non-regular Dockerfile path: ${dockerfilePath}`);
     }
+    if (fileStat.nlink !== 1) {
+      throw new Error(`Refusing to ${operation} hard-linked Dockerfile path: ${dockerfilePath}`);
+    }
     // Patch callers use a private mkdtemp build root; read-only custom paths
     // are copied into that root and validated again before patching. This
     // post-open check catches a swap around openSync without introducing a
@@ -51,6 +172,7 @@ export function openExistingRegularDockerfileNoFollow(
     if (
       pathAfterOpen.isSymbolicLink() ||
       !pathAfterOpen.isFile() ||
+      pathAfterOpen.nlink !== 1 ||
       fileStat.dev !== pathAfterOpen.dev ||
       fileStat.ino !== pathAfterOpen.ino
     ) {
@@ -62,6 +184,96 @@ export function openExistingRegularDockerfileNoFollow(
   } catch (err) {
     fs.closeSync(fd);
     throw err;
+  }
+}
+
+export function readDockerfilePatchSnapshot(dockerfilePath: string): DockerfilePatchSnapshot {
+  const parent = openRealDockerfileParent(dockerfilePath, "patch");
+  try {
+    const fd = openExistingRegularDockerfileNoFollow(
+      dockerfilePath,
+      fs.constants.O_RDONLY,
+      "patch",
+    );
+    try {
+      const fileStat = fs.fstatSync(fd);
+      const content = fs.readFileSync(fd, "utf8");
+      assertParentIdentity(parent.identity, parent.fd, "patch");
+      assertPatchDestination(dockerfilePath, fileStat, "patch");
+      return {
+        content,
+        file: { dev: fileStat.dev, ino: fileStat.ino, mode: fileStat.mode },
+        parent: parent.identity,
+      };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } finally {
+    fs.closeSync(parent.fd);
+  }
+}
+
+export function replaceDockerfilePatchSnapshot(
+  dockerfilePath: string,
+  snapshot: DockerfilePatchSnapshot,
+  content: string,
+): void {
+  const parent = openRealDockerfileParent(dockerfilePath, "patch");
+  let temporaryPath: string | null = null;
+  let temporaryFd: number | null = null;
+  try {
+    if (!sameIdentity(parent.identity, snapshot.parent)) {
+      throw new Error(
+        `Refusing to patch Dockerfile because its parent changed during validation: ${snapshot.parent.path}`,
+      );
+    }
+    assertParentIdentity(snapshot.parent, parent.fd, "patch");
+    assertPatchDestination(dockerfilePath, snapshot.file, "patch");
+
+    temporaryPath = path.join(
+      snapshot.parent.path,
+      `.${path.basename(dockerfilePath)}.nemoclaw-${process.pid}-${randomUUID()}.tmp`,
+    );
+    temporaryFd = fs.openSync(
+      temporaryPath,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | O_NOFOLLOW,
+      0o600,
+    );
+    const temporaryStat = fs.fstatSync(temporaryFd);
+    if (!temporaryStat.isFile() || temporaryStat.nlink !== 1) {
+      throw new Error(`Refusing to patch Dockerfile through a non-private temporary file.`);
+    }
+    // Prove that the fresh descriptor was created under the pinned staging
+    // directory before writing any bytes to it. This closes the parent-swap
+    // window between the pathname-based create and the first write.
+    assertParentIdentity(snapshot.parent, parent.fd, "patch");
+    assertPrivateTemporaryFile(temporaryPath, temporaryStat);
+    fs.writeFileSync(temporaryFd, content, { encoding: "utf8" });
+    fs.fchmodSync(temporaryFd, snapshot.file.mode & 0o777);
+    fs.fsyncSync(temporaryFd);
+    fs.closeSync(temporaryFd);
+    temporaryFd = null;
+
+    // Revalidate both names immediately before the atomic replacement. If the
+    // destination is swapped after this check, rename still replaces only the
+    // directory entry; it never writes through the attacker's inode.
+    assertParentIdentity(snapshot.parent, parent.fd, "patch");
+    assertPatchDestination(dockerfilePath, snapshot.file, "patch");
+    assertPrivateTemporaryFile(temporaryPath, temporaryStat);
+    fs.renameSync(temporaryPath, dockerfilePath);
+    temporaryPath = null;
+    assertParentIdentity(snapshot.parent, parent.fd, "patch");
+    assertPatchDestination(dockerfilePath, temporaryStat, "patch");
+  } finally {
+    if (temporaryFd !== null) fs.closeSync(temporaryFd);
+    if (temporaryPath !== null) {
+      try {
+        fs.unlinkSync(temporaryPath);
+      } catch {
+        // The guarded replacement either consumed the file or failed before it existed.
+      }
+    }
+    fs.closeSync(parent.fd);
   }
 }
 

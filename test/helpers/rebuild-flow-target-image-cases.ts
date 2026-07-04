@@ -15,6 +15,70 @@ import {
   snapshotEnv,
 } from "./rebuild-flow-test-harness";
 
+type RetainedContextMutationPaths = {
+  preparedDir: string;
+  preparedDockerfile: string;
+  replacementDir: string;
+  movedPreparedDir: string;
+};
+
+type RetainedContextMutation = {
+  label: string;
+  arrange(paths: RetainedContextMutationPaths): void;
+  mutate(paths: RetainedContextMutationPaths): void;
+};
+
+const FIXED_CONTEXT_TIME = new Date("2026-01-01T00:00:00.000Z");
+const retainedContextMetadataMutations: RetainedContextMutation[] = [
+  {
+    label: "file special bits change",
+    arrange: ({ preparedDockerfile }) => fs.chmodSync(preparedDockerfile, 0o755),
+    mutate: ({ preparedDockerfile }) => fs.chmodSync(preparedDockerfile, 0o4755),
+  },
+  {
+    label: "independent files become hardlinks",
+    arrange: ({ preparedDir }) => {
+      const first = path.join(preparedDir, "first.txt");
+      const second = path.join(preparedDir, "second.txt");
+      fs.writeFileSync(first, "identical\n");
+      fs.writeFileSync(second, "identical\n");
+      fs.utimesSync(first, FIXED_CONTEXT_TIME, FIXED_CONTEXT_TIME);
+      fs.utimesSync(second, FIXED_CONTEXT_TIME, FIXED_CONTEXT_TIME);
+      fs.utimesSync(preparedDir, FIXED_CONTEXT_TIME, FIXED_CONTEXT_TIME);
+    },
+    mutate: ({ preparedDir }) => {
+      const first = path.join(preparedDir, "first.txt");
+      const second = path.join(preparedDir, "second.txt");
+      fs.unlinkSync(second);
+      fs.linkSync(first, second);
+      fs.utimesSync(preparedDir, FIXED_CONTEXT_TIME, FIXED_CONTEXT_TIME);
+    },
+  },
+  {
+    label: "a file mtime alone changes",
+    arrange: ({ preparedDockerfile }) =>
+      fs.utimesSync(preparedDockerfile, FIXED_CONTEXT_TIME, FIXED_CONTEXT_TIME),
+    mutate: ({ preparedDockerfile }) =>
+      fs.utimesSync(
+        preparedDockerfile,
+        FIXED_CONTEXT_TIME,
+        new Date(FIXED_CONTEXT_TIME.getTime() + 1_000),
+      ),
+  },
+  {
+    label: "the context root is retargeted through a symlink",
+    arrange: ({ preparedDockerfile, replacementDir }) => {
+      fs.mkdirSync(replacementDir);
+      fs.copyFileSync(preparedDockerfile, path.join(replacementDir, "Dockerfile"));
+    },
+    mutate: ({ preparedDir, replacementDir, movedPreparedDir }) => {
+      fs.renameSync(preparedDir, movedPreparedDir);
+      fs.symlinkSync(replacementDir, preparedDir, "dir");
+      fs.writeFileSync(path.join(replacementDir, "Dockerfile"), "FROM changed-target\n");
+    },
+  },
+];
+
 export function registerRebuildFlowTargetImageTests(): void {
   describe("rebuildSandbox flow: target image", () => {
     installRebuildFlowTestHooks();
@@ -159,17 +223,27 @@ export function registerRebuildFlowTargetImageTests(): void {
       }
     });
 
-    it.runIf(process.platform !== "win32")(
-      "aborts before delete when retained file special bits change after preflight",
-      async () => {
-        const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-mode-source-"));
-        const preparedDir = fs.mkdtempSync(
-          path.join(os.tmpdir(), "nemoclaw-rebuild-mode-prepared-"),
-        );
+    it.runIf(process.platform !== "win32").each(retainedContextMetadataMutations)(
+      "aborts before delete when $label after preflight",
+      async ({ arrange, mutate, label }) => {
+        const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-seal-"));
+        const sourceDir = path.join(testRoot, "source");
+        const preparedDir = path.join(testRoot, "prepared");
+        const replacementDir = path.join(testRoot, "replacement");
+        const movedPreparedDir = path.join(testRoot, "prepared-moved");
+        fs.mkdirSync(sourceDir);
+        fs.mkdirSync(preparedDir);
         const sourceDockerfile = path.join(sourceDir, "Dockerfile");
         const preparedDockerfile = path.join(preparedDir, "Dockerfile");
         fs.writeFileSync(sourceDockerfile, "FROM scratch\n# source\n");
-        fs.writeFileSync(preparedDockerfile, "FROM scratch\n# prepared\n", { mode: 0o755 });
+        fs.writeFileSync(preparedDockerfile, "FROM scratch\n# prepared\n");
+        const mutationPaths = {
+          preparedDir,
+          preparedDockerfile,
+          replacementDir,
+          movedPreparedDir,
+        };
+        arrange(mutationPaths);
         const cleanupBuildCtx = vi.fn(() => {
           fs.rmSync(preparedDir, { recursive: true, force: true });
           return true;
@@ -179,7 +253,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           buildCtx: preparedDir,
           stagedDockerfile: preparedDockerfile,
           cleanupBuildCtx,
-          buildId: "special-mode-mutated-prepared",
+          buildId: `metadata-mutated-${label}`,
           origin: "custom" as const,
           contextFingerprint,
           verifyBuildCtx: createBuildContextVerifier(preparedDir, contextFingerprint),
@@ -189,10 +263,10 @@ export function registerRebuildFlowTargetImageTests(): void {
           sandboxEntry: { fromDockerfile: sourceDockerfile },
           customImagePreflight: {
             ok: true,
-            imageTag: "nemoclaw-rebuild-preflight:special-mode-mutated",
+            imageTag: "nemoclaw-rebuild-preflight:metadata-mutated",
             prepared,
           },
-          beforeBackup: () => fs.chmodSync(preparedDockerfile, 0o4755),
+          beforeBackup: () => mutate(mutationPaths),
         });
 
         try {
@@ -206,8 +280,7 @@ export function registerRebuildFlowTargetImageTests(): void {
           expect(harness.onboardSpy).not.toHaveBeenCalled();
           expect(cleanupBuildCtx).toHaveBeenCalledOnce();
         } finally {
-          fs.rmSync(sourceDir, { recursive: true, force: true });
-          fs.rmSync(preparedDir, { recursive: true, force: true });
+          fs.rmSync(testRoot, { recursive: true, force: true });
         }
       },
     );

@@ -665,11 +665,64 @@ def _run_isolation(module: types.ModuleType) -> dict[str, Any]:
     return {"thread_a": _visible_names(thread_a), "thread_b": _visible_names(thread_b)}
 
 
+def _run_namespace(module: types.ModuleType) -> dict[str, Any]:
+    class Info:
+        def __init__(self, name: str, tools: tuple[BaseTool, ...]) -> None:
+            self.name = name
+            self.tools = tools
+
+    def collision(
+        tools: list[BaseTool], mcp_server_info: list[Info] | None = None
+    ) -> str:
+        try:
+            module.assert_unique_callable_tool_names(tools, mcp_server_info)
+        except RuntimeError as exc:
+            return str(exc)
+        raise AssertionError("ambiguous callable tool namespace was accepted")
+
+    duplicate_regular = [
+        BaseTool("shared_regular", "first implementation"),
+        BaseTool("shared_regular", "second implementation"),
+    ]
+    regular_mcp = [
+        BaseTool("mcp_echo", "regular implementation"),
+        BaseTool("mcp_echo", "MCP implementation"),
+    ]
+    cross_mcp = [
+        BaseTool("alpha_beta_echo", "first MCP implementation"),
+        BaseTool("alpha_beta_echo", "second MCP implementation"),
+    ]
+    safe_mcp = BaseTool("safe_echo", "one loaded MCP implementation")
+    module.assert_unique_callable_tool_names(
+        [safe_mcp], [Info("safe", (safe_mcp,))]
+    )
+
+    return {
+        "cross_mcp": collision(
+            cross_mcp,
+            [
+                Info("alpha", (cross_mcp[0],)),
+                Info("alpha_beta", (cross_mcp[1],)),
+            ],
+        ),
+        "regular_mcp": collision(
+            regular_mcp, [Info("mcp", (regular_mcp[1],))]
+        ),
+        "regular_regular": collision(duplicate_regular),
+        "reserved_mcp": collision(
+            [BaseTool("search_tools")],
+            [Info("search", (BaseTool("search_tools"),))],
+        ),
+        "reserved_regular": collision([BaseTool("read_file")]),
+        "safe_mcp": True,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "scenario",
-        choices=("behavior", "overflow", "persistence", "isolation"),
+        choices=("behavior", "overflow", "persistence", "isolation", "namespace"),
     )
     parser.add_argument("module", type=Path)
     args = parser.parse_args()
@@ -679,6 +732,7 @@ def main() -> None:
         "overflow": _run_overflow,
         "persistence": _run_persistence,
         "isolation": _run_isolation,
+        "namespace": _run_namespace,
     }
     print(json.dumps(runners[args.scenario](module), sort_keys=True))
 

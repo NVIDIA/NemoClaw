@@ -131,6 +131,20 @@ class ScriptedModel(GenericFakeChatModel):
                 )
             return AIMessage(content="direct tool complete")
 
+        if self.scenario == "collision":
+            if step == 0:
+                return AIMessage(
+                    content="",
+                    tool_calls=[
+                        _call(
+                            "schema_executor_collision",
+                            "collision-call",
+                            value="proof",
+                        )
+                    ],
+                )
+            return AIMessage(content="collision probe complete")
+
         if self.scenario == "checkpoint":
             if step in (0, 3):
                 return AIMessage(
@@ -663,22 +677,140 @@ def _validate_guessed_tool_execution() -> None:
     assert "guessed_hidden_probe" in audit.seen
 
 
-def _validate_reserved_name_collisions() -> None:
+def _validate_pinned_executor_collision_and_namespace_guard() -> None:
+    executions: list[str] = []
+
+    @tool("schema_executor_collision")
+    def model_schema_tool(value: str) -> str:
+        """model-visible-schema-sentinel"""
+        executions.append(f"model-schema:{value}")
+        return "wrong-implementation"
+
+    @tool("schema_executor_collision")
+    def executor_tool(value: str) -> str:
+        """executor-implementation-sentinel"""
+        executions.append(f"executor:{value}")
+        return "executor-proof"
+
+    # Pin the reason for the guard: disclosure selects the first schema from
+    # the full registry while the exact LangChain executor resolves the same
+    # duplicate name to the last implementation.
+    middleware = ProgressiveToolDisclosureMiddleware()
+    prepared = middleware._prepare_request(  # noqa: SLF001
+        _RequestProbe(
+            [model_schema_tool, executor_tool, middleware.tools[0]],
+            {"discovered_tools": ["schema_executor_collision"]},
+        )
+    )
+    visible_collision_tools = [
+        tool_value
+        for tool_value in prepared.tools
+        if _tool_name(tool_value) == "schema_executor_collision"
+    ]
+    assert visible_collision_tools == [model_schema_tool]
+    assert visible_collision_tools[0].description == "model-visible-schema-sentinel"
+
+    collision_model = ScriptedModel(scenario="collision")
+    collision_agent = create_agent(
+        model=collision_model,
+        tools=[model_schema_tool, executor_tool],
+    )
+    collision_agent.invoke(
+        {"messages": [HumanMessage(content="Exercise duplicate tool resolution.")]}
+    )
+    assert executions == ["executor:proof"]
+
     @tool("read_file")
-    def regular_read_collision() -> str:
+    def reserved_regular() -> str:
         """Represent an untrusted regular tool with a reserved core name."""
         return "must-not-run"
 
-    mcp_collision = MCPServerInfo(
-        name="search",
-        transport="http",
-        tools=(MCPToolInfo(name="search_tools", description="must be rejected"),),
-    )
-    safe_mcp = MCPServerInfo(
-        name="safe",
-        transport="http",
-        tools=(MCPToolInfo(name="safe_echo", description="activates disclosure"),),
-    )
+    def collision_tool(name: str, marker: str) -> BaseTool:
+        @tool(name)
+        def probe(value: str = "") -> str:
+            """Represent one implementation in a collision fixture."""
+            return f"{marker}:{value}"
+
+        return probe
+
+    regular_a = collision_tool("regular_duplicate", "regular-a")
+    regular_b = collision_tool("regular_duplicate", "regular-b")
+    regular_mcp = collision_tool("mcp_echo", "regular")
+    mcp_peer = collision_tool("mcp_echo", "mcp")
+    cross_mcp_a = collision_tool("alpha_beta_echo", "alpha-beta_echo")
+    cross_mcp_b = collision_tool("alpha_beta_echo", "alpha_beta-echo")
+
+    collision_cases = {
+        "regular_regular": (
+            "progressive",
+            [regular_a, regular_b],
+            [],
+        ),
+        "regular_mcp": (
+            "progressive",
+            [regular_mcp, mcp_peer],
+            [
+                MCPServerInfo(
+                    name="mcp",
+                    transport="http",
+                    tools=(
+                        MCPToolInfo(
+                            name="mcp_echo",
+                            description="MCP implementation",
+                        ),
+                    ),
+                )
+            ],
+        ),
+        "cross_mcp": (
+            "progressive",
+            [cross_mcp_a, cross_mcp_b],
+            [
+                MCPServerInfo(
+                    name=server,
+                    transport="http",
+                    tools=(
+                        MCPToolInfo(
+                            name="alpha_beta_echo",
+                            description=f"{server} implementation",
+                        ),
+                    ),
+                )
+                for server in ("alpha", "alpha_beta")
+            ],
+        ),
+        "reserved_progressive": (
+            "progressive",
+            [reserved_regular],
+            [],
+        ),
+        "reserved_mcp": (
+            "progressive",
+            [collision_tool("search_tools", "reserved-mcp")],
+            [
+                MCPServerInfo(
+                    name="search",
+                    transport="http",
+                    tools=(
+                        MCPToolInfo(
+                            name="search_tools",
+                            description="non-managed reserved implementation",
+                        ),
+                    ),
+                )
+            ],
+        ),
+        "duplicate_direct": (
+            "direct",
+            [regular_a, regular_b],
+            [],
+        ),
+        "reserved_direct": (
+            "direct",
+            [collision_tool("execute", "reserved-direct")],
+            [],
+        ),
+    }
     original_cli_factory = agent_module._nemoclaw_original_create_cli_agent
     reached_original: list[str] = []
 
@@ -688,28 +820,39 @@ def _validate_reserved_name_collisions() -> None:
         raise AssertionError("reserved-name validation ran too late")
 
     agent_module._nemoclaw_original_create_cli_agent = forbidden_original
+    previous = os.environ.get("NEMOCLAW_TOOL_DISCLOSURE")
     try:
-        errors: list[str] = []
-        for tools, info in (([], mcp_collision), ([regular_read_collision], safe_mcp)):
+        errors: dict[str, str] = {}
+        for label, (mode, tools, info) in collision_cases.items():
+            os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = mode
             try:
                 create_cli_agent(
                     model=object(),
-                    assistant_id="reserved-collision-validator",
+                    assistant_id="callable-namespace-validator",
                     tools=tools,
-                    mcp_server_info=[info],
+                    mcp_server_info=info,
                 )
             except RuntimeError as exc:
-                errors.append(str(exc))
+                errors[label] = str(exc)
             else:
-                raise AssertionError("reserved core tool name collision was accepted")
+                raise AssertionError(f"callable namespace collision {label!r} was accepted")
     finally:
         agent_module._nemoclaw_original_create_cli_agent = original_cli_factory
+        if previous is None:
+            os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
+        else:
+            os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = previous
 
     assert reached_original == []
-    assert len(errors) == 2
-    assert "MCP server 'search'" in errors[0]
-    assert "reserved name 'search_tools'" in errors[0]
-    assert "registered tool[0] uses reserved name 'read_file'" in errors[1]
+    assert set(errors) == set(collision_cases)
+    assert "multiple registered implementations" in errors["regular_regular"]
+    assert "MCP metadata owners" in errors["regular_mcp"]
+    assert "multiple MCP owners" in errors["cross_mcp"]
+    assert "reserved name 'read_file'" in errors["reserved_progressive"]
+    assert "MCP server 'search' tool[0]" in errors["reserved_mcp"]
+    assert "reserved name 'search_tools'" in errors["reserved_mcp"]
+    assert "multiple registered implementations" in errors["duplicate_direct"]
+    assert "reserved name 'execute'" in errors["reserved_direct"]
 
 
 def _validate_direct_mode_execution() -> None:
@@ -901,7 +1044,7 @@ def main() -> None:
     _validate_versions_and_schema()
     _validate_bounded_catalog_and_provider_native_tools()
     _validate_guessed_tool_execution()
-    _validate_reserved_name_collisions()
+    _validate_pinned_executor_collision_and_namespace_guard()
     _validate_direct_mode_execution()
     _validate_checkpoints_and_threads()
     _validate_concurrent_discovery()

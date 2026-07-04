@@ -277,46 +277,67 @@ def _tool_description(tool: BaseTool | dict[str, Any]) -> str:
     return ""
 
 
-def assert_no_reserved_tool_name_collisions(
+def assert_unique_callable_tool_names(
     tools: Sequence[object] | None,
     mcp_server_info: Sequence[object] | None,
 ) -> None:
-    """Reject untrusted registrations that can replace managed core tools.
+    """Reject ambiguous or non-managed registrations before graph creation.
 
     The pinned runtime combines middleware and regular tools into one executor
-    registry keyed by name. Keep provenance from both the registered tool list
-    and MCP metadata so reserved names are rejected before ``create_deep_agent``
-    instead of being trusted merely because they spell like a core tool.
+    registry keyed by resolved callable name. Its model schema selection and
+    executor lookup do not share the same duplicate-name rule, so accepting two
+    implementations can bind one schema and execute another. Keep the executor
+    registry and MCP metadata as separate views: one loaded MCP tool normally
+    appears once in each, while duplicates within either view are ambiguous.
     """
     collisions: set[str] = set()
+    registered_owners: dict[str, list[str]] = {}
     for index, tool in enumerate(tools or ()):
         name = _tool_name(tool)
+        if name is None:
+            continue
+        owner = f"registered tool[{index}]"
+        registered_owners.setdefault(name, []).append(owner)
         if name in CORE_TOOL_NAMES:
-            collisions.add(f"registered tool[{index}] uses reserved name {name!r}")
+            collisions.add(f"{owner} is a non-managed owner of reserved name {name!r}")
 
+    mcp_owners: dict[str, list[str]] = {}
     for server in mcp_server_info or ():
         raw_server_name = getattr(server, "name", None)
         server_name = raw_server_name if isinstance(raw_server_name, str) else "<unknown>"
-        for tool_info in getattr(server, "tools", ()) or ():
-            declared_name = (
-                tool_info if isinstance(tool_info, str) else _tool_name(tool_info)
-            )
-            if declared_name is None:
+        for index, tool_info in enumerate(getattr(server, "tools", ()) or ()):
+            runtime_name = tool_info if isinstance(tool_info, str) else _tool_name(tool_info)
+            if runtime_name is None:
                 continue
-            runtime_names = {declared_name}
-            prefix = f"{server_name}_"
-            if server_name != "<unknown>" and not declared_name.startswith(prefix):
-                runtime_names.add(f"{prefix}{declared_name}")
-            for runtime_name in runtime_names & CORE_TOOL_NAMES:
+            owner = f"MCP server {server_name!r} tool[{index}]"
+            mcp_owners.setdefault(runtime_name, []).append(owner)
+            if runtime_name in CORE_TOOL_NAMES:
                 collisions.add(
-                    f"MCP server {server_name!r} tool {declared_name!r} "
-                    f"resolves to reserved name {runtime_name!r}"
+                    f"{owner} is a non-managed owner of reserved name {runtime_name!r}"
                 )
+
+    for name, owners in registered_owners.items():
+        if len(owners) > 1:
+            metadata = mcp_owners.get(name, [])
+            metadata_detail = (
+                f"; MCP metadata owners: {', '.join(metadata)}" if metadata else ""
+            )
+            collisions.add(
+                f"resolved callable name {name!r} has multiple registered "
+                f"implementations ({', '.join(owners)}){metadata_detail}"
+            )
+
+    for name, owners in mcp_owners.items():
+        if len(owners) > 1:
+            collisions.add(
+                f"resolved callable name {name!r} has multiple MCP owners "
+                f"({', '.join(owners)})"
+            )
 
     if collisions:
         detail = "; ".join(sorted(collisions))
         raise RuntimeError(
-            "reserved core tool name collision before create_deep_agent: " + detail
+            "non-unique callable tool namespace before create_deep_agent: " + detail
         )
 
 
@@ -597,6 +618,6 @@ __all__ = [
     "ProgressiveToolDisclosureMiddleware",
     "ProgressiveToolDisclosureState",
     "SearchToolsInput",
-    "assert_no_reserved_tool_name_collisions",
+    "assert_unique_callable_tool_names",
     "progressive_tool_disclosure_enabled",
 ]

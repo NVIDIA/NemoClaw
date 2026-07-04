@@ -53,7 +53,10 @@ describe("managed DCode rebuild image preflight", () => {
     const originalDockerfile = path.join(testRoot, "Dockerfile.original");
     const replacementDockerfile = path.join(testRoot, "Dockerfile.replacement");
     fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
+    const stableDockerfileTime = new Date("2026-01-01T00:00:00.000Z");
+    fs.utimesSync(stagedDockerfile, stableDockerfileTime, stableDockerfileTime);
     fs.writeFileSync(replacementDockerfile, "FROM attacker-controlled\n");
+    fs.utimesSync(buildCtx, stableDockerfileTime, stableDockerfileTime);
     const cleanupBuildCtx = vi.fn(() => {
       fs.rmSync(testRoot, { recursive: true, force: true });
       return true;
@@ -119,6 +122,7 @@ describe("managed DCode rebuild image preflight", () => {
 
     const prepared = expectPreparedImage(result);
     const mutationFd = fs.openSync(stagedDockerfile, fs.constants.O_WRONLY);
+    const originalMutationStat = fs.fstatSync(mutationFd);
     const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
     const nonBlock = typeof fs.constants.O_NONBLOCK === "number" ? fs.constants.O_NONBLOCK : 0;
     const stableOpen = vi.spyOn(fs, "openSync");
@@ -240,6 +244,8 @@ describe("managed DCode rebuild image preflight", () => {
     }
     fs.ftruncateSync(mutationFd, 0);
     fs.writeSync(mutationFd, "FROM scratch\n", 0, "utf8");
+    fs.futimesSync(mutationFd, originalMutationStat.atime, originalMutationStat.mtime);
+    fs.utimesSync(buildCtx, stableDockerfileTime, stableDockerfileTime);
     expect(verifyPreparedDcodeRebuildImage(prepared)).toBe(true);
 
     fs.writeSync(mutationFd, "# changed after preflight\n", 0, "utf8");

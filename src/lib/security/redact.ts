@@ -44,7 +44,7 @@ const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
 // Proxy variables and diagnostics are not limited to lowercase HTTP(S) URLs.
 // Match any RFC-style URI scheme so credentials in uppercase or SOCKS proxy
 // URLs receive the same URL-parser-backed redaction.
-const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
+const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"()<>{},;]+/gi;
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";
 const MAX_URL_PARSE_ATTEMPTS = 9;
 
@@ -58,6 +58,14 @@ function parseUrlToken(value: string): { url: URL; suffix: string } | null {
   let candidate = value;
   let suffix = "";
   for (let attempt = 0; candidate && attempt < MAX_URL_PARSE_ATTEMPTS; attempt += 1) {
+    // A terminal period is accepted as URL data by the platform parser, but
+    // is overwhelmingly sentence punctuation in the diagnostic text this
+    // matcher consumes. Peel it before parsing so it remains outside the URL.
+    if (candidate.endsWith(".")) {
+      candidate = candidate.slice(0, -1);
+      suffix = `.${suffix}`;
+      continue;
+    }
     try {
       return { url: new URL(candidate), suffix };
     } catch {

@@ -63,8 +63,70 @@ describe("dockerfile patch security guards", () => {
 
     expect(() =>
       patchStagedDockerfile(dockerfilePath, "custom-model", "https://chat.example"),
-    ).toThrow(/Refusing to patch Dockerfile through a symlink/);
+    ).toThrow(/Refusing to patch Dockerfile because it changed during validation/);
     expect(fs.readFileSync(swappedTarget, "utf-8")).toBe("ARG NEMOCLAW_MODEL=swapped\n");
+  });
+
+  it("refuses an initially hard-linked staged Dockerfile without modifying its external alias", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-hardlink-test-"));
+    tmpRoots.push(dir);
+    const externalPath = path.join(dir, "external.Dockerfile");
+    const dockerfilePath = path.join(dir, "Dockerfile");
+    const original = "ARG NEMOCLAW_MODEL=external\n";
+    fs.writeFileSync(externalPath, original, "utf-8");
+    fs.linkSync(externalPath, dockerfilePath);
+
+    expect(() =>
+      patchStagedDockerfile(dockerfilePath, "custom-model", "https://chat.example"),
+    ).toThrow(/Refusing to patch hard-linked Dockerfile path/);
+    expect(fs.readFileSync(externalPath, "utf-8")).toBe(original);
+  });
+
+  it("refuses an external hardlink swapped in between read and replacement", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-hardlink-swap-test-"));
+    tmpRoots.push(dir);
+    const dockerfilePath = path.join(dir, "Dockerfile");
+    const externalPath = path.join(dir, "external.Dockerfile");
+    const externalAlias = path.join(dir, "external-alias.Dockerfile");
+    const external = "ARG NEMOCLAW_MODEL=external\n";
+    fs.writeFileSync(dockerfilePath, "ARG NEMOCLAW_MODEL=old\n", "utf-8");
+    fs.writeFileSync(externalPath, external, "utf-8");
+    fs.linkSync(externalPath, externalAlias);
+
+    const readFileSync = fs.readFileSync.bind(fs);
+    vi.spyOn(fs, "readFileSync").mockImplementationOnce((file, options) => {
+      const content = readFileSync(file as Parameters<typeof fs.readFileSync>[0], options as never);
+      fs.unlinkSync(dockerfilePath);
+      fs.linkSync(externalPath, dockerfilePath);
+      return content;
+    });
+
+    expect(() =>
+      patchStagedDockerfile(dockerfilePath, "custom-model", "https://chat.example"),
+    ).toThrow(/Refusing to patch Dockerfile because it changed during validation/);
+    expect(fs.readFileSync(externalPath, "utf-8")).toBe(external);
+    expect(fs.readFileSync(externalAlias, "utf-8")).toBe(external);
+  });
+
+  it("refuses a Dockerfile reached through a stable symlinked staging parent", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dockerfile-parent-link-test-"));
+    tmpRoots.push(dir);
+    const realParent = path.join(dir, "real-parent");
+    const linkedParent = path.join(dir, "linked-parent");
+    fs.mkdirSync(realParent);
+    const realDockerfile = path.join(realParent, "Dockerfile");
+    const original = "ARG NEMOCLAW_MODEL=outside\n";
+    fs.writeFileSync(realDockerfile, original, "utf-8");
+    fs.symlinkSync(realParent, linkedParent, "dir");
+
+    expect(() =>
+      patchStagedDockerfile(
+        path.join(linkedParent, "Dockerfile"),
+        "custom-model",
+        "https://chat.example",
+      ),
+    ).toThrow(/Refusing to patch Dockerfile through a symlinked parent/);
+    expect(fs.readFileSync(realDockerfile, "utf-8")).toBe(original);
   });
 
   it("refuses a non-regular staged Dockerfile swapped in before write without truncating", () => {

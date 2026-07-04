@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { getSandboxInferenceConfig } from "../inference/config";
 import {
   isWebSearchEnabled,
@@ -22,8 +20,8 @@ import {
 } from "../tool-disclosure";
 import {
   dockerfileInstructions,
-  openExistingRegularDockerfileNoFollow,
-  readExistingDockerfileNoFollow,
+  readDockerfilePatchSnapshot,
+  replaceDockerfilePatchSnapshot,
   validateToolDisclosureDockerfileContract,
 } from "./dockerfile-tool-disclosure-contract";
 
@@ -34,16 +32,6 @@ const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
 type LooseObject = Record<string, unknown>;
-
-function writeExistingDockerfileNoFollow(dockerfilePath: string, dockerfile: string): void {
-  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_WRONLY, "patch");
-  try {
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, dockerfile, { encoding: "utf8" });
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
@@ -101,7 +89,8 @@ export function patchStagedDockerfile(
     inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
-  let dockerfile = readExistingDockerfileNoFollow(dockerfilePath, "patch");
+  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
+  let dockerfile = patchSnapshot.content;
   const toolDisclosure = normalizeToolDisclosure(options.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE;
   const toolDisclosureInstruction = options.requireToolDisclosureContract
     ? validateToolDisclosureDockerfileContract(dockerfile, toolDisclosure)
@@ -333,5 +322,5 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
-  writeExistingDockerfileNoFollow(dockerfilePath, dockerfile);
+  replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }

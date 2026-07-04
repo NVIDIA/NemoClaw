@@ -86,6 +86,49 @@ describe("preflightRebuildImage", () => {
     }
   });
 
+  it.runIf(process.platform !== "win32")(
+    "rejects a symlinked build-context root before the preflight build",
+    async () => {
+      const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preflight-root-link-"));
+      const targetBuildCtx = path.join(testRoot, "target");
+      const linkedBuildCtx = path.join(testRoot, "context");
+      fs.mkdirSync(targetBuildCtx);
+      fs.writeFileSync(path.join(targetBuildCtx, "Dockerfile"), "FROM scratch\n");
+      fs.symlinkSync(targetBuildCtx, linkedBuildCtx, "dir");
+      const cleanupBuildCtx = vi.fn(() => {
+        fs.rmSync(linkedBuildCtx, { force: true });
+        return true;
+      });
+      const buildImage = vi.fn(() => ({ status: 0 }) as never);
+
+      try {
+        await expect(
+          preflightRebuildImage(input(null), {
+            stageBuildContext: vi.fn(() => ({
+              buildCtx: linkedBuildCtx,
+              stagedDockerfile: path.join(linkedBuildCtx, "Dockerfile"),
+              cleanupBuildCtx,
+              origin: "generated" as const,
+            })),
+            prepareDockerfilePatch: vi.fn(async () => ({
+              buildId: "root-link",
+              resolvedBaseImage: null,
+            })),
+            buildImage,
+            removeImage: vi.fn(() => ({ status: 0 }) as never),
+          }),
+        ).resolves.toEqual({
+          ok: false,
+          detail: "build-context root must be a real directory",
+        });
+        expect(buildImage).not.toHaveBeenCalled();
+        expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(testRoot, { recursive: true, force: true });
+      }
+    },
+  );
+
   it.each([
     ["malformed syntax", "THIS IS NOT A DOCKERFILE"],
     ["missing COPY context", "FROM scratch\nCOPY missing.txt /missing.txt\n"],

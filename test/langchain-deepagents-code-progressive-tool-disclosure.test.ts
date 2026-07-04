@@ -315,29 +315,59 @@ os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
 active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
-try:
-    agent.create_cli_agent(
-        None,
-        "assistant",
-        mcp_server_info=[Info(("tools",), name="search")],
-    )
-except RuntimeError as exc:
-    mcp_collision = str(exc)
-else:
-    raise AssertionError("MCP reserved-name collision was accepted")
-try:
-    agent.create_cli_agent(
-        None,
-        "assistant",
-        tools=[NamedTool("read_file")],
-        mcp_server_info=[Info(("safe_echo",), name="safe")],
-    )
-except RuntimeError as exc:
-    regular_collision = str(exc)
-else:
-    raise AssertionError("regular reserved-name collision was accepted")
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
 direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+
+original_factory = agent._nemoclaw_original_create_cli_agent
+reached_original = []
+
+def forbidden_original(*args, **kwargs):
+    del args, kwargs
+    reached_original.append("called")
+    raise AssertionError("callable namespace validation ran too late")
+
+def reject(tools, info=()):
+    try:
+        agent.create_cli_agent(
+            None,
+            "assistant",
+            tools=tools,
+            mcp_server_info=list(info),
+        )
+    except RuntimeError as exc:
+        return str(exc)
+    raise AssertionError("ambiguous callable tool namespace was accepted")
+
+agent._nemoclaw_original_create_cli_agent = forbidden_original
+try:
+    os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "progressive"
+    progressive_collisions = {
+        "regular_regular": reject([NamedTool("duplicate"), NamedTool("duplicate")]),
+        "regular_mcp": reject(
+            [NamedTool("mcp_echo"), NamedTool("mcp_echo")],
+            [Info(("mcp_echo",), name="mcp")],
+        ),
+        "cross_mcp": reject(
+            [NamedTool("alpha_beta_echo"), NamedTool("alpha_beta_echo")],
+            [
+                Info(("alpha_beta_echo",), name="alpha"),
+                Info(("alpha_beta_echo",), name="alpha_beta"),
+            ],
+        ),
+        "reserved_regular": reject([NamedTool("read_file")]),
+        "reserved_mcp": reject(
+            [NamedTool("search_tools")],
+            [Info(("search_tools",), name="search")],
+        ),
+    }
+    os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
+    direct_collisions = {
+        "duplicate": reject([NamedTool("direct_dup"), NamedTool("direct_dup")]),
+        "reserved": reject([NamedTool("execute")]),
+    }
+finally:
+    agent._nemoclaw_original_create_cli_agent = original_factory
+
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "invalid"
 try:
     agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))])
@@ -350,8 +380,9 @@ print(json.dumps({
     "no_mcp": no_mcp,
     "empty_mcp": empty_mcp,
     "active": active,
-    "mcp_collision": mcp_collision,
-    "regular_collision": regular_collision,
+    "progressive_collisions": progressive_collisions,
+    "direct_collisions": direct_collisions,
+    "reached_original": reached_original,
     "direct": direct,
     "invalid": invalid,
 }))
@@ -365,7 +396,7 @@ print(json.dumps({
 }
 
 function runHarness(
-  scenario: "behavior" | "overflow" | "persistence" | "isolation",
+  scenario: "behavior" | "overflow" | "persistence" | "isolation" | "namespace",
   target = middlewarePath,
 ) {
   const result = spawnSync("python3", [harnessPath, scenario, target], { encoding: "utf8" });
@@ -430,6 +461,16 @@ describe("Deep Agents progressive tool disclosure", () => {
     expect(result.thread_a).toContain("Weather_Forecast");
     expect(result.thread_b).not.toContain("Weather_Forecast");
   });
+
+  it("rejects duplicate callable names and non-managed reserved-name owners", () => {
+    const result = runHarness("namespace");
+    expect(result.safe_mcp).toBe(true);
+    expect(result.regular_regular).toContain("multiple registered implementations");
+    expect(result.regular_mcp).toContain("MCP metadata owners");
+    expect(result.cross_mcp).toContain("multiple MCP owners");
+    expect(result.reserved_regular).toContain("non-managed owner of reserved name 'read_file'");
+    expect(result.reserved_mcp).toContain("non-managed owner of reserved name 'search_tools'");
+  });
 });
 
 describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
@@ -459,16 +500,25 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     ).toHaveLength(2);
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
 
-    expect(runWiring(fixture)).toEqual({
+    const wiring = runWiring(fixture);
+    expect(wiring).toMatchObject({
       no_mcp: [0, 0],
       empty_mcp: [0, 0],
       active: [3, 3],
-      mcp_collision:
-        "reserved core tool name collision before create_deep_agent: MCP server 'search' tool 'tools' resolves to reserved name 'search_tools'",
-      regular_collision:
-        "reserved core tool name collision before create_deep_agent: registered tool[0] uses reserved name 'read_file'",
       direct: [0, 0],
+      reached_original: [],
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
+    });
+    expect(wiring.progressive_collisions).toEqual({
+      regular_regular: expect.stringContaining("multiple registered implementations"),
+      regular_mcp: expect.stringContaining("MCP metadata owners"),
+      cross_mcp: expect.stringContaining("multiple MCP owners"),
+      reserved_regular: expect.stringContaining("non-managed owner of reserved name 'read_file'"),
+      reserved_mcp: expect.stringContaining("non-managed owner of reserved name 'search_tools'"),
+    });
+    expect(wiring.direct_collisions).toEqual({
+      duplicate: expect.stringContaining("multiple registered implementations"),
+      reserved: expect.stringContaining("non-managed owner of reserved name 'execute'"),
     });
   });
 

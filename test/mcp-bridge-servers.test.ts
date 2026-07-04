@@ -155,7 +155,7 @@ describe("authenticated MCP live fixtures", () => {
     }
   });
 
-  it("redacts proxy userinfo from failed cloudflared diagnostics", async () => {
+  it("omits failed cloudflared child output from diagnostics", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
     const cloudflared = path.join(directory, "cloudflared");
     const boundaryUrl = "HTTPS://boundary-user:boundary-password@boundary-proxy.example.test:9443/";
@@ -197,11 +197,10 @@ describe("authenticated MCP live fixtures", () => {
 
       expect(failure).toBeInstanceOf(Error);
       const message = failure instanceof Error ? failure.message : String(failure);
-      expect(message).toContain("boundary-proxy.example.test:9443");
-      expect(message).toContain("proxy.example.test:8443");
-      expect(message).toContain("socks.example.test:1080");
-      expect(message).toContain("PASSWORD=<REDACTED>");
-      expect(message).toContain("token: <REDACTED>");
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain("boundary-proxy.example.test:9443");
+      expect(message).not.toContain("proxy.example.test:8443");
+      expect(message).not.toContain("socks.example.test:1080");
       expect(message).not.toContain("boundary-user");
       expect(message).not.toContain("boundary-password");
       expect(message).not.toContain("proxy-user");
@@ -210,6 +209,48 @@ describe("authenticated MCP live fixtures", () => {
       expect(message).not.toContain("socks-password");
       expect(message).not.toContain("tunnel-password-value");
       expect(message).not.toContain("tunnel-payload");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits a Slack credential split across cloudflared data events", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-chunks-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const credentialPrefix = ["xoxb", "1234567890"].join("-");
+    const credentialTail = "-1234567890123-abcdefghijklmnopqrstuvwxyz";
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        `printf '%s' '${credentialPrefix}' >&2`,
+        "sleep 1",
+        `printf '%s\\n' '${credentialTail}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "chunked redaction fixture",
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain(credentialPrefix);
+      expect(message).not.toContain(credentialTail);
+      expect(message).not.toContain(`${credentialPrefix}${credentialTail}`);
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }

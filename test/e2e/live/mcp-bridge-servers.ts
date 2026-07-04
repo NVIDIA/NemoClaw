@@ -8,7 +8,6 @@ import https from "node:https";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 
-import { redact, redactFull } from "../../../src/lib/security/redact.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 
 type TestServer = http.Server | https.Server;
@@ -54,7 +53,8 @@ const MCP_NOTIFICATION_METHODS = new Set([
 const TRYCLOUDFLARE_ORIGIN_PATTERN = /https:\/\/[a-z0-9-]+\.trycloudflare\.com(?=$|[\s"'\\/])/i;
 const QUICK_TUNNEL_ATTEMPTS = 3;
 const QUICK_TUNNEL_ATTEMPT_TIMEOUT_MS = 45_000;
-const QUICK_TUNNEL_LOG_LIMIT = 32 * 1024;
+const QUICK_TUNNEL_DISCOVERY_CARRY_LIMIT = 512;
+const OMITTED_CLOUDFLARED_OUTPUT_DIAGNOSTIC = "cloudflared child output omitted from diagnostics";
 const CLOUDFLARED_ENV_NAMES = new Set([
   "PATH",
   "TMPDIR",
@@ -254,10 +254,17 @@ export async function startPublicMcpHttpsTunnel(options: {
   let lastFailure = "cloudflared did not publish a quick-tunnel URL";
 
   for (let attempt = 1; attempt <= QUICK_TUNNEL_ATTEMPTS; attempt += 1) {
-    let output = "";
+    let origin: string | null = null;
+    let childOutputSeen = false;
     let spawnError: Error | undefined;
-    const appendOutput = (chunk: string): void => {
-      output = redact(redactFull(`${output}${chunk}`)).slice(-QUICK_TUNNEL_LOG_LIMIT);
+    const inspectOutputForOrigin = (): ((chunk: string) => void) => {
+      let carry = "";
+      return (chunk: string): void => {
+        childOutputSeen = true;
+        const candidate = `${carry}${chunk}`;
+        origin ??= parseTryCloudflareOrigin(candidate);
+        carry = candidate.slice(-QUICK_TUNNEL_DISCOVERY_CARRY_LIMIT);
+      };
     };
     const child = spawn(options.cloudflaredBin ?? "cloudflared", args, {
       detached: true,
@@ -266,9 +273,9 @@ export async function startPublicMcpHttpsTunnel(options: {
     });
     const exited = waitForExit(child);
     child.stdout?.setEncoding("utf8");
-    child.stdout?.on("data", appendOutput);
+    child.stdout?.on("data", inspectOutputForOrigin());
     child.stderr?.setEncoding("utf8");
-    child.stderr?.on("data", appendOutput);
+    child.stderr?.on("data", inspectOutputForOrigin());
     child.once("error", (error) => {
       spawnError = error;
     });
@@ -279,7 +286,6 @@ export async function startPublicMcpHttpsTunnel(options: {
       return closePromise;
     };
     const deadline = Date.now() + QUICK_TUNNEL_ATTEMPT_TIMEOUT_MS;
-    let origin: string | null = null;
 
     while (Date.now() < deadline) {
       if (spawnError) {
@@ -290,7 +296,6 @@ export async function startPublicMcpHttpsTunnel(options: {
         lastFailure = `cloudflared exited before readiness (code=${String(child.exitCode)}, signal=${String(child.signalCode)})`;
         break;
       }
-      origin ??= parseTryCloudflareOrigin(output);
       if (origin) {
         const probe = await probePublicTunnel(origin);
         if (probe.ready) {
@@ -308,8 +313,14 @@ export async function startPublicMcpHttpsTunnel(options: {
     }
 
     await close();
-    const diagnostic = output.trim().split("\n").slice(-12).join("\n");
-    if (diagnostic) lastFailure = `${lastFailure}\n${diagnostic}`;
+    // Raw child output is intentionally excluded from thrown diagnostics.
+    // Redacting completed chunks is unsafe when a credential continues in a
+    // later data event, while retaining an arbitrary unfinished token would
+    // make diagnostic memory unbounded. The bounded carry above exists only
+    // to discover a quick-tunnel origin and is never surfaced to callers.
+    if (childOutputSeen) {
+      lastFailure = `${lastFailure}\n${OMITTED_CLOUDFLARED_OUTPUT_DIAGNOSTIC}`;
+    }
     if (attempt < QUICK_TUNNEL_ATTEMPTS) await delay(attempt * 1_000);
   }
 

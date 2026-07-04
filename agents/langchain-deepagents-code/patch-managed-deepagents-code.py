@@ -421,20 +421,22 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     """Keep managed graph posture and progressively disclose loaded MCP tools."""
     kwargs["rubric_model"] = None
     kwargs["async_subagents"] = None
+    from deepagents_code.progressive_tool_disclosure import (
+        assert_unique_callable_tool_names,
+    )
+
+    assert_unique_callable_tool_names(
+        kwargs.get("tools"), kwargs.get("mcp_server_info")
+    )
     has_loaded_mcp_tools = any(
         getattr(info, "tools", ()) for info in kwargs.get("mcp_server_info") or ()
     )
     if has_loaded_mcp_tools:
         from deepagents_code.progressive_tool_disclosure import (
-            assert_no_reserved_tool_name_collisions,
             progressive_tool_disclosure_enabled,
         )
 
         progressive_active = progressive_tool_disclosure_enabled()
-        if progressive_active:
-            assert_no_reserved_tool_name_collisions(
-                kwargs.get("tools"), kwargs.get("mcp_server_info")
-            )
     else:
         progressive_active = False
     if progressive_active and _nemoclaw_original_create_deep_agent is None:
