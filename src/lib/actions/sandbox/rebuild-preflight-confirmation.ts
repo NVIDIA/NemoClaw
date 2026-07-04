@@ -69,9 +69,10 @@ export function getRebuildAgentDisplayName(sandboxName: string): string {
   return agentRuntime.getAgentDisplayName(agentRuntime.getSessionAgent(sandboxName));
 }
 
-async function confirmSandboxRebuildIfNeeded(
+export async function confirmSandboxRebuildIfNeeded(
   skipConfirm: boolean,
   activeSessionCount: number,
+  prompt: typeof askPrompt = askPrompt,
 ): Promise<boolean> {
   if (skipConfirm) return true;
   if (activeSessionCount > 0) {
@@ -89,7 +90,7 @@ async function confirmSandboxRebuildIfNeeded(
   console.log("    2. Destroy and recreate the sandbox with the current image");
   console.log("    3. Restore workspace state into the new sandbox");
   console.log("");
-  const answer = await askPrompt("  Proceed? [y/N]: ");
+  const answer = await prompt("  Proceed? [y/N]: ");
   if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
     console.log("  Cancelled.");
     return false;

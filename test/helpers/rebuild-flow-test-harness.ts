@@ -41,6 +41,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const agentDefs = requireDist("../../agent/defs.js");
   const agentRuntime = requireDist("../../agent/runtime.js");
   const onboardMod = requireDist("../../onboard.js");
+  const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
   const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
@@ -137,6 +138,24 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
+  const defaultHydrateCredentialEnv =
+    onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
+  const hydrateCredentialEnvSpy = vi
+    .spyOn(onboardMod, "hydrateCredentialEnv")
+    .mockImplementation((...args: unknown[]) => {
+      const credentialEnv = String(args[0] ?? "");
+      return overrides.hydrateCredentialEnv
+        ? overrides.hydrateCredentialEnv(credentialEnv)
+        : defaultHydrateCredentialEnv(credentialEnv);
+    });
+  vi.spyOn(onboardCredentialEnv, "hydrateCredentialEnv").mockImplementation(
+    (...args: unknown[]) => {
+      const credentialEnv = String(args[0] ?? "");
+      return overrides.hydrateCredentialEnv
+        ? overrides.hydrateCredentialEnv(credentialEnv)
+        : defaultHydrateCredentialEnv(credentialEnv);
+    },
+  );
   vi.spyOn(hermesProviderAuth, "inspectHermesProviderBinding").mockReturnValue({
     exists: overrides.hermesProviderExists ?? true,
     credentialKeys:
@@ -427,6 +446,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     ensureRebuildAgentBaseImageSpy,
     ensureTargetGatewaySpy,
     ensureValidatedBraveSearchCredentialSpy,
+    hydrateCredentialEnvSpy,
     logSpy,
     markStepFailedSpy,
     onboardSpy,

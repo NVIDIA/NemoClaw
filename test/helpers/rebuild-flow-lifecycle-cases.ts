@@ -12,6 +12,26 @@ import {
 export function registerRebuildFlowLifecycleTests(): void {
   describe("rebuildSandbox flow: lifecycle", () => {
     installRebuildFlowTestHooks();
+
+    it("rejects a multi-agent sandbox before backup, onboard, or deletion", async () => {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { agents: [{ name: "openclaw" }, { name: "hermes" }] },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Multi-agent sandbox rebuild is not yet supported");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+      expect(harness.removeSandboxRegistryEntryWithReceiptSpy).not.toHaveBeenCalled();
+      expect(
+        harness.runOpenshellSpy.mock.calls.some(
+          ([args]) => Array.isArray(args) && args.join(" ") === "sandbox delete alpha",
+        ),
+      ).toBe(false);
+    });
+
     it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
       const mcpEntry = {
         server: "github",
