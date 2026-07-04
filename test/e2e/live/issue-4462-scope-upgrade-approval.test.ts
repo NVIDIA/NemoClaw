@@ -640,8 +640,10 @@ if mode == 'prepare':
         fail('repair request has no exact public key')
     context=paired_context(state, public_key)
     requested=scopes(request, ('scopes','requestedScopes'))
-    target_requested=target.get('requestedScopes') if isinstance(target.get('requestedScopes'), list) else []
     target_expected=target.get('expectedScopes') if isinstance(target.get('expectedScopes'), list) else []
+    successor_closure=set(requested or [])
+    if {'operator.read','operator.write'}.intersection(successor_closure):
+        successor_closure.add('operator.pairing')
     is_upgrade=(
         context is not None and requested is not None
         and context['scopes'] != final_scopes
@@ -650,7 +652,7 @@ if mode == 'prepare':
     is_final_successor=(
         bool(target) and context is not None and requested is not None
         and context['scopes'] == final_scopes
-        and set(target_requested) == requested
+        and successor_closure == final_scopes
         and set(target_expected) == final_scopes
     )
     if (context is None or not auth_matches(state, context) or requested is None
@@ -669,9 +671,9 @@ if mode == 'prepare':
         'expectedScopes': sorted(final_scopes),
     }
     if target:
-        exact=('deviceId','publicKey','clientId','clientMode','requestedScopes','expectedScopes')
+        exact=('deviceId','publicKey','clientId','clientMode','expectedScopes')
         if not is_final_successor:
-            exact += ('baselineScopes','baselineTokenHash')
+            exact += ('requestedScopes','baselineScopes','baselineTokenHash')
         if any(candidate.get(key) != target.get(key) for key in exact):
             fail('replacement request does not match the reviewed scope upgrade')
     status='CANDIDATE' if want == original_want else 'RETRY'
