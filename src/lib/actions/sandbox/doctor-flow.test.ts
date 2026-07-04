@@ -445,15 +445,13 @@ describe("runSandboxDoctor flow", () => {
       gatewayName: "nemoclaw-19080",
       gatewayPort: 19080,
     });
+    const openShellResponses: Record<string, { status: number; output: string }> = {
+      "sandbox list": { status: 0, output: "alpha Ready" },
+      "inference get": { status: 0, output: "Provider: nvidia-prod\nModel: nemotron\n" },
+    };
     harness.captureOpenShellSpy.mockImplementation((args: unknown) => {
       const argv = Array.isArray(args) ? args : [];
-      if (argv[0] === "sandbox" && argv[1] === "list") {
-        return { status: 0, output: "alpha Ready" };
-      }
-      if (argv[0] === "inference" && argv[1] === "get") {
-        return { status: 0, output: "Provider: nvidia-prod\nModel: nemotron\n" };
-      }
-      return { status: 0, output: "" };
+      return openShellResponses[`${argv[0]} ${argv[1]}`] ?? { status: 0, output: "" };
     });
     // The upstream provider endpoint is reachable...
     harness.healthProbeSpy.mockReturnValue({
