@@ -878,6 +878,7 @@ sys.modules["gateway.status"] = status
 module.os.geteuid = lambda: 0
 module.pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=2000)
 module._is_trusted_gateway_process = lambda pid: True
+module._gateway_has_managed_parent = lambda pid: True
 module.os.stat = lambda path: types.SimpleNamespace(st_uid=1000)
 try:
     module._gateway_identity()
@@ -929,6 +930,7 @@ sys.modules["gateway.status"] = status
 module.GATEWAY_PID_PATH = sys.argv[3]
 module.os.stat = lambda path: types.SimpleNamespace(st_uid=expected_uid)
 module._is_trusted_gateway_process = lambda pid: pid == 4242
+module._gateway_has_managed_parent = lambda pid: True
 
 recognized = module._gateway_identity()
 runtime["lock_active"] = False
@@ -1049,6 +1051,7 @@ statuses[module.GATEWAY_INTERNAL_PORT] = 200
 statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401, 401]
 identities = iter(((1, 10), (2, 20), (2, 20), (3, 30), (3, 30), (3, 30)))
 module._gateway_identity = lambda: next(identities)
+module._gateway_has_managed_parent = lambda pid: True
 signals = []
 module.os.kill = lambda pid, sent_signal: signals.append((pid, signal.Signals(sent_signal).name))
 module.time.monotonic = lambda: 0

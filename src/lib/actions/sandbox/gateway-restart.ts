@@ -159,6 +159,16 @@ export function classifyGatewayRestartFailure(result: GatewayRestartCommandResul
     return { layer: "unsafe config path", detail: detail || "unsafe config path" };
   }
   if (
+    output.includes("mcp-integrity") ||
+    output.includes("mcp-reconcile-required") ||
+    output.includes("HERMES_MCP_CONFIG_DRIFT")
+  ) {
+    return {
+      layer: "MCP reconciliation refusal",
+      detail: detail || "Hermes MCP reconciliation refused",
+    };
+  }
+  if (
     output.includes(MARKERS.GATEWAY_CONFIG_HASH_MISMATCH) ||
     output.includes("HERMES_LOCKED_HASH_MISMATCH") ||
     output.includes("HERMES_CONFIG_HASH_MISMATCH")

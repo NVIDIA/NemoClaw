@@ -556,7 +556,10 @@ def _refresh_and_verify_hashes(
         HERMES_DIR,
         STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash"),
     )
-    expected_state = "current" if mcp_transition == "apply" else None
+    expected_state = {
+        "apply": "current",
+        "rollback": "pending",
+    }.get(mcp_transition)
     if expected_state is not None and state != expected_state:
         raise RuntimeError("Hermes MCP applied hash state is stale")
 
@@ -646,9 +649,6 @@ def apply_transaction_and_reload(
     privileged = os.geteuid() == 0
     guard = _load_guard()
     original_text, original_snapshot = guard._read_text(CONFIG_PATH)
-    hash_originals = {
-        path: guard._read_text(path) for path in _managed_hash_paths(privileged)
-    }
     parsed = yaml.safe_load(original_text)
     if parsed is None:
         parsed = {}
@@ -688,7 +688,11 @@ def apply_transaction_and_reload(
                 current_snapshot,
                 mode=int(getattr(original_snapshot, "mode")),
             )
-            _restore_hash_snapshots(guard, hash_originals)
+            # Do not restore the original current/current anchors before the
+            # old config is proven live.  Record a pending rollback anchor so
+            # startup and host reconciliation remain fail-closed if this
+            # second reload also fails.
+            _refresh_and_verify_hashes(guard, privileged, "rollback")
         except Exception as rollback_error:
             rollback_errors.append(f"config/hash rollback failed: {rollback_error}")
         else:
@@ -698,6 +702,8 @@ def apply_transaction_and_reload(
                     rollback_errors.append(
                         "old-config runtime reload was not verified because the gateway stopped"
                     )
+                else:
+                    _refresh_and_verify_hashes(guard, privileged, "apply")
             except Exception as rollback_reload_error:
                 rollback_errors.append(
                     f"old-config runtime reload failed: {rollback_reload_error}"
@@ -883,6 +889,10 @@ def _gateway_identity() -> tuple[int, object] | None:
         raise PermissionError(
             "Hermes gateway PID does not identify the trusted launcher"
         )
+    if not _gateway_has_managed_parent(numeric_pid):
+        raise PermissionError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
     start_time = get_process_start_time(numeric_pid)
     if start_time is None:
         raise PermissionError("Hermes gateway process start identity is unavailable")
@@ -960,13 +970,21 @@ def reload_gateway() -> bool:
         if now >= deadline:
             break
         current = _gateway_identity()
-        if current is not None and current != previous:
+        if (
+            current is not None
+            and current != previous
+            and _gateway_has_managed_parent(current[0])
+        ):
             healthy, observed_phase = _gateway_health_phase(deadline)
             if phase_order[observed_phase] > phase_order[last_safe_phase]:
                 last_safe_phase = observed_phase
             if healthy:
                 confirmed = _gateway_identity()
-                if confirmed == current and time.monotonic() < deadline:
+                if (
+                    confirmed == current
+                    and _gateway_has_managed_parent(current[0])
+                    and time.monotonic() < deadline
+                ):
                     return True
 
         # A pinned Hermes gateway can remain alive without converging after the

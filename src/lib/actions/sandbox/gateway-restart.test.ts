@@ -23,6 +23,9 @@ describe("gateway restart failure markers", () => {
       [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
       [MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING, "unsafe config path"],
       [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
+      ["mcp-integrity", "MCP reconciliation refusal"],
+      ["mcp-reconcile-required", "MCP reconciliation refusal"],
+      ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
       [MARKERS.GATEWAY_CONFIG_HASH_MISMATCH, "config hash mismatch"],
       ["HERMES_UNSAFE_CONFIG_PATH", "unsafe config path"],
       ["HERMES_LOCKED_HASH_MISMATCH", "config hash mismatch"],
@@ -77,63 +80,6 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       ...overrides,
     };
   }
-
-  it("refuses to report a restarted Hermes gateway with stale MCP intent", () => {
-    const restore = silenceConsole();
-    try {
-      const hermesAgent = {
-        name: "hermes",
-        displayName: "Hermes Agent",
-        runtime: { type: "gateway" },
-      };
-      const deps = baseDeps({
-        getSessionAgent: () => hermesAgent,
-        getSandbox: () => ({ name: "alpha", agent: "hermes" }),
-        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-          ok: false,
-          state: "mismatch" as const,
-          detail: "Hermes MCP config does not match persisted managed intent",
-        })),
-      });
-
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "Hermes MCP config does not match persisted managed intent",
-      });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    } finally {
-      restore();
-    }
-  });
-
-  it("returns only sanitized Hermes MCP reconciliation detail", () => {
-    const restore = silenceConsole();
-    try {
-      const deps = baseDeps({
-        getSessionAgent: () => ({
-          name: "hermes",
-          displayName: "Hermes Agent",
-          runtime: { type: "gateway" },
-        }),
-        getSandbox: () => ({ name: "alpha", agent: "hermes" }),
-        inspectHermesMcpRuntimeIntent: vi.fn(() => ({
-          ok: false,
-          state: "mismatch" as const,
-          detail: "\x1b[31mintegrity pending\x1b[0m\nFORGED SUCCESS ghp_0123456789abcdefghij",
-        })),
-      });
-
-      expect(restartSandboxGateway("alpha", { quiet: true, deps })).toEqual({
-        ok: false,
-        failureLayer: "MCP reconciliation refusal",
-        detail: "integrity pending FORGED SUCCESS <REDACTED>",
-      });
-      expect(deps.ensureSandboxPortForward).not.toHaveBeenCalled();
-    } finally {
-      restore();
-    }
-  });
 
   it("refuses supervisor output without a completion marker", () => {
     const deps = baseDeps({

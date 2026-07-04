@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import {
+  extractShellFunction,
+  runHermesBashHarness as runBashHarness,
+} from "./support/hermes-shell-harness";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const SUPERVISOR_LIB = path.join(
@@ -15,46 +18,6 @@ const SUPERVISOR_LIB = path.join(
   "lib",
   "gateway-supervisor.sh",
 );
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function extractShellFunction(source: string, name: string): string {
-  const match = source.match(new RegExp(`${escapeRegExp(name)}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  const resolved =
-    match ??
-    (() => {
-      throw new Error(`Expected ${name} in agents/hermes/start.sh`);
-    })();
-  return `${name}() {${resolved[1]}\n}`;
-}
-
-function runBashHarness(lines: string[], configure?: (tmpDir: string) => Record<string, string>) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-supervisor-test-"));
-  const script = path.join(tmpDir, "run.sh");
-  fs.writeFileSync(
-    script,
-    [
-      "#!/usr/bin/env bash",
-      "set -uo pipefail",
-      "HERMES_MCP_RECONCILE_PENDING=0",
-      "HERMES_MCP_INTEGRITY_FAILED=0",
-      ...lines,
-    ].join("\n"),
-    { mode: 0o700 },
-  );
-
-  try {
-    return spawnSync("bash", [script], {
-      encoding: "utf-8",
-      timeout: 5000,
-      env: { ...process.env, ...configure?.(tmpDir) },
-    });
-  } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  }
-}
 
 function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
   const source = fs.readFileSync(START_SCRIPT, "utf-8");
@@ -272,6 +235,55 @@ describe("Hermes PID 1 supervisor recovery", () => {
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual(expected);
     expect(result.stdout).not.toContain("unexpected-");
+  });
+
+  it("stops a healthy replacement gateway when the pending MCP applied-state commit fails", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "gateway_control_take_request() { GATEWAY_CONTROL_ACTION=restart; trace take-request; }",
+      'prepare_hermes_gateway_restart() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; return 0; }',
+      "seal_hermes_restart_inputs() { trace seal-inputs; return 0; }",
+      'hermes_stop_tracked_role() { trace "stop-old:$2"; return 0; }',
+      "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
+      "cleanup_sealed_hermes_gateway_runtime() { trace cleanup-runtime; return 0; }",
+      'launch_hermes_gateway() { GATEWAY_PID=5252; trace "launch:$GATEWAY_PID"; return 0; }',
+      'wait_for_hermes_gateway_internal() { trace "health:$1"; return 0; }',
+      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; return 0; }",
+      "unseal_hermes_restart_inputs() { trace unseal-inputs; return 0; }",
+      "commit_hermes_mcp_applied_if_pending() { trace commit-applied; return 1; }",
+      'stop_hermes_gateway_fail_closed() { trace "stop-fail-closed:$GATEWAY_PID"; GATEWAY_PID=0; }',
+      'gateway_control_fail() { trace "fail:$1:$2"; }',
+      'gateway_control_complete() { trace "unexpected-complete:$1:$2:$3"; }',
+      "refresh_hermes_supervised_child_pids() { trace unexpected-refresh; }",
+      extractShellFunction(source, "handle_hermes_gateway_control_request"),
+      "INTERNAL_PORT=18642",
+      "GATEWAY_PID=4242",
+      "HERMES_RESTART_FAILURE_CODE=internal",
+      "prepare_calls=0",
+      'if handle_hermes_gateway_control_request; then trace "handler-rc:0"; else trace "handler-rc:$?"; fi',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "take-request",
+      "prepare:1",
+      "seal-inputs",
+      "prepare:2",
+      "stop-old:4242",
+      "mark-stopped",
+      "cleanup-runtime",
+      "launch:5252",
+      "health:5252",
+      "auxiliaries",
+      "unseal-inputs",
+      "commit-applied",
+      "stop-fail-closed:5252",
+      "fail:mcp-integrity:4242",
+      "handler-rc:1",
+    ]);
+    expect(result.stdout).not.toContain("unexpected-complete");
+    expect(result.stdout).not.toContain("unexpected-refresh");
   });
 
   it("routes a secret-boundary refusal through whole-container gateway revocation", () => {

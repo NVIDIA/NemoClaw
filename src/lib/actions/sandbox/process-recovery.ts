@@ -43,6 +43,7 @@ import {
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
 import { inspectHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
+import { mcpReconciliationRefusalResult } from "./process-recovery-mcp-refusal";
 import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
@@ -90,31 +91,6 @@ function auxiliaryRecoveryFailureDetail(results: AuxiliaryRecoveryResult[]): str
 
 function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
   return results.some((result) => result.recovered === true);
-}
-
-type McpReconciliationRefusalRecoveryResult = {
-  checked: true;
-  wasRunning: boolean;
-  recovered: false;
-  forwardRecovered: false;
-  forwardRecoveryFailed?: undefined;
-  forwardRecoveryFailureDetail?: undefined;
-  mcpReconciliationRefused: true;
-  mcpReconciliationReason: string;
-};
-
-function mcpReconciliationRefusalResult(
-  wasRunning: boolean,
-  reason: string,
-): McpReconciliationRefusalRecoveryResult {
-  return {
-    checked: true,
-    wasRunning,
-    recovered: false,
-    forwardRecovered: false,
-    mcpReconciliationRefused: true,
-    mcpReconciliationReason: reason,
-  };
 }
 
 function resolveSandboxExecTimeout(timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS): number {

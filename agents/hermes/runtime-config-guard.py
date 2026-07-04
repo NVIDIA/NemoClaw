@@ -1253,7 +1253,7 @@ def refresh_hashes(
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")
     compat_hash = os.path.join(hermes_dir, ".config-hash")
-    if mcp_transition not in {"preserve", "intend", "apply"}:
+    if mcp_transition not in {"preserve", "intend", "rollback", "apply"}:
         raise UnsafePathError("refusing unsupported Hermes MCP hash transition")
 
     # Snapshot-stability/TOCTOU contract: derive the config hash and canonical
@@ -1285,6 +1285,21 @@ def refresh_hashes(
                 "Hermes MCP configuration has an incomplete prior transaction"
             )
         state = McpHashState(current_mcp, state.applied)
+    elif mcp_transition == "rollback":
+        # A failed desired-config reload leaves the runtime identity uncertain.
+        # Re-anchor the restored config as intended, but retain the failed
+        # candidate digest as the conservative applied value until a healthy
+        # old-config replacement is observed.  This keeps startup/recovery
+        # fail-closed if the rollback reload also fails.
+        if secrets.compare_digest(state.intended, state.applied):
+            raise UnsafePathError(
+                "Hermes MCP rollback requires a pending desired configuration"
+            )
+        if not secrets.compare_digest(current_mcp, state.applied):
+            raise UnsafePathError(
+                "Hermes MCP rollback config does not match the previously applied state"
+            )
+        state = McpHashState(current_mcp, state.intended)
     else:
         if not secrets.compare_digest(current_mcp, state.intended):
             raise UnsafePathError(
