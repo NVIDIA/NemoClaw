@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import {
+  createDirectCommandRouter,
   createDirectSetupInferenceHarnessFactory,
   directRunResult,
 } from "./support/setup-inference-test-harness.js";
@@ -106,6 +107,124 @@ describe("setupInference dependency failures", () => {
     expect(setupBedrockRuntimeInference).not.toHaveBeenCalled();
     expect(hydrateCredentialEnv).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
+  });
+
+  it("fails through the injected exit boundary when a remote credential is missing", async () => {
+    const exitProcess = createInjectedExit();
+    const hydrateCredentialEnv = vi.fn(() => null);
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        hydrateCredentialEnv,
+        upsertProvider,
+        promptValidationRecovery,
+        bedrockRuntimeOnboard: { setupBedrockRuntimeInference },
+      },
+    });
+
+    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+      "EXIT_CALLED:1",
+    );
+
+    expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(promptValidationRecovery).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  A host credential is required to configure provider 'openai-api'.",
+    ]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("preserves a remote provider upsert status through the injected exit boundary", async () => {
+    const exitProcess = createInjectedExit();
+    const hydrateCredentialEnv = vi.fn(() => "openai-secret");
+    const upsertProvider = vi.fn(() => ({
+      ok: false,
+      status: 23,
+      message: "remote provider registration rejected",
+    }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        hydrateCredentialEnv,
+        upsertProvider,
+        promptValidationRecovery,
+        bedrockRuntimeOnboard: { setupBedrockRuntimeInference },
+      },
+    });
+
+    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+      "EXIT_CALLED:23",
+    );
+
+    expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
+    expect(hydrateCredentialEnv).toHaveBeenCalledWith("OPENAI_API_KEY");
+    expect(upsertProvider).toHaveBeenCalledOnce();
+    expect(upsertProvider).toHaveBeenCalledWith(
+      "openai-api",
+      "openai",
+      "OPENAI_API_KEY",
+      expect.any(String),
+      { OPENAI_API_KEY: "openai-secret" },
+    );
+    expect(promptValidationRecovery).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(23);
+    expect(harness.errors).toEqual(["  remote provider registration rejected"]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("redacts a remote inference-set failure and preserves its status at the exit boundary", async () => {
+    const exitProcess = createInjectedExit();
+    const hydrateCredentialEnv = vi.fn(() => "openai-secret");
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "remote-inference-set",
+        matches: (command) => command.startsWith("inference set"),
+        results: [{ status: 37, stdout: "", stderr: "route failed nvapi-1234567890abcdef" }],
+      },
+    ]);
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        hydrateCredentialEnv,
+        upsertProvider,
+        promptValidationRecovery,
+        bedrockRuntimeOnboard: { setupBedrockRuntimeInference },
+      },
+    });
+
+    await expect(harness.setupInference("test-box", "gpt-test", "openai-api")).rejects.toThrow(
+      "EXIT_CALLED:37",
+    );
+
+    expect(setupBedrockRuntimeInference).toHaveBeenCalledOnce();
+    expect(upsertProvider).toHaveBeenCalledOnce();
+    expect(commandRouter.callCount("remote-inference-set")).toBe(1);
+    expect(promptValidationRecovery).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(37);
+    expect(harness.errors.join("\n")).toContain("route failed");
+    expect(harness.errors.join("\n")).not.toContain("nvapi-1234567890abcdef");
+    expectNoPostFailureSideEffects(harness, [
+      "gateway select nemoclaw",
+      "inference set --no-verify --provider openai-api --model gpt-test",
+    ]);
   });
 
   it("fails closed before provider registration when local vLLM validation fails", async () => {
@@ -299,6 +418,120 @@ describe("setupInference dependency failures", () => {
       "  ✗ OpenShell provider storage is unreachable.",
       "    provider store unavailable",
       "    Restart or recreate the OpenShell gateway, then rerun onboarding.",
+    ]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("exits through injected boundaries when Hermes API-key preparation throws", async () => {
+    const exitProcess = createInjectedExit();
+    const isHermesProviderRegistered = vi.fn(() => false);
+    const ensureHermesProviderApiKeyCredentials = vi.fn(async () => {
+      throw new Error("API-key preparation failed");
+    });
+    const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
+    const providerExistsInGateway = vi.fn(() => true);
+    const resolveHermesNousApiKey = vi.fn(() => "nous-secret");
+    const checkHermesProviderStoreReachable = vi.fn(() => ({ ok: true }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        normalizeHermesAuthMethod: () => "api_key",
+        providerExistsInGateway,
+        resolveHermesNousApiKey,
+        checkHermesProviderStoreReachable,
+        hermesProviderAuth: {
+          HERMES_PROVIDER_NAME: "hermes-provider",
+          isHermesProviderRegistered,
+          ensureHermesProviderApiKeyCredentials,
+          ensureHermesProviderOAuthCredentials,
+        },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "moonshotai/kimi-k2.6",
+        "hermes-provider",
+        null,
+        "NOUS_API_KEY",
+        "api-key",
+      ),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
+    expect(isHermesProviderRegistered).toHaveBeenCalledWith(harness.runOpenshell);
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledOnce();
+    expect(ensureHermesProviderApiKeyCredentials).toHaveBeenCalledWith("test-box", {
+      apiKey: "nous-secret",
+      runOpenshell: harness.runOpenshell,
+      baseUrl: undefined,
+    });
+    expect(ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  ✗ Failed to prepare Hermes Provider credentials: API-key preparation failed",
+    ]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("exits through injected boundaries when Hermes OAuth preparation throws", async () => {
+    const exitProcess = createInjectedExit();
+    const isHermesProviderRegistered = vi.fn(() => false);
+    const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
+    const ensureHermesProviderOAuthCredentials = vi.fn(async () => {
+      throw new Error("OAuth preparation failed");
+    });
+    const providerExistsInGateway = vi.fn(() => true);
+    const resolveHermesNousApiKey = vi.fn(() => "unused-key");
+    const checkHermesProviderStoreReachable = vi.fn(() => ({ ok: true }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        normalizeHermesAuthMethod: () => "oauth",
+        providerExistsInGateway,
+        resolveHermesNousApiKey,
+        checkHermesProviderStoreReachable,
+        hermesProviderAuth: {
+          HERMES_PROVIDER_NAME: "hermes-provider",
+          isHermesProviderRegistered,
+          ensureHermesProviderApiKeyCredentials,
+          ensureHermesProviderOAuthCredentials,
+        },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "moonshotai/kimi-k2.6",
+        "hermes-provider",
+        null,
+        null,
+        "oauth",
+      ),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
+    expect(isHermesProviderRegistered).toHaveBeenCalledWith(harness.runOpenshell);
+    expect(providerExistsInGateway).not.toHaveBeenCalled();
+    expect(resolveHermesNousApiKey).not.toHaveBeenCalled();
+    expect(ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+    expect(ensureHermesProviderOAuthCredentials).toHaveBeenCalledOnce();
+    expect(ensureHermesProviderOAuthCredentials).toHaveBeenCalledWith("test-box", {
+      allowInteractiveLogin: false,
+      runOpenshell: harness.runOpenshell,
+      baseUrl: undefined,
+      toolGatewayPresets: [],
+    });
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  ✗ Failed to prepare Hermes Provider credentials: OAuth preparation failed",
     ]);
     expectNoPostFailureSideEffects(harness);
   });
@@ -645,6 +878,52 @@ describe("setupInference dependency failures", () => {
     expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(harness.errors).toEqual(["  ✗ Failed to start model router: router unavailable"]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("preserves a routed-provider upsert status through the injected exit boundary", async () => {
+    const exitProcess = createInjectedExit();
+    const reconcileModelRouter = vi.fn(async () => {});
+    const upsertProvider = vi.fn(() => ({ ok: true }));
+    const hydrateCredentialEnv = vi.fn(() => "unused-secret");
+    const upsertRoutedProvider = vi.fn(() => ({
+      ok: false,
+      result: { status: 29, message: "routed provider registration rejected" },
+    }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+        exitProcess,
+        reconcileModelRouter,
+        upsertProvider,
+        hydrateCredentialEnv,
+        routedInference: { upsertRoutedProvider },
+      },
+    });
+
+    await expect(
+      harness.setupInference(
+        "test-box",
+        "router/model",
+        "nvidia-router",
+        "http://host.openshell.internal:4000/v1",
+        "NVIDIA_INFERENCE_API_KEY",
+      ),
+    ).rejects.toThrow("EXIT_CALLED:29");
+
+    expect(reconcileModelRouter).toHaveBeenCalledOnce();
+    expect(upsertRoutedProvider).toHaveBeenCalledOnce();
+    expect(upsertRoutedProvider).toHaveBeenCalledWith(
+      "nvidia-router",
+      "http://host.openshell.internal:4000/v1",
+      "NVIDIA_INFERENCE_API_KEY",
+      { upsertProvider, hydrateCredentialEnv },
+    );
+    expect(upsertProvider).not.toHaveBeenCalled();
+    expect(hydrateCredentialEnv).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(29);
+    expect(harness.errors).toEqual(["  routed provider registration rejected"]);
     expectNoPostFailureSideEffects(harness);
   });
 });
