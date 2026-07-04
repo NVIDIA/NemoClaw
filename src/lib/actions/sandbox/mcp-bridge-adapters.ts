@@ -19,6 +19,7 @@ import {
 import type {
   AdapterMutationOptions,
   AdapterRegistrationInspection,
+  AdapterRemovalOutcome,
 } from "./mcp-bridge-adapter-inspection";
 import {
   inspectOpenClawAdapterRegistration,
@@ -122,7 +123,7 @@ export function registerAgentAdapter(
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   envValues: Record<string, string> = {},
-  options: { replaceExisting?: boolean } = {},
+  options: { replaceExisting?: boolean; teardownRollback?: boolean } = {},
 ): void {
   switch (adapter) {
     case "mcporter":
@@ -132,7 +133,13 @@ export function registerAgentAdapter(
       registerHermesAdapter(sandboxName, entry, envValues, options.replaceExisting === true);
       return;
     case "deepagents-config":
-      registerDeepAgentsAdapter(sandboxName, entry, envValues, options.replaceExisting === true);
+      registerDeepAgentsAdapter(
+        sandboxName,
+        entry,
+        envValues,
+        options.replaceExisting === true,
+        options.teardownRollback === true,
+      );
       return;
   }
 }
@@ -142,16 +149,15 @@ export function unregisterAgentAdapter(
   adapter: AgentMcpAdapter,
   entry: McpBridgeEntry,
   options: AdapterMutationOptions = {},
-): void {
+): AdapterRemovalOutcome {
   switch (adapter) {
     case "mcporter":
       unregisterOpenClawAdapter(sandboxName, entry, options);
-      return;
+      return "removed";
     case "hermes-config":
       unregisterHermesAdapter(sandboxName, entry, options);
-      return;
+      return "removed";
     case "deepagents-config":
-      unregisterDeepAgentsAdapter(sandboxName, entry, options);
-      return;
+      return unregisterDeepAgentsAdapter(sandboxName, entry, options);
   }
 }

@@ -51,33 +51,10 @@ def parse_args():
 def cli_main():
     return parse_args()
 `,
-  "app.py": `from __future__ import annotations
-
-class UserMessage:
-    def __init__(self, value): self.value = value
-
-class AppMessage(UserMessage):
-    pass
-
-class DeepAgentsApp:
-    async def _check_for_updates(self, *, periodic=False): pass
-    async def _enter_service_api_key(self, *args, **kwargs): pass
-    async def _handle_auto_update_toggle(self): pass
-    async def _handle_command(self, command): pass
-    async def _handle_install_command(self, command): pass
-    async def _handle_install_package(self, *args, **kwargs): pass
-    async def _handle_update_action(self, *args, **kwargs): pass
-    async def _handle_update_command(self, command="/update"): pass
-    async def _install_extra(self, *args, **kwargs): return True
-    async def _on_auto_approve_enabled(self): pass
-    async def _prompt_launch_tavily(self): pass
-    async def _prompt_model_auth_if_needed(self, model_spec): return True
-    async def _set_rubric_model(self, model_spec): pass
-    async def _show_auth_manager(self, **kwargs): pass
-    async def _switch_model(self, model_spec, **kwargs): pass
-    def _start_mcp_login(self, server_name): pass
-    async def action_toggle_auto_approve(self): pass
-`,
+  "app.py": fs.readFileSync(
+    path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "app.py"),
+    "utf8",
+  ),
   "auth_store.py": `from __future__ import annotations
 
 class StoredCredential: pass
@@ -195,12 +172,25 @@ class ModelSelectorScreen:
 class ApprovalMenu:
     def _handle_selection(self, option, *, reject_message=None): pass
 `,
-  "server.py": `from __future__ import annotations
+  "server.py": fs.readFileSync(
+    path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "server.py"),
+    "utf8",
+  ),
+  "_server_config.py": `from __future__ import annotations
 
-import os
+from pathlib import Path
 
-def _build_server_env(): return dict(os.environ)
+def _normalize_path(raw_path, project_context, label):
+    if not raw_path:
+        return None
+    if project_context is not None:
+        return str(project_context.resolve_user_path(raw_path))
+    return str(Path(raw_path).expanduser().resolve())
 `,
+  "mcp_tools.py": fs.readFileSync(
+    path.join(repoRoot, "test", "fixtures", "langchain-deepagents-code", "mcp_tools.py"),
+    "utf8",
+  ),
   "subagents.py": `from __future__ import annotations
 
 def list_subagents(*args, **kwargs): return []

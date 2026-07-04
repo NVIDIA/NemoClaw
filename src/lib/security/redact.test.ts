@@ -71,6 +71,18 @@ describe("URL redaction", () => {
     expect(result).not.toContain("wrapped-password");
   });
 
+  it.each([
+    ["semicolon", "pa;ssword"],
+    ["comma", "pa,ssword"],
+    ["balanced parentheses", "pa(ss)word"],
+  ])("redacts credentials containing valid %s punctuation", (_label, password) => {
+    const result = redact(`proxy https://userinfo-user:${password}@proxy.example/path failed`);
+
+    expect(result).toContain("https://****:****@proxy.example/path");
+    expect(result).not.toContain("userinfo-user");
+    expect(result).not.toContain(password);
+  });
+
   it("fully removes generic-scheme userinfo and sensitive query values", () => {
     const result = redactUrl(
       "FtP://ftp-user:ftp-password@files.example/path?token=secret-value#fragment",

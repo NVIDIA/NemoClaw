@@ -8,6 +8,7 @@ import { fingerprintBuildContext } from "../../adapters/fs/build-context-fingerp
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
 import { GATEWAY_PORT } from "../../core/ports";
+import type { WebSearchConfig } from "../../inference/web-search";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
@@ -32,6 +33,8 @@ export type ManagedDcodeRebuildImageInput = {
   model: string;
   provider: string;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: "true" | "false" | null;
+  webSearchConfig: WebSearchConfig | null;
   toolDisclosure: ToolDisclosure;
   sandboxGpuConfig: SandboxGpuConfig;
   gatewayPort?: number;
@@ -103,6 +106,7 @@ export async function prepareManagedDcodeRebuildImage(
   const removeImage = deps.removeImage ?? dockerRmi;
   const imageTag = (deps.createImageTag ?? defaultImageTag)();
   const previousDockerGpuPatchNetwork = process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+  const previousReasoning = process.env.NEMOCLAW_REASONING;
   let cleanupBuildContext: (() => boolean) | null = null;
   let imageBuilt = false;
   let retainBuildContext = false;
@@ -111,6 +115,11 @@ export async function prepareManagedDcodeRebuildImage(
     // Recompute the patch decision from the recorded target rather than a
     // caller's unrelated ambient rebuild environment.
     delete process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK;
+    if (input.provider === "compatible-endpoint") {
+      process.env.NEMOCLAW_REASONING = input.compatibleEndpointReasoning ?? "false";
+    } else {
+      delete process.env.NEMOCLAW_REASONING;
+    }
 
     const staged = stage({
       root: ROOT,
@@ -136,7 +145,7 @@ export async function prepareManagedDcodeRebuildImage(
       chatUiUrl: "",
       provider: input.provider,
       preferredInferenceApi: input.preferredInferenceApi,
-      webSearchConfig: null,
+      webSearchConfig: input.webSearchConfig,
       toolDisclosure: input.toolDisclosure,
       hermesToolGateways: [],
       sandboxGpuConfig: input.sandboxGpuConfig,
@@ -201,5 +210,7 @@ export async function prepareManagedDcodeRebuildImage(
     } else {
       process.env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK = previousDockerGpuPatchNetwork;
     }
+    if (previousReasoning === undefined) delete process.env.NEMOCLAW_REASONING;
+    else process.env.NEMOCLAW_REASONING = previousReasoning;
   }
 }

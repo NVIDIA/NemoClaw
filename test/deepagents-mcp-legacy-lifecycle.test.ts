@@ -22,6 +22,7 @@ const providerId = "11111111-2222-4333-8444-555555555555";
 let providerExists = true;
 let attached = true;
 let adapterRegistered = true;
+let adapterRemovalOutcome = "";
 let deepAgentsCapability = false;
 let policyApplyCalls = 0;
 let policyState = "match";
@@ -85,16 +86,27 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
   adapterCalls.push(command);
   if (command === "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability") {
     return deepAgentsCapability
-      ? { status: 0, stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n", stderr: "" }
+      ? { status: 0, stdout: "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n", stderr: "" }
       : { status: 2, stdout: "", stderr: "unknown option" };
   }
-  if (command.includes("servers.pop(payload['server'], None)")) {
-    adapterRegistered = false;
-    return { status: 0, stdout: "", stderr: "" };
+  if (command.includes("servers.pop(payload['server'])")) {
+    const outcome = adapterRemovalOutcome || (adapterRegistered ? "removed" : "absent");
+    if (outcome !== "unowned") adapterRegistered = false;
+    return {
+      status: 0,
+      stdout: "NEMOCLAW_DEEPAGENTS_MCP_REMOVAL=" + outcome + "\n",
+      stderr: "",
+    };
   }
   if (command.includes("data = {'mcpServers': payload['expectedServers']}")) {
     adapterRegistered = true;
-    return { status: 0, stdout: "", stderr: "" };
+    return {
+      status: 0,
+      stdout: command.includes("NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED")
+        ? "NEMOCLAW_DEEPAGENTS_MCP_ROLLBACK_RESTORED=1\n"
+        : "",
+      stderr: "",
+    };
   }
   if (command.includes("print('registered' if ok else ('mismatch' if present else 'absent'))")) {
     return {
@@ -162,6 +174,7 @@ function parseResult(result: ReturnType<typeof runLegacyLifecycle>) {
     providerExists: boolean;
     policyApplyCalls: number;
     markerCalls: number;
+    registryEntryPresent?: boolean;
   };
 }
 
@@ -187,6 +200,54 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
       attached: false,
       adapterRegistered: false,
       providerExists: false,
+      markerCalls: 0,
+    });
+  });
+
+  it("treats an already-absent legacy entry as an idempotent removal retry", () => {
+    const result = runLegacyLifecycle(`
+adapterRegistered = false;
+(async () => {
+  await bridge.removeMcpBridge("alpha", "github");
+  process.stdout.write(${resultExpression});
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+    expect(parseResult(result)).toMatchObject({
+      attached: false,
+      adapterRegistered: false,
+      providerExists: false,
+      markerCalls: 0,
+    });
+  });
+
+  it("preserves ownership state when legacy adapter cleanup is unproved", () => {
+    const result = runLegacyLifecycle(`
+adapterRemovalOutcome = "unowned";
+(async () => {
+  let error = "";
+  try {
+    await bridge.removeMcpBridge("alpha", "github", { force: true });
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+  }
+  process.stdout.write(JSON.stringify({
+    error,
+    attached,
+    adapterRegistered,
+    providerExists,
+    policyApplyCalls,
+    registryEntryPresent: Boolean(registry.getSandbox("alpha")?.mcp?.bridges?.github),
+    markerCalls: adapterCalls.filter((call) =>
+      call.includes("deepagents-code --nemoclaw-mcp-capability")
+    ).length,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+    expect(parseResult(result)).toMatchObject({
+      error: expect.stringMatching(/left residual resources/),
+      adapterRegistered: true,
+      providerExists: true,
+      registryEntryPresent: true,
       markerCalls: 0,
     });
   });
@@ -219,6 +280,36 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
         markerCalls: 0,
       });
     });
+
+    it(`${label} teardown fails closed when adapter ownership is unproved`, () => {
+      const result = runLegacyLifecycle(`
+adapterRemovalOutcome = "unowned";
+(async () => {
+  let error = "";
+  try {
+    await bridge.${method}("alpha");
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+  }
+  process.stdout.write(JSON.stringify({
+    error,
+    attached,
+    adapterRegistered,
+    providerExists,
+    markerCalls: adapterCalls.filter((call) =>
+      call.includes("deepagents-code --nemoclaw-mcp-capability")
+    ).length,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+      expect(parseResult(result)).toMatchObject({
+        error: expect.stringMatching(/Could not prove removal of the exact managed adapter entry/),
+        attached: true,
+        adapterRegistered: true,
+        providerExists: true,
+        markerCalls: 0,
+      });
+    });
   }
 
   it("proves the replacement image marker before post-rebuild reattachment", () => {
@@ -244,7 +335,7 @@ describe("legacy Deep Agents managed MCP lifecycle", () => {
 })().catch((error) => { console.error(error); process.exit(1); });
 `);
     expect(parseResult(result)).toMatchObject({
-      error: expect.stringMatching(/does not contain the managed MCP-aware launcher/i),
+      error: expect.stringMatching(/does not contain managed MCP capability v2/i),
       attached: false,
       adapterRegistered: false,
       providerExists: true,

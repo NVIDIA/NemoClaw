@@ -49,8 +49,10 @@ state_dirs:
 # config.toml is non-secret NemoClaw-generated provider/model configuration.
 # .env and user-authored .deepagents/.mcp.json content are intentionally omitted
 # because they may contain service credentials. NemoClaw writes only direct-HTTP
-# bridge endpoint config and OpenShell placeholders to the user-level MCP file,
-# then restores its managed entries from the registry after rebuild.
+# bridge endpoint config and OpenShell placeholders to its separate
+# .deepagents/.nemoclaw-mcp.json projection, then restores that projection from
+# the registry after rebuild. The managed projection is reconstructable state,
+# not user-authored durable state.
 state_files:
   - path: config.toml
 user_managed_files:

@@ -44,7 +44,7 @@ const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
 // Proxy variables and diagnostics are not limited to lowercase HTTP(S) URLs.
 // Match any RFC-style URI scheme so credentials in uppercase or SOCKS proxy
 // URLs receive the same URL-parser-backed redaction.
-const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"()<>{},;]+/gi;
+const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
 const URL_TRAILING_DELIMITERS = ")]}>.,;:!?";
 const MAX_URL_PARSE_ATTEMPTS = 9;
 
@@ -54,22 +54,43 @@ function redactMatch(match: string): string {
   return match.slice(0, 4) + "*".repeat(Math.min(match.length - 4, 20));
 }
 
+function isUnmatchedClosingDelimiter(value: string, closing: string): boolean {
+  const openingByClosing: Record<string, string> = {
+    ")": "(",
+    "]": "[",
+    "}": "{",
+    ">": "<",
+  };
+  const opening = openingByClosing[closing];
+  if (!opening) return false;
+  let balance = 0;
+  for (const character of value) {
+    if (character === opening) balance += 1;
+    else if (character === closing) balance -= 1;
+  }
+  return balance < 0;
+}
+
+function isProseUrlSuffix(value: string, trailing: string): boolean {
+  return ".,;".includes(trailing) || isUnmatchedClosingDelimiter(value, trailing);
+}
+
 function parseUrlToken(value: string): { url: URL; suffix: string } | null {
   let candidate = value;
   let suffix = "";
   for (let attempt = 0; candidate && attempt < MAX_URL_PARSE_ATTEMPTS; attempt += 1) {
-    // A terminal period is accepted as URL data by the platform parser, but
-    // is overwhelmingly sentence punctuation in the diagnostic text this
-    // matcher consumes. Peel it before parsing so it remains outside the URL.
-    if (candidate.endsWith(".")) {
+    const trailing = candidate.at(-1);
+    // Capture the complete token first so punctuation that is valid in
+    // userinfo cannot terminate redaction. Only then peel terminal prose
+    // punctuation and unmatched wrapper closers before URL parsing.
+    if (trailing && isProseUrlSuffix(candidate, trailing)) {
       candidate = candidate.slice(0, -1);
-      suffix = `.${suffix}`;
+      suffix = `${trailing}${suffix}`;
       continue;
     }
     try {
       return { url: new URL(candidate), suffix };
     } catch {
-      const trailing = candidate.at(-1);
       if (!trailing || !URL_TRAILING_DELIMITERS.includes(trailing)) return null;
       candidate = candidate.slice(0, -1);
       suffix = `${trailing}${suffix}`;

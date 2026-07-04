@@ -48,6 +48,7 @@ describe("DCode rebuild orchestrator", () => {
     await expect(
       orchestrator.prepareImage(
         {} as RebuildResumeConfig,
+        null,
         "progressive",
         false,
         19_080,
@@ -86,7 +87,7 @@ describe("DCode rebuild orchestrator", () => {
     const resolutionHint = { key: "sandbox-alpha" } as SandboxBaseImageResolutionMetadata;
 
     await expect(
-      orchestrator.prepareImage(resumeConfig, "progressive", false, 19_080, {
+      orchestrator.prepareImage(resumeConfig, null, "progressive", false, 19_080, {
         resolutionHint,
         forceBaseImageRefresh: true,
       }),
@@ -97,6 +98,7 @@ describe("DCode rebuild orchestrator", () => {
         sandboxName: "alpha",
         entry,
         resumeConfig,
+        webSearchConfig: null,
         toolDisclosure: "progressive",
         skipLiveRoute: false,
         gatewayPort: 19_080,

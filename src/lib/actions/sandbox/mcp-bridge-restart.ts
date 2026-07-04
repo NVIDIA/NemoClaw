@@ -209,7 +209,16 @@ export async function restoreExistingMcpBridgeRuntime(
     waitForAttachedMcpCredential(sandboxName, entry);
     const adapter =
       (entry.adapter as AgentMcpAdapter | undefined) ?? getBridgeAdapter(getSandboxAgent(sandbox));
-    registerAgentAdapter(sandboxName, adapter, entry, {}, { replaceExisting: true });
+    registerAgentAdapter(
+      sandboxName,
+      adapter,
+      entry,
+      {},
+      {
+        replaceExisting: true,
+        teardownRollback: options.lifecyclePhase === "teardown-rollback",
+      },
+    );
     writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
   }
 }
