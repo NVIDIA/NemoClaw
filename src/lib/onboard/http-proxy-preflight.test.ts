@@ -1,29 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { redactProxyCredentials, warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 
 function withStderrColorDepth<T>(colorDepth: number, callback: () => T): T {
-  const originalIsTTY = process.stderr.isTTY;
-  const originalGetColorDepth = process.stderr.getColorDepth;
-  Object.defineProperty(process.stderr, "isTTY", { value: true, configurable: true });
-  Object.defineProperty(process.stderr, "getColorDepth", {
-    value: () => colorDepth,
-    configurable: true,
-  });
+  const stderr = Object.assign(Object.create(process.stderr), {
+    getColorDepth: () => colorDepth,
+    isTTY: true,
+  }) as typeof process.stderr;
+  const getStderr = vi.spyOn(process, "stderr", "get").mockReturnValue(stderr);
+  vi.stubEnv("NO_COLOR", "");
   try {
     return callback();
   } finally {
-    Object.defineProperty(process.stderr, "isTTY", {
-      value: originalIsTTY,
-      configurable: true,
-    });
-    Object.defineProperty(process.stderr, "getColorDepth", {
-      value: originalGetColorDepth,
-      configurable: true,
-    });
+    getStderr.mockRestore();
+    vi.unstubAllEnvs();
   }
 }
 

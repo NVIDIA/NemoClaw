@@ -66,6 +66,7 @@ describe("preflight severity lines (#6004)", () => {
     await withRestoredStreams(() => {
       // stdout redirected to a file, terminal still on stderr: warn/error must
       // stay colored because they land on the color-capable stderr.
+      vi.stubEnv("NO_COLOR", "");
       stubStream(process.stderr, true, 24);
       stubStream(process.stdout, false, 1);
       expect(warnLine("disk low")).toBe(`  ${YELLOW("⚠ disk low")}`);
@@ -77,6 +78,7 @@ describe("preflight severity lines (#6004)", () => {
     await withRestoredStreams(() => {
       // The inverse leak: stderr redirected to a log, stdout still a terminal.
       // warn/error must go plain so no raw ANSI lands in the log.
+      vi.stubEnv("NO_COLOR", "");
       stubStream(process.stdout, true, 24);
       stubStream(process.stderr, false, 1);
       expect(warnLine("disk low")).toBe("  ⚠ disk low");
@@ -84,13 +86,12 @@ describe("preflight severity lines (#6004)", () => {
     });
   });
 
-  it("emits plain text with no ANSI when the stream reports no color (NO_COLOR / CI)", async () => {
+  it("keeps NO_COLOR authoritative when FORCE_COLOR is also set", async () => {
     await withRestoredStreams(() => {
-      // A real terminal under NO_COLOR reports color depth 1; redirected pipes
-      // and CI do the same. Assert the observable #6004 guarantee: no escapes.
       vi.stubEnv("NO_COLOR", "1");
-      stubStream(process.stdout, true, 1);
-      stubStream(process.stderr, true, 1);
+      vi.stubEnv("FORCE_COLOR", "1");
+      stubStream(process.stdout, true, 24);
+      stubStream(process.stderr, true, 24);
       expect(warnLine("a")).toBe("  ⚠ a");
       expect(failLine("b")).toBe("  ✗ b");
     });

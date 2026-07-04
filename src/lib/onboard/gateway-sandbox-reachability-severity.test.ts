@@ -16,6 +16,7 @@ async function withColoredStderr<T>(callback: () => T | Promise<T>): Promise<T> 
     value: () => 24,
     configurable: true,
   });
+  vi.stubEnv("NO_COLOR", "");
   try {
     return await callback();
   } finally {
@@ -27,6 +28,7 @@ async function withColoredStderr<T>(callback: () => T | Promise<T>): Promise<T> 
       value: originalGetColorDepth,
       configurable: true,
     });
+    vi.unstubAllEnvs();
   }
 }
 

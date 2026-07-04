@@ -30,7 +30,8 @@ function stderrSeverityLine(
   format: "yellow" | "red",
   message: string,
 ): string {
-  return `  ${styleText(format, `${marker}${message}`, { stream: process.stderr })}`;
+  const line = `${marker}${message}`;
+  return `  ${process.env.NO_COLOR ? line : styleText(format, line, { stream: process.stderr })}`;
 }
 
 export const warnLine = (message: string): string => stderrSeverityLine("⚠ ", "yellow", message);
