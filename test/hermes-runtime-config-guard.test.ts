@@ -1006,6 +1006,20 @@ except guard.UnsafePathError:
 else:
     inspect_without_owner_allowed = True
 
+try:
+    guard._validate_action_readiness("commit-mcp-applied", True)
+except guard.UnsafePathError:
+    commit_allowed = False
+else:
+    commit_allowed = True
+
+try:
+    guard._validate_action_readiness("commit-mcp-applied", False)
+except guard.UnsafePathError:
+    commit_without_owner_allowed = False
+else:
+    commit_without_owner_allowed = True
+
 guard._startup_ready_marker_absent = lambda: False
 try:
     guard._validate_action_readiness("seal-restart", False)
@@ -1015,6 +1029,8 @@ else:
     stale_marker_error = ""
 
 print(json.dumps({
+    "commit_allowed": commit_allowed,
+    "commit_without_owner_allowed": commit_without_owner_allowed,
     "host_allowed": host_allowed,
     "inspect_allowed": inspect_allowed,
     "inspect_without_owner_allowed": inspect_without_owner_allowed,
@@ -1026,6 +1042,8 @@ print(json.dumps({
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
+      commit_allowed: true,
+      commit_without_owner_allowed: false,
       host_allowed: true,
       inspect_allowed: true,
       inspect_without_owner_allowed: false,

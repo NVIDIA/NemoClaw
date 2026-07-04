@@ -639,6 +639,58 @@ print(json.dumps({"states": states, "hash": hash_text}))
     expect(proof.hash).not.toContain("FAKE_TOKEN");
   });
 
+  it("refuses a second intent while a prior MCP transaction is incomplete", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-c",
+        String.raw`
+import importlib.util, json, os, sys, tempfile
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+root = tempfile.mkdtemp(prefix="hermes-mcp-incomplete-intent-")
+hermes = os.path.join(root, ".hermes")
+os.mkdir(hermes)
+config = os.path.join(hermes, "config.yaml")
+env = os.path.join(hermes, ".env")
+strict = os.path.join(root, "hash")
+open(config, "w", encoding="utf-8").write("model: test\n")
+open(env, "w", encoding="utf-8").write("SAFE=1\n")
+initial, _config_snapshot, _env_snapshot = guard._hash_text(config, env)
+guard._write_hash(strict, initial)
+open(config, "w", encoding="utf-8").write(
+    "model: test\nmcp_servers: {fake: {url: https://first.example.test/mcp}}\n"
+)
+guard.refresh_hashes(hermes, strict, "strict", mcp_transition="intend")
+pending_hash = open(strict, encoding="utf-8").read()
+open(config, "w", encoding="utf-8").write(
+    "model: test\nmcp_servers: {fake: {url: https://second.example.test/mcp}}\n"
+)
+try:
+    guard.refresh_hashes(hermes, strict, "strict", mcp_transition="intend")
+except Exception as error:
+    refusal = str(error)
+else:
+    refusal = ""
+print(json.dumps({
+    "refusal": refusal,
+    "hash_unchanged": open(strict, encoding="utf-8").read() == pending_hash,
+}))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 10_000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      refusal: "Hermes MCP configuration has an incomplete prior transaction",
+      hash_unchanged: true,
+    });
+  });
+
   it("does not bless unrelated config or env drift while committing applied state", () => {
     const result = spawnSync(
       "python3",

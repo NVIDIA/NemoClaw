@@ -400,6 +400,32 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
       }
     });
 
+    it.each([
+      ["config", "configPath"],
+      ["environment", "envPath"],
+    ] as const)("binds non-root strict hash parsing to the live %s path (#2426)", (_label, pathKey) => {
+      const fixture = createFixture();
+      fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"4".repeat(64)}\n`);
+      refreshCompatOnly(fixture);
+      const livePath = fixture[pathKey];
+      const malformed = fs
+        .readFileSync(fixture.hashPath, "utf-8")
+        .replace(`  ${livePath}\n`, `  ${livePath}.stale\n`);
+      fs.writeFileSync(fixture.hashPath, malformed);
+      try {
+        const result = runManagedNonrootWrite(
+          fixture,
+          expectedConfigDigest(fixture),
+          "model:\n  default: must-not-apply\n",
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("malformed Hermes config hash");
+        assertCleanRefusal(fixture, malformed);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
     it("refuses any env drift beyond the generated API key", () => {
       const fixture = createFixture();
       fs.appendFileSync(
