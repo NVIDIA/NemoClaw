@@ -102,6 +102,37 @@ describe("resolveRebuildDurableConfig", () => {
     expect(config.webSearchError).toBeNull();
   });
 
+  it("recovers provider-less Tavily for an explicitly enabled DCode selection", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        policies: ["tavily"],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it.each([null, "hermes"])('migrates a provider-less Tavily policy for agent "%s"', (agent) => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent,
+        policies: ["tavily"],
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
   it("backfills a legacy enabled provider from the matching Tavily session", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
@@ -134,6 +165,84 @@ describe("resolveRebuildDurableConfig", () => {
       createSession({ sandboxName: "other" }),
     );
     expect(config.webSearchConfig).toBeNull();
+  });
+
+  it("does not infer managed Tavily from a custom same-name policy", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["tavily"],
+        customPolicies: [{ name: "tavily", content: "allow: []" }],
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+  });
+
+  it("fails closed when provider-less durable policies select both web-search providers", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+    expect(config.webSearchError).toContain("more than one provider");
+  });
+
+  it("lets an explicit provider resolve stale dual-policy state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it("uses the unshadowed provider when the other policy name is custom", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        customPolicies: [{ name: "brave", content: "allow: []" }],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it("fails closed when the managed provider is shadowed by a custom same-name policy", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["tavily"],
+        customPolicies: [{ name: "tavily", content: "allow: []" }],
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+    expect(config.webSearchError).toContain("conflicts with a custom same-name policy");
   });
 
   it("fails closed for an invalid durable web-search provider", () => {

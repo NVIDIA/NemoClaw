@@ -13,7 +13,10 @@ export type AdapterMutationOptions = {
   force?: boolean;
   bestEffort?: boolean;
   envValues?: Record<string, string>;
+  teardown?: boolean;
 };
+
+export type AdapterRemovalOutcome = "removed" | "absent" | "unowned";
 
 export function parseAdapterRegistrationInspection(
   result: SandboxCommandResult,

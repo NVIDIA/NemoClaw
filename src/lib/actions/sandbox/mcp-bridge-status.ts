@@ -39,6 +39,17 @@ export interface McpBridgeJsonSummary {
   bridges: McpBridgeStatus[];
 }
 
+// Source-of-truth review for the provider warning:
+// invalidState: OpenShell can resolve one sandbox-scoped provider placeholder
+// from another inspected route attributed to the same adapter runtime.
+// sourceBoundary: OpenShell owns provider attachment and HTTP rewrite binding;
+// NemoClaw owns the generated least-privilege route and operator diagnostics.
+// whyNotSourceFix: v0.0.72 has no endpoint-exclusive provider attachment or
+// enforceable Host, scheme, and query binding that NemoClaw can request.
+// regressionTest: mcp-bridge-status-boundaries.test.ts pins this warning and the
+// generated policy tests pin unique keys, explicit methods, and allowed IPs.
+// removalCondition: remove only when OpenShell exposes and NemoClaw requires
+// endpoint-exclusive credential binding plus Host, scheme, and query enforcement.
 const SANDBOX_SCOPED_PROVIDER_WARNING =
   "OpenShell currently attaches this credential provider at sandbox scope, not exclusively to this MCP endpoint. Keep other inspected routes for the same adapter binary at least as restrictive until OpenShell supports endpoint-exclusive credential binding plus Host, scheme, and query enforcement.";
 const UNSUPPORTED_STORED_URL_WARNING =

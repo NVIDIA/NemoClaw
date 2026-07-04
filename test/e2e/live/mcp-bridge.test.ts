@@ -702,7 +702,7 @@ async function assertDeepAgentsConfig(
     "set -eu",
     "python3 - <<'PY'",
     "import json, pathlib",
-    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
+    "path = pathlib.Path('/sandbox/.deepagents/.nemoclaw-mcp.json')",
     "text = path.read_text(encoding='utf-8')",
     "data = json.loads(text)",
     `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,

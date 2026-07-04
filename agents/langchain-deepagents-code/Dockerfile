@@ -21,12 +21,13 @@ RUN set -eu; \
 
 # Copy config generator, wrapper, startup script, and shared blueprint files.
 COPY agents/langchain-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/generate-config.ts
+COPY agents/langchain-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py
 COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/dcode-launcher.sh /usr/local/lib/nemoclaw/dcode-launcher.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
+RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/managed-dcode-runtime.py /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-launcher.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \

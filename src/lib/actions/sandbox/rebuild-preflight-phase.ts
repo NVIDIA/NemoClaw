@@ -142,6 +142,7 @@ export async function runRebuildPreflightPhase(
         const recoveryRecreate = liveState.staleRecovery || recoveryManifest !== null;
         const imageReady = await dcodePreflight.prepareImage(
           preparedTarget.targetConfig.resumeConfig,
+          preparedTarget.targetConfig.durableConfig.webSearchConfig,
           recoveryRecreate,
           preparedTarget.recreateOptions.targetGatewayPort,
         );

@@ -1525,6 +1525,8 @@ Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoCl
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
 All endpoints must use HTTPS.
 The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero.
+Server names must start with a letter and contain at most 64 letters, digits, hyphens, or underscores, and endpoint hostnames must use canonical lowercase DNS labels.
+NemoClaw rejects invalid names and endpoints before it writes lifecycle state or changes OpenShell resources.
 NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit.
 OpenShell `0.0.72` evaluates that policy before replacing the attached provider placeholder in the allowed request header.
 Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
@@ -1594,8 +1596,8 @@ Keep them down until the command returns; a concurrent relock refuses the config
 </AgentOnly>
 
 NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
-Deep Agents teardown does not require the managed launcher marker from the old image, so an existing compatible MCP entry cannot block `mcp remove`, sandbox rebuild, or destroy merely because the image predates that probe.
-A replacement image must pass the marker probe before post-rebuild MCP providers or policy are restored.
+Deep Agents teardown does not require managed MCP capability v2 from the old image.
+For a v1 image, NemoClaw removes the exact registry-owned entry from the legacy `.mcp.json` while preserving unrelated user state; a replacement image must pass the v2 capability check before post-rebuild providers or policy are restored.
 The command fails closed on observed drift.
 `--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content.
 Residuals preserve registry state.
@@ -1861,6 +1863,7 @@ Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
+The replacement uses the recorded compatible-endpoint reasoning mode and web search selection instead of ambient shell values.
 The recorded sandbox GPU mode is preserved across rebuild.
 A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
 Auto-mode sandboxes remain auto.

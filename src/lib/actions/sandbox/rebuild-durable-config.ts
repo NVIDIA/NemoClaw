@@ -22,6 +22,7 @@ import {
 } from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import type { Session } from "../../state/onboard-session";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
@@ -101,6 +102,13 @@ function normalizeHermesAuthMethod(value: unknown): "oauth" | "api_key" | null {
   return value === "oauth" || value === "api_key" ? value : null;
 }
 
+function builtinWebSearchPolicyProviders(entry: RebuildSandboxEntry): WebSearchProvider[] {
+  const customPolicyNames = new Set(entry.customPolicies?.map((policy) => policy.name) ?? []);
+  return (["brave", "tavily"] as const).filter(
+    (provider) => entry.policies?.includes(provider) === true && !customPolicyNames.has(provider),
+  );
+}
+
 export function resolveRebuildDurableConfig(
   sandboxName: string,
   entry: RebuildSandboxEntry,
@@ -116,21 +124,26 @@ export function resolveRebuildDurableConfig(
     (!resolvedSelection.model || session.model === resolvedSelection.model)
       ? session
       : null;
-  const legacyBravePolicy =
-    entry.policies?.includes("brave") === true &&
-    !entry.customPolicies?.some((policy) => policy.name === "brave");
-  const legacyTavilyPolicy =
-    entry.agent !== "langchain-deepagents-code" &&
-    entry.policies?.includes("tavily") === true &&
-    !entry.customPolicies?.some((policy) => policy.name === "tavily");
+  const customPolicyNames = new Set(entry.customPolicies?.map((policy) => policy.name) ?? []);
+  const policyProviders = builtinWebSearchPolicyProviders(entry);
+  const migrationPolicyProviders =
+    entry.webSearchEnabled === true || entry.agent !== DCODE_AGENT_NAME
+      ? policyProviders
+      : policyProviders.filter((provider) => provider === "brave");
   const recordedWebSearchProvider = entry.webSearchProvider;
+  const validRecordedWebSearchProvider = isWebSearchProvider(recordedWebSearchProvider)
+    ? recordedWebSearchProvider
+    : null;
+  const sessionWebSearchProvider =
+    matchingSession?.webSearchConfig?.fetchEnabled === true
+      ? webSearchProviderForConfig(matchingSession.webSearchConfig)
+      : null;
   const webSearchEnabled =
     typeof entry.webSearchEnabled === "boolean"
       ? entry.webSearchEnabled
-      : isWebSearchProvider(recordedWebSearchProvider) ||
+      : validRecordedWebSearchProvider !== null ||
         matchingSession?.webSearchConfig?.fetchEnabled === true ||
-        legacyBravePolicy ||
-        legacyTavilyPolicy;
+        migrationPolicyProviders.length > 0;
   let webSearchError: string | null = null;
   if (entry.webSearchEnabled !== undefined && typeof entry.webSearchEnabled !== "boolean") {
     webSearchError = "recorded webSearchEnabled value is not boolean";
@@ -140,18 +153,27 @@ export function resolveRebuildDurableConfig(
     !isWebSearchProvider(recordedWebSearchProvider)
   ) {
     webSearchError = "recorded webSearchProvider value is invalid";
-  } else if (!webSearchEnabled && isWebSearchProvider(recordedWebSearchProvider)) {
+  } else if (!webSearchEnabled && validRecordedWebSearchProvider) {
     webSearchError = "recorded webSearchProvider is set while web search is disabled";
+  } else if (
+    webSearchEnabled &&
+    !validRecordedWebSearchProvider &&
+    !sessionWebSearchProvider &&
+    migrationPolicyProviders.length > 1
+  ) {
+    webSearchError = "recorded web-search policies select more than one provider";
   }
   let webSearchProvider: WebSearchProvider | null = null;
   if (webSearchEnabled && !webSearchError) {
-    webSearchProvider = isWebSearchProvider(recordedWebSearchProvider)
-      ? recordedWebSearchProvider
-      : matchingSession?.webSearchConfig?.fetchEnabled === true
-        ? webSearchProviderForConfig(matchingSession.webSearchConfig)
-        : legacyTavilyPolicy
-          ? "tavily"
-          : "brave";
+    webSearchProvider =
+      validRecordedWebSearchProvider ??
+      sessionWebSearchProvider ??
+      migrationPolicyProviders[0] ??
+      "brave";
+    if (customPolicyNames.has(webSearchProvider)) {
+      webSearchError = `managed web-search provider '${webSearchProvider}' conflicts with a custom same-name policy`;
+      webSearchProvider = null;
+    }
   }
   const recordedFromDockerfile: unknown =
     entry.fromDockerfile !== undefined

@@ -46,7 +46,7 @@ describe("DCode rebuild orchestrator", () => {
     const baseImageOptions = { resolutionHint, forceBaseImageRefresh: true };
 
     await expect(
-      orchestrator.prepareImage({} as RebuildResumeConfig, false, 19_080, baseImageOptions),
+      orchestrator.prepareImage({} as RebuildResumeConfig, null, false, 19_080, baseImageOptions),
     ).resolves.toBe(true);
     expect(ensureAgentBaseImage).toHaveBeenCalledWith("hermes", bail, baseImageOptions);
   });
@@ -80,7 +80,7 @@ describe("DCode rebuild orchestrator", () => {
     const resolutionHint = { key: "sandbox-alpha" } as SandboxBaseImageResolutionMetadata;
 
     await expect(
-      orchestrator.prepareImage(resumeConfig, false, 19_080, {
+      orchestrator.prepareImage(resumeConfig, null, false, 19_080, {
         resolutionHint,
         forceBaseImageRefresh: true,
       }),
@@ -91,6 +91,7 @@ describe("DCode rebuild orchestrator", () => {
         sandboxName: "alpha",
         entry,
         resumeConfig,
+        webSearchConfig: null,
         skipLiveRoute: false,
         gatewayPort: 19_080,
       }),

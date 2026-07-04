@@ -207,6 +207,21 @@ describe("MCP CLI input validation", () => {
     expect(() => normalizeMcpServerUrl("https://mcp.example.test:0/mcp")).toThrow(
       /port must be between 1 and 65535/,
     );
+    for (const hostname of [
+      "mcp_bad.example.test",
+      "-mcp.example.test",
+      "mcp-.example.test",
+      "mcp..example.test",
+      `${"a".repeat(64)}.example.test`,
+      `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}`,
+    ]) {
+      expect(() => normalizeMcpServerUrl(`https://${hostname}/mcp`)).toThrow(
+        /canonical DNS labels/,
+      );
+    }
+    expect(normalizeMcpServerUrl(`https://${"a".repeat(63)}.example.test/mcp`)).toBe(
+      `https://${"a".repeat(63)}.example.test/mcp`,
+    );
     for (const path of [
       "/mcp/**",
       "/mcp/%2A%2A",
