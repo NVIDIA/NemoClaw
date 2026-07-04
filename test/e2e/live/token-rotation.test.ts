@@ -104,11 +104,9 @@ function readSandboxRegistryEntry(): RegistrySandboxEntry {
 
 function sandboxImageTag(): string {
   const imageTag = readSandboxRegistryEntry().imageTag;
-  expect(typeof imageTag, "registry imageTag missing").toBe("string");
-  if (typeof imageTag !== "string" || !imageTag.trim()) {
-    throw new Error("registry imageTag missing");
-  }
-  return imageTag;
+  const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
+  expect(normalizedImageTag, "registry imageTag missing").not.toBe("");
+  return normalizedImageTag;
 }
 
 function credentialBindings(): RegistryCredentialBinding[] {

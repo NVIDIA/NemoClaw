@@ -533,22 +533,22 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       expect(output).toBe(expectedOutput);
     }
 
+    for (const input of ["v2026.6.10", "2026.6.10-beta.1", "2026.6.10 trailing", "2026.4.24"]) {
+      const { output, result } = runBaseImageBuildArgGuard(guard, input);
+      expect(result.status, JSON.stringify(input)).toBe(1);
+      expect(output).toBe("");
+    }
+
     for (const input of [
-      "v2026.6.10",
-      "2026.6.10-beta.1",
-      "2026.6.10 trailing",
-      "2026.4.24",
       "2026.6.10\r",
       "2026.6.9\nNEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1\nOPENCLAW_VERSION=2026.4.24",
     ]) {
       const { output, result } = runBaseImageBuildArgGuard(guard, input);
       expect(result.status, JSON.stringify(input)).toBe(1);
       expect(output).toBe("");
-      if (input.includes("\r") || input.includes("\n")) {
-        expect(result.stderr).toContain(
-          "production Docker build arguments must not contain CR or LF characters",
-        );
-      }
+      expect(result.stderr).toContain(
+        "production Docker build arguments must not contain CR or LF characters",
+      );
     }
   });
 
