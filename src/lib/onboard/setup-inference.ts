@@ -77,6 +77,8 @@ export function createSetupInference(
       isNonInteractive: deps.isNonInteractive,
       registry: { updateSandbox: deps.updateSandbox },
       exitProcess: deps.exitProcess,
+      error: deps.error,
+      log: deps.log,
     };
 
     if (provider === deps.hermesProviderAuth.HERMES_PROVIDER_NAME) {
@@ -129,8 +131,6 @@ export function createSetupInference(
           bedrockRuntimeOnboard: deps.bedrockRuntimeOnboard,
           redact: deps.redact,
           compactText: deps.compactText,
-          error: deps.error,
-          log: deps.log,
         },
       );
       if (outcome.done) return outcome.result;

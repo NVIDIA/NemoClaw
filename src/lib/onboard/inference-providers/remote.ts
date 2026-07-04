@@ -58,7 +58,7 @@ export async function setupRemoteProviderInference(
       ? REMOTE_PROVIDER_CONFIG.build
       : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
   if (!config) {
-    console.error(`  Unsupported provider configuration: ${provider}`);
+    error(`  Unsupported provider configuration: ${provider}`);
     return exitProcess(1);
   }
   const bedrockSetup = await bedrockRuntimeOnboard.setupBedrockRuntimeInference({
@@ -119,9 +119,9 @@ export async function setupRemoteProviderInference(
           };
     }
     if (!providerResult.ok) {
-      console.error(`  ${providerResult.message}`);
+      error(`  ${providerResult.message}`);
       if (isNonInteractive()) {
-        exitProcess(providerResult.status || 1);
+        return exitProcess(providerResult.status || 1);
       }
       const retry = await promptValidationRecovery(
         config.label,
@@ -135,7 +135,7 @@ export async function setupRemoteProviderInference(
       if (retry === "selection" || retry === "model") {
         return { done: true, result: { retry: "selection" } };
       }
-      exitProcess(providerResult.status || 1);
+      return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
     if (config.skipVerify) {
@@ -152,9 +152,9 @@ export async function setupRemoteProviderInference(
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${provider}'.`;
-    console.error(`  ${message}`);
+    error(`  ${message}`);
     if (isNonInteractive()) {
-      exitProcess(applyResult.status || 1);
+      return exitProcess(applyResult.status || 1);
     }
     const retry = await promptValidationRecovery(
       config.label,
@@ -168,7 +168,7 @@ export async function setupRemoteProviderInference(
     if (retry === "selection" || retry === "model") {
       return { done: true, result: { retry: "selection" } };
     }
-    exitProcess(applyResult.status || 1);
+    return exitProcess(applyResult.status || 1);
   }
   return { done: false };
 }

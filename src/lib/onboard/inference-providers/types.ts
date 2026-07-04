@@ -88,11 +88,11 @@ export type CommonDeps = {
   isNonInteractive: () => boolean;
   registry: Registry;
   exitProcess: (code: number) => never;
+  error: (message: string) => void;
+  log: (message: string) => void;
 };
 
 export type RemoteProviderDeps = CommonDeps & {
-  error: (message: string) => void;
-  log: (message: string) => void;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   hydrateCredentialEnv: (envName: any, resolveCredential?: any) => any;
   promptValidationRecovery: PromptValidationRecovery;

@@ -67,12 +67,6 @@ function stubMissingBedrockAuth(): void {
   }
 }
 
-function stubProcessExit() {
-  return vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-    throw new Error(`EXIT_CALLED:${code ?? 0}`);
-  }) as typeof process.exit);
-}
-
 function expectNoPostFailureSideEffects(
   harness: DirectSetupInferenceHarness,
   expectedCommands = ["gateway select nemoclaw"],
@@ -90,10 +84,7 @@ describe("setupInference dependency failures", () => {
   });
 
   it("fails through the injected exit boundary when a known remote provider has no config", async () => {
-    const exitProcess = vi.fn((code: number): never => {
-      throw new Error(`EXIT_CALLED:${code}`);
-    });
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitProcess = createInjectedExit();
     const hydrateCredentialEnv = vi.fn();
     const setupBedrockRuntimeInference = vi.fn(async () => ({ handled: false as const }));
     const harness = createDirectSetupInferenceHarness({
@@ -109,7 +100,8 @@ describe("setupInference dependency failures", () => {
       "EXIT_CALLED:1",
     );
 
-    expect(error).toHaveBeenCalledWith("  Unsupported provider configuration: openai-api");
+    expect(harness.errors).toEqual(["  Unsupported provider configuration: openai-api"]);
+    expect(exitProcess).toHaveBeenCalledOnce();
     expect(exitProcess).toHaveBeenCalledWith(1);
     expect(setupBedrockRuntimeInference).not.toHaveBeenCalled();
     expect(hydrateCredentialEnv).not.toHaveBeenCalled();
@@ -117,8 +109,7 @@ describe("setupInference dependency failures", () => {
   });
 
   it("fails closed before provider registration when local vLLM validation fails", async () => {
-    const exit = stubProcessExit();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitProcess = createInjectedExit();
     const validateLocalProvider = vi.fn(() => ({
       ok: false,
       message: "vLLM is unreachable",
@@ -127,7 +118,7 @@ describe("setupInference dependency failures", () => {
     const getLocalProviderHealthCheck = vi.fn(() => ["curl", "-sf", "http://127.0.0.1:8000"]);
     const run = vi.fn(() => directRunResult({ status: 7 }));
     const harness = createDirectSetupInferenceHarness({
-      overrides: { validateLocalProvider, getLocalProviderHealthCheck, run },
+      overrides: { exitProcess, validateLocalProvider, getLocalProviderHealthCheck, run },
     });
 
     await expect(harness.setupInference("test-box", "meta-llama", "vllm-local")).rejects.toThrow(
@@ -140,20 +131,24 @@ describe("setupInference dependency failures", () => {
       ignoreError: true,
       suppressOutput: true,
     });
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(error).toHaveBeenCalledWith("  vLLM is unreachable");
-    expect(error).toHaveBeenCalledWith("  Diagnostic: container probe failed");
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  vLLM is unreachable",
+      "  Diagnostic: container probe failed",
+    ]);
     expectNoPostFailureSideEffects(harness);
   });
 
   it("propagates local vLLM health-check errors before provider registration", async () => {
-    const exit = stubProcessExit();
+    const exitProcess = createInjectedExit();
     const run = vi.fn(() => directRunResult());
     const getLocalProviderHealthCheck = vi.fn(() => {
       throw new Error("health probe exploded");
     });
     const harness = createDirectSetupInferenceHarness({
       overrides: {
+        exitProcess,
         validateLocalProvider: () => ({ ok: false, message: "vLLM is unreachable" }),
         getLocalProviderHealthCheck,
         run,
@@ -166,12 +161,12 @@ describe("setupInference dependency failures", () => {
 
     expect(getLocalProviderHealthCheck).toHaveBeenCalledWith("vllm-local");
     expect(run).not.toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
   });
 
   it("propagates Ollama proxy startup errors before reading credentials", async () => {
-    const exit = stubProcessExit();
+    const exitProcess = createInjectedExit();
     const ensureOllamaAuthProxy = vi.fn(() => {
       throw new Error("proxy startup failed");
     });
@@ -179,6 +174,7 @@ describe("setupInference dependency failures", () => {
     const persistAndProbeOllamaProxy = vi.fn(async () => {});
     const harness = createDirectSetupInferenceHarness({
       overrides: {
+        exitProcess,
         shouldFrontOllamaWithProxy: () => true,
         ensureOllamaAuthProxy,
         getOllamaProxyToken,
@@ -193,13 +189,12 @@ describe("setupInference dependency failures", () => {
     expect(ensureOllamaAuthProxy).toHaveBeenCalledOnce();
     expect(getOllamaProxyToken).not.toHaveBeenCalled();
     expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
   });
 
   it("fails closed when the recovered Ollama proxy remains unhealthy", async () => {
-    const exit = stubProcessExit();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitProcess = createInjectedExit();
     const ensureOllamaAuthProxy = vi.fn();
     const isProxyHealthy = vi.fn(() => false);
     const getOllamaProxyToken = vi.fn(() => "unused-token");
@@ -212,6 +207,7 @@ describe("setupInference dependency failures", () => {
           diagnostic: "proxy probe failed",
         }),
         shouldFrontOllamaWithProxy: () => true,
+        exitProcess,
         ensureOllamaAuthProxy,
         isProxyHealthy,
         getOllamaProxyToken,
@@ -227,21 +223,24 @@ describe("setupInference dependency failures", () => {
     expect(isProxyHealthy).toHaveBeenCalledOnce();
     expect(getOllamaProxyToken).not.toHaveBeenCalled();
     expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(error).toHaveBeenCalledWith("  container cannot reach Ollama");
-    expect(error).toHaveBeenCalledWith("  Diagnostic: proxy probe failed");
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  container cannot reach Ollama",
+      "  Diagnostic: proxy probe failed",
+    ]);
     expectNoPostFailureSideEffects(harness);
   });
 
   it("fails closed when proxy-fronted Ollama has no credential token", async () => {
-    const exit = stubProcessExit();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitProcess = createInjectedExit();
     const ensureOllamaAuthProxy = vi.fn();
     const getOllamaProxyToken = vi.fn(() => null);
     const persistAndProbeOllamaProxy = vi.fn(async () => {});
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         shouldFrontOllamaWithProxy: () => true,
+        exitProcess,
         ensureOllamaAuthProxy,
         getOllamaProxyToken,
         persistAndProbeOllamaProxy,
@@ -255,20 +254,63 @@ describe("setupInference dependency failures", () => {
     expect(ensureOllamaAuthProxy).toHaveBeenCalledOnce();
     expect(getOllamaProxyToken).toHaveBeenCalledOnce();
     expect(persistAndProbeOllamaProxy).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(error).toHaveBeenCalledWith(
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
       "  Ollama auth proxy token is not set. Re-run onboard to initialize the proxy.",
-    );
+    ]);
+    expectNoPostFailureSideEffects(harness);
+  });
+
+  it("exits through injected Hermes boundaries when provider storage is unavailable", async () => {
+    const exitProcess = createInjectedExit();
+    const isHermesProviderRegistered = vi.fn(() => true);
+    const ensureHermesProviderApiKeyCredentials = vi.fn(async () => ({}));
+    const ensureHermesProviderOAuthCredentials = vi.fn(async () => ({}));
+    const checkHermesProviderStoreReachable = vi.fn(() => ({
+      ok: false,
+      message: "provider store unavailable",
+    }));
+    const harness = createDirectSetupInferenceHarness({
+      overrides: {
+        isNonInteractive: () => true,
+        exitProcess,
+        checkHermesProviderStoreReachable,
+        hermesProviderAuth: {
+          HERMES_PROVIDER_NAME: "hermes-provider",
+          isHermesProviderRegistered,
+          ensureHermesProviderApiKeyCredentials,
+          ensureHermesProviderOAuthCredentials,
+        },
+      },
+    });
+
+    await expect(
+      harness.setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider"),
+    ).rejects.toThrow("EXIT_CALLED:1");
+
+    expect(checkHermesProviderStoreReachable).toHaveBeenCalledWith(harness.runOpenshell);
+    expect(isHermesProviderRegistered).not.toHaveBeenCalled();
+    expect(ensureHermesProviderApiKeyCredentials).not.toHaveBeenCalled();
+    expect(ensureHermesProviderOAuthCredentials).not.toHaveBeenCalled();
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual([
+      "  ✗ OpenShell provider storage is unreachable.",
+      "    provider store unavailable",
+      "    Restart or recreate the OpenShell gateway, then rerun onboarding.",
+    ]);
     expectNoPostFailureSideEffects(harness);
   });
 
   it("propagates Ollama proxy persistence errors before provider registration", async () => {
-    const exit = stubProcessExit();
+    const exitProcess = createInjectedExit();
     const persistAndProbeOllamaProxy = vi.fn(async () => {
       throw new Error("proxy persistence failed");
     });
     const harness = createDirectSetupInferenceHarness({
       overrides: {
+        exitProcess,
         shouldFrontOllamaWithProxy: () => true,
         ensureOllamaAuthProxy: () => {},
         getOllamaProxyToken: () => "proxy-token",
@@ -281,7 +323,7 @@ describe("setupInference dependency failures", () => {
     );
 
     expect(persistAndProbeOllamaProxy).toHaveBeenCalledWith("proxy-token");
-    expect(exit).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
   });
 
@@ -553,11 +595,11 @@ describe("setupInference dependency failures", () => {
   });
 
   it("uses an injected Hermes DNS lookup before rejecting an unpinnable HTTPS endpoint", async () => {
-    const exit = stubProcessExit();
+    const exitProcess = createInjectedExit();
     const lookup = vi.fn<NonNullable<SetupInferenceDeps["lookup"]>>(async () => [
       { address: "8.8.8.8", family: 4 },
     ]);
-    const harness = createDirectSetupInferenceHarness({ overrides: { lookup } });
+    const harness = createDirectSetupInferenceHarness({ overrides: { exitProcess, lookup } });
 
     await expect(
       harness.setupInference(
@@ -569,13 +611,12 @@ describe("setupInference dependency failures", () => {
     ).rejects.toThrow("DNS-backed HTTPS URLs are not supported");
 
     expect(lookup).toHaveBeenCalledWith("api.public.example.test", { all: true });
-    expect(exit).not.toHaveBeenCalled();
+    expect(exitProcess).not.toHaveBeenCalled();
     expectNoPostFailureSideEffects(harness);
   });
 
   it("fails closed before routed-provider registration when model-router reconciliation fails", async () => {
-    const exit = stubProcessExit();
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exitProcess = createInjectedExit();
     const reconcileModelRouter = vi.fn(async () => {
       throw new Error("router unavailable");
     });
@@ -583,6 +624,7 @@ describe("setupInference dependency failures", () => {
     const harness = createDirectSetupInferenceHarness({
       overrides: {
         isRoutedInferenceProvider: (provider) => provider === "nvidia-router",
+        exitProcess,
         reconcileModelRouter,
         routedInference: { upsertRoutedProvider },
       },
@@ -600,8 +642,9 @@ describe("setupInference dependency failures", () => {
 
     expect(reconcileModelRouter).toHaveBeenCalledOnce();
     expect(upsertRoutedProvider).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
-    expect(error).toHaveBeenCalledWith("  ✗ Failed to start model router: router unavailable");
+    expect(exitProcess).toHaveBeenCalledOnce();
+    expect(exitProcess).toHaveBeenCalledWith(1);
+    expect(harness.errors).toEqual(["  ✗ Failed to start model router: router unavailable"]);
     expectNoPostFailureSideEffects(harness);
   });
 });

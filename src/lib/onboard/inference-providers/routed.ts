@@ -22,6 +22,8 @@ export async function setupRoutedInference(
     reconcileModelRouter,
     routedInference,
     hydrateCredentialEnv,
+    exitProcess,
+    error,
   } = deps;
 
   // Blueprint profile provider (e.g., nvidia-router for the routed profile).
@@ -29,18 +31,16 @@ export async function setupRoutedInference(
   try {
     await reconcileModelRouter();
   } catch (err) {
-    console.error(
-      `  ✗ Failed to start model router: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    process.exit(1);
+    error(`  ✗ Failed to start model router: ${err instanceof Error ? err.message : String(err)}`);
+    return exitProcess(1);
   }
   const routed = routedInference.upsertRoutedProvider(provider, endpointUrl, credentialEnv, {
     upsertProvider,
     hydrateCredentialEnv,
   });
   if (!routed.ok) {
-    console.error(`  ${routed.result.message}`);
-    process.exit(routed.result.status || 1);
+    error(`  ${routed.result.message}`);
+    return exitProcess(routed.result.status || 1);
   }
   runOpenshell(["inference", "set", "--no-verify", "--provider", provider, "--model", model]);
   return { done: false };
