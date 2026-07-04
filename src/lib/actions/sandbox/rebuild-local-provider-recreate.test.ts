@@ -6,9 +6,9 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createRebuildFlowHarness,
+  type RebuildFlowHarness,
   resetRebuildFlowTestEnvironment,
   restoreRebuildFlowTestEnvironment,
-  type RebuildFlowHarness,
 } from "../../../../test/helpers/rebuild-flow-harness";
 import {
   setupOllamaLocalInference,
