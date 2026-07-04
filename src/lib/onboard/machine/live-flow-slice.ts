@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createPhaseProgressReporter, type PhaseProgressReporter } from "./phase-progress";
 import type { OnboardStateResult } from "./result";
 import type {
   OnboardMachineRunnerResult,
@@ -16,6 +17,7 @@ export interface LiveOnboardFlowSliceOptions<Context> {
   phases: readonly OnboardSequencePhase<Context>[];
   runWhenState: readonly OnboardMachineState[];
   compatibilityWhenState?: readonly OnboardMachineState[];
+  phaseProgress?: PhaseProgressReporter;
   runSlice(options: {
     context: Context;
     runtime: OnboardMachineRunnerRuntime;
@@ -78,6 +80,7 @@ export async function runLiveOnboardFlowSlice<Context>({
   phases,
   runWhenState,
   compatibilityWhenState = [],
+  phaseProgress = createPhaseProgressReporter(),
   runSlice,
   applyCompatibleResult,
 }: LiveOnboardFlowSliceOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
@@ -98,7 +101,8 @@ export async function runLiveOnboardFlowSlice<Context>({
 
   assertUniquePhases(phases);
   let nextContext = context;
-  for (const phase of phases) {
+  for (const rawPhase of phases) {
+    const phase = phaseProgress.wrap(rawPhase);
     const phaseResult = await phase.run(nextContext);
     for (const result of asResultArray(phaseResult.result, phase.state)) {
       await applyCompatibleResult(result);

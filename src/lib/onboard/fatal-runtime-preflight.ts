@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { detectGpu, type GpuDetection } from "../inference/nim";
-import { cliDisplayName } from "./branding";
 import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
@@ -12,6 +11,7 @@ import {
   type HostAssessment,
   planHostRemediation,
 } from "./preflight";
+import { printDockerNotReachableError, printUnsupportedRuntimeError } from "./preflight-messages";
 import { printRemediationActions } from "./remediation";
 import { resolveSandboxGpuConfig, type SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
@@ -46,9 +46,7 @@ export function rejectUnsupportedContainerRuntime(
   exitProcess: (code: number) => never = exitProcessByDefault,
 ): void {
   if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
-    console.error(`  ✗ ${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`);
-    console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
-    console.error("    Switch to Docker Engine and rerun onboarding.");
+    printUnsupportedRuntimeError();
     exitProcess(1);
   }
 }
@@ -61,7 +59,7 @@ export function runFatalOnboardRuntimePreflight(
   const exitProcess = context.exitProcess ?? exitProcessByDefault;
   const host = assessHost();
   if (!host.dockerReachable) {
-    console.error("  Docker is not reachable. Please fix Docker and try again.");
+    printDockerNotReachableError();
     printRemediationActions(planHostRemediation(host));
     exitProcess(1);
   }

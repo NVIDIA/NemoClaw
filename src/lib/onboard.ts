@@ -598,6 +598,11 @@ import {
 } from "./onboard/policy-selection";
 import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
 import {
+  printLowMemoryWarning,
+  printMessagingProviderMissing,
+  printSwapCreationFailed,
+} from "./onboard/preflight-messages";
+import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
 } from "./onboard/sandbox-backup-on-recreate";
@@ -748,6 +753,12 @@ const {
 
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const { isSandboxReady, parseSandboxStatus, getSandboxStateFromOutputs } = gatewayState;
+const waitForSandboxReady = sandboxReadinessTracing.createSandboxReadyWaiter({
+  runCaptureOpenshell,
+  isSandboxReady,
+  isLinuxDockerDriverGatewayEnabled,
+  sleep: sleepSeconds,
+});
 const { hasStaleGateway, isSelectedGateway, isGatewayHealthy, getGatewayReuseState } =
   gatewayBinding.createGatewayNameBoundClassifiers(gatewayState, () => GATEWAY_NAME);
 
@@ -1555,39 +1566,6 @@ async function ensureNamedCredential(
   return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
 }
 
-function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
-  for (let i = 0; i < attempts; i += 1) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) return true;
-
-    // Package-managed OpenShell gateways report readiness through
-    // `sandbox list`; legacy Kubernetes gateways may still expose pod state.
-    if (isLinuxDockerDriverGatewayEnabled()) {
-      if (i < attempts - 1) sleepSeconds(delaySeconds);
-      continue;
-    }
-    const podPhase = runCaptureOpenshell(
-      [
-        "doctor",
-        "exec",
-        "--",
-        "kubectl",
-        "-n",
-        "openshell",
-        "get",
-        "pod",
-        sandboxName,
-        "-o",
-        "jsonpath={.status.phase}",
-      ],
-      { ignoreError: true },
-    );
-    if (podPhase === "Running") return true;
-    sleepSeconds(delaySeconds);
-  }
-  return false;
-}
-
 // parsePolicyPresetEnv — see urlUtils import above
 // isSafeModelId — see validation import above
 
@@ -1655,6 +1633,7 @@ async function preflight(
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
     log: console.log,
+    warn: console.warn,
     runOpenshell,
     destroyGateway,
     destroyGatewayForReuse,
@@ -1835,9 +1814,7 @@ async function preflight(
     const mem = getMemoryInfo();
     if (mem) {
       if (mem.totalMB < 12000) {
-        console.log(
-          `  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`,
-        );
+        printLowMemoryWarning(mem);
 
         let proceedWithSwap: boolean = false;
         if (!isNonInteractive()) {
@@ -1863,8 +1840,7 @@ async function preflight(
               console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
             }
           } else {
-            console.log(`  ⚠ Could not create swap: ${swapResult.reason}`);
-            console.log("  Sandbox creation may fail with OOM on low-memory systems.");
+            printSwapCreationFailed(swapResult.reason);
           }
         }
       } else {
@@ -2942,8 +2918,8 @@ async function createSandbox(
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
-  const { createCommand, effectiveDashboardPort, sandboxEnv, sandboxStartupCommand } =
-    sandboxCreateLaunch.prepareSandboxCreateLaunch({
+  const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
+    await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
       chatUiUrl,
       createArgs,
@@ -2954,6 +2930,8 @@ async function createSandbox(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
+      // Transitional BuildKit handoff removal is tracked by #6258.
+      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3015,7 +2993,7 @@ async function createSandbox(
         backupPath: restoreBackupPath,
       });
       console.error("  Try:  openshell sandbox list        # check gateway state");
-      printSandboxCreateRecoveryHints(createResult.output, { createArgs });
+      printSandboxCreateRecoveryHints(createResult.output, { createArgs: prebuild.createArgs });
       process.exit(createResult.status || 1);
     }
   }
@@ -3099,8 +3077,10 @@ async function createSandbox(
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
 
-  // Register only after ready; OpenShell tags in seconds, so parse the tag instead of using buildId.
-  const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
+  // Register only after confirmed ready — prevents phantom entries
+  // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
+  const resolvedImageTag =
+    prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   const inferenceSelection = sandboxRegistration.selection;
@@ -3158,11 +3138,7 @@ async function createSandbox(
   // cannot be verified via CLI yet — only gateway-level existence is checked).
   for (const p of messagingProviders) {
     if (!providerExistsInGateway(p)) {
-      console.error(`  ⚠ Messaging provider '${p}' was not found in the gateway.`);
-      console.error(`    The credential may not be available inside the sandbox.`);
-      console.error(
-        `    To fix: openshell provider create --name ${p} --type generic --credential <KEY>`,
-      );
+      printMessagingProviderMissing(p);
     }
   }
 
@@ -4601,7 +4577,8 @@ async function preflightAuthoritativeRebuildTarget(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-async function onboard(opts: OnboardOptions = {}): Promise<void> {
+const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
+async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };

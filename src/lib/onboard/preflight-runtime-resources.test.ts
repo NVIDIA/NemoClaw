@@ -40,6 +40,7 @@ describe("checkContainerRuntimeResources", () => {
     ).rejects.toThrow("exit:1");
 
     expect(confirm).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("⚠ Container runtime under-provisioned");
     expect(warn.mock.calls.flat().join("\n")).toContain("2 vCPU / 2.0 GiB");
     expect(error).toHaveBeenCalledWith(expect.stringContaining("Aborted by user"));
     expect(exit).toHaveBeenCalledWith(1);
