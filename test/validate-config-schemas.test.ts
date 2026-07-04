@@ -128,6 +128,31 @@ describe("config validation target discovery", () => {
       ]),
     );
   });
+
+  it("includes the onboard performance budget config", () => {
+    expect(filesBySchema.get("schemas/onboard-config.schema.json") ?? []).toEqual([
+      "ci/onboard-performance-budget.json",
+    ]);
+  });
+});
+
+// ── Onboard performance budget ──────────────────────────────────────────────
+
+describe("onboard-config.schema.json", () => {
+  const validate = compileSchema("schemas/onboard-config.schema.json");
+  const data = loadJSON(repoPath("ci/onboard-performance-budget.json"));
+
+  it("onboard-performance-budget.json passes schema validation", () => {
+    expectValid(validate, data, "onboard-performance-budget.json");
+  });
+
+  it("rejects invalid threshold shapes", () => {
+    const bad = {
+      ...cloneObject(data),
+      regressionWarning: { minDeltaMs: -1, minPercent: 20 },
+    };
+    expect(validate(bad)).toBe(false);
+  });
 });
 
 // ── Blueprint ────────────────────────────────────────────────────────────────
