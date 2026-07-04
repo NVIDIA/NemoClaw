@@ -442,6 +442,9 @@ snapshot=json.loads(snapshot_raw) if snapshot_raw else {}
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
 allowed={'operator.pairing','operator.read','operator.write'}
 final_scopes=allowed
+SETTLE_TIMEOUT_SECONDS=10.0
+SETTLE_POLL_SECONDS=0.2
+SETTLE_ATTEMPTS=int(SETTLE_TIMEOUT_SECONDS / SETTLE_POLL_SECONDS) + 1
 
 def norm(value): return str(value or '').strip()
 def fail(message):
@@ -581,6 +584,16 @@ def converge_after_sync(state):
     if context is None or context['scopes'] != final_scopes: return None
     sync_auth(context)
     return converged(load_state())
+def safe_state_summary(state):
+    expected_key=target.get('publicKey') if target else snapshot.get('publicKey', '')
+    context=paired_context(state, expected_key)
+    if context is None:
+        paired_label='invalid'
+        auth_label='unverified'
+    else:
+        paired_label='final' if context['scopes'] == final_scopes else 'baseline-or-other'
+        auth_label='match' if auth_matches(state, context) else 'mismatch'
+    return f'paired={paired_label} auth={auth_label} same_device_pending={len(same_device_pending(state))}'
 
 state=load_state()
 complete=converge_after_sync(state)
@@ -593,7 +606,7 @@ if mode == 'prove':
 if mode == 'prepare':
     original_want=want
     request=None
-    for poll in range(6):
+    for poll in range(SETTLE_ATTEMPTS):
         state=load_state()
         complete=converge_after_sync(state)
         if complete is not None:
@@ -613,7 +626,7 @@ if mode == 'prepare':
             want=replacement
             request=same_device[0]
             break
-        if poll < 5: time.sleep(0.2)
+        if poll + 1 < SETTLE_ATTEMPTS: time.sleep(SETTLE_POLL_SECONDS)
     same_device=same_device_pending(state)
     if (not want or any(character.isspace() for character in want)
             or not isinstance(request, dict) or request.get('requestId') != want
@@ -655,7 +668,7 @@ if mode != 'observe' or not snapshot:
     fail('invalid approval state validation mode')
 
 last_state=state
-for poll in range(6):
+for poll in range(SETTLE_ATTEMPTS):
     state=load_state()
     complete=converge_after_sync(state)
     if complete is not None:
@@ -677,7 +690,7 @@ for poll in range(6):
             print(f"RETRY {replacement}")
             raise SystemExit(0)
     last_state=state
-    if poll < 5: time.sleep(0.2)
+    if poll + 1 < SETTLE_ATTEMPTS: time.sleep(SETTLE_POLL_SECONDS)
 
 baseline=paired_context(last_state, snapshot.get('publicKey', ''))
 pending=same_device_pending(last_state)
@@ -692,7 +705,7 @@ if unchanged and len(pending) == 1:
     if isinstance(replacement, str) and replacement:
         print(f"RETRY {replacement}")
         raise SystemExit(0)
-fail('approval produced neither canonical convergence nor one exact replacement')
+fail('approval did not settle: ' + safe_state_summary(last_state))
 PY
 }
 
