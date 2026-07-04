@@ -64,6 +64,7 @@ const preparedBuildContext = {
   buildCtx: ${JSON.stringify(path.join(home, "prepared-context"))},
   stagedDockerfile: ${JSON.stringify(path.join(home, "prepared-context", "Dockerfile"))},
   buildId: "6195-prepared",
+  origin: "generated",
   cleanupBuildCtx: () => true,
 };
 const common = {

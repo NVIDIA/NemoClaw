@@ -28,6 +28,7 @@ describe("managed DCode rebuild image preparation", () => {
         prepared: {
           buildCtx: fixture.buildCtx,
           stagedDockerfile: fixture.stagedDockerfile,
+          origin: "generated",
           buildId: "dcode-build-1",
           dockerGpuPatchNetwork: null,
         },
@@ -79,7 +80,12 @@ describe("managed DCode rebuild image preparation", () => {
         return true;
       });
     const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
-      stageBuildContext: vi.fn(() => ({ buildCtx, stagedDockerfile, cleanupBuildCtx })),
+      stageBuildContext: vi.fn(() => ({
+        buildCtx,
+        stagedDockerfile,
+        cleanupBuildCtx,
+        origin: "generated" as const,
+      })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-cleanup",
         resolvedBaseImage: null,
@@ -107,7 +113,12 @@ describe("managed DCode rebuild image preparation", () => {
     const secret = "nvapi-secret-value-that-must-not-leak";
 
     const result = await prepareManagedDcodeRebuildImage(dcodeInput(), {
-      stageBuildContext: vi.fn(() => ({ buildCtx, stagedDockerfile, cleanupBuildCtx })),
+      stageBuildContext: vi.fn(() => ({
+        buildCtx,
+        stagedDockerfile,
+        cleanupBuildCtx,
+        origin: "generated" as const,
+      })),
       prepareDockerfilePatch: vi.fn(async () => ({
         buildId: "dcode-build-failure",
         resolvedBaseImage: null,

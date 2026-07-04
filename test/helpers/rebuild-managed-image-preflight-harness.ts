@@ -62,7 +62,12 @@ export async function createPreparedDcodeImageFixture() {
     fs.rmSync(testRoot, { recursive: true, force: true });
     return true;
   });
-  const stageBuildContext = vi.fn(() => ({ buildCtx, stagedDockerfile, cleanupBuildCtx }));
+  const stageBuildContext = vi.fn(() => ({
+    buildCtx,
+    stagedDockerfile,
+    cleanupBuildCtx,
+    origin: "generated" as const,
+  }));
   const prepareDockerfilePatch = vi.fn(async () => ({
     buildId: "dcode-build-1",
     resolvedBaseImage: null,

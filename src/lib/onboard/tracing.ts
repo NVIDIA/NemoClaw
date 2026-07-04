@@ -8,6 +8,14 @@ type TraceFn<T> = () => T;
 
 const TRACE_TRUTHY_VALUES = new Set(["1", "true", "yes", "on"]);
 
+export const ONBOARD_TRACE_PHASE_NAMES = {
+  preflight: "nemoclaw.onboard.phase.preflight",
+  gateway: "nemoclaw.onboard.phase.gateway",
+  providerSelection: "nemoclaw.onboard.phase.provider_selection",
+  inference: "nemoclaw.onboard.phase.inference",
+  sandbox: "nemoclaw.onboard.phase.sandbox",
+} as const;
+
 export interface OnboardTraceOptions {
   resume?: boolean;
   fresh?: boolean;
@@ -56,7 +64,7 @@ export function finishOnboardTrace(handle: OnboardTraceHandle, completed: boolea
 }
 
 export function withPreflightTrace<T>(fn: TraceFn<T>): T {
-  return trace.withTraceSpan("nemoclaw.onboard.phase.preflight", {}, fn);
+  return trace.withTraceSpan(ONBOARD_TRACE_PHASE_NAMES.preflight, {}, fn);
 }
 
 export function withGatewayTrace<T>(
@@ -65,7 +73,7 @@ export function withGatewayTrace<T>(
   fn: TraceFn<T>,
 ): T {
   return trace.withTraceSpan(
-    "nemoclaw.onboard.phase.gateway",
+    ONBOARD_TRACE_PHASE_NAMES.gateway,
     { reuse_state: reuseState, gpu_passthrough: gpuPassthrough },
     fn,
   );
@@ -77,7 +85,7 @@ export function withProviderSelectionTrace<T>(
   fn: TraceFn<T>,
 ): T {
   return trace.withTraceSpan(
-    "nemoclaw.onboard.phase.provider_selection",
+    ONBOARD_TRACE_PHASE_NAMES.providerSelection,
     { sandbox_name: sandboxName, agent: agentName ?? null },
     fn,
   );
@@ -91,7 +99,7 @@ export function withInferenceTrace<T>(
   fn: TraceFn<T>,
 ): T {
   return trace.withTraceSpan(
-    "nemoclaw.onboard.phase.inference",
+    ONBOARD_TRACE_PHASE_NAMES.inference,
     { sandbox_name: sandboxName, provider, model, credential_env: credentialEnv },
     fn,
   );
@@ -105,7 +113,7 @@ export function withSandboxPhaseTrace<T>(
   fn: TraceFn<T>,
 ): T {
   return trace.withTraceSpan(
-    "nemoclaw.onboard.phase.sandbox",
+    ONBOARD_TRACE_PHASE_NAMES.sandbox,
     { sandbox_name: sandboxName, provider, model, agent: agentName ?? null },
     fn,
   );

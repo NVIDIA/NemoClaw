@@ -40,6 +40,7 @@ describe("managed DCode rebuild image configuration", () => {
           stageBuildContext: () => ({
             buildCtx: testRoot,
             stagedDockerfile,
+            origin: "generated" as const,
             cleanupBuildCtx: () => {
               fs.rmSync(testRoot, { recursive: true, force: true });
               return true;
@@ -81,6 +82,7 @@ describe("managed DCode rebuild image configuration", () => {
           stageBuildContext: () => ({
             buildCtx,
             stagedDockerfile,
+            origin: "generated" as const,
             cleanupBuildCtx: () => {
               fs.rmSync(buildCtx, { recursive: true, force: true });
               return true;

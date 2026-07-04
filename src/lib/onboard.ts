@@ -2771,7 +2771,7 @@ async function createSandboxWithBaseImageResolution(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
+  const { buildCtx, stagedDockerfile, origin, cleanupBuildCtx } =
     preparedDcodeRebuild.resolveSandboxBuildContext(
       {
         preparedBuildContext,
@@ -2798,6 +2798,7 @@ async function createSandboxWithBaseImageResolution(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
@@ -2818,7 +2819,7 @@ async function createSandboxWithBaseImageResolution(
     extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    dockerDriverGateway,
     appendResourceFlags: (args) =>
       appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
         isNonInteractive,
@@ -2884,8 +2885,7 @@ async function createSandboxWithBaseImageResolution(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
-      // Transitional BuildKit handoff removal is tracked by #6258.
-      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3007,7 +3007,7 @@ async function createSandboxWithBaseImageResolution(
     // when applicable, then gates host-network local inference reachability (#4509).
     dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
       sandboxName,
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      dockerDriverGateway,
       useDockerGpuPatch,
       verifyDirectSandboxGpu,
       verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
