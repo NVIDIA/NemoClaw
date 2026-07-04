@@ -307,9 +307,6 @@ describe("OpenClaw 2026.6.10 dependency review contract", () => {
     expect(review).toContain("protected exact-version/SRI/tarball/lifecycle provenance marker");
     expect(review).toContain("removes the marker before applying NemoClaw patches");
     expect(review).toContain("ten fallback states");
-    expect(readFileSync(path.join(REPO_ROOT, "Dockerfile"), "utf-8")).toContain(
-      `stat -c '%u:%g:%a' "$OPENCLAW_PROVENANCE_PATH"`,
-    );
     expect(review).toContain("issue #5896 section 2");
     expect(review).toContain("issue #5896 section 9");
     expect(review).toContain("direct source- and target-traversal vectors");
@@ -377,6 +374,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
 done
 
 check_contains "$(cat Dockerfile.base)" 'chmod 0444 "$OPENCLAW_PROVENANCE_TMP"' "base provenance protected mode"
+check_contains "$(cat Dockerfile)" "stat -c '%u:%g:%a'" "runtime provenance metadata format"
+check_contains "$(cat Dockerfile)" '0:0:444' "runtime provenance exact metadata"
 check_contains "$(cat Dockerfile)" 'rm -rf "$OPENCLAW_PROVENANCE_PATH"' "runtime provenance consumption"
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
