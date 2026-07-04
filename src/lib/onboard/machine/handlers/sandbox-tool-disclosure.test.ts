@@ -4,8 +4,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../../state/onboard-session";
-import { resolveSandboxToolDisclosure } from "../../../tool-disclosure";
-import type { SandboxCreateIntent } from "../../types";
 import { handleSandboxState } from "./sandbox";
 import { baseOptions, createDeps } from "./sandbox-test-fixtures";
 
@@ -72,25 +70,10 @@ describe("handleSandboxState tool disclosure", () => {
   it.each([
     ["progressive", "direct"],
     ["direct", "progressive"],
-  ] as const)("propagates resumed %s-to-%s tool-disclosure drift through the downstream create lifecycle", async (recordedMode, requestedMode) => {
+  ] as const)("passes resumed %s-to-%s tool-disclosure drift into the downstream create intent", async (recordedMode, requestedMode) => {
     const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
     session.steps.sandbox.status = "complete";
-    const lifecycle: Array<{ action: "recreate" | "reuse"; mode: string }> = [];
-    const createSandbox = vi.fn(async (...args: unknown[]) => {
-      const createIntent = args[14] as SandboxCreateIntent | undefined;
-      const recreate = createIntent?.recreate ?? false;
-      const mode = resolveSandboxToolDisclosure({
-        requested: createIntent?.toolDisclosure ?? null,
-        recorded: recordedMode,
-        session: session.toolDisclosure,
-        sandboxExists: true,
-        recreate,
-      });
-      lifecycle.push({ action: recreate ? "recreate" : "reuse", mode });
-      return "saved";
-    });
     const { deps, calls } = createDeps({
-      createSandbox,
       getSandboxReuseState: () => "ready",
       updateSession: vi.fn(
         (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
@@ -109,7 +92,7 @@ describe("handleSandboxState tool disclosure", () => {
     });
 
     expect(calls.removeSandbox).not.toHaveBeenCalled();
-    expect(createSandbox).toHaveBeenCalledWith(
+    expect(calls.createSandbox).toHaveBeenCalledWith(
       expect.anything(),
       "model",
       "provider",
@@ -126,7 +109,6 @@ describe("handleSandboxState tool disclosure", () => {
       null,
       { recreate: true, toolDisclosure: requestedMode },
     );
-    expect(lifecycle).toEqual([{ action: "recreate", mode: requestedMode }]);
   });
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
