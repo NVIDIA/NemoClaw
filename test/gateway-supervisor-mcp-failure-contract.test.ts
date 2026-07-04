@@ -35,12 +35,17 @@ describe("gateway supervisor MCP failure contract", () => {
           "-c",
           [
             "set -eu",
-            `export NEMOCLAW_GATEWAY_CONTROL_DIR=${JSON.stringify(controlDir)}`,
-            `. ${JSON.stringify(SUPERVISOR_LIB)}`,
-            `GATEWAY_CONTROL_NONCE=${NONCE}`,
-            `gateway_control_fail ${failureCode} 4242`,
+            'export NEMOCLAW_GATEWAY_CONTROL_DIR="$1"',
+            '. "$2"',
+            'GATEWAY_CONTROL_NONCE="$3"',
+            'gateway_control_fail "$4" 4242',
             'cat "$NEMOCLAW_GATEWAY_CONTROL_STATUS"',
           ].join("\n"),
+          "gateway-supervisor-mcp-failure-contract",
+          controlDir,
+          SUPERVISOR_LIB,
+          NONCE,
+          failureCode,
         ],
         { encoding: "utf8" },
       );
@@ -67,11 +72,11 @@ describe("gateway supervisor MCP failure contract", () => {
           "#!/usr/bin/env bash",
           "set -eu",
           'stat() { printf "%s\\n" "root:root 700"; }',
-          `FAILURE_CODE=${failureCode}`,
-          `TEST_NONCE=${NONCE}`,
+          'FAILURE_CODE="${NEMOCLAW_TEST_FAILURE_CODE:?}"',
+          'TEST_NONCE="${NEMOCLAW_TEST_NONCE:?}"',
           'kill() { printf "v1 %s failed %s 4242 0\\n" "$TEST_NONCE" "$FAILURE_CODE" >"$NEMOCLAW_GATEWAY_CONTROL_DIR/status"; }',
           'set -- restart "$TEST_NONCE"',
-          `. ${JSON.stringify(CONTROL_HELPER)}`,
+          '. "${NEMOCLAW_TEST_CONTROL_HELPER:?}"',
         ].join("\n"),
         { mode: 0o700 },
       );
@@ -81,8 +86,11 @@ describe("gateway supervisor MCP failure contract", () => {
         env: {
           ...process.env,
           NEMOCLAW_GATEWAY_CONTROL_DIR: controlDir,
+          NEMOCLAW_TEST_CONTROL_HELPER: CONTROL_HELPER,
+          NEMOCLAW_TEST_FAILURE_CODE: failureCode,
           NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID: "0",
           NEMOCLAW_TEST_GATEWAY_CONTROL_PROC_ROOT: procRoot,
+          NEMOCLAW_TEST_NONCE: NONCE,
         },
       });
 
