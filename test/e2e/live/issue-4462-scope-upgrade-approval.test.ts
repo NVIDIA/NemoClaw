@@ -640,10 +640,22 @@ if mode == 'prepare':
         fail('repair request has no exact public key')
     context=paired_context(state, public_key)
     requested=scopes(request, ('scopes','requestedScopes'))
+    target_requested=target.get('requestedScopes') if isinstance(target.get('requestedScopes'), list) else []
+    target_expected=target.get('expectedScopes') if isinstance(target.get('expectedScopes'), list) else []
+    is_upgrade=(
+        context is not None and requested is not None
+        and context['scopes'] != final_scopes
+        and context['scopes'] | requested == final_scopes
+    )
+    is_final_successor=(
+        bool(target) and context is not None and requested is not None
+        and context['scopes'] == final_scopes
+        and set(target_requested) == requested
+        and set(target_expected) == final_scopes
+    )
     if (context is None or not auth_matches(state, context) or requested is None
             or not {'operator.read','operator.write'}.intersection(requested)
-            or context['scopes'] | requested != final_scopes
-            or context['scopes'] == final_scopes):
+            or not (is_upgrade or is_final_successor)):
         fail('request is not the exact canonical operator scope upgrade')
     candidate={
         'requestId': want,
@@ -657,7 +669,9 @@ if mode == 'prepare':
         'expectedScopes': sorted(final_scopes),
     }
     if target:
-        exact=('deviceId','publicKey','clientId','clientMode','baselineScopes','baselineTokenHash','requestedScopes','expectedScopes')
+        exact=('deviceId','publicKey','clientId','clientMode','requestedScopes','expectedScopes')
+        if not is_final_successor:
+            exact += ('baselineScopes','baselineTokenHash')
         if any(candidate.get(key) != target.get(key) for key in exact):
             fail('replacement request does not match the reviewed scope upgrade')
     status='CANDIDATE' if want == original_want else 'RETRY'
@@ -682,6 +696,19 @@ for poll in range(SETTLE_ATTEMPTS):
         and hashlib.sha256(baseline['token'].encode()).hexdigest() == snapshot.get('baselineTokenHash')
         and auth_matches(state, baseline)
     )
+    final_successor_hint=(
+        bool(target) and baseline is not None
+        and baseline['scopes'] == final_scopes
+        and auth_matches(state, baseline)
+        and len(pending) == 1
+    )
+    if final_successor_hint:
+        replacement=pending[0].get('requestId')
+        if (isinstance(replacement, str) and replacement == replacement.strip()
+                and replacement and not any(character.isspace() for character in replacement)
+                and replacement != want):
+            print(f"RETRY {replacement}")
+            raise SystemExit(0)
     if unchanged and len(pending) > 1:
         fail('multiple same-device replacement requests appeared')
     if unchanged and len(pending) == 1:
