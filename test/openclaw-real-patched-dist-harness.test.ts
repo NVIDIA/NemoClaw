@@ -278,7 +278,7 @@ describe("OpenClaw real patched-dist materialization guard", () => {
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
   () => {
-    it("materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches", () => {
+    it("materializes the reviewed tarball and applies NemoClaw's Dockerfile OpenClaw patches", async () => {
       const version = readRequiredDockerArg("OPENCLAW_VERSION");
       const integrity = readRequiredDockerArg("OPENCLAW_2026_6_10_INTEGRITY");
       const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_6_10_TARBALL");
@@ -429,7 +429,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
         // This proof installs the reviewed shrinkwrapped runtime dependencies
         // with lifecycle scripts disabled. Keep it after every shape-only dist
         // scan so dependency materialization cannot perturb their timing.
-        runRealOpenClawDeviceSelfApprovalProof({
+        await runRealOpenClawDeviceSelfApprovalProof({
           dist,
           patchScript: path.join(REPO_ROOT, "scripts", "patch-openclaw-device-self-approval.ts"),
           timeoutMs: PATCH_COMMAND_TIMEOUT_MS,

@@ -2483,9 +2483,10 @@ APPROVED = 0
 SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
-# (the gateway stores connectParams.client.id verbatim). This allowlist
-# is defense-in-depth, not a trust boundary. PR #690 adds one-shot exit,
-# timeout reduction, and token cleanup for a more comprehensive fix.
+# (the gateway stores connectParams.client.id verbatim). The policy requires
+# an explicit known clientId and never trusts an allowlisted mode by itself.
+# This remains defense-in-depth, not a trust boundary. PR #690 adds one-shot
+# exit, timeout reduction, and token cleanup for a more comprehensive fix.
 # The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
@@ -2494,8 +2495,10 @@ RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 # watcher inspects live state. Approval calls drop the gateway env triplet so
 # OpenClaw resolves its local loopback gateway and device token. The reviewed
 # 2026.6.10 dist patch requests only operator.pairing for a complete bounded
-# CLI self-upgrade, then validates and commits it in OpenClaw's canonical
-# locked pairing writer. Remove both pieces when upstream supports that flow.
+# CLI self-upgrade and forces the existing local-only stored-device-auth path
+# so a shared token reloaded from config cannot win authentication. The gateway
+# then validates and commits in OpenClaw's canonical locked pairing writer.
+# Remove both pieces when upstream supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with

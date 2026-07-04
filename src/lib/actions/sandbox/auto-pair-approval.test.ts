@@ -104,6 +104,18 @@ describe("auto-pair approval pass behaviour (#4616)", () => {
           scopes: ["operator.read"],
         },
         {
+          requestId: "deny-spoofed-cli-mode",
+          clientId: "evil",
+          clientMode: "cli",
+          scopes: ["operator.write"],
+        },
+        {
+          requestId: "deny-spoofed-webchat-mode",
+          clientId: "evil",
+          clientMode: "webchat",
+          scopes: ["operator.read"],
+        },
+        {
           requestId: "deny-admin",
           clientId: "openclaw-control-ui",
           clientMode: "webchat",

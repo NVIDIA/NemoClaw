@@ -1,6 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+/**
+ * SOURCE_OF_TRUTH
+ * Invalid state: rebuild must remove the registered sandbox before recreation,
+ * but a failed recreation would otherwise permanently lose the prior row and
+ * default selection.
+ * Source boundary: runRebuildDestroyPhase removes the registry row only after
+ * OpenShell has successfully deleted (or confirms absence of) the old sandbox;
+ * the rebuild pipeline restores that receipt if recreation then fails.
+ * Source-fix constraint: OpenShell cannot yet create and verify a replacement
+ * under a temporary name and atomically swap it with the existing sandbox.
+ * Regression proof: registry-reversible-removal.test.ts covers receipt-based
+ * restoration, default ownership revisions, and concurrent-write preservation.
+ * Removal condition: delete this compatibility layer when OpenShell provides
+ * an atomic build/verify/swap primitive for same-name sandbox replacement.
+ */
+
 type NamedRegistryEntry = {
   name: string;
 };

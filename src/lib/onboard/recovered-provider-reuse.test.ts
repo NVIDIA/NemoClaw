@@ -203,6 +203,65 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
   });
 
+  it("rejects mismatched recovered provider and model combinations", () => {
+    for (const override of [
+      { recoveredProvider: "another-provider" },
+      { recoveredModel: "another-model" },
+    ]) {
+      expect(
+        assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
+      ).toMatchObject({ kind: "reject" });
+    }
+  });
+
+  it("rejects an unsupported API for the recovered provider type", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        recoveredPreferredInferenceApi: "anthropic-messages",
+      }),
+    ).toEqual({
+      kind: "reject",
+      reason: "the recovered inference API is missing or unsupported",
+    });
+  });
+
+  it("rejects oversized recovered provider, model, and endpoint values", () => {
+    const oversizedProvider = "p".repeat(129);
+    const oversizedModel = "m".repeat(513);
+    const oversizedEndpoint = `https://inference.example/${"x".repeat(2049)}`;
+    for (const override of [
+      { selectedProvider: oversizedProvider, recoveredProvider: oversizedProvider },
+      { selectedModel: oversizedModel, recoveredModel: oversizedModel },
+      {
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          selected: oversizedEndpoint,
+          recovered: oversizedEndpoint,
+        },
+      },
+    ]) {
+      expect(
+        assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
+      ).toMatchObject({ kind: "reject" });
+    }
+  });
+
+  it("rejects recovered credential reuse when the registry route is missing", () => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          routeSource: null,
+        },
+      }),
+    ).toEqual({
+      kind: "reject",
+      reason: "the recovered endpoint identity is missing or incompatible",
+    });
+  });
+
   it("accepts the deliberate compatible-Anthropic completions recovery", () => {
     expect(
       assessRecoveredProviderCredentialReuse({

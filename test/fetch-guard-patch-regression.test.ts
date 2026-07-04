@@ -759,25 +759,33 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
     }
   });
 
-  it("skips the strict export patch when strict fetch mode is absent", () => {
+  it("classifies trusted-proxy-only media fetch files as Patch 1 not needed", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-strict-skip-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist, { recursive: true });
-    const modulePath = path.join(dist, "fetch-guard-no-strict.js");
-    fs.writeFileSync(
-      path.join(dist, "media-runtime.js"),
-      "export { readRemoteMediaBuffer, saveRemoteMedia, fetchRemoteMedia };\n",
-    );
-    fs.writeFileSync(
-      modulePath,
-      [
-        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
-        "async function fetchGuardedMediaResponse() {",
-        "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({}));",
-        "}",
-        "export { withTrustedEnvProxyGuardedFetchMode as a };",
-        "",
-      ].join("\n"),
+    const mediaRuntimePath = path.join(dist, "media-runtime.js");
+    const mediaAttachmentPath = path.join(dist, "media-attachment.js");
+    const mediaRuntimeSource = [
+      "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+      "async function fetchGuardedMediaResponse() {",
+      "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({}));",
+      "}",
+      "export { withTrustedEnvProxyGuardedFetchMode as a, fetchGuardedMediaResponse as b };",
+      "",
+    ].join("\n");
+    const mediaAttachmentSource = [
+      "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+      "async function fetchGuardedMediaResponse() {",
+      "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({ url: 'https://example.com/media' }));",
+      "}",
+      "export { withTrustedEnvProxyGuardedFetchMode as a, fetchGuardedMediaResponse as b };",
+      "",
+    ].join("\n");
+    fs.writeFileSync(mediaRuntimePath, mediaRuntimeSource);
+    fs.writeFileSync(mediaAttachmentPath, mediaAttachmentSource);
+
+    expect(`${mediaRuntimeSource}\n${mediaAttachmentSource}`).not.toContain(
+      "withStrictGuardedFetchMode",
     );
 
     try {
@@ -785,8 +793,8 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 not needed");
       expect(patch.stdout).toContain("Patch 2 not needed");
-      const patched = fs.readFileSync(modulePath, "utf-8");
-      expect(patched).not.toContain("nemoclaw: env-gated bypass");
+      expect(fs.readFileSync(mediaRuntimePath, "utf-8")).toBe(mediaRuntimeSource);
+      expect(fs.readFileSync(mediaAttachmentPath, "utf-8")).toBe(mediaAttachmentSource);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -1338,8 +1346,8 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
 
   function writeNeighbouringFetchGuardFixtures(dist: string): void {
     // Earlier patches in the same RUN block (1, 2, 2b, 4) only need the dist to
-    // navigate their "not needed" branches; mirror the shape proven by the
-    // "skips the strict export patch when strict fetch mode is absent" test so
+    // navigate their "not needed" branches; mirror the trusted-proxy-only
+    // classification proven by the dedicated two-file regression test so
     // execution reaches Patch 6 without classifying the dist as unknown.
     fs.writeFileSync(
       path.join(dist, "media-runtime.js"),

@@ -1543,7 +1543,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     }
   });
 
-  it("approves only whitelisted clients and does not reprocess handled requests", () => {
+  it("approves only known client identities and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "list-count");
@@ -1613,19 +1613,16 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] approved request=ok-browser client=openclaw-control-ui",
       );
-      expect(run.stdout).toContain("[auto-pair] approved request=ok-webchat client=other-client");
+      expect(run.stdout).toContain("[auto-pair] rejected unknown client=other-client mode=webchat");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain(
-        "[auto-pair] browser pairing converged; entering slow-mode approvals=2",
+        "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
-        "ok-browser",
-        "ok-webchat",
-      ]);
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["ok-browser"]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
       expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
-      expect(envLogLines).toContain("approve:ok-webchat:unset:unset:unset");
+      expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

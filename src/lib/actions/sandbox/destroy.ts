@@ -365,6 +365,21 @@ async function destroySandboxUnlocked(
   const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
     destructiveResult;
 
+  /**
+   * SOURCE_OF_TRUTH
+   * Invalid state: the OpenShell gateway is unreachable while a local sandbox
+   * record still exists, so a normal destroy cannot confirm remote deletion.
+   * Source boundary: destroySandbox -> executeSandboxDestroy -> `openshell
+   * sandbox delete`; only an explicit --force and no retained MCP ownership may
+   * select forcedLocalCleanup.
+   * Source-fix constraint: NemoClaw cannot make an unreachable remote gateway
+   * delete or attest the sandbox, so this path discards local state only.
+   * Regression proof: destroy-flow.test.ts and the CLI integration test
+   * test/cli/destroy-gateway-unreachable.test.ts prove the forced cleanup,
+   * registry removal, and preservation of shared host/gateway services.
+   * Removal condition: remove this workaround when OpenShell provides an
+   * authenticated force-cleanup operation for an unreachable gateway.
+   */
   if (forcedLocalCleanup) {
     if (deleteOutput) {
       console.error(`  ${deleteOutput}`);

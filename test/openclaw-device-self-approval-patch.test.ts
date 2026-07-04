@@ -364,6 +364,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     "GATEWAY_CLIENT_MODES",
     "OPERATOR_ROLE",
     "PAIRING_SCOPE",
+    "normalizeOptionalString",
   ])("fails closed when the CLI replacement dependency %s drifts", (dependency) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-dependency-drift-"));
     const dist = path.join(tmp, "dist");

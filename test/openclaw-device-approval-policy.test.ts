@@ -63,9 +63,21 @@ describe("OpenClaw device approval policy", () => {
         scopes: "operator.write",
       },
       {
-        requestId: "unknown",
+        requestId: "unknown-client",
         clientId: "untrusted",
         clientMode: "untrusted",
+        scopes: ["operator.read"],
+      },
+      {
+        requestId: "spoofed-cli-mode",
+        clientId: "evil",
+        clientMode: "cli",
+        scopes: ["operator.write"],
+      },
+      {
+        requestId: "spoofed-webchat-mode",
+        clientId: "evil",
+        clientMode: "webchat",
         scopes: ["operator.read"],
       },
     ]);
@@ -74,6 +86,8 @@ describe("OpenClaw device approval policy", () => {
       "allowlisted",
       "disallowed-scopes",
       "malformed-scopes",
+      "unknown-client",
+      "unknown-client",
       "unknown-client",
     ]);
     expect(payload.approval_env).toEqual({ KEEP_ME: "yes" });

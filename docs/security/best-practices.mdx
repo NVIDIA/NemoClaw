@@ -558,7 +558,7 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 
 | Aspect | Detail |
 |---|---|
-| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices with `clientId` set to `openclaw-control-ui` or `clientMode` set to `webchat` or `cli`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. All other clients or scopes are rejected and logged. |
+| Default | Startup auto-pairing and `connect`-time approval share one policy. NemoClaw approves devices only when `clientId` is `cli`, `openclaw-cli`, or `openclaw-control-ui`, and only for `operator.pairing`, `operator.read`, and `operator.write` scopes. An allowlisted `clientMode` alone is never sufficient; all other clients or scopes are rejected and logged. |
 | What you can change | This is not a user-facing knob. The allowlist is defined by NemoClaw's OpenClaw device-approval helper. |
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
 | Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |

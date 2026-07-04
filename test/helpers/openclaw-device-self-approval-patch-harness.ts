@@ -23,6 +23,39 @@ const OPERATOR_ROLE = "operator";
 const GATEWAY_CLIENT_NAMES = { CLI: "cli" };
 const GATEWAY_CLIENT_MODES = { CLI: "cli" };
 const KNOWN_NON_ADMIN_OPERATOR_SCOPES = new Set(["operator.pairing", "operator.read", "operator.write"]);
+const gatewayCalls = [];
+let pairingList = { pending: [], paired: [] };
+let approvalFailures = [];
+function withProgress(_options, callback) { return callback(); }
+function parseTimeoutMsWithFallback(value, fallback) { return value ?? fallback; }
+async function callGateway(options) {
+  gatewayCalls.push(options);
+  if (options.method === "device.pair.list") return pairingList;
+  if (options.method === "device.pair.approve" && approvalFailures.length > 0) {
+    throw approvalFailures.shift();
+  }
+  return { requestId: options.params.requestId, approved: true };
+}
+const callGatewayCli = async (method, opts, params, callOpts) => withProgress({
+  label: \`Devices \${method}\`,
+  indeterminate: true,
+  enabled: opts.json !== true
+}, async () => await callGateway({
+  url: opts.url,
+  token: opts.token,
+  password: opts.password,
+  method,
+  params,
+  timeoutMs: parseTimeoutMsWithFallback(opts.timeout, 10000),
+  clientName: GATEWAY_CLIENT_NAMES.CLI,
+  mode: GATEWAY_CLIENT_MODES.CLI,
+  scopes: callOpts?.scopes
+}));
+function normalizeOptionalString(value) {
+  if (typeof value !== "string") return;
+  const normalized = value.trim();
+  return normalized || undefined;
+}
 function normalizeDeviceRoles(request) {
   return [...new Set([...(request.roles ?? []), ...(request.role ? [request.role] : [])])];
 }
@@ -37,7 +70,12 @@ function normalizeDeviceAuthScopes(scopes) {
   return [...normalized].sort();
 }
 function resolvePairedOperatorScopes(paired) {
-  const operatorToken = paired?.tokens?.find((token) => token.role === OPERATOR_ROLE && !token.revokedAtMs);
+  const tokens = Array.isArray(paired?.tokens)
+    ? paired.tokens
+    : paired?.tokens && typeof paired.tokens === "object"
+      ? Object.values(paired.tokens)
+      : [];
+  const operatorToken = tokens.find((token) => token.role === OPERATOR_ROLE && !token.revokedAtMs);
   return normalizeDeviceAuthScopes(operatorToken?.scopes ?? paired?.scopes);
 }
 function resolvePendingOperatorApprovalScopes(request, paired) {
@@ -46,6 +84,24 @@ function resolvePendingOperatorApprovalScopes(request, paired) {
 }
 function isKnownNonAdminOperatorScope(scope) {
   return KNOWN_NON_ADMIN_OPERATOR_SCOPES.has(scope);
+}
+function parseDevicePairingList(value) {
+  return {
+    pending: Array.isArray(value?.pending) ? value.pending : [],
+    paired: Array.isArray(value?.paired) ? value.paired : [],
+  };
+}
+function findPendingRequestById(pending, requestId) {
+  return pending.find((request) => request.requestId === requestId);
+}
+function indexPairedDevices(paired) {
+  return new Map(paired.map((device) => [normalizeOptionalString(device.deviceId), device]));
+}
+function lookupPairedDevice(pairedByDeviceId, request) {
+  return pairedByDeviceId.get(normalizeOptionalString(request.deviceId));
+}
+async function listPairingWithFallback(opts) {
+  return parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
 }
 function resolveApprovePairingScopesForRequest(request, paired) {
   const operatorScopes = resolvePendingOperatorApprovalScopes(request, paired);
@@ -58,8 +114,36 @@ function resolveApprovePairingScopesForRequest(request, paired) {
   }
   return [...out];
 }
+async function resolveApprovePairingGatewayContext(opts, requestId) {
+  try {
+    const list = await listPairingWithFallback(opts);
+    const request = findPendingRequestById(list.pending, requestId);
+    if (!request) return {
+      originalRequest: null,
+      scopes: void 0
+    };
+    return {
+      originalRequest: request,
+      scopes: resolveApprovePairingScopesForRequest(request, lookupPairedDevice(indexPairedDevices(list.paired), request))
+    };
+  } catch {
+    return {
+      originalRequest: null,
+      scopes: void 0
+    };
+  }
+}
+function isDevicePairingApprovalDenied(error) {
+  return String(error?.message ?? error).toLowerCase().includes("device pairing approval denied");
+}
 async function approvePairingWithFallback(opts, requestId) {
-  return callGatewayCli("device.pair.approve", opts, { requestId });
+  const { scopes, originalRequest } = await resolveApprovePairingGatewayContext(opts, requestId);
+  try {
+    return await callGatewayCli("device.pair.approve", opts, { requestId }, scopes ? { scopes } : void 0);
+  } catch (error) {
+    if (isDevicePairingApprovalDenied(error) && !scopes?.includes("operator.admin")) return await callGatewayCli("device.pair.approve", opts, { requestId }, { scopes: [ADMIN_SCOPE] });
+    throw error;
+  }
 }
 `);
 }
@@ -238,6 +322,21 @@ export function validPending(overrides: Record<string, unknown> = {}) {
     roles: ["operator"],
     scopes: ["operator.write"],
     isRepair: true,
+    ...overrides,
+  };
+}
+
+export function validPaired(overrides: Record<string, unknown> = {}) {
+  return {
+    deviceId: "device-1",
+    publicKey: "public-key-1",
+    clientId: "cli",
+    clientMode: "cli",
+    role: "operator",
+    roles: ["operator"],
+    scopes: ["operator.pairing"],
+    approvedScopes: ["operator.pairing"],
+    tokens: [{ role: "operator", scopes: ["operator.pairing"] }],
     ...overrides,
   };
 }
