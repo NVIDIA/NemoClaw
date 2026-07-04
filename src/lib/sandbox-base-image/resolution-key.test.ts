@@ -101,6 +101,18 @@ describe("sandbox base-image resolution key", () => {
     expect(second).not.toBe(first);
   });
 
+  it("isolates pinned-first resolution policy", () => {
+    const root = fixture();
+    const base = {
+      ...options(root),
+      pinnedRemoteRef: "example/base@sha256:first",
+    };
+
+    expect(createSandboxBaseImageResolutionKey({ ...base, preferPinnedRemoteRef: true })).not.toBe(
+      createSandboxBaseImageResolutionKey(base),
+    );
+  });
+
   it("bounds Docker platform detection before using the host fallback (#4680)", () => {
     const root = fixture();
     dockerMocks.infoFormat.mockReturnValue("");
