@@ -23,15 +23,13 @@ const validManifest: Record<string, unknown> = {
   runtimeControlPrefixes: ["RUNTIME_CONTROL_"],
 };
 
-function runEmbeddedTransactionImport(manifest?: Record<string, unknown>) {
+function runEmbeddedTransactionImport(setup: (helperDir: string) => void = () => {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-manifest-"));
   const helperDir = path.join(root, "isolated", "helper");
   const helper = path.join(helperDir, "mcp-config-transaction.py");
   fs.mkdirSync(helperDir, { recursive: true });
   fs.copyFileSync(TRANSACTION, helper);
-  if (manifest) {
-    fs.writeFileSync(path.join(helperDir, MANIFEST_NAME), JSON.stringify(manifest));
-  }
+  setup(helperDir);
 
   try {
     const result = spawnSync(
@@ -63,6 +61,12 @@ print(json.dumps(outcome))
   }
 }
 
+function runEmbeddedTransactionImportWithManifest(manifest: Record<string, unknown>) {
+  return runEmbeddedTransactionImport((helperDir) => {
+    fs.writeFileSync(path.join(helperDir, MANIFEST_NAME), JSON.stringify(manifest));
+  });
+}
+
 describe("Hermes MCP credential boundary manifest (#6256)", () => {
   it("fails closed when the manifest is missing", () => {
     expect(runEmbeddedTransactionImport()).toEqual({
@@ -73,7 +77,12 @@ describe("Hermes MCP credential boundary manifest (#6256)", () => {
   });
 
   it("fails closed on a manifest for another OpenShell version", () => {
-    expect(runEmbeddedTransactionImport({ ...validManifest, openshellVersion: "0.0.73" })).toEqual({
+    expect(
+      runEmbeddedTransactionImportWithManifest({
+        ...validManifest,
+        openshellVersion: "0.0.73",
+      }),
+    ).toEqual({
       loaded: false,
       type: "RuntimeError",
       message: "Hermes MCP credential boundary manifest is invalid",
@@ -88,7 +97,7 @@ describe("Hermes MCP credential boundary manifest (#6256)", () => {
   ])("fails closed when %s is missing", (key) => {
     const incomplete = { ...validManifest };
     delete incomplete[key];
-    expect(runEmbeddedTransactionImport(incomplete)).toEqual({
+    expect(runEmbeddedTransactionImportWithManifest(incomplete)).toEqual({
       loaded: false,
       type: "RuntimeError",
       message: `Hermes MCP credential boundary manifest has invalid ${key}`,
