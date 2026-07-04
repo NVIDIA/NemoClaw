@@ -158,11 +158,24 @@ describe("authenticated MCP live fixtures", () => {
   it("redacts proxy userinfo from failed cloudflared diagnostics", async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
     const cloudflared = path.join(directory, "cloudflared");
+    const boundaryUrl = "HTTPS://boundary-user:boundary-password@boundary-proxy.example.test:9443/";
+    const diagnosticSuffix = [
+      "",
+      "proxy HTTPS://proxy-user:proxy-password@proxy.example.test:8443 failed",
+      "fallback socks5://socks-user:socks-password@socks.example.test:1080 failed",
+      "PASSWORD=tunnel-password-value",
+      "token: eyJhbGciOiJIUzI1NiJ9.tunnel-payload",
+      "",
+    ].join("\n");
+    const boundaryPaddingBytes =
+      32 * 1024 + "HTTPS://".length - boundaryUrl.length - diagnosticSuffix.length;
     fs.writeFileSync(
       cloudflared,
       [
         "#!/bin/sh",
-        "printf '%s\\n' 'proxy https://proxy-user:proxy-password@proxy.example.test:8443 failed' >&2",
+        `printf '%s' '${boundaryUrl}' >&2`,
+        `dd if=/dev/zero bs=${boundaryPaddingBytes} count=1 2>/dev/null | tr '\\000' x >&2`,
+        `printf '%s' '${diagnosticSuffix}' >&2`,
         "exit 1",
         "",
       ].join("\n"),
@@ -184,9 +197,19 @@ describe("authenticated MCP live fixtures", () => {
 
       expect(failure).toBeInstanceOf(Error);
       const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("boundary-proxy.example.test:9443");
       expect(message).toContain("proxy.example.test:8443");
+      expect(message).toContain("socks.example.test:1080");
+      expect(message).toContain("PASSWORD=<REDACTED>");
+      expect(message).toContain("token: <REDACTED>");
+      expect(message).not.toContain("boundary-user");
+      expect(message).not.toContain("boundary-password");
       expect(message).not.toContain("proxy-user");
       expect(message).not.toContain("proxy-password");
+      expect(message).not.toContain("socks-user");
+      expect(message).not.toContain("socks-password");
+      expect(message).not.toContain("tunnel-password-value");
+      expect(message).not.toContain("tunnel-payload");
     } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }

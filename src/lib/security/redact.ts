@@ -41,6 +41,11 @@ const SENSITIVE_ENV_ASSIGNMENT_PATTERN = new RegExp(
   "gi",
 );
 
+// Proxy variables and diagnostics are not limited to lowercase HTTP(S) URLs.
+// Match any RFC-style URI scheme so credentials in uppercase or SOCKS proxy
+// URLs receive the same URL-parser-backed redaction.
+const URL_TOKEN_PATTERN = /[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi;
+
 // ── Partial redaction (runner.ts style) ─────────────────────────
 
 function redactMatch(match: string): string {
@@ -66,7 +71,7 @@ function redactUrlPartial(value: string): string {
 
 export function redact(str: string): string {
   if (typeof str !== "string") return str;
-  let out = str.replace(/https?:\/\/[^\s'"]+/g, redactUrlPartial);
+  let out = str.replace(URL_TOKEN_PATTERN, redactUrlPartial);
   for (const pat of SECRET_PATTERNS) {
     pat.lastIndex = 0;
     out = out.replace(pat, redactMatch);

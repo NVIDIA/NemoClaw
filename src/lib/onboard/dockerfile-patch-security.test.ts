@@ -120,10 +120,7 @@ describe("dockerfile patch security guards", () => {
 
     const openSync = fs.openSync.bind(fs);
     let swappedParent = false;
-    vi.spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
-      if (swappedParent || path.basename(String(args[0])) !== "Dockerfile") {
-        return openSync(...args);
-      }
+    const openThroughSwappedParent = (...args: Parameters<typeof fs.openSync>) => {
       fs.renameSync(trustedDir, movedTrustedDir);
       fs.renameSync(redirectedDir, trustedDir);
       try {
@@ -134,6 +131,11 @@ describe("dockerfile patch security guards", () => {
         fs.renameSync(trustedDir, redirectedDir);
         fs.renameSync(movedTrustedDir, trustedDir);
       }
+    };
+    vi.spyOn(fs, "openSync").mockImplementation(((...args: Parameters<typeof fs.openSync>) => {
+      return swappedParent || path.basename(String(args[0])) !== "Dockerfile"
+        ? openSync(...args)
+        : openThroughSwappedParent(...args);
     }) as typeof fs.openSync);
 
     expect(() =>
