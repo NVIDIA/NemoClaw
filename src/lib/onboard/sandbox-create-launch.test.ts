@@ -88,12 +88,50 @@ describe("prepareSandboxCreateLaunch", () => {
     );
   });
 
+  it("forwards only the allowlisted OpenClaw auto-pair runtime controls", () => {
+    const result = prepareSandboxCreateLaunch({
+      agent: { name: "openclaw" } as any,
+      chatUiUrl: "",
+      createArgs: [],
+      env: {
+        NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: " 30 ",
+        NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "3",
+        NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "10",
+        NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "600",
+        NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS: "99",
+        NEMOCLAW_PROVIDER_KEY: "must-not-enter-the-sandbox",
+      },
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: vi.fn(() => {
+        throw new Error("dashboard port should not be resolved");
+      }),
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      buildEnv: () => ({}),
+    });
+
+    expect(result.envArgs).toEqual([
+      "OPENCLAW_HOME=/sandbox",
+      "OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+      "OPENCLAW_WORKSPACE_DIR=/sandbox/.openclaw/workspace",
+      "NEMOCLAW_AUTO_PAIR_DEADLINE_SECS=30",
+      "NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS=3",
+      "NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS=10",
+      "NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=600",
+    ]);
+    expect(result.sandboxStartupCommand.join(" ")).not.toContain(
+      "NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS",
+    );
+    expect(result.sandboxStartupCommand.join(" ")).not.toContain("NEMOCLAW_PROVIDER_KEY");
+  });
+
   it("adds Hermes dashboard env and skips OpenClaw env for non-OpenClaw agents", () => {
     const result = prepareSandboxCreateLaunch({
       agent: { name: "hermes" } as any,
       chatUiUrl: "http://127.0.0.1:18789/",
       createArgs: [],
-      env: {},
+      env: { NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "30" },
       extraPlaceholderKeys: [],
       getDashboardForwardPort: () => "18789",
       hermesDashboardState: {
