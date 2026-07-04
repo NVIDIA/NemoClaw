@@ -8,6 +8,7 @@ import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue, saveCredential } from "../credentials/store";
 import {
   BRAVE_API_KEY_ENV,
+  FIRECRAWL_API_KEY_ENV,
   normalizeWebSearchConfig,
   parseExplicitWebSearchProvider,
   TAVILY_API_KEY_ENV,
@@ -34,10 +35,12 @@ import { verifyWebSearchInsideSandbox as verifyWebSearchInsideSandboxWithDeps } 
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 const TAVILY_SEARCH_HELP_URL = "https://app.tavily.com/home";
+const FIRECRAWL_SEARCH_HELP_URL = "https://www.firecrawl.dev/app/api-keys";
 const WEB_SEARCH_VALIDATION_TIMING_ARGS = ["--connect-timeout", "10", "--max-time", "15"] as const;
 const CURL_CONFIG_PREFIX: Record<WebSearchProvider, string> = {
   brave: "nemoclaw-brave-probe",
   tavily: "nemoclaw-tavily-probe",
+  firecrawl: "nemoclaw-firecrawl-probe",
 };
 
 type WebSearchProviderSpec = {
@@ -59,6 +62,12 @@ const WEB_SEARCH_PROVIDER_SPECS: Record<WebSearchProvider, WebSearchProviderSpec
     envKey: TAVILY_API_KEY_ENV,
     label: webSearchLabelFor("tavily"),
     helpUrl: TAVILY_SEARCH_HELP_URL,
+  },
+  firecrawl: {
+    provider: "firecrawl",
+    envKey: FIRECRAWL_API_KEY_ENV,
+    label: webSearchLabelFor("firecrawl"),
+    helpUrl: FIRECRAWL_SEARCH_HELP_URL,
   },
 };
 
@@ -117,7 +126,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
 
   function curlConfigHeaders(provider: WebSearchProvider, apiKey: string): string[] {
     const authHeader =
-      provider === "tavily" ? `Authorization: Bearer ${apiKey}` : `X-Subscription-Token: ${apiKey}`;
+      provider === "brave" ? `X-Subscription-Token: ${apiKey}` : `Authorization: Bearer ${apiKey}`;
     return [
       "Accept: application/json",
       ...(provider === "brave" ? ["Accept-Encoding: gzip"] : ["Content-Type: application/json"]),
@@ -137,6 +146,19 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
         "--data-raw",
         JSON.stringify({ query: "ping", max_results: 1 }),
         "https://api.tavily.com/search",
+      ];
+    }
+    if (provider === "firecrawl") {
+      return [
+        "-sS",
+        ...WEB_SEARCH_VALIDATION_TIMING_ARGS,
+        "--compressed",
+        ...authArgs,
+        "-X",
+        "POST",
+        "--data-raw",
+        JSON.stringify({ query: "ping", limit: 1 }),
+        "https://api.firecrawl.dev/v2/search",
       ];
     }
     return [
@@ -333,10 +355,12 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     const explicit = parseExplicitWebSearchProvider(env[WEB_SEARCH_PROVIDER_ENV]);
     if (explicit.specified) return explicit.provider;
 
-    // Preserve the historical implicit behavior: Brave wins when both keys
-    // exist. Tavily is auto-selected only when it is the sole configured key.
+    // Preserve the historical implicit behavior: Brave wins when multiple keys
+    // exist. Tavily then Firecrawl are auto-selected only when they are the
+    // sole configured key.
     if (configuredCredential("brave")) return "brave";
     if (configuredCredential("tavily")) return "tavily";
+    if (configuredCredential("firecrawl")) return "firecrawl";
     return null;
   }
 
@@ -360,7 +384,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
         return providers[selectedIndex];
       }
       // Preserve the former yes/no behavior by selecting the first supported
-      // provider. OpenClaw keeps Brave first; Hermes exposes only Tavily.
+      // provider. OpenClaw keeps Brave first; Hermes exposes Tavily and Firecrawl.
       if ((raw === "y" || raw === "yes") && providers.length > 0) return providers[0];
       if (raw === "exit" || raw === "quit") exitOnboardFromPrompt();
       console.log(`  Enter a number from 1 to ${maxChoice}.`);
@@ -406,7 +430,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     // unrelated Brave key is also present in the host credential store.
     if (!explicit.specified && !existingConfig) {
       provider =
-        (["brave", "tavily"] as const).find(
+        (["brave", "tavily", "firecrawl"] as const).find(
           (candidate) =>
             Boolean(configuredCredential(candidate)) &&
             providerIsSupported(candidate, agent, dockerfilePathOverride),

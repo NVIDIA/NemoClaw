@@ -166,11 +166,14 @@ export function isStaleBuiltinWebSearchPolicyPreset(
 ): boolean {
   if (options.customPresetNames?.has(name)) return false;
   if (name === "nous-web") {
-    return Boolean(
-      options.webSearchConfig && webSearchProviderForConfig(options.webSearchConfig) === "tavily",
-    );
+    // Both Tavily and Firecrawl are bring-your-own-key backends that replace
+    // the Nous-managed web gateway, so its preset is stale when either wins.
+    const provider = options.webSearchConfig
+      ? webSearchProviderForConfig(options.webSearchConfig)
+      : null;
+    return provider === "tavily" || provider === "firecrawl";
   }
-  if (name !== "brave" && name !== "tavily") return false;
+  if (name !== "brave" && name !== "tavily" && name !== "firecrawl") return false;
   if (!options.webSearchConfig) return true;
   return name !== webSearchProviderForConfig(options.webSearchConfig);
 }

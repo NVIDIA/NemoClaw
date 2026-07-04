@@ -6,7 +6,7 @@ import { Buffer } from "node:buffer";
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
 import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
 
-export type HermesWebSearchProvider = "tavily";
+export type HermesWebSearchProvider = "tavily" | "firecrawl";
 
 export type HermesBuildSettings = {
   model: string;
@@ -50,9 +50,9 @@ function readWebSearchProvider(env: NodeJS.ProcessEnv): HermesWebSearchProvider 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED !== "1") return null;
 
   const provider = (env.NEMOCLAW_WEB_SEARCH_PROVIDER || "tavily").trim();
-  if (provider === "tavily") return provider;
+  if (provider === "tavily" || provider === "firecrawl") return provider;
   throw new Error(
-    `Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily", got ${JSON.stringify(provider)}`,
+    `Hermes NEMOCLAW_WEB_SEARCH_PROVIDER must be "tavily" or "firecrawl", got ${JSON.stringify(provider)}`,
   );
 }
 

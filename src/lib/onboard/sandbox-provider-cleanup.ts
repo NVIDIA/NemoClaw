@@ -38,6 +38,7 @@ export const SANDBOX_PROVIDER_SUFFIXES = [
   ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
   "tavily-search",
+  "firecrawl-search",
 ] as readonly string[];
 
 export type SandboxProviderSuffix = string;

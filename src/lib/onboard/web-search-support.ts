@@ -61,9 +61,15 @@ export function agentSupportsWebSearchProvider(
   dockerfilePathOverride: string | null = null,
   rootDir = ROOT,
 ): boolean {
-  // Hermes currently exposes only its native Tavily backend. Brave remains
+  // Hermes exposes its native Tavily and Firecrawl backends. Brave remains
   // OpenClaw-only until Hermes ships a compatible Brave backend.
-  if (agent?.name?.trim().toLowerCase() === "hermes" && provider !== "tavily") return false;
+  if (
+    agent?.name?.trim().toLowerCase() === "hermes" &&
+    provider !== "tavily" &&
+    provider !== "firecrawl"
+  ) {
+    return false;
+  }
 
   const candidates = [
     dockerfilePathOverride,

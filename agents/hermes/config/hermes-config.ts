@@ -177,11 +177,13 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     }
   }
 
-  // An explicitly selected Tavily credential takes precedence over the
-  // Nous-managed Firecrawl gateway. Replacing the whole section also removes
-  // `use_gateway: true`, which would otherwise keep Hermes on Firecrawl.
-  if (settings.webSearchProvider === "tavily") {
-    config.web = { backend: "tavily" };
+  // An explicitly selected bring-your-own-key web search backend takes
+  // precedence over the Nous-managed Firecrawl gateway. Replacing the whole
+  // section also removes `use_gateway: true`, which would otherwise keep Hermes
+  // on the managed gateway. Firecrawl here means the user's own Firecrawl API
+  // key hitting api.firecrawl.dev directly, not the managed Nous gateway.
+  if (settings.webSearchProvider === "tavily" || settings.webSearchProvider === "firecrawl") {
+    config.web = { backend: settings.webSearchProvider };
   }
 
   return config;

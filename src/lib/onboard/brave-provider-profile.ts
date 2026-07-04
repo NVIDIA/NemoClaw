@@ -8,14 +8,20 @@ import { isWebSearchEnabled } from "../inference/web-search";
 
 export const BRAVE_PROVIDER_PROFILE_ID = "brave";
 export const TAVILY_PROVIDER_PROFILE_ID = "tavily";
+export const FIRECRAWL_PROVIDER_PROFILE_ID = "firecrawl";
 // OpenShell custom profiles are immutable after import. Use a versioned Hermes
 // profile so upgrades never accept the earlier Deep Agents-only Tavily binary
 // allowlist as compatible with Hermes.
 export const HERMES_TAVILY_PROVIDER_PROFILE_ID = "tavily-hermes-v1";
+// Firecrawl is Hermes-only today; the versioned Hermes profile scopes the
+// binary allowlist to Hermes' managed venv Python.
+export const HERMES_FIRECRAWL_PROVIDER_PROFILE_ID = "firecrawl-hermes-v1";
 export const WEB_SEARCH_PROVIDER_PROFILE_IDS = [
   BRAVE_PROVIDER_PROFILE_ID,
   TAVILY_PROVIDER_PROFILE_ID,
+  FIRECRAWL_PROVIDER_PROFILE_ID,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
+  HERMES_FIRECRAWL_PROVIDER_PROFILE_ID,
 ] as const;
 export type WebSearchProviderProfileId = (typeof WEB_SEARCH_PROVIDER_PROFILE_IDS)[number];
 

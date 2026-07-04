@@ -28,7 +28,11 @@ export function canonicalPlaceholderKeys(): Set<string> {
   return new Set<string>(
     channels
       .flatMap((c) => getChannelTokenKeys(c))
-      .concat(webSearch.BRAVE_API_KEY_ENV, webSearch.TAVILY_API_KEY_ENV),
+      .concat(
+        webSearch.BRAVE_API_KEY_ENV,
+        webSearch.TAVILY_API_KEY_ENV,
+        webSearch.FIRECRAWL_API_KEY_ENV,
+      ),
   );
 }
 

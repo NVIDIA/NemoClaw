@@ -98,10 +98,15 @@ export function prepareCreateSandboxMessaging(
   }
 
   if (webSearchEnabled) {
-    const providerType =
-      webSearchProvider === "tavily" && input.agentName?.trim().toLowerCase() === "hermes"
-        ? braveProviderProfile.HERMES_TAVILY_PROVIDER_PROFILE_ID
-        : webSearchProvider;
+    const isHermes = input.agentName?.trim().toLowerCase() === "hermes";
+    let providerType: string = webSearchProvider;
+    if (webSearchProvider === "tavily" && isHermes) {
+      providerType = braveProviderProfile.HERMES_TAVILY_PROVIDER_PROFILE_ID;
+    } else if (webSearchProvider === "firecrawl") {
+      // Firecrawl is exposed only through Hermes' native backend, so always
+      // register the versioned Hermes profile for the credential rewrite.
+      providerType = braveProviderProfile.HERMES_FIRECRAWL_PROVIDER_PROFILE_ID;
+    }
     messagingTokenDefs.push({
       name: `${input.sandboxName}-${webSearchProvider}-search`,
       envKey: webSearchCredentialEnv,

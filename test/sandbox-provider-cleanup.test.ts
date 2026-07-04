@@ -41,6 +41,7 @@ describe("SANDBOX_PROVIDER_SUFFIXES", () => {
         "teams-bridge",
         "brave-search",
         "tavily-search",
+        "firecrawl-search",
       ].sort(),
     );
   });
@@ -229,6 +230,14 @@ describe("detachSandboxProviders", () => {
         argv[4] === "spark-nemo-tavily-search",
     );
     expect(tavilyCall).toBeDefined();
+    const firecrawlCall = calls.find(
+      (argv) =>
+        argv[0] === "sandbox" &&
+        argv[1] === "provider" &&
+        argv[2] === "detach" &&
+        argv[4] === "spark-nemo-firecrawl-search",
+    );
+    expect(firecrawlCall).toBeDefined();
   });
 });
 

@@ -536,6 +536,8 @@ export function openClawDoctorEnvOverrides(
       overrides.BRAVE_API_KEY = "openshell:resolve:env:BRAVE_API_KEY";
     } else if (provider === "tavily") {
       overrides.TAVILY_API_KEY = "openshell:resolve:env:TAVILY_API_KEY";
+    } else if (provider === "firecrawl") {
+      overrides.FIRECRAWL_API_KEY = "openshell:resolve:env:FIRECRAWL_API_KEY";
     } else {
       throw new MessagingBuildApplierError(
         `Unsupported NEMOCLAW_WEB_SEARCH_PROVIDER: ${provider || "<empty>"}`,

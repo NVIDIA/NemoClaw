@@ -83,13 +83,13 @@ Sandbox name [hermes]: my-hermes
 Choose the inference provider that matches where you want Hermes model traffic to go.
 The provider options and credential environment variables are the same as the standard NemoClaw quickstart.
 For provider-specific prompts, refer to the [Inference Options](../inference/inference-options) page.
-The Hermes wizard offers Tavily Search as its web search provider.
+The Hermes wizard offers Tavily Search and Firecrawl Search as its web search providers.
 Hermes does not support the NemoClaw Brave Search path.
-If you enable Tavily Search, enter `TAVILY_API_KEY` when prompted.
-NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
+If you enable Tavily Search, enter `TAVILY_API_KEY` when prompted; if you enable Firecrawl Search, enter `FIRECRAWL_API_KEY` when prompted.
+NemoClaw validates the key, stores it in a sandbox-scoped OpenShell provider, writes `web.backend: tavily` (or `web.backend: firecrawl`) into the Hermes configuration, and writes only an OpenShell resolver placeholder into the generated environment.
 If you authenticate Hermes through Nous Portal OAuth, the wizard can also prompt for managed Nous tool gateways such as web search, image generation, audio, browser automation, or managed code execution.
 Those choices add the matching Hermes policy presets to the sandbox.
-If you select both Tavily Search and the managed Nous web gateway, Tavily becomes the Hermes web search and extract backend.
+If you select a bring-your-own-key web search provider (Tavily or Firecrawl) together with the managed Nous web gateway, the selected provider becomes the Hermes web search and extract backend.
 NemoClaw removes `nous-web` from the effective managed-tool selection while preserving selected Nous image, audio, browser, and code tools.
 API-key mode is inference-only and does not enable managed tool gateways.
 
@@ -119,9 +119,10 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Use the provider variables from [Inference Options](../inference/inference-options) when you choose a different provider.
+Set `NEMOCLAW_WEB_SEARCH_PROVIDER=firecrawl` with `FIRECRAWL_API_KEY` to use Firecrawl Search instead of Tavily.
 Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` when you want to disable web search explicitly.
-When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` because Brave Search is unsupported for Hermes.
-Changing or disabling Tavily requires a sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
+When the selector is unset, Hermes enables Tavily automatically when `TAVILY_API_KEY` is available, or Firecrawl when only `FIRECRAWL_API_KEY` is available, and ignores `BRAVE_API_KEY` because Brave Search is unsupported for Hermes.
+Changing or disabling the web search provider requires a sandbox recreation because the backend, credential attachment, and policy selection are build-time inputs.
 Rerun onboarding with the new selection and accept the recreation, or pass `--recreate-sandbox`.
 If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemohermes onboard --resume`.
 For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
@@ -130,6 +131,7 @@ For the recovery commands, refer to [Previous onboarding session failed](../refe
 
 When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, the Hermes dashboard URL, and the OpenAI-compatible API URL.
 When Tavily is enabled, onboarding reads the generated Hermes configuration to confirm `web.backend: tavily` and sends a real search request through OpenShell's request-body credential rewrite path.
+When Firecrawl is enabled, onboarding confirms `web.backend: firecrawl` and sends a real search request through OpenShell's `Authorization` header credential rewrite path.
 This verification reports a warning instead of aborting onboarding when the configuration or egress path needs attention.
 Hermes exposes its built-in browser dashboard on port `18789`.
 NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary announces both URLs.

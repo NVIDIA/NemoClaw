@@ -30,7 +30,7 @@ export default class CredentialsAddCommand extends NemoClawCommand {
   };
   static flags = {
     type: Flags.string({
-      description: "Provider type (e.g. tavily, nvidia, openai, anthropic, generic)",
+      description: "Provider type (e.g. tavily, firecrawl, nvidia, openai, anthropic, generic)",
       required: true,
     }),
     credential: Flags.string({

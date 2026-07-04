@@ -156,10 +156,12 @@ export function prepareRebuildTargetConfig(
     sessionSnapshot,
     sessionMatchesSandbox,
   );
+  const rebuildWebSearchProvider = durableConfig.webSearchConfig
+    ? webSearchProviderForConfig(durableConfig.webSearchConfig)
+    : null;
   const hermesToolGateways =
     rebuildAgent === "hermes" &&
-    durableConfig.webSearchConfig &&
-    webSearchProviderForConfig(durableConfig.webSearchConfig) === "tavily"
+    (rebuildWebSearchProvider === "tavily" || rebuildWebSearchProvider === "firecrawl")
       ? hermesGateways.gateways.filter((gateway) => gateway !== "nous-web")
       : hermesGateways.gateways;
   const credentialEnv =

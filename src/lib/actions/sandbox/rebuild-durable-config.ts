@@ -112,7 +112,7 @@ function normalizeHermesAuthMethod(value: unknown): "oauth" | "api_key" | null {
 
 function builtinWebSearchPolicyProviders(entry: RebuildSandboxEntry): WebSearchProvider[] {
   const customPolicyNames = new Set(entry.customPolicies?.map((policy) => policy.name) ?? []);
-  return (["brave", "tavily"] as const).filter(
+  return (["brave", "tavily", "firecrawl"] as const).filter(
     (provider) => entry.policies?.includes(provider) === true && !customPolicyNames.has(provider),
   );
 }

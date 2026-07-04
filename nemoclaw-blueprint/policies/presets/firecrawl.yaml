@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+preset:
+  name: firecrawl
+  description: "Firecrawl web search API access (opt-in)"
+
+network_policies:
+  firecrawl:
+    name: firecrawl
+    endpoints:
+      - host: api.firecrawl.dev
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v2/search" }
+          - allow: { method: POST, path: "/v2/scrape" }
+    binaries:
+      # Agent runtimes: Deep Agents Code's managed Python (including versioned
+      # python3 names), Hermes' exact venv Python, and OpenClaw's Node paths.
+      - { path: /opt/venv/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
+      # Exact curl paths are used only by onboarding's post-create verifier;
+      # requests remain constrained by the two POST rules above.
+      - { path: /usr/local/bin/curl }
+      - { path: /usr/bin/curl }

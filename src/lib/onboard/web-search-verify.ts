@@ -105,6 +105,49 @@ function hasTavilyResult(body: string): boolean {
   }
 }
 
+function buildFirecrawlEgressProbeCommand(apiKey: string): string {
+  return [
+    "curl",
+    "-sS",
+    "--compressed",
+    "--max-time",
+    "20",
+    "-X",
+    "POST",
+    "https://api.firecrawl.dev/v2/search",
+    "-H",
+    `Authorization: Bearer ${apiKey}`,
+    "-H",
+    "Content-Type: application/json",
+    "--data",
+    JSON.stringify({ query: "NVIDIA", limit: 1 }),
+    "-w",
+    "\nHTTP_STATUS:%{http_code}\n",
+  ]
+    .map(shellQuote)
+    .join(" ");
+}
+
+function hasFirecrawlResult(body: string): boolean {
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed?.success !== true) return false;
+    const data = parsed.data;
+    // v2 /search returns either a Document[] (legacy `sources`-less array) or
+    // an object keyed by result kind (`web`, `news`, `images`). Accept either
+    // shape as long as it carries at least one result.
+    if (Array.isArray(data)) return data.length > 0;
+    if (data && typeof data === "object") {
+      return ["web", "news", "images"].some(
+        (key) => Array.isArray(data[key]) && data[key].length > 0,
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Post-creation probe: verify web search is actually functional inside the
  * sandbox. Hermes silently ignores unknown web.backend values, so config
@@ -137,19 +180,20 @@ export function verifyWebSearchInsideSandbox(
         },
       );
       if (!configText) {
-        warn("  ⚠ Could not read Hermes config to verify Tavily Search.");
+        warn("  ⚠ Could not read Hermes config to verify web search.");
         return;
       }
       let config: { web?: { backend?: unknown } };
       try {
         config = YAML.parse(configText) as { web?: { backend?: unknown } };
       } catch {
-        warn("  ⚠ Could not parse Hermes config to verify Tavily Search.");
+        warn("  ⚠ Could not parse Hermes config to verify web search.");
         return;
       }
-      if (config?.web?.backend !== "tavily") {
+      const backend = config?.web?.backend;
+      if (backend !== "tavily" && backend !== "firecrawl") {
         warn(
-          "  ⚠ Tavily Search was configured but Hermes config does not select web.backend=tavily.",
+          "  ⚠ Web search was configured but Hermes config does not select a supported web.backend.",
         );
         warn("    The agent may not have accepted the web search configuration.");
         warn(
@@ -158,31 +202,32 @@ export function verifyWebSearchInsideSandbox(
         return;
       }
 
-      const placeholder = "openshell:resolve:env:TAVILY_API_KEY";
+      const providerLabel = backend === "firecrawl" ? "Firecrawl Search" : "Tavily Search";
+      // Tavily on Hermes rewrites a body credential; Firecrawl rewrites the
+      // Authorization bearer header. Feed each probe the matching placeholder
+      // so the L7 proxy proves the rewrite path we actually configured.
+      const probeCommand =
+        backend === "firecrawl"
+          ? buildFirecrawlEgressProbeCommand("openshell:resolve:env:FIRECRAWL_API_KEY")
+          : buildTavilyBodyEgressProbeCommand("openshell:resolve:env:TAVILY_API_KEY");
       const probe = deps.runCaptureOpenshell(
-        [
-          "sandbox",
-          "exec",
-          "-n",
-          sandboxName,
-          "--",
-          "sh",
-          "-lc",
-          buildTavilyBodyEgressProbeCommand(placeholder),
-        ],
+        ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", probeCommand],
         { ignoreError: true, timeout: 30_000 },
       );
       if (!probe) {
-        warn("  ⚠ Tavily Search config exists, but the egress verification request failed.");
+        warn(`  ⚠ ${providerLabel} config exists, but the egress verification request failed.`);
         return;
       }
       const statusMatch = probe.match(/(?:^|\n)HTTP_STATUS:(\d{3})(?:\n|$)/);
       const status = statusMatch?.[1] || "unknown";
       const body = probe.replace(/(?:^|\n)HTTP_STATUS:\d{3}\s*$/m, "").trim();
-      if (status === "200" && hasTavilyResult(body)) {
-        log("  ✓ Tavily Search egress verified inside sandbox");
+      const hasResult = backend === "firecrawl" ? hasFirecrawlResult(body) : hasTavilyResult(body);
+      if (status === "200" && hasResult) {
+        log(`  ✓ ${providerLabel} egress verified inside sandbox`);
       } else {
-        warn(`  ⚠ Tavily Search config exists, but egress verification returned HTTP ${status}.`);
+        warn(
+          `  ⚠ ${providerLabel} config exists, but egress verification returned HTTP ${status}.`,
+        );
       }
     } else if (agentName === "openclaw") {
       // OpenClaw: verify tools.web.search exists, then prove the selected

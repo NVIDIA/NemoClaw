@@ -237,7 +237,7 @@ During automatic suggestion and resume reconciliation, it removes stale `brave`,
 An explicit `custom` preset list or interactive manual selection remains operator-controlled.
 
 Hermes managed-tool gateway selections add matching Hermes-specific policy presets, such as `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, and `nous-code`, without applying unsupported OpenClaw-only presets.
-When Tavily Search is selected, it replaces `nous-web` as the Hermes web search and extract backend while the other selected Nous tools remain enabled.
+When a bring-your-own-key web search provider (Tavily Search or Firecrawl Search) is selected, it replaces `nous-web` as the Hermes web search and extract backend while the other selected Nous tools remain enabled.
 
 | Value | Behaviour |
 |-------|-----------|
@@ -265,7 +265,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOC
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
 
-Hermes supports Tavily Search through NemoClaw onboarding and does not support Brave Search.
+Hermes supports Tavily Search and Firecrawl Search through NemoClaw onboarding and does not support Brave Search.
 To enable Tavily in non-interactive mode, set the provider and matching key.
 
 ```bash
@@ -274,12 +274,20 @@ TAVILY_API_KEY=... \
   nemohermes onboard --non-interactive
 ```
 
+To enable Firecrawl in non-interactive mode, set the provider and matching key.
+
+```bash
+NEMOCLAW_WEB_SEARCH_PROVIDER=firecrawl \
+FIRECRAWL_API_KEY=... \
+  nemohermes onboard --non-interactive
+```
+
 Set `NEMOCLAW_WEB_SEARCH_PROVIDER=none` to disable web search explicitly.
-When the selector is unset, NemoClaw enables Tavily when `TAVILY_API_KEY` is available and ignores `BRAVE_API_KEY` for Hermes.
-An explicit Tavily selection with no key exits before sandbox creation.
-A Tavily key that fails validation prints a warning, disables web search for that run, and lets the rest of onboarding continue.
-Changing or disabling Tavily recreates the sandbox because the Hermes backend, environment placeholder, and credential attachment are part of the image.
-If you also select the Nous-managed web gateway through Nous Portal OAuth, Tavily replaces `nous-web` while other selected Nous tools remain enabled.
+When the selector is unset, NemoClaw enables Tavily when `TAVILY_API_KEY` is available, or Firecrawl when only `FIRECRAWL_API_KEY` is available, and ignores `BRAVE_API_KEY` for Hermes.
+An explicit Tavily or Firecrawl selection with no matching key exits before sandbox creation.
+A web search key that fails validation prints a warning, disables web search for that run, and lets the rest of onboarding continue.
+Changing or disabling the web search provider recreates the sandbox because the Hermes backend, environment placeholder, and credential attachment are part of the image.
+If you also select the Nous-managed web gateway through Nous Portal OAuth, the selected bring-your-own-key provider replaces `nous-web` while other selected Nous tools remain enabled.
 API-key mode is inference-only and does not enable managed Nous tool gateways.
 
 The wizard prompts for a sandbox name.
@@ -1977,7 +1985,7 @@ nemohermes credentials add tavily-search --type tavily --credential TAVILY_API_K
 
 | Flag | Description |
 |------|-------------|
-| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--type <TYPE>` | Provider type (e.g. `tavily`, `firecrawl`, `nvidia`, `openai`, `anthropic`, `generic`) |
 | `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
 | `--config <K=V>` | Provider configuration pair. Repeatable |
 | `--from-existing` | Load credentials and config from existing local state |
@@ -2201,8 +2209,9 @@ Hermes-specific onboarding configuration:
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_WEB_SEARCH_PROVIDER` | `tavily` or `none` | Selects Tavily Search in non-interactive onboarding or disables web search explicitly. When unset, `TAVILY_API_KEY` implicitly selects Tavily. |
+| `NEMOCLAW_WEB_SEARCH_PROVIDER` | `tavily`, `firecrawl`, or `none` | Selects Tavily Search or Firecrawl Search in non-interactive onboarding or disables web search explicitly. When unset, `TAVILY_API_KEY` implicitly selects Tavily, or `FIRECRAWL_API_KEY` implicitly selects Firecrawl. |
 | `TAVILY_API_KEY` | Tavily Search API key | Supplies and implicitly selects Tavily Search when no web search provider is set. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
+| `FIRECRAWL_API_KEY` | Firecrawl Search API key | Supplies and implicitly selects Firecrawl Search when no web search provider is set and no Tavily key is present. NemoClaw validates the key and stores it in OpenShell rather than the sandbox. |
 | `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
 | `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
@@ -2226,7 +2235,7 @@ The Hermes profile `.env` files are operator-owned: write `${TELEGRAM_BOT_TOKEN_
 NemoClaw never reads, writes, or rewrites these `.env` files; verify after onboarding that each profile's `.env` references the placeholder and that no raw bot token value sits on disk.
 
 Entries are split on whitespace and commas and must match `^[A-Z][A-Z0-9_]{0,127}$`.
-Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, and `TAVILY_API_KEY`.
+Each entry must extend a canonical channel envKey with a non-empty `_<suffix>` (for example `TELEGRAM_BOT_TOKEN_AGENT_A`); the canonical envKeys are `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `WECHAT_BOT_TOKEN`, `BRAVE_API_KEY`, `TAVILY_API_KEY`, and `FIRECRAWL_API_KEY`.
 Bare canonical envKeys, the control env itself, and arbitrary host secret names (`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `KUBECONFIG`, and similar) are refused so they cannot leak into the sandbox provider gateway.
 Duplicates are dropped silently.
 The list is capped at 32 entries per sandbox.

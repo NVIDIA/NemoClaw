@@ -8,6 +8,7 @@ import {
   braveProviderProfilePath,
   ensureBraveProviderProfile,
   ensureWebSearchProviderProfiles,
+  HERMES_FIRECRAWL_PROVIDER_PROFILE_ID,
   HERMES_TAVILY_PROVIDER_PROFILE_ID,
   shouldEnableBraveWebSearch,
   TAVILY_PROVIDER_PROFILE_ID,
@@ -91,6 +92,26 @@ describe("ensureBraveProviderProfile", () => {
         "import",
         "--file",
         webSearchProviderProfilePath("/repo", HERMES_TAVILY_PROVIDER_PROFILE_ID),
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("imports the versioned Hermes Firecrawl profile", () => {
+    const runOpenshell = vi.fn(() => ({ status: 0, stderr: "", stdout: "" }));
+
+    ensureWebSearchProviderProfiles(
+      [{ providerType: HERMES_FIRECRAWL_PROVIDER_PROFILE_ID, token: "fc-test" }],
+      makeDeps(runOpenshell),
+    );
+
+    expect(runOpenshell).toHaveBeenCalledWith(
+      [
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        webSearchProviderProfilePath("/repo", HERMES_FIRECRAWL_PROVIDER_PROFILE_ID),
       ],
       expect.objectContaining({ ignoreError: true }),
     );

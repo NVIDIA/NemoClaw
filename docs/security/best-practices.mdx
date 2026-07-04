@@ -217,6 +217,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting for Hermes. |
+| `firecrawl` | Firecrawl Search API. | Agent can submit search and scrape targets to Firecrawl. The preset allows only `POST /v2/search` and `POST /v2/scrape` to `api.firecrawl.dev` from the maintained Hermes runtime and enables `Authorization` header credential rewriting. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
 Apply presets only when the agent's task requires the integration.
@@ -227,8 +228,9 @@ Review the preset's YAML file before applying to understand the endpoints, metho
 NemoClaw registers each selected web search credential in a sandbox-scoped OpenShell provider and writes a resolver placeholder into the agent configuration.
 OpenClaw sends Brave's placeholder in the `X-Subscription-Token` header and Tavily's placeholder in the `Authorization` header.
 Hermes sends the Tavily placeholder in the JSON `api_key` field, so the `tavily` policy preset enables `request_body_credential_rewrite` for `api.tavily.com`.
+Hermes sends the Firecrawl placeholder in the `Authorization` header as a bearer token, so the `firecrawl` policy preset enables header credential rewriting for `api.firecrawl.dev`.
 OpenShell replaces these placeholders only when the request reaches the matching egress policy path.
-The raw `BRAVE_API_KEY` or `TAVILY_API_KEY` is not written into the sandbox configuration.
+The raw `BRAVE_API_KEY`, `TAVILY_API_KEY`, or `FIRECRAWL_API_KEY` is not written into the sandbox configuration.
 
 The `tavily` preset restricts agent egress to the maintained Python and Node.js paths used by the supported agents.
 Its exact curl paths are used only by onboarding's post-create verifier.

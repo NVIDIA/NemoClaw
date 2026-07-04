@@ -81,7 +81,9 @@ export function preparePolicyPresetResumeSelection(
       customPresetNames: customPolicyPresetNames,
     });
   const recordedBuiltinWebSearchProviderChanged = clampedRecordedPolicyPresets.some(
-    (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
+    (name) =>
+      (name === "brave" || name === "tavily" || name === "firecrawl") &&
+      isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
     clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinWebSearch(name)),

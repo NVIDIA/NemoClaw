@@ -4,7 +4,7 @@
 title: "Common NemoClaw Integration Policy Examples"
 sidebar-title: "Integration Policy Examples"
 description: "Guided examples for adding post-install integration policy access to a NemoClaw sandbox."
-description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave and Tavily web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
+description-agent: "Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave, Tavily, and Firecrawl web search, package managers, Hugging Face, local inference, and OpenShell approval workflows."
 keywords: ["nemoclaw integration policy examples", "post-install policy setup", "openshell approval workflow", "policy preset"]
 content:
   type: "how_to"
@@ -65,6 +65,7 @@ Messaging channel presets are scoped to the sandbox's active agent; if an agent 
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Tavily Search | `tavily` |
+| Firecrawl Search | `firecrawl` |
 | Telegram Bot API | `telegram` |
 | Weather and geocoding APIs | `weather` |
 | WeChat (personal) iLink Bot API (experimental) | `wechat` |
@@ -270,7 +271,7 @@ Configure the matching `BRAVE_API_KEY` or `TAVILY_API_KEY` during that onboardin
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes supports Tavily Search through NemoClaw onboarding and does not support Brave Search.
+Hermes supports Tavily Search and Firecrawl Search through NemoClaw onboarding and does not support Brave Search.
 Apply the `tavily` preset if it is missing.
 
 ```bash
@@ -278,13 +279,22 @@ $$nemoclaw my-assistant policy-add tavily --dry-run
 $$nemoclaw my-assistant policy-add tavily --yes
 ```
 
-Rerun onboarding when you enable or disable Tavily because the Hermes backend and OpenShell credential attachment are part of the sandbox image.
-Configure `TAVILY_API_KEY` during that onboarding run.
+Or apply the `firecrawl` preset for Firecrawl Search.
+
+```bash
+$$nemoclaw my-assistant policy-add firecrawl --dry-run
+$$nemoclaw my-assistant policy-add firecrawl --yes
+```
+
+Rerun onboarding when you enable or disable a web search provider because the Hermes backend and OpenShell credential attachment are part of the sandbox image.
+Configure `TAVILY_API_KEY` or `FIRECRAWL_API_KEY` during that onboarding run.
 
 </AgentOnly>
 
 The `tavily` preset permits only `POST /search` and `POST /extract` to `api.tavily.com`.
 It enables request-body credential rewriting because Hermes sends its resolver placeholder in the JSON `api_key` field.
+The `firecrawl` preset permits only `POST /v2/search` and `POST /v2/scrape` to `api.firecrawl.dev`.
+It enables `Authorization` header credential rewriting because Hermes sends its resolver placeholder as a bearer token.
 OpenShell replaces that placeholder at egress, so the raw key is not written into the sandbox configuration.
 
 ## Weather and Public Reference Lookups

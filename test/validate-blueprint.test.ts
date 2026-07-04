@@ -37,6 +37,18 @@ const TAVILY_POLICY_PRESET_PATH = new URL(
   "../nemoclaw-blueprint/policies/presets/tavily.yaml",
   import.meta.url,
 );
+const FIRECRAWL_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/firecrawl.yaml",
+  import.meta.url,
+);
+const FIRECRAWL_PROVIDER_PROFILE_FOR_HERMES_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/firecrawl-hermes-v1.yaml",
+  import.meta.url,
+);
+const FIRECRAWL_POLICY_PRESET_PATH = new URL(
+  "../nemoclaw-blueprint/policies/presets/firecrawl.yaml",
+  import.meta.url,
+);
 const DEEPAGENTS_POLICY_PATH = new URL(
   "../agents/langchain-deepagents-code/policy-additions.yaml",
   import.meta.url,
@@ -615,6 +627,108 @@ describe("Tavily Search provider profile", () => {
       expect(endpoint?.rules).toBeUndefined();
       expect(policy.network_policies?.tavily?.binaries).toEqual([{ path: "/**" }]);
     }
+  });
+});
+
+describe("Firecrawl Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(FIRECRAWL_PROVIDER_PROFILE_PATH);
+  const hermesProfile = loadYaml<ProviderProfile>(FIRECRAWL_PROVIDER_PROFILE_FOR_HERMES_PATH);
+  const preset = loadYaml<PolicyPreset>(FIRECRAWL_POLICY_PRESET_PATH);
+  const hermesPermissivePolicy = loadYaml<SandboxPolicy>(hermesPermissivePolicyPath);
+
+  it("routes FIRECRAWL_API_KEY through a bearer authorization header", () => {
+    expect(profile.id).toBe("firecrawl");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["FIRECRAWL_API_KEY"],
+        auth_style: "bearer",
+        header_name: "authorization",
+      }),
+    ]);
+  });
+
+  it("keeps both provider policy layers aligned with the least-privilege preset", () => {
+    const presetEndpoint = preset.network_policies?.firecrawl?.endpoints?.[0];
+    const expectedRules = [
+      { allow: { method: "POST", path: "/v2/search" } },
+      { allow: { method: "POST", path: "/v2/scrape" } },
+    ];
+
+    expect(presetEndpoint?.rules).toEqual(expectedRules);
+    for (const candidate of [profile, hermesProfile]) {
+      expect(candidate.endpoints).toEqual([
+        {
+          host: "api.firecrawl.dev",
+          port: 443,
+          protocol: "rest",
+          enforcement: "enforce",
+          rules: expectedRules,
+        },
+      ]);
+      // Firecrawl rewrites the Authorization bearer header via the provider
+      // profile credential, so no JSON-body rewrite flag is present and no
+      // broad `access` grant leaks in.
+      expect(candidate.endpoints?.[0]).not.toHaveProperty("request_body_credential_rewrite");
+      expect(candidate.endpoints?.[0]).not.toHaveProperty("access");
+    }
+  });
+
+  it("limits the binary allowlist to runtimes the Firecrawl client actually uses", () => {
+    expect(profile.binaries).toEqual([
+      "/opt/venv/bin/python3*",
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/local/bin/curl",
+      "/usr/bin/curl",
+    ]);
+  });
+
+  it("keeps its binary allowlist aligned with the Firecrawl policy preset", () => {
+    const presetBinaries = preset.network_policies?.firecrawl?.binaries?.map(({ path }) => path);
+    for (const binary of profile.binaries ?? []) expect(presetBinaries).toContain(binary);
+  });
+
+  it("supports Hermes' exact managed Python path and Authorization header rewrite", () => {
+    const endpoint = preset.network_policies?.firecrawl?.endpoints?.find(
+      (candidate) => candidate.host === "api.firecrawl.dev",
+    );
+
+    expect(hermesProfile).toMatchObject({
+      id: "firecrawl-hermes-v1",
+      credentials: [
+        expect.objectContaining({
+          env_vars: ["FIRECRAWL_API_KEY"],
+          auth_style: "bearer",
+          header_name: "authorization",
+        }),
+      ],
+      endpoints: [expect.objectContaining({ host: "api.firecrawl.dev", port: 443 })],
+      binaries: ["/opt/hermes/.venv/bin/python", "/usr/local/bin/curl", "/usr/bin/curl"],
+    });
+    expect(endpoint).toMatchObject({
+      protocol: "rest",
+      enforcement: "enforce",
+      rules: [
+        { allow: { method: "POST", path: "/v2/search" } },
+        { allow: { method: "POST", path: "/v2/scrape" } },
+      ],
+    });
+    expect(endpoint).not.toHaveProperty("access");
+    expect(endpoint).not.toHaveProperty("request_body_credential_rewrite");
+  });
+
+  it("keeps Firecrawl reachable for Hermes when agent shields are down", () => {
+    const endpoint = hermesPermissivePolicy.network_policies?.firecrawl?.endpoints?.find(
+      (candidate) => candidate.host === "api.firecrawl.dev",
+    );
+
+    expect(endpoint).toMatchObject({
+      protocol: "rest",
+      enforcement: "enforce",
+      access: "full",
+    });
+    expect(endpoint?.rules).toBeUndefined();
+    expect(hermesPermissivePolicy.network_policies?.firecrawl?.binaries).toEqual([{ path: "/**" }]);
   });
 });
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const WEB_SEARCH_PROVIDERS = ["brave", "tavily"] as const;
+export const WEB_SEARCH_PROVIDERS = ["brave", "tavily", "firecrawl"] as const;
 
 export type WebSearchProvider = (typeof WEB_SEARCH_PROVIDERS)[number];
 
@@ -19,9 +19,10 @@ export const DEFAULT_WEB_SEARCH_PROVIDER: WebSearchProvider = "brave";
 export const WEB_SEARCH_PROVIDER_ENV = "NEMOCLAW_WEB_SEARCH_PROVIDER";
 export const BRAVE_API_KEY_ENV = "BRAVE_API_KEY";
 export const TAVILY_API_KEY_ENV = "TAVILY_API_KEY";
+export const FIRECRAWL_API_KEY_ENV = "FIRECRAWL_API_KEY";
 
 export function isWebSearchProvider(value: unknown): value is WebSearchProvider {
-  return value === "brave" || value === "tavily";
+  return value === "brave" || value === "tavily" || value === "firecrawl";
 }
 
 export type ExplicitWebSearchProviderSelection =
@@ -38,7 +39,7 @@ export function parseExplicitWebSearchProvider(
     return { specified: true, provider: null };
   }
   throw new Error(
-    `Unsupported ${WEB_SEARCH_PROVIDER_ENV}: ${value}. Valid values: brave, tavily, none.`,
+    `Unsupported ${WEB_SEARCH_PROVIDER_ENV}: ${value}. Valid values: brave, tavily, firecrawl, none.`,
   );
 }
 
@@ -53,16 +54,21 @@ export function webSearchProviderForConfig(
 }
 
 export function webSearchEnvFor(provider: WebSearchProvider): string {
-  return provider === "tavily" ? TAVILY_API_KEY_ENV : BRAVE_API_KEY_ENV;
+  if (provider === "tavily") return TAVILY_API_KEY_ENV;
+  if (provider === "firecrawl") return FIRECRAWL_API_KEY_ENV;
+  return BRAVE_API_KEY_ENV;
 }
 
 export function webSearchLabelFor(provider: WebSearchProvider): string {
-  return provider === "tavily" ? "Tavily Search" : "Brave Search";
+  if (provider === "tavily") return "Tavily Search";
+  if (provider === "firecrawl") return "Firecrawl Search";
+  return "Brave Search";
 }
 
 export function webSearchProviderForEnvKey(envKey: string): WebSearchProvider | null {
   if (envKey === BRAVE_API_KEY_ENV) return "brave";
   if (envKey === TAVILY_API_KEY_ENV) return "tavily";
+  if (envKey === FIRECRAWL_API_KEY_ENV) return "firecrawl";
   return null;
 }
 

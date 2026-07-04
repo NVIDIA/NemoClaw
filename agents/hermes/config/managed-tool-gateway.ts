@@ -20,8 +20,13 @@ export function effectiveManagedToolGatewayPresets(
 ): string[] {
   if (!settings.managedToolGateways.brokerEnabled) return [];
 
+  // A bring-your-own-key web search backend (Tavily or Firecrawl) replaces the
+  // Nous-managed web gateway, so drop its `nous-web` preset when either is
+  // selected.
+  const byoWebSearch =
+    settings.webSearchProvider === "tavily" || settings.webSearchProvider === "firecrawl";
   return settings.managedToolGateways.presets.filter(
-    (preset) => !(settings.webSearchProvider === "tavily" && preset === "nous-web"),
+    (preset) => !(byoWebSearch && preset === "nous-web"),
   );
 }
 

@@ -470,7 +470,9 @@ export function registerSandbox(entry: SandboxEntry): void {
       toolDisclosure: normalizeToolDisclosure(entry.toolDisclosure) ?? undefined,
       webSearchProvider:
         entry.webSearchEnabled === true &&
-        (entry.webSearchProvider === "brave" || entry.webSearchProvider === "tavily")
+        (entry.webSearchProvider === "brave" ||
+          entry.webSearchProvider === "tavily" ||
+          entry.webSearchProvider === "firecrawl")
           ? entry.webSearchProvider
           : null,
       // policyPresetsFinalized is intentionally not set here: registration means

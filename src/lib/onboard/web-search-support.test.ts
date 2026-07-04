@@ -92,6 +92,33 @@ describe("agentSupportsWebSearch", () => {
     ).toBe(true);
   });
 
+  it("supports Firecrawl for Hermes when the provider selector arg is present", () => {
+    const root = tmpRoot();
+    const providerAwareDockerfile = writeDockerfile(
+      root,
+      "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\nARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily\n",
+      "Providerfile",
+    );
+
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "hermes", dockerfilePath: providerAwareDockerfile },
+        "firecrawl",
+        null,
+        root,
+      ),
+    ).toBe(true);
+    // Hermes never accepts the Brave backend even with the provider arg present.
+    expect(
+      agentSupportsWebSearchProvider(
+        { name: "hermes", dockerfilePath: providerAwareDockerfile },
+        "brave",
+        null,
+        root,
+      ),
+    ).toBe(false);
+  });
+
   it("uses an override Dockerfile path first", () => {
     const root = tmpRoot();
     writeDockerfile(root, "FROM scratch\n");

@@ -440,14 +440,14 @@ If the provider is wrong, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=br
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Confirm that the generated Hermes configuration selects the Tavily backend.
+Confirm that the generated Hermes configuration selects the web search backend you enabled.
 
 ```bash
 $$nemoclaw <name> exec -- cat /sandbox/.hermes/config.yaml
 ```
 
-The output should include a `web` mapping with `backend: tavily`.
-If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`.
+The output should include a `web` mapping with `backend: tavily` or `backend: firecrawl`.
+If it does not, rerun onboarding with `NEMOCLAW_WEB_SEARCH_PROVIDER=tavily` and `TAVILY_API_KEY`, or `NEMOCLAW_WEB_SEARCH_PROVIDER=firecrawl` and `FIRECRAWL_API_KEY`.
 
 </AgentOnly>
 
@@ -2215,7 +2215,7 @@ Reset a specific provider's credentials with `nemohermes credentials reset <prov
 
 Hermes does not have a NemoClaw Brave Search backend.
 Adding the `brave` preset to a Hermes sandbox opens Brave's endpoints but does not configure Hermes to use the credential.
-Use Tavily Search through NemoClaw onboarding instead.
+Use Tavily Search or Firecrawl Search through NemoClaw onboarding instead.
 
 ```bash
 NEMOCLAW_WEB_SEARCH_PROVIDER=tavily \
@@ -2223,8 +2223,16 @@ TAVILY_API_KEY=<your-tavily-key> \
   nemohermes onboard --recreate-sandbox
 ```
 
-NemoClaw writes `web.backend: tavily`, applies the `tavily` policy preset, and configures request-body credential rewriting for Hermes.
-If the same onboarding run selected the Nous-managed web gateway, Tavily replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
+Or, for Firecrawl:
+
+```bash
+NEMOCLAW_WEB_SEARCH_PROVIDER=firecrawl \
+FIRECRAWL_API_KEY=<your-firecrawl-key> \
+  nemohermes onboard --recreate-sandbox
+```
+
+NemoClaw writes `web.backend: tavily` (or `firecrawl`), applies the matching `tavily` or `firecrawl` policy preset, and configures credential rewriting for Hermes (request-body for Tavily, `Authorization` header for Firecrawl).
+If the same onboarding run selected the Nous-managed web gateway, the selected provider replaces `nous-web` while selected Nous image, audio, browser, and code tools remain enabled.
 
 ### Re-onboarding asks every messaging prompt again
 

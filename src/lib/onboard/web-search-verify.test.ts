@@ -50,13 +50,56 @@ describe("verifyWebSearchInsideSandbox", () => {
     expect(d.warn).not.toHaveBeenCalled();
   });
 
-  it("does not treat pinned Hermes dump-shaped output as an active Tavily backend", () => {
+  it("verifies Hermes Firecrawl egress through the bearer header credential rewrite", () => {
+    const d = deps([
+      "web:\n  backend: firecrawl\n",
+      JSON.stringify({ success: true, data: { web: [{ title: "NVIDIA" }] } }) +
+        "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
+
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(2);
+    const probeCommand = d.runCaptureOpenshell.mock.calls[1][0][7];
+    expect(probeCommand).toContain("https://api.firecrawl.dev/v2/search");
+    expect(probeCommand).toContain("Authorization: Bearer openshell:resolve:env:FIRECRAWL_API_KEY");
+    expect(d.log).toHaveBeenCalledWith("  ✓ Firecrawl Search egress verified inside sandbox");
+    expect(d.warn).not.toHaveBeenCalled();
+  });
+
+  it("accepts a Firecrawl legacy Document[] data array as a successful probe", () => {
+    const d = deps([
+      "web:\n  backend: firecrawl\n",
+      JSON.stringify({ success: true, data: [{ url: "https://nvidia.com" }] }) +
+        "\nHTTP_STATUS:200\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
+
+    expect(d.log).toHaveBeenCalledWith("  ✓ Firecrawl Search egress verified inside sandbox");
+  });
+
+  it("does not accept an unsuccessful Firecrawl response as verification", () => {
+    const d = deps([
+      "web:\n  backend: firecrawl\n",
+      JSON.stringify({ success: false, error: "Unauthorized" }) + "\nHTTP_STATUS:401\n",
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
+
+    expect(d.warn).toHaveBeenCalledWith(
+      "  ⚠ Firecrawl Search config exists, but egress verification returned HTTP 401.",
+    );
+    expect(d.log).not.toHaveBeenCalled();
+  });
+
+  it("does not treat pinned Hermes dump-shaped output as an active backend", () => {
     const d = deps("active toolsets: web, shell\n");
 
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, d);
 
     expect(d.warn).toHaveBeenCalledWith(
-      "  ⚠ Tavily Search was configured but Hermes config does not select web.backend=tavily.",
+      "  ⚠ Web search was configured but Hermes config does not select a supported web.backend.",
     );
     expect(d.warn).toHaveBeenCalledWith(
       "    Check: nemoclaw alpha exec -- cat /sandbox/.hermes/config.yaml",
@@ -68,13 +111,13 @@ describe("verifyWebSearchInsideSandbox", () => {
     const missing = deps(null);
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, missing);
     expect(missing.warn).toHaveBeenCalledWith(
-      "  ⚠ Could not read Hermes config to verify Tavily Search.",
+      "  ⚠ Could not read Hermes config to verify web search.",
     );
 
     const malformed = deps("web: [\n");
     verifyWebSearchInsideSandbox("alpha", { name: "hermes" }, malformed);
     expect(malformed.warn).toHaveBeenCalledWith(
-      "  ⚠ Could not parse Hermes config to verify Tavily Search.",
+      "  ⚠ Could not parse Hermes config to verify web search.",
     );
   });
 

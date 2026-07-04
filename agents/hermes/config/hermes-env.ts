@@ -8,6 +8,7 @@ import {
 } from "./managed-tool-gateway.ts";
 
 const TAVILY_API_KEY_PLACEHOLDER = "openshell:resolve:env:TAVILY_API_KEY";
+const FIRECRAWL_API_KEY_PLACEHOLDER = "openshell:resolve:env:FIRECRAWL_API_KEY";
 
 export function buildHermesEnvLines(settings: HermesBuildSettings): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
@@ -18,6 +19,8 @@ export function buildHermesEnvLines(settings: HermesBuildSettings): string[] {
 
   if (settings.webSearchProvider === "tavily") {
     envLines.push(`TAVILY_API_KEY=${TAVILY_API_KEY_PLACEHOLDER}`);
+  } else if (settings.webSearchProvider === "firecrawl") {
+    envLines.push(`FIRECRAWL_API_KEY=${FIRECRAWL_API_KEY_PLACEHOLDER}`);
   }
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);

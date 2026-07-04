@@ -5,6 +5,7 @@ import {
   parseExplicitWebSearchProvider,
   type WebSearchConfig as SharedWebSearchConfig,
   WEB_SEARCH_PROVIDER_ENV,
+  type WebSearchProvider,
   webSearchConfigsEqual,
   webSearchEnvFor,
   webSearchLabelFor,
@@ -64,7 +65,7 @@ export interface SandboxStateOptions<
     ): boolean;
     agentSupportsWebSearchProvider?(
       agent: Agent,
-      provider: "brave" | "tavily",
+      provider: WebSearchProvider,
       dockerfilePathOverride: string | null,
       rootDir: string,
     ): boolean;
@@ -213,9 +214,13 @@ function missingWebSearchFidelity(
 
 function knownAgentSupportsWebSearchProvider(
   agent: { name?: string } | null,
-  provider: "brave" | "tavily",
+  provider: WebSearchProvider,
 ): boolean {
-  return agent?.name?.trim().toLowerCase() !== "hermes" || provider === "tavily";
+  return (
+    agent?.name?.trim().toLowerCase() !== "hermes" ||
+    provider === "tavily" ||
+    provider === "firecrawl"
+  );
 }
 
 function effectiveHermesToolGatewaysForWebSearch(
@@ -224,9 +229,12 @@ function effectiveHermesToolGatewaysForWebSearch(
   gateways: string[],
 ): string[] {
   const isHermes = agent?.name?.trim().toLowerCase() === "hermes";
-  const tavilySelected =
-    webSearchConfig !== null && webSearchProviderForConfig(webSearchConfig) === "tavily";
-  return isHermes && tavilySelected
+  const selectedProvider =
+    webSearchConfig !== null ? webSearchProviderForConfig(webSearchConfig) : null;
+  // Tavily and Firecrawl are both bring-your-own-key backends that replace the
+  // Nous-managed `nous-web` (Firecrawl) gateway.
+  const byoWebSearchSelected = selectedProvider === "tavily" || selectedProvider === "firecrawl";
+  return isHermes && byoWebSearchSelected
     ? gateways.filter((gateway) => gateway !== "nous-web")
     : [...gateways];
 }
@@ -619,8 +627,12 @@ class SandboxStateFlow<
       this.options.hermesToolGateways.includes("nous-web") &&
       !hermesToolGateways.includes("nous-web")
     ) {
+      const selectedProvider = state.webSearchConfig
+        ? webSearchProviderForConfig(state.webSearchConfig as unknown as SharedWebSearchConfig)
+        : null;
+      const providerLabel = selectedProvider ? webSearchLabelFor(selectedProvider) : "Web search";
       this.deps.note(
-        "  Tavily Search replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.",
+        `  ${providerLabel} replaces Hermes managed Web search/extract and removes the conflicting nous-web selection.`,
       );
     }
     return {
