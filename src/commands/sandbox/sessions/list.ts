@@ -17,7 +17,7 @@ export default class SandboxSessionsListCommand extends NemoClawCommand {
   static usage = ["<name> [sessions-list-flags...]"];
   static examples = [
     "<%= config.bin %> sandbox sessions list alpha",
-    "<%= config.bin %> sandbox sessions list alpha --agent work --json",
+    "<%= config.bin %> sandbox sessions list alpha --limit 20",
   ];
 
   public async run(): Promise<void> {

@@ -1192,23 +1192,22 @@ nemohermes my-assistant agents delete work --force --json
 
 ### `nemohermes <name> sessions`
 
-List OpenClaw conversation sessions in the sandbox.
-With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
-NemoClaw invokes `openclaw sessions` via `openshell sandbox exec` and forwards OpenClaw flags verbatim, but filters default list output so internal `nemoclaw-onboard-warmup-*` sessions created during onboarding are hidden from user-facing output.
+List Hermes conversation sessions in the sandbox.
+NemoClaw invokes `hermes sessions list` via `openshell sandbox exec`, forwards native Hermes flags such as `--source` and `--limit`, and streams the output unchanged.
 
 ```bash
 nemohermes my-assistant sessions
-nemohermes my-assistant sessions --all-agents --json
+nemohermes my-assistant sessions --source cli --limit 20
 ```
 
 ### `nemohermes <name> sessions list`
 
-Invoke `openclaw sessions list` inside the sandbox.
-NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
+Invoke `hermes sessions list` inside the sandbox.
+NemoClaw forwards native Hermes flags such as `--source` and `--limit` and streams the output unchanged.
 
 ```bash
 nemohermes my-assistant sessions list
-nemohermes my-assistant sessions list --agent work --json
+nemohermes my-assistant sessions list --source cli --limit 20
 ```
 
 ### `nemohermes <name> sessions reset <key>`

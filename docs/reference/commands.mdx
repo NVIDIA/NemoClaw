@@ -1538,6 +1538,8 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 ### `$$nemoclaw <name> sessions`
 
+<AgentOnly variant="openclaw">
+
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
 NemoClaw invokes `openclaw sessions` via `openshell sandbox exec` and forwards OpenClaw flags verbatim, but filters default list output so internal `nemoclaw-onboard-warmup-*` sessions created during onboarding are hidden from user-facing output.
@@ -1547,7 +1549,22 @@ $$nemoclaw my-assistant sessions
 $$nemoclaw my-assistant sessions --all-agents --json
 ```
 
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+List Hermes conversation sessions in the sandbox.
+NemoClaw invokes `hermes sessions list` via `openshell sandbox exec`, forwards native Hermes flags such as `--source` and `--limit`, and streams the output unchanged.
+
+```bash
+$$nemoclaw my-assistant sessions
+$$nemoclaw my-assistant sessions --source cli --limit 20
+```
+
+</AgentOnly>
+
 ### `$$nemoclaw <name> sessions list`
+
+<AgentOnly variant="openclaw">
 
 Invoke `openclaw sessions list` inside the sandbox.
 NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
@@ -1556,6 +1573,19 @@ NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agent
 $$nemoclaw my-assistant sessions list
 $$nemoclaw my-assistant sessions list --agent work --json
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Invoke `hermes sessions list` inside the sandbox.
+NemoClaw forwards native Hermes flags such as `--source` and `--limit` and streams the output unchanged.
+
+```bash
+$$nemoclaw my-assistant sessions list
+$$nemoclaw my-assistant sessions list --source cli --limit 20
+```
+
+</AgentOnly>
 
 ### `$$nemoclaw <name> sessions reset <key>`
 

@@ -196,7 +196,7 @@ describe("printSessionsPassthroughHelp", () => {
 
     expect(help).not.toMatch(/Pass-through to `openclaw sessions/i);
     expect(help).toMatch(/openclaw/i);
-    expect(help).toMatch(/hermes/i);
+    expect(help).toMatch(/hermes sessions list/i);
     // Warm-up filtering is documented as OpenClaw-specific, not universal.
     expect(help).toMatch(/warm-up[^\n]*OpenClaw|OpenClaw[^\n]*warm-up/i);
   });
@@ -383,13 +383,13 @@ describe("runSessionsPassthrough", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("--limit"));
   });
 
-  it("routes to the hermes binary and skips warm-up filtering on hermes sandboxes (#6247)", async () => {
+  it("routes the bare command to `hermes sessions list` and skips warm-up filtering (#6247)", async () => {
     getSandboxMock.mockReturnValue({ agent: "hermes" });
 
     await runSessionsPassthrough("hermes", { extraArgs: [] });
 
     expect(captureMock).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions"]);
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list"]);
   });
 
   it("uses openclaw binary for openclaw-agent sandboxes (#6247)", async () => {
@@ -410,11 +410,11 @@ describe("runSessionsPassthrough", () => {
 
     await runSessionsPassthrough("hermes", {
       verb: "list",
-      extraArgs: ["--json"],
+      extraArgs: ["--limit", "5"],
     });
 
     expect(captureMock).not.toHaveBeenCalled();
-    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--json"]);
+    expect(execMock).toHaveBeenCalledWith("hermes", ["hermes", "sessions", "list", "--limit", "5"]);
   });
 
   it("defaults to the openclaw binary + filter path when the registry has no entry (#6247)", async () => {
