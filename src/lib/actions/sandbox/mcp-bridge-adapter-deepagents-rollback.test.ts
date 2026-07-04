@@ -55,7 +55,7 @@ describe("Deep Agents MCP config adapter rollback", () => {
       legacyConfig,
     );
     expect(removal.status, removal.stderr).toBe(0);
-    expect(removal.configExists).toBe(false);
+    expect(removal.config).toEqual({ mcpServers: {} });
     expect(removal.legacyConfig).toEqual(legacyConfig);
 
     const rollback = runDeepAgentsConfigCommand(

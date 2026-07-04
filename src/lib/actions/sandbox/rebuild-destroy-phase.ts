@@ -5,6 +5,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import { removeSandboxRegistryEntry } from "./destroy";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
@@ -72,7 +73,9 @@ export async function runRebuildDestroyPhase(
         let validation: RebuildDeleteValidationResult;
         try {
           validation = await validateAfterMcpPreparation();
-        } catch {
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          log(`Unexpected DCode replacement validation failure: ${redactFull(detail)}`);
           validation = {
             ok: false,
             message: "DCode replacement validation failed before sandbox deletion.",

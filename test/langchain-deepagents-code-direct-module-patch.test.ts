@@ -1094,22 +1094,26 @@ child = (
     "import os; from pathlib import Path; "
     "print(Path(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']).read_text(), end='')"
 )
-env = os.environ.copy()
-env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = sealed_path
-server = ServerProcess([sys.executable, "-c", child], os.getcwd(), env)
-unsealed_descriptor = os.memfd_create(
-    "unsealed-dcode-mcp",
-    flags=os.MFD_ALLOW_SEALING,
+def server_for_path(config_path):
+    env = os.environ.copy()
+    env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = config_path
+    return ServerProcess([sys.executable, "-c", child], os.getcwd(), env)
+
+def make_descriptor_server(name, payload, seals):
+    descriptor = os.memfd_create(name, flags=os.MFD_ALLOW_SEALING)
+    os.write(descriptor, payload)
+    fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+    return descriptor, server_for_path(f"/proc/self/fd/{descriptor}")
+
+server = server_for_path(sealed_path)
+unsealed_descriptor, unsealed_server = make_descriptor_server(
+    "unsealed-dcode-mcp", b"{}", 0
 )
-os.write(unsealed_descriptor, b"{}")
-unsealed_env = os.environ.copy()
-unsealed_env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = (
-    f"/proc/self/fd/{unsealed_descriptor}"
+empty_descriptor, empty_server = make_descriptor_server(
+    "empty-dcode-mcp", b"", required_seals
 )
-unsealed_server = ServerProcess(
-    [sys.executable, "-c", child],
-    os.getcwd(),
-    unsealed_env,
+oversized_descriptor, oversized_server = make_descriptor_server(
+    "oversized-dcode-mcp", b"x" * 262_145, required_seals
 )
 
 async def exercise():
@@ -1129,15 +1133,17 @@ async def exercise():
         encoding="utf-8",
     )
     await server.restart()
-    try:
-        await unsealed_server.start()
-    except RuntimeError as exc:
-        assert "not valid and sealed" in str(exc)
-    else:
-        raise AssertionError("unsealed MCP descriptor was inherited")
+    for invalid_server in (unsealed_server, empty_server, oversized_server):
+        try:
+            await invalid_server.start()
+        except RuntimeError as exc:
+            assert "not valid and sealed" in str(exc)
+        else:
+            raise AssertionError("invalid MCP descriptor was inherited")
 
 asyncio.run(exercise())
-os.close(unsealed_descriptor)
+for descriptor in (unsealed_descriptor, empty_descriptor, oversized_descriptor):
+    os.close(descriptor)
 print(json.dumps({
     "path": sealed_path,
     "outputs": [json.loads(output) for output in server.outputs],

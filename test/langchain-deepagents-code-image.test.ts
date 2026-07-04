@@ -381,6 +381,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
     expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
+    expect(patcher).toContain("if not servers:\n        return None");
+    expect(patcher).toContain("or descriptor != _MANAGED_MCP_FD");
     expect(patcher).toContain("def discover_mcp_configs(");
     expect(patcher).toContain("return []");
     expect(manifest).toContain("- .deepagents/.mcp.json");

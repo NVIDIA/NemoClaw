@@ -3,12 +3,11 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
-  isAgentMcpAdapter,
-  MCP_BRIDGE_POLICY_SOURCE,
-  McpBridgeError,
-} from "./mcp-bridge-contracts";
+  rollbackScrubbedMcpAdapters,
+  scrubManagedMcpAdapterOrThrow,
+} from "./mcp-bridge-adapter-teardown";
+import { MCP_BRIDGE_POLICY_SOURCE, McpBridgeError } from "./mcp-bridge-contracts";
 import type { McpDestroyPreparation } from "./mcp-bridge-destroy-preflight";
 import {
   assertMcpDestroySnapshotCurrent,
@@ -32,8 +31,6 @@ import {
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
-  getBridgeAdapter,
-  getSandboxAgent,
   getSandboxOrThrow,
   nowIso,
 } from "./mcp-bridge-state";
@@ -127,18 +124,7 @@ export async function prepareMcpBridgesForDestroy(
   const scrubbedAdapters: McpBridgeEntry[] = [];
   try {
     for (const entry of entries) {
-      const adapter = isAgentMcpAdapter(entry.adapter)
-        ? entry.adapter
-        : getBridgeAdapter(getSandboxAgent(sandbox));
-      const adapterRemoval = unregisterAgentAdapter(sandboxName, adapter, entry, {
-        envValues: {},
-        teardown: true,
-      });
-      if (adapterRemoval === "unowned") {
-        throw new McpBridgeError(
-          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'.`,
-        );
-      }
+      scrubManagedMcpAdapterOrThrow(sandboxName, sandbox, entry);
       scrubbedAdapters.push(entry);
     }
     for (const entry of entries) {
@@ -184,27 +170,7 @@ export async function prepareMcpBridgesForDestroy(
         );
       }
     }
-    for (const entry of scrubbedAdapters) {
-      try {
-        const adapter = isAgentMcpAdapter(entry.adapter)
-          ? entry.adapter
-          : getBridgeAdapter(getSandboxAgent(sandbox));
-        registerAgentAdapter(
-          sandboxName,
-          adapter,
-          entry,
-          {},
-          {
-            replaceExisting: true,
-            teardownRollback: true,
-          },
-        );
-      } catch (rollbackError) {
-        rollbackFailures.push(
-          rollbackError instanceof Error ? rollbackError.message : String(rollbackError),
-        );
-      }
-    }
+    rollbackFailures.push(...rollbackScrubbedMcpAdapters(sandboxName, sandbox, scrubbedAdapters));
     const current = registry.getSandbox(sandboxName);
     if (current?.mcp?.destroyPreparedAt) {
       try {

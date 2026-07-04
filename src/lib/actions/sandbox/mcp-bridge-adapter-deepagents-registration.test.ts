@@ -116,4 +116,17 @@ describe("Deep Agents MCP config adapter registration", () => {
       buildDeepAgentsMcpRegisterCommand(managedEntries[0], false, managedEntries.slice(0, 64)),
     ).not.toThrow();
   });
+
+  it("rejects an oversized rendered projection before truncating existing state", () => {
+    const initialConfig = { mcpServers: {} };
+    const oversized = buildDeepAgentsMcpRegisterCommand(baseEntry).replace(
+      "data = {'mcpServers': payload['expectedServers']}",
+      "data = {'mcpServers': {'oversized': {'blob': 'x' * 300000}}}",
+    );
+    const registration = runDeepAgentsConfigCommand(oversized, initialConfig);
+
+    expect(registration.status).toBe(2);
+    expect(registration.stderr).toContain("invalid rendered size");
+    expect(registration.config).toEqual(initialConfig);
+  });
 });

@@ -30,6 +30,14 @@ export interface DeepAgentsConfigCommandResult {
   legacyConfigExists: boolean;
   legacyConfig: Record<string, unknown> | null;
   legacyConfigText: string | null;
+  managedSymlinkTargetExists: boolean;
+  managedSymlinkTargetText: string | null;
+}
+
+export interface DeepAgentsManagedFixtureOptions {
+  fifo?: boolean;
+  mode?: number;
+  symlink?: boolean;
 }
 
 export function runDeepAgentsConfigCommand(
@@ -38,23 +46,39 @@ export function runDeepAgentsConfigCommand(
   runtimeKind: "v2" | "legacy" | "unknown" = "v2",
   initialLegacyConfig?: Record<string, unknown> | string,
   initialLegacyMode = 0o600,
+  managedOptions: DeepAgentsManagedFixtureOptions = {},
 ): DeepAgentsConfigCommandResult {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-"));
   const configPath = path.join(tmp, ".deepagents", ".nemoclaw-mcp.json");
+  const managedSymlinkTarget = path.join(tmp, "managed-projection-target.json");
   const legacyConfigPath = path.join(tmp, ".deepagents", ".mcp.json");
   const initializeConfig = (
     target: string,
     value: Record<string, unknown> | string | undefined,
+    mode = 0o600,
   ) => {
     if (value === undefined) return;
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(
       target,
       typeof value === "string" ? value : `${JSON.stringify(value, null, 2)}\n`,
-      { mode: 0o600 },
+      { mode },
     );
   };
-  initializeConfig(configPath, initialConfig);
+  const managedInitialPath = managedOptions.symlink ? managedSymlinkTarget : configPath;
+  if (managedOptions.fifo) {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const fifo = spawnSync("mkfifo", [configPath], { encoding: "utf-8", timeout: 5000 });
+    if (fifo.status !== 0) throw new Error(fifo.stderr || "could not create managed fixture FIFO");
+    fs.chmodSync(configPath, managedOptions.mode ?? 0o600);
+  } else {
+    initializeConfig(managedInitialPath, initialConfig, managedOptions.mode);
+    if (initialConfig !== undefined) fs.chmodSync(managedInitialPath, managedOptions.mode ?? 0o600);
+    if (managedOptions.symlink && initialConfig !== undefined) {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.symlinkSync(managedSymlinkTarget, configPath);
+    }
+  }
   initializeConfig(legacyConfigPath, initialLegacyConfig);
   if (initialLegacyConfig !== undefined) fs.chmodSync(legacyConfigPath, initialLegacyMode);
   try {
@@ -69,7 +93,12 @@ export function runDeepAgentsConfigCommand(
     const result = spawnSync("bash", ["-c", fixtureCommand], { encoding: "utf-8", timeout: 5000 });
     const configExists = fs.existsSync(configPath);
     const legacyConfigExists = fs.existsSync(legacyConfigPath);
-    const configText = configExists ? fs.readFileSync(configPath, "utf-8") : null;
+    const configIsFifo = configExists && fs.lstatSync(configPath).isFIFO();
+    const configText = configExists && !configIsFifo ? fs.readFileSync(configPath, "utf-8") : null;
+    const managedSymlinkTargetExists = fs.existsSync(managedSymlinkTarget);
+    const managedSymlinkTargetText = managedSymlinkTargetExists
+      ? fs.readFileSync(managedSymlinkTarget, "utf-8")
+      : null;
     const legacyConfigText = legacyConfigExists ? fs.readFileSync(legacyConfigPath, "utf-8") : null;
     return {
       status: result.status,
@@ -83,6 +112,8 @@ export function runDeepAgentsConfigCommand(
         ? (JSON.parse(legacyConfigText) as Record<string, unknown>)
         : null,
       legacyConfigText,
+      managedSymlinkTargetExists,
+      managedSymlinkTargetText,
     };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });

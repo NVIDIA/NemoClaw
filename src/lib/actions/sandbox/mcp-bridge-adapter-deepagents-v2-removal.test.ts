@@ -54,7 +54,7 @@ describe("Deep Agents MCP config adapter v2 removal", () => {
     expect(remove.config).toEqual(driftedConfig);
   });
 
-  it("deletes an empty projection and refuses unrelated state unless forced", () => {
+  it("writes an empty tombstone and refuses unrelated state unless forced", () => {
     const managedServer = {
       type: "http",
       url: baseEntry.url,
@@ -67,7 +67,7 @@ describe("Deep Agents MCP config adapter v2 removal", () => {
       { mcpServers: { github: managedServer } },
     );
     expect(onlyManagedServer.status, onlyManagedServer.stderr).toBe(0);
-    expect(onlyManagedServer.configExists).toBe(false);
+    expect(onlyManagedServer.config).toEqual({ mcpServers: {} });
 
     const withUnrelatedConfig = runDeepAgentsConfigCommand(
       buildDeepAgentsMcpRemoveCommand(baseEntry),
@@ -88,6 +88,6 @@ describe("Deep Agents MCP config adapter v2 removal", () => {
       ui: { theme: "dark" },
     });
     expect(forced.status, forced.stderr).toBe(0);
-    expect(forced.configExists).toBe(false);
+    expect(forced.config).toEqual({ mcpServers: {} });
   });
 });

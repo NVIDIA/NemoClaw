@@ -280,6 +280,36 @@ adapterRemovalOutcome = "unowned";
         markerCalls: 0,
       });
     });
+
+    it(`${label} teardown fails closed when adapter ownership is unproved`, () => {
+      const result = runLegacyLifecycle(`
+adapterRemovalOutcome = "unowned";
+(async () => {
+  let error = "";
+  try {
+    await bridge.${method}("alpha");
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+  }
+  process.stdout.write(JSON.stringify({
+    error,
+    attached,
+    adapterRegistered,
+    providerExists,
+    markerCalls: adapterCalls.filter((call) =>
+      call.includes("deepagents-code --nemoclaw-mcp-capability")
+    ).length,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+      expect(parseResult(result)).toMatchObject({
+        error: expect.stringMatching(/Could not prove removal of the exact managed adapter entry/),
+        attached: true,
+        adapterRegistered: true,
+        providerExists: true,
+        markerCalls: 0,
+      });
+    });
   }
 
   it("proves the replacement image marker before post-rebuild reattachment", () => {

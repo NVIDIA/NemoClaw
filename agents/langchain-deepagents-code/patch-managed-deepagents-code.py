@@ -557,43 +557,11 @@ SERVER_POPEN_PATCH = '''        # The managed MCP path must remain the sealed me
         nemoclaw_mcp_pass_fds: tuple[int, ...] = ()
         nemoclaw_mcp_path = env.get("DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH")
         if nemoclaw_mcp_path:
-            import fcntl
-            import stat
-
-            descriptor_prefix = "/proc/self/fd/"
-            descriptor_text = nemoclaw_mcp_path.removeprefix(descriptor_prefix)
-            if (
-                not nemoclaw_mcp_path.startswith(descriptor_prefix)
-                or not descriptor_text.isascii()
-                or not descriptor_text.isdecimal()
-                or str(int(descriptor_text)) != descriptor_text
-            ):
-                raise RuntimeError(
-                    "managed MCP server config is not a sealed descriptor"
-                )
-            descriptor = int(descriptor_text)
-            try:
-                metadata = os.fstat(descriptor)
-                seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
-            except OSError as exc:
-                raise RuntimeError(
-                    "managed MCP server config descriptor is unavailable"
-                ) from exc
-            required_seals = (
-                fcntl.F_SEAL_WRITE
-                | fcntl.F_SEAL_GROW
-                | fcntl.F_SEAL_SHRINK
-                | fcntl.F_SEAL_SEAL
+            from deepagents_code._nemoclaw_managed import (
+                managed_mcp_server_descriptor,
             )
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_size <= 0
-                or metadata.st_size > 262_144
-                or seals != required_seals
-            ):
-                raise RuntimeError(
-                    "managed MCP server config descriptor is not valid and sealed"
-                )
+
+            descriptor = managed_mcp_server_descriptor(nemoclaw_mcp_path)
             nemoclaw_mcp_pass_fds = (descriptor,)
         self._process = subprocess.Popen(  # noqa: S603, ASYNC220
             cmd,
@@ -788,6 +756,12 @@ _MCP_NUMERIC_HOST = re.compile(
 )
 _MCP_MAX_CONFIG_BYTES = 262_144
 _MCP_MAX_SERVERS = 64
+_MCP_REQUIRED_SEALS = (
+    fcntl.F_SEAL_WRITE
+    | fcntl.F_SEAL_GROW
+    | fcntl.F_SEAL_SHRINK
+    | fcntl.F_SEAL_SEAL
+)
 _MCP_BLOCKED_ALIASES = {
     "host.openshell.internal",
     "host.docker.internal",
@@ -1130,7 +1104,7 @@ def _read_managed_mcp_config() -> bytes | None:
     return raw
 
 
-def _canonicalize_managed_mcp_config(raw: bytes) -> bytes:
+def _canonicalize_managed_mcp_config(raw: bytes) -> bytes | None:
     try:
         data = json.loads(
             raw.decode("utf-8"),
@@ -1144,12 +1118,10 @@ def _canonicalize_managed_mcp_config(raw: bytes) -> bytes:
     if not isinstance(data, dict) or set(data) != {"mcpServers"}:
         raise RuntimeError("managed MCP config must contain only mcpServers")
     servers = data["mcpServers"]
-    if (
-        not isinstance(servers, dict)
-        or not servers
-        or len(servers) > _MCP_MAX_SERVERS
-    ):
+    if not isinstance(servers, dict) or len(servers) > _MCP_MAX_SERVERS:
         raise RuntimeError("managed MCP config has an invalid server map")
+    if not servers:
+        return None
     canonical_servers = {
         server: _validate_managed_mcp_entry(server, servers[server])
         for server in sorted(servers)
@@ -1164,6 +1136,65 @@ def _canonicalize_managed_mcp_config(raw: bytes) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def _validate_sealed_managed_mcp_descriptor(
+    descriptor: int,
+    *,
+    expected_size: int | None,
+    unavailable_message: str,
+    invalid_message: str,
+) -> None:
+    """Require one bounded, regular, completely sealed managed MCP memfd."""
+    try:
+        metadata = os.fstat(descriptor)
+        seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+    except OSError as exc:
+        raise RuntimeError(unavailable_message) from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_size <= 0
+        or metadata.st_size > _MCP_MAX_CONFIG_BYTES
+        or (expected_size is not None and metadata.st_size != expected_size)
+        or seals != _MCP_REQUIRED_SEALS
+    ):
+        raise RuntimeError(invalid_message)
+
+
+def managed_mcp_server_descriptor(path: str) -> int:
+    """Validate the sealed descriptor inherited by a managed server child."""
+    descriptor_prefix = "/proc/self/fd/"
+    descriptor_text = path.removeprefix(descriptor_prefix)
+    if (
+        not path.startswith(descriptor_prefix)
+        or not descriptor_text.isascii()
+        or not descriptor_text.isdecimal()
+        or str(int(descriptor_text)) != descriptor_text
+    ):
+        raise RuntimeError(
+            "managed MCP server config is not a sealed descriptor"
+        )
+    descriptor = int(descriptor_text)
+    _validate_sealed_managed_mcp_descriptor(
+        descriptor,
+        expected_size=None,
+        unavailable_message=(
+            "managed MCP server config descriptor is unavailable"
+        ),
+        invalid_message=(
+            "managed MCP server config descriptor is not valid and sealed"
+        ),
+    )
+    if (
+        not _MANAGED_MCP_READY
+        or _MANAGED_MCP_FD is None
+        or descriptor != _MANAGED_MCP_FD
+        or path != f"/proc/self/fd/{_MANAGED_MCP_FD}"
+    ):
+        raise RuntimeError(
+            "managed MCP server config descriptor is not process-local"
+        )
+    return descriptor
 
 
 def _sealed_managed_mcp_snapshot(payload: bytes) -> int:
@@ -1185,21 +1216,18 @@ def _sealed_managed_mcp_snapshot(payload: bytes) -> int:
                     "could not write managed MCP config snapshot"
                 )
             remaining = remaining[written:]
-        required_seals = (
-            fcntl.F_SEAL_WRITE
-            | fcntl.F_SEAL_GROW
-            | fcntl.F_SEAL_SHRINK
-            | fcntl.F_SEAL_SEAL
-        )
-        fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, required_seals)
-        if (
-            os.fstat(descriptor).st_size != len(payload)
-            or fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
-            != required_seals
-        ):
+        try:
+            fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, _MCP_REQUIRED_SEALS)
+        except OSError as exc:
             raise RuntimeError(
                 "managed MCP config snapshot could not be sealed"
-            )
+            ) from exc
+        _validate_sealed_managed_mcp_descriptor(
+            descriptor,
+            expected_size=len(payload),
+            unavailable_message="managed MCP config snapshot could not be sealed",
+            invalid_message="managed MCP config snapshot could not be sealed",
+        )
         os.lseek(descriptor, 0, os.SEEK_SET)
         return descriptor
     except Exception:
@@ -1220,6 +1248,9 @@ def managed_mcp_config_path() -> str | None:
         _MANAGED_MCP_READY = True
         return None
     canonical = _canonicalize_managed_mcp_config(raw)
+    if canonical is None:
+        _MANAGED_MCP_READY = True
+        return None
     _MANAGED_MCP_FD = _sealed_managed_mcp_snapshot(canonical)
     _MANAGED_MCP_READY = True
     return f"/proc/self/fd/{_MANAGED_MCP_FD}"

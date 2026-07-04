@@ -22,10 +22,9 @@ import {
 } from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
 import type { Session } from "../../state/onboard-session";
+import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
-
-const DCODE_AGENT_NAME = "langchain-deepagents-code";
 
 export type RebuildDurableConfig = {
   fromDockerfile: string | null;
