@@ -22,6 +22,8 @@ interface ComplianceFixture {
       submittedAt?: string | null;
     }>
   >;
+  contributorCommitTotalCount?: number;
+  contributorReviewTotalCount?: number;
   reviews?: Array<{
     author: { login: string };
     state: string;
@@ -94,10 +96,20 @@ function runGate(fixture: ComplianceFixture) {
     ],
   ];
   const contributorCommitOutput = contributorCommitPages
-    .map((page) => JSON.stringify(page))
+    .map((page) =>
+      JSON.stringify({
+        nodes: page,
+        totalCount: fixture.contributorCommitTotalCount ?? contributorCommitPages.flat().length,
+      }),
+    )
     .join("\n");
   const contributorReviewOutput = contributorReviewPages
-    .map((page) => JSON.stringify(page))
+    .map((page) =>
+      JSON.stringify({
+        nodes: page,
+        totalCount: fixture.contributorReviewTotalCount ?? contributorReviewPages.flat().length,
+      }),
+    )
     .join("\n");
   const commit = {
     sha: "abc123",
@@ -382,6 +394,36 @@ describe("maintainer merge-gate contributor compliance", () => {
     expect(output.allPass).toBe(true);
   });
 
+  it("warns when the paginated review count is incomplete (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      contributorReviewPages: [
+        [
+          {
+            author: { login: "other-reviewer" },
+            state: "APPROVED",
+            submittedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      ],
+      contributorReviewTotalCount: 2,
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: [],
+    });
+    expect(output.advisories.contributorApprovalOverlap.details).toContain(
+      "complete paginated commit and review history",
+    );
+    expect(output.allPass).toBe(true);
+  });
+
   it("matches multiple commit authors and co-authors case-insensitively (#6222)", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
@@ -414,7 +456,7 @@ describe("maintainer merge-gate contributor compliance", () => {
   it("ignores automated contributor and reviewer identities (#6222)", () => {
     const result = runGate({
       body: "Signed-off-by: Example User <user@example.com>",
-      commitAuthorLogins: ["dependabot[bot]", "coderabbitai"],
+      commitAuthorLogins: ["dependabot[bot]", "coderabbitai", "github-actions[bot]"],
       prAuthorLogin: "human-author",
       reviews: [
         {
@@ -426,6 +468,11 @@ describe("maintainer merge-gate contributor compliance", () => {
           author: { login: "coderabbitai" },
           state: "APPROVED",
           submittedAt: "2026-01-02T00:00:00Z",
+        },
+        {
+          author: { login: "github-actions[bot]" },
+          state: "APPROVED",
+          submittedAt: "2026-01-03T00:00:00Z",
         },
       ],
       verified: true,
@@ -646,6 +693,65 @@ describe("maintainer merge-gate contributor compliance", () => {
       status: "warning",
       actors: [],
       uncertainActors: ["contributor"],
+    });
+  });
+
+  it("reports equal-timestamp conflicts independently of API order (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["contributor"],
+      reviews: [
+        {
+          author: { login: "contributor" },
+          state: "CHANGES_REQUESTED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+        {
+          author: { login: "contributor" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: [],
+      uncertainActors: ["contributor"],
+    });
+  });
+
+  it("accepts GraphQL RFC3339 timestamp variants (#6222)", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      commitAuthorLogins: ["fractional", "offset", "whole-second"],
+      reviews: [
+        {
+          author: { login: "fractional" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00.123Z",
+        },
+        {
+          author: { login: "offset" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T05:30:00+05:30",
+        },
+        {
+          author: { login: "whole-second" },
+          state: "APPROVED",
+          submittedAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).advisories.contributorApprovalOverlap).toMatchObject({
+      status: "warning",
+      actors: ["fractional", "offset", "whole-second"],
+      uncertainActors: [],
     });
   });
 

@@ -104,22 +104,34 @@ function isAutomatedLogin(login: string): boolean {
   return login.endsWith("[bot]") || CODERABBIT_LOGINS.has(login);
 }
 
-function parsePaginatedNodePages<T>(raw: string): T[] | null {
+function parseCompletePaginatedConnection<T>(raw: string): T[] | null {
   if (!raw) return null;
 
   const nodes: T[] = [];
+  let expectedTotal: number | null = null;
   try {
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const page = JSON.parse(trimmed) as unknown;
-      if (!Array.isArray(page)) return null;
-      nodes.push(...(page as T[]));
+      if (typeof page !== "object" || page === null || Array.isArray(page)) return null;
+      const { nodes: pageNodes, totalCount } = page as Record<string, unknown>;
+      if (
+        !Array.isArray(pageNodes) ||
+        typeof totalCount !== "number" ||
+        !Number.isInteger(totalCount) ||
+        totalCount < 0 ||
+        (expectedTotal !== null && totalCount !== expectedTotal)
+      ) {
+        return null;
+      }
+      expectedTotal = totalCount;
+      nodes.push(...(pageNodes as T[]));
     }
   } catch {
     return null;
   }
-  return nodes;
+  return expectedTotal !== null && nodes.length === expectedTotal ? nodes : null;
 }
 
 function fetchContributorApprovalHistory(
@@ -141,13 +153,14 @@ function fetchContributorApprovalHistory(
         pullRequest(number: $number) {
           commits(first: 100, after: $endCursor) {
             nodes { commit { authors(first: 100) { totalCount nodes { user { login } } } } }
+            totalCount
             pageInfo { hasNextPage endCursor }
           }
         }
       }
     }`,
     "--jq",
-    "[.data.repository.pullRequest.commits.nodes[] | {authors: [.commit.authors.nodes[] | {login: (.user.login // null)}], authorCount: .commit.authors.totalCount}]",
+    "{nodes: [.data.repository.pullRequest.commits.nodes[] | {authors: [.commit.authors.nodes[] | {login: (.user.login // null)}], authorCount: .commit.authors.totalCount}], totalCount: .data.repository.pullRequest.commits.totalCount}",
   ]);
   const reviewsRaw = run("gh", [
     "api",
@@ -160,17 +173,18 @@ function fetchContributorApprovalHistory(
         pullRequest(number: $number) {
           reviews(first: 100, after: $endCursor) {
             nodes { author { login } state submittedAt }
+            totalCount
             pageInfo { hasNextPage endCursor }
           }
         }
       }
     }`,
     "--jq",
-    ".data.repository.pullRequest.reviews.nodes",
+    "{nodes: .data.repository.pullRequest.reviews.nodes, totalCount: .data.repository.pullRequest.reviews.totalCount}",
   ]);
 
-  const commits = parsePaginatedNodePages<PrCommit>(commitsRaw);
-  const reviews = parsePaginatedNodePages<PrReview>(reviewsRaw);
+  const commits = parseCompletePaginatedConnection<PrCommit>(commitsRaw);
+  const reviews = parseCompletePaginatedConnection<PrReview>(reviewsRaw);
   const completeCommitAuthors = commits?.every(
     (commit) =>
       Array.isArray(commit.authors) &&
@@ -204,6 +218,7 @@ function checkContributorApprovalOverlap(
     if (login && !isAutomatedLogin(login)) contributors.add(login);
   };
 
+  // Opening the PR is a contribution even when the opener authored no current commit.
   addContributor(pr.author);
   for (const commit of history.commits) {
     for (const author of commit.authors) addContributor(author);
@@ -211,11 +226,10 @@ function checkContributorApprovalOverlap(
 
   const invalidTimestampLogins = new Set<string>();
   const reviews = history.reviews
-    .map((review, sequence) => ({
+    .map((review) => ({
       login: normalizedLogin(review.author),
       state: review.state?.toUpperCase() ?? "",
       submittedAt: Date.parse(review.submittedAt ?? ""),
-      sequence,
     }))
     .filter(
       (review) =>
@@ -230,7 +244,7 @@ function checkContributorApprovalOverlap(
   }
   const orderedReviews = reviews
     .filter((review) => Number.isFinite(review.submittedAt))
-    .sort((left, right) => left.submittedAt - right.submittedAt || left.sequence - right.sequence);
+    .sort((left, right) => left.submittedAt - right.submittedAt);
   const ambiguousLatestOpinionLogins = new Set<string>();
   const latestOpinionByLogin = new Map<string, { state: string; submittedAt: number }>();
   for (const review of orderedReviews) {
@@ -243,6 +257,7 @@ function checkContributorApprovalOverlap(
       });
       ambiguousLatestOpinionLogins.delete(review.login);
     } else if (review.submittedAt === latest.submittedAt && review.state !== latest.state) {
+      // A conflicting equal-time opinion is ambiguous regardless of API ordering.
       ambiguousLatestOpinionLogins.add(review.login);
     }
   }
