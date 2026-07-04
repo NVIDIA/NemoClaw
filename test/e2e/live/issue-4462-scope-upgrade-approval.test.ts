@@ -437,8 +437,10 @@ mode, want, expected_device_id, approve_rc=sys.argv[1:5]
 target_raw=os.fdopen(3).read().strip()
 snapshot_raw=os.fdopen(4).read().strip()
 raw_log=os.fdopen(5).read()[:2000]
-target=json.loads(target_raw) if target_raw else {}
-snapshot=json.loads(snapshot_raw) if snapshot_raw else {}
+parsed_target=json.loads(target_raw) if target_raw else {}
+parsed_snapshot=json.loads(snapshot_raw) if snapshot_raw else {}
+target=parsed_target if isinstance(parsed_target, dict) else {}
+snapshot=parsed_snapshot if isinstance(parsed_snapshot, dict) else {}
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
 allowed={'operator.pairing','operator.read','operator.write'}
 final_scopes=allowed
@@ -546,11 +548,22 @@ def auth_matches(state, context):
         and operator.get('token') == context['token']
         and scopes(operator, ('scopes',)) == context['scopes']
     )
-def inert_final_pending(state, context, reviewed_target):
-    pending=same_device_pending(state)
-    if len(pending) != 1 or not reviewed_target or context['scopes'] != final_scopes:
-        return False
-    request=pending[0]
+def exact_nonempty_id(value):
+    return (
+        isinstance(value, str) and value == value.strip() and bool(value)
+        and not any(character.isspace() for character in value)
+    )
+def inert_final_pending_failures(state, context, reviewed_target):
+    state=state if isinstance(state, dict) else {}
+    context=context if isinstance(context, dict) else {}
+    reviewed_target=reviewed_target if isinstance(reviewed_target, dict) else {}
+    pending_by_id=state.get('pending')
+    pending_by_id=pending_by_id if isinstance(pending_by_id, dict) else {}
+    pending=[
+        value for value in pending_by_id.values()
+        if isinstance(value, dict) and norm(value.get('deviceId')) == expected_device_id
+    ]
+    request=pending[0] if len(pending) == 1 else {}
     request_id=request.get('requestId')
     target_request_id=reviewed_target.get('requestId')
     target_baseline=reviewed_target.get('baselineScopes')
@@ -573,49 +586,91 @@ def inert_final_pending(state, context, reviewed_target):
             for marker in ('auth', 'credential', 'permission', 'secret', 'token'))
     }
     request_id_matches=[
-        value for value in state['pending'].values()
+        value for value in pending_by_id.values()
         if isinstance(value, dict) and value.get('requestId') == request_id
     ]
+    current_token=context.get('token')
+    current_hash=(
+        hashlib.sha256(current_token.encode()).hexdigest()
+        if isinstance(current_token, str) else ''
+    )
     # OpenClaw can publish this no-capability metadata repair after the reviewed
     # scope upgrade. Leave it untouched; the final real agent call proves that
     # it is irrelevant to this scope gate rather than treating it as paired.
+    checks=(
+        ('same-device-count', len(pending) == 1),
+        ('target-present', bool(reviewed_target)),
+        ('final-context', context.get('scopes') == final_scopes),
+        ('target-request-id', exact_nonempty_id(target_request_id)),
+        ('target-identity',
+            reviewed_target.get('deviceId') == expected_device_id
+            and reviewed_target.get('publicKey') == context.get('key')
+            and reviewed_target.get('clientId') == 'cli'
+            and reviewed_target.get('clientMode') == 'cli'),
+        ('target-baseline', target_baseline == ['operator.pairing']),
+        ('target-requested',
+            isinstance(target_requested, list)
+            and all(isinstance(scope, str) and scope == scope.strip() and scope
+                for scope in target_requested)
+            and target_requested == sorted(target_requested_set)
+            and bool({'operator.read','operator.write'}.intersection(target_requested_set))
+            and target_requested_set.issubset(final_scopes)
+            and {'operator.pairing'} | target_requested_set == final_scopes),
+        ('target-expected', target_expected == sorted(final_scopes)),
+        ('target-hash',
+            isinstance(target_hash, str)
+            and re.fullmatch(r'[0-9a-f]{64}', target_hash) is not None),
+        ('token-rotated', bool(current_hash) and current_hash != target_hash),
+        ('successor-request-id',
+            exact_nonempty_id(request_id) and request_id != target_request_id),
+        ('successor-request-id-unique', len(request_id_matches) == 1),
+        ('successor-map-key',
+            isinstance(request_id, str) and pending_by_id.get(request_id) is request),
+        ('successor-identity',
+            request.get('deviceId') == expected_device_id
+            and request.get('publicKey') == context.get('key')),
+        ('successor-client',
+            request.get('clientId') == 'cli' and request.get('clientMode') == 'cli'),
+        ('successor-repair', request.get('isRepair') is True),
+        ('successor-role',
+            request.get('role') == 'operator' and request.get('roles') == ['operator']),
+        ('successor-scopes', scope_keys == {'scopes'} and request.get('scopes') == []),
+        ('successor-auth-fields', not unexpected_auth_keys),
+        ('successor-silent-local', request.get('silent') is True),
+    )
+    return [name for name, valid in checks if not valid]
+def inert_final_pending(state, context, reviewed_target):
+    return not inert_final_pending_failures(state, context, reviewed_target)
+def inert_final_pending_diagnostic(state, context, reviewed_target):
+    state=state if isinstance(state, dict) else {}
+    pending_by_id=state.get('pending')
+    pending_by_id=pending_by_id if isinstance(pending_by_id, dict) else {}
+    pending=[
+        value for value in pending_by_id.values()
+        if isinstance(value, dict) and norm(value.get('deviceId')) == expected_device_id
+    ]
+    request=pending[0] if len(pending) == 1 else {}
+    scope_keys=[
+        key for key in request
+        if isinstance(key, str) and key.lower().endswith('scopes')
+    ]
+    raw_scopes=request.get('scopes')
+    scope_count=len(raw_scopes) if isinstance(raw_scopes, list) else -1
+    if request.get('silent') is True:
+        silent_label='true'
+    elif request.get('silent') is False:
+        silent_label='false'
+    elif 'silent' not in request:
+        silent_label='missing'
+    else:
+        silent_label=type(request.get('silent')).__name__
+    failures=inert_final_pending_failures(state, context, reviewed_target)
     return (
-        isinstance(target_request_id, str)
-        and target_request_id == target_request_id.strip()
-        and bool(target_request_id)
-        and not any(character.isspace() for character in target_request_id)
-        and reviewed_target.get('deviceId') == expected_device_id
-        and reviewed_target.get('publicKey') == context['key']
-        and reviewed_target.get('clientId') == 'cli'
-        and reviewed_target.get('clientMode') == 'cli'
-        and target_baseline == ['operator.pairing']
-        and isinstance(target_requested, list)
-        and target_requested == sorted(target_requested_set)
-        and bool({'operator.read','operator.write'}.intersection(target_requested_set))
-        and target_requested_set.issubset(final_scopes)
-        and {'operator.pairing'} | target_requested_set == final_scopes
-        and target_expected == sorted(final_scopes)
-        and isinstance(target_hash, str)
-        and re.fullmatch(r'[0-9a-f]{64}', target_hash) is not None
-        and hashlib.sha256(context['token'].encode()).hexdigest() != target_hash
-        and isinstance(request_id, str)
-        and request_id == request_id.strip()
-        and bool(request_id)
-        and not any(character.isspace() for character in request_id)
-        and request_id != target_request_id
-        and len(request_id_matches) == 1
-        and state['pending'].get(request_id) is request
-        and request.get('deviceId') == expected_device_id
-        and request.get('publicKey') == context['key']
-        and request.get('clientId') == 'cli'
-        and request.get('clientMode') == 'cli'
-        and request.get('isRepair') is True
-        and request.get('role') == 'operator'
-        and request.get('roles') == ['operator']
-        and scope_keys == {'scopes'}
-        and request.get('scopes') == []
-        and not unexpected_auth_keys
-        and request.get('silent') is True
+        f"failures={'+'.join(failures) or 'none'} fields={len(request)} "
+        f"scope_keys={len(scope_keys)} scopes_present={'scopes' in request} "
+        f"requested_scopes_present={'requestedScopes' in request} "
+        f"scopes_type={type(raw_scopes).__name__} scopes_count={scope_count} "
+        f"silent={silent_label}"
     )
 def verify_inert_final_pending_classifier():
     context={'key': 'reviewed-public-key', 'scopes': final_scopes, 'token': 'rotated-token'}
@@ -654,6 +709,10 @@ def verify_inert_final_pending_classifier():
         return {'pending': {'inert-request': {**request, **changes}}}
     missing_scopes={key: value for key, value in request.items() if key != 'scopes'}
     rejected=[
+        ([], context, reviewed),
+        (valid, [], reviewed),
+        (valid, context, []),
+        ({'pending': []}, context, reviewed),
         ({'pending': {}}, context, reviewed),
         ({'pending': {'wrong-key': request}}, context, reviewed),
         ({'pending': {**valid['pending'], 'extra-request': {
@@ -814,13 +873,14 @@ if mode == 'prepare':
             return '|'.join('+'.join(sorted(view)) for view in views)
         context_label='missing' if context is None else scope_sets_label([context['scopes']])
         auth_ok=context is not None and auth_matches(state, context)
+        inert_label=inert_final_pending_diagnostic(state, context or {}, target)
         fail(
             'request is not the exact canonical operator scope upgrade; '
             f'context={context_label} auth_match={auth_ok} '
             f'views={scope_sets_label(requested_views)} '
             f'closures={scope_sets_label(successor_closures)} '
             f'target={bool(target)} target_expected_final={set(target_expected) == final_scopes} '
-            f'upgrade={is_upgrade} final_successor={is_final_successor}'
+            f'upgrade={is_upgrade} final_successor={is_final_successor} inert={inert_label}'
         )
     candidate_requested=final_scopes if is_final_successor else requested
     candidate={
