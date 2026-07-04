@@ -172,14 +172,14 @@ print(json.dumps({"current": current, "pending": pending, "misuse": misuse}))
     expect(JSON.parse(result.stdout)).toEqual({ current: 0, pending: 10, misuse: 1 });
   });
 
-  it("fails a compat applied-state commit when its anchor directory is not writable", () => {
+  it("uses the atomic write outcome for compat applied-state commits", () => {
     const result = spawnSync(
       "python3",
       [
         "-I",
         "-c",
         String.raw`
-import contextlib, importlib.util, io, json, os, sys, tempfile
+import importlib.util, json, os, sys, tempfile
 spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
 guard = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = guard
@@ -198,29 +198,28 @@ open(config, "w", encoding="utf-8").write(
     "model: test\nmcp_servers:\n  alpha:\n    url: https://alpha.example/mcp\n"
 )
 guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="intend")
-pending_text = open(anchor, encoding="utf-8").read()
+original_access = guard.os.access
 guard.os.access = lambda *_args: False
-sys.argv = [
-    "runtime-config-guard.py",
-    "commit-mcp-applied",
-    "--hermes-dir", hermes,
-    "--hash-file", anchor,
-    "--mode", "compat",
-    "--startup-owner",
-]
-stdout = io.StringIO()
-stderr = io.StringIO()
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="apply")
+false_negative_state = guard.inspect_mcp_integrity(hermes, anchor)
+guard.os.access = original_access
+open(config, "w", encoding="utf-8").write(
+    "model: test\nmcp_servers:\n  beta:\n    url: https://beta.example/mcp\n"
+)
+guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="intend")
+pending_text = open(anchor, encoding="utf-8").read()
+guard._write_hash = lambda *_args: (_ for _ in ()).throw(
+    PermissionError(13, "permission denied")
+)
 try:
-    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-        guard.main()
-except SystemExit as error:
-    status = error.code
+    guard.refresh_hashes(hermes, anchor, "compat", mcp_transition="apply")
+except PermissionError:
+    write_denied = True
 else:
-    status = 0
+    write_denied = False
 print(json.dumps({
-    "status": status,
-    "stdout": stdout.getvalue(),
-    "stderr": stderr.getvalue(),
+    "false_negative_state": false_negative_state,
+    "write_denied": write_denied,
     "unchanged": open(anchor, encoding="utf-8").read() == pending_text,
 }))
 `,
@@ -231,10 +230,8 @@ print(json.dumps({
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      status: 1,
-      stdout: "",
-      stderr:
-        "[SECURITY] Hermes compatibility MCP applied-state commit requires a writable directory\n",
+      false_negative_state: "current",
+      write_denied: true,
       unchanged: true,
     });
   });

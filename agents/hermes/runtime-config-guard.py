@@ -1372,11 +1372,13 @@ def refresh_hashes(
     # Hash refresh is an atomic rename, so directory write authority is what
     # matters; a correctly shields-locked compatibility file is itself 0444.
     compat_writable = os.access(hermes_dir, os.W_OK)
-    if mcp_transition == "apply" and mode == "compat" and not compat_writable:
-        raise UnsafePathError(
-            "Hermes compatibility MCP applied-state commit requires a writable directory"
-        )
-    if mode == "both" or (mode == "compat" and compat_writable):
+    # Applying a healthy gateway's intent must use the real atomic write as
+    # the authority check. `os.access` is only a best-effort legacy probe and
+    # can disagree with the effective credentials used by the write itself.
+    compat_commit_required = mcp_transition == "apply" and mode == "compat"
+    if mode == "both" or (
+        mode == "compat" and (compat_writable or compat_commit_required)
+    ):
         assert_inputs_stable()
         _write_hash(compat_hash, hash_text)
 
