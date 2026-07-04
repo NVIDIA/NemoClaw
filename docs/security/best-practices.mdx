@@ -216,10 +216,24 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
+| `tavily` | Tavily Search API. | Agent can submit search queries and extraction targets to Tavily. The preset allows only `POST /search` and `POST /extract` from the maintained agent runtimes and enables request-body credential rewriting for Hermes. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
 Apply presets only when the agent's task requires the integration.
 Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
+
+### Web Search Credential Rewriting
+
+NemoClaw registers each selected web search credential in a sandbox-scoped OpenShell provider and writes a resolver placeholder into the agent configuration.
+OpenClaw sends Brave's placeholder in the `X-Subscription-Token` header and Tavily's placeholder in the `Authorization` header.
+Hermes sends the Tavily placeholder in the JSON `api_key` field, so the `tavily` policy preset enables `request_body_credential_rewrite` for `api.tavily.com`.
+OpenShell replaces these placeholders only when the request reaches the matching egress policy path.
+The raw `BRAVE_API_KEY` or `TAVILY_API_KEY` is not written into the sandbox configuration.
+
+The `tavily` preset restricts agent egress to the maintained Python and Node.js paths used by the supported agents.
+Its exact curl paths are used only by onboarding's post-create verifier.
+Do not replace these paths with a broad `/**` binary rule.
+Broader binary access would let unrelated sandbox processes send data to Tavily through the same allowed endpoint.
 
 ## Filesystem Controls
 

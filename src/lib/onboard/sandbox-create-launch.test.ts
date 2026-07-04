@@ -9,7 +9,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createOpenshellCliHelpers } from "./openshell-cli";
-import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
+import {
+  prepareSandboxCreateLaunch,
+  prepareSandboxCreateLaunchWithPrebuild,
+} from "./sandbox-create-launch";
 
 const disabledHermesDashboardState = { config: null, enabled: false };
 
@@ -257,5 +260,74 @@ describe("prepareSandboxCreateLaunch", () => {
     });
 
     expect(result.envArgs.some((arg) => arg.startsWith("NEMOCLAW_SANDBOX_NAME="))).toBe(false);
+  });
+});
+
+describe("prepareSandboxCreateLaunchWithPrebuild", () => {
+  it("hands the build-qualified image to the canonical launch renderer", async () => {
+    const buildImage = vi.fn(async () => 0);
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx: "/tmp/build",
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage,
+        log: vi.fn(),
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", "nemoclaw-sandbox-local:demo-build-123", "--name", "demo"],
+      imageRef: "nemoclaw-sandbox-local:demo-build-123",
+    });
+    expect(result.createCommand).toContain(
+      "sandbox create --from nemoclaw-sandbox-local:demo-build-123 --name demo",
+    );
+    expect(buildImage).toHaveBeenCalledOnce();
+  });
+
+  it("renders the original Dockerfile after a local build failure", async () => {
+    const result = await prepareSandboxCreateLaunchWithPrebuild({
+      agent: null,
+      chatUiUrl: "",
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "demo"],
+      env: {},
+      extraPlaceholderKeys: [],
+      getDashboardForwardPort: () => "0",
+      hermesDashboardState: disabledHermesDashboardState,
+      manageDashboard: false,
+      openshellShellCommand: (args) => args.join(" "),
+      sandboxName: "demo",
+      buildEnv: () => ({}),
+      prebuild: {
+        buildCtx: "/tmp/build",
+        buildId: "build-123",
+        dockerDriverGateway: true,
+        env: { NEMOCLAW_SANDBOX_PREBUILD: "1" },
+        buildImage: async () => 1,
+        log: vi.fn(),
+      },
+    });
+
+    expect(result.prebuild).toEqual({
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "demo"],
+      imageRef: null,
+    });
+    expect(result.createCommand).toContain(
+      "sandbox create --from /tmp/build/Dockerfile --name demo",
+    );
+    expect(result.createCommand).not.toContain("nemoclaw-sandbox-local");
   });
 });

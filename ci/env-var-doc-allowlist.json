@@ -62,5 +62,9 @@
   {
     "name": "NEMOCLAW_FORWARD_RECOVERY_WAIT_MS",
     "reason": "Internal Vitest-only override that shortens the bounded post-start forward-settle poll in subprocess fixtures. Production uses the built-in three-second window."
+  },
+  {
+    "name": "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK",
+    "reason": "Internal one-process handoff from Docker GPU patch preparation into sandbox creation. Rebuild scopes and restores it; users must not set it."
   }
 ]

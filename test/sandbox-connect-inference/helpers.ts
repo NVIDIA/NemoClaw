@@ -242,7 +242,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
       }
     }
     if (
-      process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
+      process.env.OPENSHELL_TEST_FAIL_APPROVAL_PASS === "1" &&
       approvalCmd.includes("openclaw") &&
       approvalCmd.includes("devices") &&
       approvalCmd.includes("approve")
@@ -254,7 +254,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     // STOPPED so the probe path takes the not-running branch and (when recovery
     // also fails) the probe-failure exit — where the approval sweep must NOT run.
     if (
-      process.env.NEMOCLAW_TEST_GATEWAY_DOWN === "1" &&
+      process.env.OPENSHELL_TEST_GATEWAY_DOWN === "1" &&
       command.includes("/health") &&
       command.includes("HTTP_CODE")
     ) {
@@ -332,11 +332,23 @@ const sanitizedPrefix =
     index % 2 === 0 ? value === "--env" : /^[A-Z0-9_]+=.*$/.test(value)
   );
 
-if (args[0] === "ps") {
+const isDirectSandboxDiscovery =
+  args[0] === "ps" &&
+  args.includes("--no-trunc") &&
+  args.includes("label=openshell.ai/managed-by=openshell") &&
+  args.includes("label=openshell.ai/sandbox-name=${sandboxName}") &&
+  args.includes("{{.ID}}\\t{{.Names}}");
+
+if (isDirectSandboxDiscovery) {
   const directContainer = state.gatewaySupervisorRecovery
-    ? "openshell-${sandboxName}-fixture\\n"
+    ? "sandbox-container-id\\topenshell-${sandboxName}-fixture\\n"
     : "";
-  process.stdout.write("openshell-cluster-nemoclaw\\n" + directContainer);
+  process.stdout.write(directContainer);
+  process.exit(0);
+}
+
+if (args[0] === "ps") {
+  process.stdout.write("openshell-cluster-nemoclaw\\n");
   process.exit(0);
 }
 
@@ -348,7 +360,7 @@ if (
   args.includes("PYTHONNOUSERSITE=1") &&
   args.length === userIndex + 6 &&
   args[userIndex + 1] === "root" &&
-  args[userIndex + 2] === "openshell-${sandboxName}-fixture" &&
+  args[userIndex + 2] === "sandbox-container-id" &&
   args[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
   args[userIndex + 4] === "recover"
 ) {

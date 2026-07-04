@@ -9,6 +9,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "brev-launchable-ci-cpu.sh");
+const BREV_LIFECYCLE_SCRIPT_MAX_BYTES = 16 * 1024;
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4";
 
@@ -253,6 +254,10 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
+  it("fits within Brev's lifecycle setup-script limit", () => {
+    expect(fs.statSync(SCRIPT).size).toBeLessThanOrEqual(BREV_LIFECYCLE_SCRIPT_MAX_BYTES);
+  });
+
   it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",

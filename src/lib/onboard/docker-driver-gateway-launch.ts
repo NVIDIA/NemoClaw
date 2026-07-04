@@ -93,6 +93,9 @@ type BuildGatewayLaunchOptions = {
   hostGlibcVersion?: string | null;
   requiredGlibcVersions?: string[];
   ensureLocalTlsBundle?: boolean;
+  // Multi-gateway callers pass the selected name. The hardened config derives
+  // its JWT gateway identity from the already gateway-scoped state directory.
+  gatewayName?: string;
   // Default compatibility container name when NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME
   // is unset. Callers pass a per-gateway-port name so a second sandbox's compat
   // container (and its pre-launch `docker rm`) cannot tear down the first
@@ -166,25 +169,16 @@ export function buildDockerDriverGatewayRuntimeIdentity(
   options: BuildGatewayLaunchOptions,
 ): DockerDriverGatewayRuntimeIdentity {
   const launch = buildDockerDriverGatewayLaunch(options);
-  const desiredEnv =
-    launch.mode === "container"
-      ? {
-          ...options.gatewayEnv,
-          ...Object.fromEntries(
-            Object.entries(launch.env).filter(
-              ([key, val]) => key in options.gatewayEnv && typeof val === "string",
-            ) as [string, string][],
-          ),
-          ...(typeof launch.env.OPENSHELL_GATEWAY_CONFIG === "string"
-            ? { OPENSHELL_GATEWAY_CONFIG: launch.env.OPENSHELL_GATEWAY_CONFIG }
-            : {}),
-        }
-      : {
-          ...options.gatewayEnv,
-          ...(typeof launch.env.OPENSHELL_GATEWAY_CONFIG === "string"
-            ? { OPENSHELL_GATEWAY_CONFIG: launch.env.OPENSHELL_GATEWAY_CONFIG }
-            : {}),
-        };
+  const desiredKeys = new Set([
+    ...Object.keys(options.gatewayEnv),
+    "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+    "OPENSHELL_GATEWAY_CONFIG",
+  ]);
+  const desiredEnv = Object.fromEntries(
+    Object.entries(launch.env).filter(
+      ([key, value]) => desiredKeys.has(key) && typeof value === "string",
+    ) as [string, string][],
+  );
   return {
     launch,
     desiredEnv,

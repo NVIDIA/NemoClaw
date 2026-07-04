@@ -4,7 +4,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
@@ -14,34 +13,27 @@ import {
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
 import {
-  getSandboxDeleteOutcome,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import {
   emitProviderDetachResidualHint,
-  runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { redact } from "../../security/redact";
-import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
-import { killTimer as defaultKillShieldsTimer, readTimerMarker } from "../../shields/timer-control";
+import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
+import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
 import * as registry from "../../state/registry";
-import {
-  createSystemDeps as createSessionDeps,
-  getActiveSandboxSessions,
-} from "../../state/sandbox-session";
-import {
-  cleanupGatewayAfterLastSandbox,
-  type DestroyRunOpenshell,
-  selectGatewayForSandboxDestroy,
-} from "./destroy-gateway";
-import { getSandboxTargetGatewayName } from "./gateway-target";
+import { confirmSandboxDestroy } from "./destroy-confirmation";
+import { executeSandboxDestroy } from "./destroy-execution";
+import { cleanupGatewayAfterLastSandbox } from "./destroy-gateway";
+import { prepareSandboxDestroy } from "./destroy-preflight";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
+
+export { classifyDestroySandboxPresence } from "./destroy-presence";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -302,148 +294,79 @@ export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
 ): Promise<void> {
+  return withMcpLifecycleLock(sandboxName, () => destroySandboxUnlocked(sandboxName, options));
+}
+
+async function destroySandboxUnlocked(
+  sandboxName: string,
+  options: string[] | DestroySandboxOptions = {},
+): Promise<void> {
   const normalized = normalizeDestroySandboxOptions(options);
-  const skipConfirm = normalized.yes === true || normalized.force === true;
+  if (!(await confirmSandboxDestroy(sandboxName, normalized))) return;
 
-  // Active session detection — enrich the confirmation prompt if sessions are active
-  let activeSessionCount = 0;
-  const opsBin = resolveOpenshell();
-  if (opsBin) {
-    try {
-      const sessionResult = getActiveSandboxSessions(sandboxName, createSessionDeps(opsBin));
-      if (sessionResult.detected) {
-        activeSessionCount = sessionResult.sessions.length;
-      }
-    } catch {
-      /* non-fatal */
-    }
-  }
-
-  if (!skipConfirm) {
-    console.log(`  ${YW}Destroy sandbox '${sandboxName}'?${R}`);
-    if (activeSessionCount > 0) {
-      const plural = activeSessionCount > 1 ? "sessions" : "session";
-      console.log(
-        `  ${YW}⚠  Active SSH ${plural} detected (${activeSessionCount} connection${activeSessionCount > 1 ? "s" : ""})${R}`,
-      );
-      console.log(
-        `  Destroying will terminate ${activeSessionCount === 1 ? "the" : "all"} active ${plural} with a Broken pipe error.`,
-      );
-    }
-    console.log("  This will permanently delete the sandbox and all workspace files inside it.");
-    console.log("  This cannot be undone.");
-    const answer = await askPrompt("  Type 'yes' to confirm, or press Enter to cancel [y/N]: ");
-    if (answer.trim().toLowerCase() !== "y" && answer.trim().toLowerCase() !== "yes") {
-      console.log("  Cancelled.");
-      return;
-    }
-  }
-
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
-  const sb = registry.getSandbox(sandboxName);
-  if (sb && sb.nimContainer) {
-    console.log(`  Stopping NIM for '${sandboxName}'...`);
-    nim.stopNimContainerByName(sb.nimContainer);
-  } else {
-    // Best-effort cleanup of convention-named NIM containers that may not
-    // be recorded in the registry (e.g. older sandboxes).  Suppress output
-    // so the user doesn't see "No such container" noise when no NIM exists.
-    nim.stopNimContainer(sandboxName, { silent: true });
-  }
-
-  // The Ollama auth proxy is per-sandbox and only spawned when the provider
-  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
-  // handled separately by `cleanupSandboxServices` above (which routes
-  // through `stopAll()` or directly into `unloadOllamaModels()` based on
-  // whether host services are being torn down).
-  if (sb?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy");
-    killStaleProxy();
-  }
-
-  console.log(`  Deleting sandbox '${sandboxName}'...`);
-  const { runOpenshell } = require("../../adapters/openshell/runtime") as {
-    runOpenshell: DestroyRunOpenshell;
-  };
-  // Capture and select the sandbox's gateway before any destructive OpenShell
-  // operation. Provider cleanup and sandbox delete must address the gateway
-  // recorded for this sandbox, not whichever gateway happens to be active.
-  const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
-  selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
-
-  const destructiveResult = withTimerBoundShieldsMutationLock(
+  const { cleanupGatewayName, runOpenshell, sandbox, sandboxConfirmedAbsent } =
+    prepareSandboxDestroy(sandboxName);
+  const destructiveResult = await executeSandboxDestroy({
+    cleanupShieldsArtifacts: cleanupShieldsDestroyArtifacts,
+    force: normalized.force === true,
+    runOpenshell,
+    sandbox,
+    sandboxConfirmedAbsent,
     sandboxName,
-    "destroy sandbox",
-    () => {
-      // Wipe persistent state AFTER the gateway is selected so the exec targets
-      // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
-      // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
-      // Hold the same lock used by the auto-restore timer through wipe, provider
-      // detach, and delete. A timer that is already restoring finishes first;
-      // a waiting timer cannot mutate this sandbox or a same-name replacement.
-      wipeSandboxState(sandboxName);
-
-      // The wipe needs the timed mutable posture so the sandbox user can
-      // remove manifest state. Convert it back to a verified locked posture
-      // immediately afterward and before delete. The outer owner carries the
-      // timer takeover token throughout, so a deadline/crash during the wipe
-      // can still reclaim it; after shieldsUp succeeds, delete failure or
-      // process death leaves a surviving sandbox hardened.
-      if (readTimerMarker(sandboxName)) {
-        const { shieldsUp: hardenShields } =
-          require("../../shields") as typeof import("../../shields");
-        hardenShields(sandboxName, {
-          throwOnError: true,
-          allowLegacyHermesProtocol: true,
-        });
-      }
-
-      const lockedDetachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
-        runOpenshell,
-        redact,
-      });
-      const lockedDeleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      const { output: deleteOutput, alreadyGone: lockedAlreadyGone } =
-        getSandboxDeleteOutcome(lockedDeleteResult);
-
-      if (lockedDeleteResult.status !== 0 && !lockedAlreadyGone) {
-        // Any active timer was cleared only after shieldsUp verified the live
-        // sandbox was hardened. Preserve that locked state on delete failure;
-        // do not remove its local shields record as if deletion had succeeded.
-        return {
-          ok: false as const,
-          deleteOutput,
-          exitCode: lockedDeleteResult.status || 1,
-        };
-      }
-
-      // The live sandbox is now gone while this name remains serialized.
-      // Revoke the timer and local shields state before releasing the lock so
-      // neither can target a subsequently created sandbox with the same name.
-      cleanupShieldsDestroyArtifacts(sandboxName);
-      return {
-        ok: true as const,
-        detachOutcome: lockedDetachOutcome,
-        deleteResult: lockedDeleteResult,
-        alreadyGone: lockedAlreadyGone,
-      };
-    },
-  );
+  });
   if (!destructiveResult.ok) {
     if (destructiveResult.deleteOutput) {
       console.error(`  ${destructiveResult.deleteOutput}`);
     }
+    if (destructiveResult.mcpRecoveryFailure) {
+      console.error(
+        `  Failed to restore MCP runtime state after the sandbox delete failed: ${destructiveResult.mcpRecoveryFailure}`,
+      );
+      console.error(
+        `  MCP definitions and OpenShell providers were preserved; fix the reported cause and retry MCP restart or destroy.`,
+      );
+    }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
+    if (destructiveResult.gatewayUnreachable) {
+      if (destructiveResult.mcpOwnershipRequiresGateway) {
+        console.error(
+          `  The OpenShell gateway is unreachable. Local state was preserved because it contains MCP ownership required for exact provider cleanup.`,
+        );
+        console.error(
+          `  Start the gateway (run '${CLI_NAME} ${sandboxName} status'), then retry destroy; --force cannot safely discard MCP ownership.`,
+        );
+      } else {
+        console.error(
+          `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
+        );
+        console.error(
+          `  or re-run with --force to remove the local sandbox record without the gateway.`,
+        );
+      }
+    }
     process.exit(destructiveResult.exitCode);
   }
-  const { detachOutcome, deleteResult, alreadyGone } = destructiveResult;
+  const { detachOutcome, deleteResult, alreadyGone, forcedLocalCleanup, deleteOutput } =
+    destructiveResult;
 
+  if (forcedLocalCleanup) {
+    if (deleteOutput) {
+      console.error(`  ${deleteOutput}`);
+    }
+    console.warn(
+      `  ${YW}⚠${R} OpenShell gateway unreachable; removing the local record for '${sandboxName}' (--force).`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} If the gateway comes back, the sandbox may still exist — re-run destroy or remove it via openshell.`,
+    );
+  }
+
+  // Forced local cleanup removes the registry entry/local artifacts but cannot
+  // confirm the gateway-side delete, so it must not trigger shared host-service
+  // or gateway teardown: the sandbox may still exist on the (unreachable)
+  // gateway. Gate that teardown on the *confirmed* delete state only — never on
+  // forcedLocalCleanup — so a forced cleanup of the last registered sandbox does
+  // not shut down services for a sandbox we never confirmed deleted (#6046).
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,

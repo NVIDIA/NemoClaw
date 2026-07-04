@@ -18,6 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout, testTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -83,6 +84,7 @@ function createFixture(opts: {
   providerRegistered?: boolean;
   registeredProviders?: string[];
   activeSessionCount?: number | null;
+  inferenceProbeHttpStatus?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -98,6 +100,7 @@ function createFixture(opts: {
     providerRegistered = true,
     registeredProviders,
     activeSessionCount = 0,
+    inferenceProbeHttpStatus = null,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -119,8 +122,25 @@ function createFixture(opts: {
           model: "meta/llama-3.3-70b-instruct",
           provider,
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18789,
+          fromDockerfile: null,
           policies: [],
           agent,
+          ...(agent === "langchain-deepagents-code"
+            ? {
+                credentialEnv,
+                preferredInferenceApi: "openai-completions",
+                endpointUrl: "https://inference-api.nvidia.com/v1",
+                nemoclawVersion: "0.0.72",
+                dashboardPort: 0,
+                gatewayName: "nemoclaw",
+                gatewayPort: 8080,
+                sandboxGpuMode: "0",
+              }
+            : {}),
           ...(agents ? { agents } : {}),
           ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
@@ -224,6 +244,9 @@ function createFixture(opts: {
   const workspaceDir = path.join(fakeRoot, "workspace");
   fs.mkdirSync(workspaceDir, { recursive: true });
   fs.writeFileSync(path.join(workspaceDir, "marker.txt"), "test-workspace");
+  const deleteMarker = path.join(tmpDir, "sandbox-delete-invoked");
+  const atomicityMarker = path.join(fakeRoot, "rebuild-atomicity-marker.txt");
+  fs.writeFileSync(atomicityMarker, "dcode-atomicity-marker\n");
 
   // ── Fake openshell ────────────────────────────────────────────
   const sshConfig = [
@@ -236,29 +259,83 @@ function createFixture(opts: {
   ].join("\\n");
 
   const registeredProvidersLiteral = JSON.stringify(registeredProviders ?? null);
+  const hermesProviderStatePath = path.join(tmpDir, "hermes-provider-credential-key");
+  const initialHermesCredentialKey =
+    hermesAuthMethod === "api_key" ? "NOUS_API_KEY" : "OPENAI_API_KEY";
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("fs");
 const a = process.argv.slice(2);
 const registeredProviders = ${registeredProvidersLiteral};
-if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
+const hermesProviderStatePath = ${JSON.stringify(hermesProviderStatePath)};
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName} Ready\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
-if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="delete")     { fs.writeFileSync(${JSON.stringify(deleteMarker)}, "deleted\\n"); process.exit(0); }
+if (a[0]==="sandbox" && a[1]==="exec") {
+  const command = a.join(" ");
+  if (command.includes("rebuild-atomicity-marker.txt")) {
+    process.stdout.write(fs.readFileSync(${JSON.stringify(atomicityMarker)}, "utf-8"));
+    process.exit(0);
+  }
+  if (command.includes("https://inference.local/")) {
+    const probeStatus = ${String(inferenceProbeHttpStatus ?? 200)};
+    process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\n" + probeStatus + "\\n");
+    if (probeStatus >= 200 && probeStatus < 300) process.exit(0);
+    process.stderr.write("upstream rejected stored provider credential\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (a[0]==="status")                         { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { const i=a.indexOf("-g"); const name=i>=0?a[i+1]:"nemoclaw"; process.stdout.write("Gateway Info\\n\\nGateway: " + name + "\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
-if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
+if (a[0]==="inference" && a[1]==="get")      { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       {
-  if (Array.isArray(registeredProviders)) process.exit(registeredProviders.includes(a[2]) ? 0 : 1);
-  process.exit(${providerRegistered ? 0 : 1});
+  const providerName = a[2];
+  const persistedHermes = providerName === "hermes-provider" && fs.existsSync(hermesProviderStatePath);
+  const exists = persistedHermes || (Array.isArray(registeredProviders)
+    ? registeredProviders.includes(providerName)
+    : ${providerRegistered ? "true" : "false"});
+  if (!exists) process.exit(1);
+  if (providerName === "hermes-provider") {
+    const credentialKey = persistedHermes
+      ? fs.readFileSync(hermesProviderStatePath, "utf8").trim()
+      : ${JSON.stringify(initialHermesCredentialKey)};
+    process.stdout.write("Provider:\\n  Name: hermes-provider\\n  Credential keys: " + credentialKey + "\\n");
+  }
+  process.exit(0);
+}
+if (a[0]==="provider" && (a[1]==="create" || a[1]==="update")) {
+  const nameIndex = a.indexOf("--name");
+  const providerName = a[1] === "create" ? a[nameIndex + 1] : a[2];
+  const credentialIndex = a.indexOf("--credential");
+  if (providerName === "hermes-provider" && credentialIndex >= 0) {
+    fs.writeFileSync(hermesProviderStatePath, a[credentialIndex + 1]);
+  }
+  process.exit(0);
 }
 if (a[0]==="provider")                       { process.exit(0); }
+if (a[0]==="forward" && a[1]==="list")      { process.stdout.write("SANDBOX BIND PORT PID STATUS\\n${sandboxName} 127.0.0.1 18789 4242 running\\n"); process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(tmpDir, component),
+      `#!/usr/bin/env node
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 
   // ── Fake ps for active SSH session detection ──────────────────
   const activeSessionLines = Array.from(
@@ -282,8 +359,25 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+if (a[0]==="info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
-if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
+if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
+if (a[0]==="run") {
+  if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  else process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 if (a[0]==="ps") { process.exit(0); }
 process.stderr.write("unexpected docker call: " + a.join(" ") + "\\n");
@@ -322,29 +416,42 @@ process.exit(0);
     mode: 0o755,
   });
 
-  return { tmpDir, nemoclawDir, sandboxName, fakeRoot };
+  return { tmpDir, nemoclawDir, sandboxName, fakeRoot, deleteMarker };
 }
 
 function runRebuild(
   fixture: ReturnType<typeof createFixture>,
   extraEnv: Record<string, string> = {},
-  options: { yes?: boolean; input?: string } = {},
+  options: { yes?: boolean; input?: string; timeoutMs?: number } = {},
 ) {
-  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
-  if (options.yes !== false) argv.push("--yes");
+  const args = [fixture.sandboxName, "rebuild"];
+  if (options.yes !== false) args.push("--yes");
+  return runCli(fixture, args, extraEnv, options.input, options.timeoutMs);
+}
+
+function runCli(
+  fixture: ReturnType<typeof createFixture>,
+  args: string[],
+  extraEnv: Record<string, string> = {},
+  input?: string,
+  timeoutMs = 60_000,
+) {
+  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), ...args];
   return spawnSync(process.execPath, argv, {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    input: options.input,
+    input,
     env: {
       HOME: fixture.tmpDir,
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_NO_CONNECT_HINT: "1",
       NO_COLOR: "1",
       ...extraEnv,
     },
-    timeout: 30_000,
+    timeout: execTimeout(timeoutMs),
   });
 }
 
@@ -511,6 +618,49 @@ describe("atomic rebuild (#2273)", () => {
       expect(output).toContain("Backing up sandbox state");
     });
 
+    it("preserves the Ready DCode sandbox when its stored inference route returns 401 (#6195)", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "langchain-deepagents-code",
+        provider: "compatible-endpoint",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        providerRegistered: true,
+        inferenceProbeHttpStatus: 401,
+      });
+
+      const result = runRebuild(f, {
+        NEMOCLAW_PROVIDER_KEY: "obviously-invalid-ambient-credential",
+      });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("HTTP 401");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Deleting old sandbox");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(fs.existsSync(f.deleteMarker)).toBe(false);
+      expect(registryHasSandbox(f)).toBe(true);
+
+      const liveList = spawnSync(path.join(f.tmpDir, "openshell"), ["sandbox", "list"], {
+        encoding: "utf-8",
+      });
+      expect(liveList.status).toBe(0);
+      expect(liveList.stdout).toContain(`${f.sandboxName} Ready`);
+
+      const marker = runCli(f, [
+        f.sandboxName,
+        "exec",
+        "--",
+        "cat",
+        "/sandbox/rebuild-atomicity-marker.txt",
+      ]);
+      expect(marker.status, marker.stderr).toBe(0);
+      expect(marker.stdout).toContain("dcode-atomicity-marker");
+    });
+
     it("aborts before backup when the gateway provider is missing even with host credential", {
       timeout: 60_000,
     }, () => {
@@ -538,7 +688,7 @@ describe("atomic rebuild (#2273)", () => {
     });
 
     it("copies Hermes messaging channels from the registry into the rebuild resume session", {
-      timeout: 60_000,
+      timeout: testTimeout(120_000),
     }, () => {
       const f = createFixture({
         agent: "hermes",
@@ -550,7 +700,7 @@ describe("atomic rebuild (#2273)", () => {
         },
       });
 
-      const result = runRebuild(f);
+      const result = runRebuild(f, {}, { timeoutMs: 120_000 });
       const output = (result.stderr || "") + (result.stdout || "");
       expect(output).toContain("Creating new sandbox with current image");
 
@@ -776,7 +926,13 @@ describe("atomic rebuild (#2273)", () => {
 
       expect(output).not.toContain("Missing credential: NOUS_API_KEY");
       expect(output).not.toContain("provider credential not found");
+      expect(output).toContain(
+        "Hermes Provider is not registered in OpenShell; registering it from the configured exported API-key environment variable before rebuild.",
+      );
+      expect(output).not.toContain("NOUS_API_KEY");
+      expect(output).not.toContain("nous-key-from-env");
       expect(output).toContain("Backing up sandbox state");
+      expect(output).toContain("State backed up");
     });
 
     it("uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_INFERENCE_API_KEY", {

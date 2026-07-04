@@ -28,6 +28,8 @@ type ResolveBaseImageOptions = {
   minGlibcVersion?: string;
   rootDir?: string;
   env?: NodeJS.ProcessEnv;
+  validateImage?: (imageRef: string) => boolean;
+  validationDescription?: string;
 };
 
 export type SandboxBaseImageResolution = {
@@ -363,6 +365,14 @@ function resolvePulledCandidate(
     }
   }
 
+  if (options.validateImage && !options.validateImage(imageRef)) {
+    console.warn(
+      `  Warning: ${options.label || "sandbox base image"} ${imageRef} lacks ` +
+        `${options.validationDescription || "a required runtime capability"}.`,
+    );
+    return null;
+  }
+
   const repoDigest = getRepoDigest(imageName, imageRef);
   return {
     ref: repoDigest?.ref || imageRef,
@@ -381,7 +391,7 @@ function resolveLocalCandidate(
     const check = options.requireOpenshellSandboxAbi
       ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
       : { ok: true, version: null };
-    if (check.ok) {
+    if (check.ok && (!options.validateImage || options.validateImage(imageRef))) {
       return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
     }
   }
@@ -424,6 +434,14 @@ function resolveLocalCandidate(
     return null;
   }
 
+  if (options.validateImage && !options.validateImage(imageRef)) {
+    console.error(
+      `  Local ${label} ${imageRef} lacks ` +
+        `${options.validationDescription || "a required runtime capability"}.`,
+    );
+    return null;
+  }
+
   return { ref: imageRef, digest: null, source: "local", glibcVersion: check.version };
 }
 
@@ -436,7 +454,7 @@ export function resolveSandboxBaseImage(
   if (override) {
     const resolved = resolvePulledCandidate(options.imageName, override, "override", options);
     if (resolved) return resolved;
-    if (!options.requireOpenshellSandboxAbi) return null;
+    if (!options.requireOpenshellSandboxAbi && !options.validateImage) return null;
   } else {
     for (const tag of getVersionedBaseImageTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;
@@ -467,7 +485,7 @@ export function resolveSandboxBaseImage(
     if (resolved) return resolved;
   }
 
-  if (options.requireOpenshellSandboxAbi) {
+  if (options.requireOpenshellSandboxAbi || options.validateImage) {
     return resolveLocalCandidate(options);
   }
   return null;

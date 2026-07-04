@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Agent definition loader — reads agents/*/manifest.yaml and provides
-// accessors for agent-specific configuration used during onboarding.
+// Agent definition loader — each agent's definition already lives in its
+// agents/*/manifest.yaml. This facade scans those per-agent files and builds
+// the stable derived accessors used during onboarding; schema types and
+// validation readers stay in focused sibling modules.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -13,119 +15,57 @@ import {
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
+import type {
+  AgentChoice,
+  AgentConfigPaths,
+  AgentDashboard,
+  AgentDefinition,
+  AgentHealthProbe,
+  AgentLegacyPaths,
+  AgentMcpCapability,
+  AgentStateFile,
+  AgentVersionScheme,
+} from "./definition-types";
+import {
+  loadManifestRecord,
+  readBoolean,
+  readDashboard,
+  readHealthProbe,
+  readInference,
+  readMcpCapability,
+  readObject,
+  readPortArray,
+  readStateFiles,
+  readString,
+  readStringArray,
+  readStringMap,
+  readUserManagedFiles,
+  readVersionScheme,
+} from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
+export type {
+  AgentChoice,
+  AgentConfigPaths,
+  AgentDashboard,
+  AgentDashboardKind,
+  AgentDefinition,
+  AgentHealthProbe,
+  AgentInference,
+  AgentLegacyPaths,
+  AgentMcpAdapter,
+  AgentMcpCapability,
+  AgentMcpSupport,
+  AgentStateFile,
+  AgentStateFileStrategy,
+  AgentVersionScheme,
+} from "./definition-types";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
-
-type ManifestScalar = string | number | boolean | null | Date;
-type ManifestValue = ManifestScalar | ManifestRecord | ManifestValue[];
-type ManifestRecord = { [key: string]: ManifestValue };
-type StringMap = { [key: string]: string };
-
-const yaml: { load(input: string): unknown } = require("js-yaml");
-
-export interface AgentHealthProbe {
-  url: string;
-  port: number;
-  timeout_seconds: number;
-}
-
-export interface AgentConfigPaths {
-  dir: string;
-  configFile: string;
-  envFile: string | null;
-  format: string;
-}
-
-export type AgentStateFileStrategy = "copy" | "sqlite_backup";
-
-export interface AgentStateFile {
-  path: string;
-  strategy: AgentStateFileStrategy;
-}
-
-export type AgentDashboardKind = "ui" | "api";
-
-export interface AgentDashboard {
-  kind: AgentDashboardKind;
-  label: string;
-  path: string;
-  healthPath: string;
-  auth: "url_token" | "session" | "none";
-}
-
-export interface AgentInference {
-  provider_type?: string;
-  provider_options?: string[];
-}
-
-export interface AgentLegacyPaths {
-  dockerfileBase: string | null;
-  dockerfile: string | null;
-  startScript: string | null;
-  policy: string | null;
-  plugin: string | null;
-}
-
-export type AgentVersionScheme = "semver" | "calendar";
-
-export interface AgentDefinition {
-  name: string;
-  description?: string;
-  display_name?: string;
-  binary_path?: string;
-  version_command?: string;
-  expected_version?: string;
-  version_scheme?: AgentVersionScheme;
-  gateway_command?: string;
-  runtime?: AgentRuntime;
-  device_pairing?: boolean;
-  phone_home_hosts?: string[];
-  forward_ports?: number[];
-  health_probe?: AgentHealthProbe;
-  config?: ManifestRecord;
-  inference?: AgentInference;
-  state_dirs?: string[];
-  state_files?: AgentStateFile[];
-  user_managed_files?: string[];
-  _legacy_paths?: StringMap;
-  agentDir: string;
-  manifestPath: string;
-  readonly displayName: string;
-  readonly healthProbe: AgentHealthProbe | null;
-  readonly forwardPort: number;
-  readonly dashboard: AgentDashboard;
-  readonly webAuth: AgentWebAuth;
-  readonly dashboardUi?: AgentDashboardUi | null;
-  readonly configPaths: AgentConfigPaths;
-  readonly inferenceProviderOptions: string[];
-  readonly stateDirs: string[];
-  readonly stateFiles: AgentStateFile[];
-  readonly userManagedFiles: string[];
-  readonly versionCommand: string;
-  readonly expectedVersion: string | null;
-  readonly versionScheme?: AgentVersionScheme | null;
-  readonly hasDevicePairing: boolean;
-  readonly phoneHomeHosts: string[];
-  readonly dockerfileBasePath: string | null;
-  readonly dockerfilePath: string | null;
-  readonly startScriptPath: string | null;
-  readonly policyAdditionsPath: string | null;
-  readonly policyPermissivePath: string | null;
-  readonly pluginDir: string | null;
-  readonly legacyPaths: AgentLegacyPaths | null;
-}
-
-export interface AgentChoice {
-  name: string;
-  displayName: string;
-  description: string;
-}
 
 const _cache = new Map<string, AgentDefinition>();
 
@@ -146,268 +86,6 @@ function unknownAgentMessage(
   const choices = available.join(", ");
   const suffix = context ? ` ${context}` : "";
   return `Unknown agent '${value}'${suffix}. Available: ${choices}${formatAgentAliasSuffix(available)}`;
-}
-
-function isManifestValue(value: unknown): value is ManifestValue {
-  if (value === null || value instanceof Date) return true;
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return true;
-  }
-  if (Array.isArray(value)) {
-    return value.every((entry) => isManifestValue(entry));
-  }
-  return isManifestRecord(value);
-}
-
-function isManifestRecord(value: unknown): value is ManifestRecord {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    return false;
-  }
-
-  return Object.values(value).every((entry) => isManifestValue(entry));
-}
-
-function readString(record: ManifestRecord, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function readBoolean(record: ManifestRecord, key: string): boolean | undefined {
-  const value = record[key];
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readVersionScheme(record: ManifestRecord): AgentVersionScheme | undefined {
-  const value = record.version_scheme;
-  if (value === "semver" || value === "calendar") return value;
-  return undefined;
-}
-
-function readObject(record: ManifestRecord, key: string): ManifestRecord | undefined {
-  const value = record[key];
-  return isManifestRecord(value) ? value : undefined;
-}
-
-function readStringArray(record: ManifestRecord, key: string): string[] | undefined {
-  const value = record[key];
-  if (!Array.isArray(value)) return undefined;
-  return value.filter((entry): entry is string => typeof entry === "string");
-}
-
-const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
-
-function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
-  const value = record.user_managed_files;
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error("Agent manifest field 'user_managed_files' must be an array");
-  }
-
-  return value.map((entry, index) => {
-    if (typeof entry !== "string") {
-      throw new Error(
-        `Agent manifest field 'user_managed_files[${String(index)}]' must be a string`,
-      );
-    }
-    if (entry.length === 0) {
-      throw new Error(
-        `Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`,
-      );
-    }
-    if (CONTROL_CHAR_RE.test(entry)) {
-      throw new Error(
-        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain control characters`,
-      );
-    }
-    if (entry.startsWith("/")) {
-      throw new Error(
-        `Agent manifest field 'user_managed_files[${String(index)}]' must be a relative path, not absolute`,
-      );
-    }
-    const segments = entry.split("/");
-    if (segments.some((segment) => segment === "..")) {
-      throw new Error(
-        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain '..' path components`,
-      );
-    }
-    return entry;
-  });
-}
-
-function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
-  const value = record.state_files;
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error("Agent manifest field 'state_files' must be an array");
-  }
-
-  return value.map((entry, index) => {
-    if (typeof entry === "string") {
-      return { path: entry, strategy: "copy" };
-    }
-    if (!isManifestRecord(entry)) {
-      throw new Error(
-        `Agent manifest field 'state_files[${String(index)}]' must be a string or object`,
-      );
-    }
-    const statePath = readString(entry, "path");
-    if (!statePath) {
-      throw new Error(`Agent manifest field 'state_files[${String(index)}].path' is required`);
-    }
-    const rawStrategy = readString(entry, "strategy") ?? "copy";
-    if (rawStrategy !== "copy" && rawStrategy !== "sqlite_backup") {
-      throw new Error(
-        `Agent manifest field 'state_files[${String(index)}].strategy' must be copy or sqlite_backup`,
-      );
-    }
-    return { path: statePath, strategy: rawStrategy };
-  });
-}
-
-function isValidPort(value: unknown, min = 1): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= 65535;
-}
-
-function readPortArray(record: ManifestRecord, key: string): number[] | undefined {
-  const value = record[key];
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    throw new Error(`Agent manifest field '${key}' must be an array of TCP ports`);
-  }
-
-  const ports = value.map((entry, index) => {
-    if (!isValidPort(entry, 1024)) {
-      throw new Error(
-        `Agent manifest field '${key}[${String(index)}]' must be an integer TCP port between 1024 and 65535`,
-      );
-    }
-    return entry;
-  });
-
-  return ports.length > 0 ? ports : undefined;
-}
-
-function readStringMap(record: ManifestRecord, key: string): StringMap | undefined {
-  const value = readObject(record, key);
-  if (!value) return undefined;
-
-  const result: StringMap = {};
-  for (const [entryKey, entryValue] of Object.entries(value)) {
-    if (typeof entryValue === "string") {
-      result[entryKey] = entryValue;
-    }
-  }
-  return result;
-}
-
-function readHealthProbe(record: ManifestRecord): AgentHealthProbe | undefined {
-  const healthProbe = readObject(record, "health_probe");
-  if (!healthProbe) return undefined;
-
-  const url = readString(healthProbe, "url");
-  const port = healthProbe.port;
-  const timeoutSeconds = healthProbe.timeout_seconds;
-
-  if (port !== undefined && !isValidPort(port)) {
-    throw new Error(
-      "Agent manifest field 'health_probe.port' must be an integer TCP port between 1 and 65535",
-    );
-  }
-
-  if (
-    typeof url === "string" &&
-    isValidPort(port) &&
-    typeof timeoutSeconds === "number" &&
-    Number.isFinite(timeoutSeconds)
-  ) {
-    return {
-      url,
-      port,
-      timeout_seconds: timeoutSeconds,
-    };
-  }
-
-  return undefined;
-}
-
-function readDashboard(record: ManifestRecord): AgentDashboard {
-  const d = readObject(record, "dashboard") ?? {};
-  const rawKind = d.kind;
-  if (rawKind !== undefined && rawKind !== "ui" && rawKind !== "api") {
-    throw new Error("Agent manifest field 'dashboard.kind' must be ui or api");
-  }
-  const kind: AgentDashboardKind = rawKind === "api" ? "api" : "ui";
-  const defaultLabel = kind === "api" ? "API" : "UI";
-  const normalizedLabel = typeof d.label === "string" ? d.label.trim() : "";
-
-  const normalizePath = (key: "path" | "health_path", fallback: string): string => {
-    const value = d[key];
-    if (value === undefined) return fallback;
-    if (typeof value !== "string" || !value.startsWith("/")) {
-      throw new Error(`Agent manifest field 'dashboard.${key}' must be an absolute path`);
-    }
-    return value.trim() || fallback;
-  };
-
-  const rawAuth = d.auth;
-  if (
-    rawAuth !== undefined &&
-    rawAuth !== "url_token" &&
-    rawAuth !== "session" &&
-    rawAuth !== "none"
-  ) {
-    throw new Error("Agent manifest field 'dashboard.auth' must be url_token, session, or none");
-  }
-
-  return {
-    kind,
-    label: normalizedLabel || defaultLabel,
-    path: normalizePath("path", "/"),
-    healthPath: normalizePath("health_path", "/health"),
-    auth: rawAuth ?? (kind === "api" ? "none" : "url_token"),
-  };
-}
-
-function readInference(record: ManifestRecord): AgentInference | undefined {
-  const inference = readObject(record, "inference");
-  if (!inference) return undefined;
-
-  const providerType = inference.provider_type;
-  if (providerType !== undefined && typeof providerType !== "string") {
-    throw new Error("Agent manifest field 'inference.provider_type' must be a string");
-  }
-
-  const providerOptions = inference.provider_options;
-  let providerOptionList: string[] | undefined;
-  if (providerOptions !== undefined) {
-    if (
-      !Array.isArray(providerOptions) ||
-      providerOptions.some((entry) => typeof entry !== "string")
-    ) {
-      throw new Error(
-        "Agent manifest field 'inference.provider_options' must be an array of strings",
-      );
-    }
-    providerOptionList = providerOptions as string[];
-  }
-
-  return {
-    provider_type: providerType,
-    provider_options: providerOptionList,
-  };
-}
-
-function loadManifestRecord(manifestPath: string): ManifestRecord {
-  const parsed = yaml.load(fs.readFileSync(manifestPath, "utf8"));
-  if (!isManifestRecord(parsed)) {
-    throw new Error(`Agent manifest must be a YAML object: ${manifestPath}`);
-  }
-  return parsed;
 }
 
 /**
@@ -453,6 +131,7 @@ export function loadAgent(name: string): AgentDefinition {
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
+  const mcp = readMcpCapability(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
@@ -477,6 +156,7 @@ export function loadAgent(name: string): AgentDefinition {
     health_probe: healthProbe,
     config,
     inference,
+    mcp,
     state_dirs: stateDirs,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
@@ -531,6 +211,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get inferenceProviderOptions(): string[] {
       return inference?.provider_options ?? [];
+    },
+
+    get mcpCapability(): AgentMcpCapability {
+      return mcp;
     },
 
     get stateDirs(): string[] {

@@ -250,8 +250,8 @@ esac`,
 }
 
 // tar stub: write the corresponding binary into the -C outdir. Each binary
-// reports the replacement version + carries the messaging-rewrite capability
-// marker so the post-install feature probe passes.
+// reports the replacement version + carries the messaging-rewrite and MCP-L7
+// capability markers so the post-install feature probes pass.
 function createFakeTar(binDir: string, replacementVersion: string): void {
   writeExecutable(
     path.join(binDir, "tar"),
@@ -275,7 +275,7 @@ esac
 cat > "$outdir/$name" <<'EOS'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${replacementVersion}"; exit 0; fi
-# request-body-credential-rewrite websocket-credential-rewrite
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
 exit 0
 EOS
 chmod 755 "$outdir/$name"`,
