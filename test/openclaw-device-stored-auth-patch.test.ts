@@ -33,7 +33,7 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
         `({
           approve: approvePairingWithFallback,
           calls: gatewayCalls,
-          setList: (value) => { pairingList = value; },
+          setList: setPairingLists,
         })`,
       );
       runtime.setList({ pending: [validPending()], paired: [validPaired()] });
@@ -41,14 +41,17 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
       await runtime.approve({ json: true }, "request-1");
 
       expect(runtime.calls).toHaveLength(2);
-      expect(runtime.calls[0]).toMatchObject({ method: "device.pair.list" });
-      expect(runtime.calls[0]).not.toHaveProperty("useStoredDeviceAuth");
-      expect(runtime.calls[1]).toMatchObject({
-        method: "device.pair.approve",
-        scopes: ["operator.pairing"],
-        useStoredDeviceAuth: true,
-        requiredStoredDeviceAuthScopes: ["operator.pairing"],
-      });
+      for (const [method, call] of [
+        ["device.pair.list", runtime.calls[0]],
+        ["device.pair.approve", runtime.calls[1]],
+      ] as const) {
+        expect(call).toMatchObject({
+          method,
+          scopes: ["operator.pairing"],
+          useStoredDeviceAuth: true,
+          requiredStoredDeviceAuthScopes: ["operator.pairing"],
+        });
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -127,7 +130,7 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           approve: approvePairingWithFallback,
           calls: gatewayCalls,
           failApprovals: (errors) => { approvalFailures = errors; },
-          setList: (value) => { pairingList = value; },
+          setList: setPairingLists,
         })`,
       );
       runtime.setList({ pending: [validPending()], paired: [validPaired()] });
@@ -138,6 +141,11 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
       );
 
       expect(runtime.calls).toHaveLength(2);
+      expect(runtime.calls[0]).toMatchObject({
+        method: "device.pair.list",
+        useStoredDeviceAuth: true,
+        requiredStoredDeviceAuthScopes: ["operator.pairing"],
+      });
       expect(runtime.calls[1]).toMatchObject({
         method: "device.pair.approve",
         useStoredDeviceAuth: true,
@@ -170,7 +178,7 @@ describe("OpenClaw bounded stored-device-auth selection (#4462)", () => {
           approve: approvePairingWithFallback,
           calls: gatewayCalls,
           failApprovals: (errors) => { approvalFailures = errors; },
-          setList: (value) => { pairingList = value; },
+          setList: setPairingLists,
         })`,
       );
       runtime.setList({

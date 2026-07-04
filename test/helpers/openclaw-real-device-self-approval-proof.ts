@@ -172,6 +172,20 @@ function requireRealStoredDeviceAuthLinkage(sources: DistSource[], cliSource: Di
   requireOrderedMarkers(
     cliSource.source,
     [
+      "async function listPairingWithFallback(opts, callOpts)",
+      "nemoclaw: preflight bounded stored device auth before live pairing list",
+      'callGatewayCli("device.pair.list", opts, {}, callOpts)',
+      "const nemoclawLocalList = await listDevicePairing();",
+      "nemoclawLocalStoredAuthCandidate = resolveNemoClawSelfRepairPairingContext",
+      "const nemoclawListCallOpts = nemoclawLocalStoredAuthCandidate ?",
+      "const list = await listPairingWithFallback(opts, nemoclawListCallOpts);",
+      "nemoclawRefuseUnsafeApproval",
+    ],
+    "devices CLI bounded pairing-list preflight",
+  );
+  requireOrderedMarkers(
+    cliSource.source,
+    [
       "async function approvePairingWithFallback(opts, requestId)",
       "nemoclawUseStoredDeviceAuth",
       "nemoclaw: select stored device auth for bounded same-device scope approval",
@@ -1046,6 +1060,20 @@ async function runLiveConfigTokenSelfApprovalProof(options: ProofOptions): Promi
     requireLiveProof(
       !(String(repair.requestId) in pendingAfter),
       "real same-device repair remained pending after approval",
+    );
+    const adminSuccessors = Object.values(pendingAfter)
+      .map(asRecord)
+      .filter(
+        (request): request is Record<string, unknown> =>
+          request !== null &&
+          request.deviceId === identity.deviceId &&
+          [request.scopes, request.requestedScopes].some(
+            (scopes) => Array.isArray(scopes) && scopes.includes("operator.admin"),
+          ),
+      );
+    requireLiveProof(
+      adminSuccessors.length === 0,
+      `real same-device approval left ${adminSuccessors.length} operator.admin successor request(s)`,
     );
     const pairedAfter = readJsonObject(pairedPath, "real paired state after approval");
     const pairedDeviceAfter = asRecord(pairedAfter[String(identity.deviceId)]);

@@ -231,6 +231,97 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     }
   });
 
+  it("preflights the exact repair before both live list and approval use stored pairing auth", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-preflight-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        gatewayCalls: Array<Record<string, unknown>>;
+        setPairingLists(local: Record<string, unknown>, live?: Record<string, unknown>): void;
+        approvePairingWithFallback(
+          opts: Record<string, unknown>,
+          requestId: string,
+        ): Promise<unknown>;
+      }>(source, "({ gatewayCalls, setPairingLists, approvePairingWithFallback })");
+      const exactList = { pending: [validPending()], paired: [validPaired()] };
+      runtime.setPairingLists(exactList);
+
+      await expect(
+        runtime.approvePairingWithFallback({ json: true }, "request-1"),
+      ).resolves.toEqual({ requestId: "request-1", approved: true });
+      expect(runtime.gatewayCalls).toHaveLength(2);
+      for (const [method, call] of [
+        ["device.pair.list", runtime.gatewayCalls[0]],
+        ["device.pair.approve", runtime.gatewayCalls[1]],
+      ] as const) {
+        expect(call).toMatchObject({
+          method,
+          scopes: ["operator.pairing"],
+          useStoredDeviceAuth: true,
+          requiredStoredDeviceAuthScopes: ["operator.pairing"],
+        });
+      }
+
+      runtime.gatewayCalls.length = 0;
+      const ordinaryList = {
+        pending: [validPending({ isRepair: false })],
+        paired: [validPaired()],
+      };
+      runtime.setPairingLists(ordinaryList);
+      await runtime.approvePairingWithFallback({ json: true }, "request-1");
+      expect(runtime.gatewayCalls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: undefined,
+      });
+      expect(runtime.gatewayCalls[0]).not.toHaveProperty("useStoredDeviceAuth");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the live repair no longer matches its exact local preflight", async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-preflight-drift-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeFixtureDist(dist);
+    try {
+      expect(runPatch(dist).status).toBe(0);
+      const source = fs.readFileSync(path.join(dist, "devices-cli.runtime-fixture.js"), "utf8");
+      const runtime = runFixture<{
+        gatewayCalls: Array<Record<string, unknown>>;
+        setPairingLists(local: Record<string, unknown>, live?: Record<string, unknown>): void;
+        approvePairingWithFallback(
+          opts: Record<string, unknown>,
+          requestId: string,
+        ): Promise<unknown>;
+      }>(source, "({ gatewayCalls, setPairingLists, approvePairingWithFallback })");
+      runtime.setPairingLists(
+        { pending: [validPending()], paired: [validPaired()] },
+        {
+          pending: [validPending({ publicKey: "changed-public-key" })],
+          paired: [validPaired()],
+        },
+      );
+
+      await expect(runtime.approvePairingWithFallback({ json: true }, "request-1")).rejects.toThrow(
+        "bounded same-device approval context changed before gateway approval",
+      );
+      expect(runtime.gatewayCalls).toHaveLength(1);
+      expect(runtime.gatewayCalls[0]).toMatchObject({
+        method: "device.pair.list",
+        scopes: ["operator.pairing"],
+        useStoredDeviceAuth: true,
+        requiredStoredDeviceAuthScopes: ["operator.pairing"],
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("passes authenticated identity to the canonical approver and never publishes state itself", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-handler-"));
     const dist = path.join(tmp, "dist");
@@ -736,6 +827,7 @@ describe("OpenClaw bounded device self-approval patch (#4462)", () => {
     "OPERATOR_ROLE",
     "PAIRING_SCOPE",
     "normalizeOptionalString",
+    "listDevicePairing",
   ])("fails closed when the CLI replacement dependency %s drifts", (dependency) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-device-cli-dependency-drift-"));
     const dist = path.join(tmp, "dist");

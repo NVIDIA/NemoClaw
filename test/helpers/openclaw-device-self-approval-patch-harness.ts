@@ -25,7 +25,12 @@ const GATEWAY_CLIENT_MODES = { CLI: "cli" };
 const KNOWN_NON_ADMIN_OPERATOR_SCOPES = new Set(["operator.pairing", "operator.read", "operator.write"]);
 const gatewayCalls = [];
 let pairingList = { pending: [], paired: [] };
+let localPairingList = { pending: [], paired: [] };
 let approvalFailures = [];
+function setPairingLists(localList, liveList = localList) {
+  localPairingList = localList;
+  pairingList = liveList;
+}
 function withProgress(_options, callback) { return callback(); }
 function parseTimeoutMsWithFallback(value, fallback) { return value ?? fallback; }
 async function callGateway(options) {
@@ -100,8 +105,15 @@ function indexPairedDevices(paired) {
 function lookupPairedDevice(pairedByDeviceId, request) {
   return pairedByDeviceId.get(normalizeOptionalString(request.deviceId));
 }
+async function listDevicePairing() {
+  return localPairingList;
+}
 async function listPairingWithFallback(opts) {
-  return parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
+  try {
+    return parseDevicePairingList(await callGatewayCli("device.pair.list", opts, {}));
+  } catch (error) {
+    throw error;
+  }
 }
 function resolveApprovePairingScopesForRequest(request, paired) {
   const operatorScopes = resolvePendingOperatorApprovalScopes(request, paired);
