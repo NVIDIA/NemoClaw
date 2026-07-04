@@ -46,7 +46,10 @@ function openRealDockerfileParent(
   const parentPath = path.dirname(path.resolve(dockerfilePath));
   let fd: number;
   try {
-    fd = fs.openSync(parentPath, fs.constants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK);
+    // This acquires a read-only descriptor for an existing directory; it does
+    // not create a temporary file. Numeric O_DIRECTORY/O_NOFOLLOW flags obscure
+    // that fact from the temporary-file query.
+    fd = fs.openSync(parentPath, fs.constants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_NONBLOCK); // codeql[js/insecure-temporary-file]
   } catch (err) {
     let parentIsSymlink = false;
     try {
