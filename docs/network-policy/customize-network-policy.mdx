@@ -302,6 +302,10 @@ network_policies:
 
 The top-level `preset.name` must be a lowercase RFC 1123 label (letters, digits, hyphens) and must not collide with a built-in preset name such as `slack` or `pypi`.
 Rename `preset.name` if NemoClaw refuses to apply the file because of a collision.
+Rule matchers must match the endpoint protocol.
+REST and WebSocket rules require `method` and `path`; REST accepts standard HTTP methods or `*`, while WebSocket accepts `GET`, `WEBSOCKET_TEXT`, or `*`.
+JSON-RPC rules accept only `method`, and MCP rules accept `method` plus optional `tool` or `params.name` matchers.
+The same protocol-specific matcher shape applies to `deny_rules`.
 User-authored presets must not declare `allowed_ips` for ordinary endpoints.
 NemoClaw rejects that field in files passed through `--from-file` or `--from-dir` because it can widen the private-address ranges that OpenShell checks during SSRF protection.
 Use hostnames, ports, protocols, methods, paths, and binary restrictions instead.

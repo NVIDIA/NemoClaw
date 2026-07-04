@@ -15,6 +15,8 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     sandboxGpuConfigChanged: false,
     messagingChannelConfigChanged: false,
     hermesToolGatewayConfigChanged: false,
+    toolDisclosureMigrationNeeded: false,
+    toolDisclosureChanged: false,
     ...overrides,
   };
 }
@@ -30,10 +32,25 @@ describe("decideSandboxResume", () => {
     ["sandbox GPU", { sandboxGpuConfigChanged: true }, true],
     ["messaging", { messagingChannelConfigChanged: true }, true],
     ["Hermes tool gateway", { hermesToolGatewayConfigChanged: true }, true],
+    ["tool disclosure migration", { toolDisclosureMigrationNeeded: true }, false],
+    ["tool disclosure", { toolDisclosureChanged: true }, false],
   ] as const)("recreates for %s drift", (_label, overrides, removeRegistryEntry) => {
     expect(decideSandboxResume(resumeSignals(overrides))).toMatchObject({
       kind: "recreate",
       removeRegistryEntry,
+    });
+  });
+
+  it("distinguishes one-time tool-disclosure migration from user configuration drift", () => {
+    expect(
+      decideSandboxResume(resumeSignals({ toolDisclosureMigrationNeeded: true })),
+    ).toMatchObject({
+      kind: "recreate",
+      note: expect.stringContaining("metadata is missing"),
+    });
+    expect(decideSandboxResume(resumeSignals({ toolDisclosureChanged: true }))).toMatchObject({
+      kind: "recreate",
+      note: expect.stringContaining("configuration changed"),
     });
   });
 

@@ -20,6 +20,14 @@ import {
 } from "./e2e/live/mcp-bridge-servers";
 
 const servers: StartedHttpServer[] = [];
+type CompatibleToolCallResponse = {
+  choices: Array<{
+    message: {
+      content?: unknown;
+      tool_calls: Array<{ function: { name: string; arguments: string } }>;
+    };
+  }>;
+};
 const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-fixture-tls-"));
 execFileSync(
   "openssl",
@@ -143,6 +151,107 @@ describe("authenticated MCP live fixtures", () => {
       priorOpenShellSecret === undefined
         ? delete process.env.OPENSHELL_OIDC_CLIENT_SECRET
         : (process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret);
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits failed cloudflared child output from diagnostics", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-redaction-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const boundaryUrl = "HTTPS://boundary-user:boundary-password@boundary-proxy.example.test:9443/";
+    const diagnosticSuffix = [
+      "",
+      "proxy HTTPS://proxy-user:proxy-password@proxy.example.test:8443 failed",
+      "fallback socks5://socks-user:socks-password@socks.example.test:1080 failed",
+      "PASSWORD=tunnel-password-value",
+      "token: eyJhbGciOiJIUzI1NiJ9.tunnel-payload",
+      "",
+    ].join("\n");
+    const boundaryPaddingBytes =
+      32 * 1024 + "HTTPS://".length - boundaryUrl.length - diagnosticSuffix.length;
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        `printf '%s' '${boundaryUrl}' >&2`,
+        `dd if=/dev/zero bs=${boundaryPaddingBytes} count=1 2>/dev/null | tr '\\000' x >&2`,
+        `printf '%s' '${diagnosticSuffix}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "redaction fixture",
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain("boundary-proxy.example.test:9443");
+      expect(message).not.toContain("proxy.example.test:8443");
+      expect(message).not.toContain("socks.example.test:1080");
+      expect(message).not.toContain("boundary-user");
+      expect(message).not.toContain("boundary-password");
+      expect(message).not.toContain("proxy-user");
+      expect(message).not.toContain("proxy-password");
+      expect(message).not.toContain("socks-user");
+      expect(message).not.toContain("socks-password");
+      expect(message).not.toContain("tunnel-password-value");
+      expect(message).not.toContain("tunnel-payload");
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("omits a Slack credential split across cloudflared data events", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-chunks-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const credentialPrefix = ["xoxb", "1234567890"].join("-");
+    const credentialTail = "-1234567890123-abcdefghijklmnopqrstuvwxyz";
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        `printf '%s' '${credentialPrefix}' >&2`,
+        "sleep 1",
+        `printf '%s\\n' '${credentialTail}' >&2`,
+        "exit 1",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      let failure: unknown;
+      try {
+        await startPublicMcpHttpsTunnel({
+          cloudflaredBin: cloudflared,
+          cleanup: { add: vi.fn() },
+          label: "chunked redaction fixture",
+          server: { port: 43123, close: async () => {} },
+        });
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toBeInstanceOf(Error);
+      const message = failure instanceof Error ? failure.message : String(failure);
+      expect(message).toContain("cloudflared child output omitted from diagnostics");
+      expect(message).not.toContain(credentialPrefix);
+      expect(message).not.toContain(credentialTail);
+      expect(message).not.toContain(`${credentialPrefix}${credentialTail}`);
+    } finally {
       fs.rmSync(directory, { force: true, recursive: true });
     }
   });
@@ -422,7 +531,6 @@ describe("authenticated MCP live fixtures", () => {
       model: "mock/model",
       toolChallenge: "deferred-fixture",
       toolResultToken: resultToken,
-      toolNames: ["mcp_fake_fake_echo"],
       deferredToolName: "mcp_fake_fake_echo",
     });
     servers.push(server);
@@ -431,29 +539,73 @@ describe("authenticated MCP live fixtures", () => {
       authorization: "Bearer compatible-key",
       "content-type": "application/json",
     };
+    const bridgeTools = ["tool_search", "tool_describe", "tool_call"].map((name) => ({
+      type: "function",
+      function: { name, parameters: {} },
+    }));
 
-    const first = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        model: "mock/model",
-        messages: [{ role: "user", content: "use the deferred tool" }],
-        tools: [
-          {
-            type: "function",
-            function: { name: "tool_call", parameters: {} },
-          },
-        ],
-      }),
+    const call = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+    ) =>
+      (await (
+        await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ model: "mock/model", messages, tools: bridgeTools }),
+        })
+      ).json()) as CompatibleToolCallResponse;
+    const searchBody = await call([{ role: "user", content: "use the deferred tool" }]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "tool_search",
+        arguments: JSON.stringify({ query: "mcp_fake_fake_echo" }),
+      },
     });
-    const firstBody = (await first.json()) as {
-      choices: Array<{
-        message: {
-          tool_calls: Array<{ function: { name: string; arguments: string } }>;
-        };
-      }>;
+    const missedSearch = await call([
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_search",
+        content: '{"matches":[{"name":"some_other_tool"}]}',
+      },
+    ]);
+    expect(missedSearch).toMatchObject({
+      choices: [
+        { message: { content: expect.stringContaining("did not return the deferred target") } },
+      ],
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_hermes_tool_search",
+      content: '{"matches":[{"name":"mcp_fake_fake_echo"}]}',
     };
-    expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({
+    const describeBody = await call([searchResult]);
+    expect(describeBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "tool_describe",
+        arguments: JSON.stringify({ name: "mcp_fake_fake_echo" }),
+      },
+    });
+    const wrongDescription = await call([
+      searchResult,
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_describe",
+        content: '{"name":"mcp_fake_fake_echo","parameters":{}}',
+      },
+    ]);
+    expect(wrongDescription).toMatchObject({
+      choices: [
+        { message: { content: expect.stringContaining("did not return the deferred schema") } },
+      ],
+    });
+    const descriptionResult = {
+      role: "tool",
+      tool_call_id: "call_hermes_tool_describe",
+      content:
+        '{"name":"mcp_fake_fake_echo","parameters":{"properties":{"challenge":{"type":"string"}}}}',
+    };
+    const callBody = await call([searchResult, descriptionResult]);
+    expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({
       function: {
         name: "tool_call",
         arguments: JSON.stringify({
@@ -462,24 +614,156 @@ describe("authenticated MCP live fixtures", () => {
         }),
       },
     });
-    expect(JSON.stringify(firstBody)).not.toContain(resultToken);
+    expect(JSON.stringify(callBody)).not.toContain(resultToken);
 
-    const final = await fetch(url, {
+    const finalBody = await call([
+      searchResult,
+      descriptionResult,
+      {
+        role: "tool",
+        tool_call_id: "call_hermes_tool_call",
+        content: JSON.stringify({ result: resultToken }),
+      },
+    ]);
+    expect(finalBody).toMatchObject({
+      choices: [{ message: { content: resultToken } }],
+    });
+  });
+
+  it("fails closed when a Hermes deferred tool leaks into the model registry", async () => {
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "leak-fixture",
+      deferredToolName: "mcp_fake_fake_echo",
+    });
+    servers.push(server);
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/chat/completions`, {
       method: "POST",
-      headers,
+      headers: {
+        authorization: "Bearer compatible-key",
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
-        model: "mock/model",
-        messages: [{ role: "tool", content: JSON.stringify({ result: resultToken }) }],
-        tools: [
-          {
-            type: "function",
-            function: { name: "tool_call", parameters: {} },
-          },
-        ],
+        messages: [{ role: "user", content: "use the deferred tool" }],
+        tools: ["tool_search", "tool_describe", "tool_call", "mcp_fake_fake_echo"].map((name) => ({
+          type: "function",
+          function: { name, parameters: {} },
+        })),
       }),
     });
-    expect(await final.json()).toMatchObject({
-      choices: [{ message: { content: resultToken } }],
+    expect(await response.json()).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining("deferred target mcp_fake_fake_echo leaked"),
+          },
+        },
+      ],
+    });
+  });
+
+  it("requires Deep Agents search_tools before exposing the matching MCP tool", async () => {
+    const resultToken = "MCP_AUTH_REWRITE_OK::progressive-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "progressive-fixture",
+      toolResultToken: resultToken,
+      progressiveToolSearch: {
+        toolName: "fake_fake_echo",
+        query: "AuThEnTiCaTeD McP",
+      },
+    });
+    servers.push(server);
+    const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
+    const headers = {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    };
+    const post = async (
+      messages: Array<{ role: string; content: string; tool_call_id?: string }>,
+      tools: string[],
+    ) =>
+      (await (
+        await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            messages,
+            tools: tools.map((name) => ({ type: "function", function: { name, parameters: {} } })),
+          }),
+        })
+      ).json()) as CompatibleToolCallResponse;
+
+    const searchBody = await post([{ role: "user", content: "use MCP" }], ["search_tools", "ls"]);
+    expect(searchBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "search_tools",
+        arguments: JSON.stringify({ query: "AuThEnTiCaTeD McP" }),
+      },
+    });
+    const missedSearch = await post(
+      [
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_tool_search",
+          content: "No hidden tools matched",
+        },
+      ],
+      ["search_tools", "ls"],
+    );
+    expect(missedSearch).toMatchObject({
+      choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
+    });
+    const legacySearch = await post(
+      [
+        {
+          role: "tool",
+          tool_call_id: "call_progressive_tool_search",
+          content: "Discovered fake_fake_echo",
+        },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(legacySearch).toMatchObject({
+      choices: [{ message: { content: expect.stringContaining("did not return the expected") } }],
+    });
+    const searchResult = {
+      role: "tool",
+      tool_call_id: "call_progressive_tool_search",
+      content:
+        "Found 1 matching hidden tool(s); returning 1 bounded discovery candidate(s) " +
+        "(per-search limit 20):\n- fake_fake_echo: Authenticated MCP tool",
+    };
+    const callBody = await post([searchResult], ["search_tools", "ls", "fake_fake_echo"]);
+    expect(callBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "fake_fake_echo",
+        arguments: JSON.stringify({ challenge: "progressive-fixture" }),
+      },
+    });
+    const finalBody = await post(
+      [
+        searchResult,
+        { role: "tool", tool_call_id: "call_progressive_mcp_proof", content: resultToken },
+      ],
+      ["search_tools", "ls", "fake_fake_echo"],
+    );
+    expect(finalBody).toMatchObject({ choices: [{ message: { content: resultToken } }] });
+
+    const leaked = await post(
+      [{ role: "user", content: "use MCP" }],
+      ["search_tools", "fake_fake_echo"],
+    );
+    expect(leaked).toMatchObject({
+      choices: [
+        {
+          message: {
+            content: expect.stringContaining("visible before search_tools"),
+          },
+        },
+      ],
     });
   });
 });

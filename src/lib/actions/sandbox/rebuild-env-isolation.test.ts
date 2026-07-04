@@ -60,6 +60,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_POLICY_PRESETS",
       "NEMOCLAW_SANDBOX_GPU",
       "NEMOCLAW_SANDBOX_GPU_DEVICE",
+      "NEMOCLAW_TOOL_DISCLOSURE",
     ]);
   });
 });

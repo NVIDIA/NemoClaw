@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
+import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 
 export type RebuildSandbox =
   typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
@@ -31,7 +33,11 @@ export type RebuildFlowOverrides = {
     overrideEnvVar: string | null;
   };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
-  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
+  onboard?: (
+    session: RebuildFlowSession,
+    options: RebuildRecreateOnboardOpts,
+  ) => Promise<void> | void;
+  beforeBackup?: () => void;
   repairMutableConfigPerms?: () =>
     | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
     | { applied: true; verified: boolean; errors: string[] };
@@ -45,6 +51,7 @@ export type RebuildFlowOverrides = {
   restoreMcpBridgesAfterRebuild?: () => Promise<void>;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
+  sandboxBaseImageLabelsOutput?: string;
   sessionSandboxName?: string;
   sandboxListOutput?: string;
   defaultSandbox?: string | null;
@@ -72,7 +79,7 @@ export type RebuildFlowOverrides = {
   ensureValidatedWebSearchCredential?: () => Promise<unknown>;
   hermesCredentialKeys?: string[] | null;
   hermesProviderExists?: boolean;
-  customImagePreflight?: { ok: true; imageTag: string | null } | { ok: false; detail: string };
+  customImagePreflight?: RebuildImagePreflightResult;
   removeSandboxRegistryEntry?: () => void;
   clearShieldsState?: () => void;
 };
@@ -83,6 +90,7 @@ export type RebuildFlowHarness = {
   errorSpy: MockInstance;
   executeSandboxCommandSpy: MockInstance;
   ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
+  ensureRebuildAgentBaseImageSpy: MockInstance;
   ensureTargetGatewaySpy: MockInstance;
   ensureValidatedBraveSearchCredentialSpy: MockInstance;
   logSpy: MockInstance;

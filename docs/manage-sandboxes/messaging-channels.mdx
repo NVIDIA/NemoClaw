@@ -369,6 +369,9 @@ For Slack, NemoClaw checks both the bot token and the Socket Mode app token so d
 For Microsoft Teams, NemoClaw also checks the local webhook port because active Teams sandboxes cannot share the same forwarded port.
 If NemoClaw only has legacy channel metadata and cannot compare credential hashes, it keeps the conservative warning.
 Re-run `channels add <channel>` with the intended token to refresh the stored non-secret hash.
+Before any rebuild, including one started by `channels add` or `channels start`, NemoClaw rechecks the staged messaging plan against other registered sandboxes.
+A credential or channel-resource conflict aborts before backup or deletion and leaves the original sandbox registered and intact.
+Resolve the conflict, then rerun the operation.
 `$$nemoclaw status` reports cross-sandbox overlaps so you can resolve duplicates before messages start dropping.
 
 ## Stop Messaging Delivery

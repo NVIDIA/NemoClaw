@@ -161,29 +161,29 @@ The exposure command prefers `npm link` and falls back to a managed `~/.local/bi
 
 ## Main Tasks
 
-These are the primary `make` and `npm` targets for day-to-day development:
+These are the primary npm scripts for day-to-day development:
 
 | Task | Purpose |
 |------|---------|
 | `npm run dev:setup` | Install or repair repository-local contributor tooling |
 | `npm run dev:doctor` | Run read-only contributor environment readiness checks |
 | `npm run agent` | Launch the repository-pinned Pi coding agent |
-| `make check` | Run all linters (TypeScript + Python) |
-| `make lint` | Same as `make check` |
-| `make format` | Auto-format TypeScript and Python source |
-| `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
-| `npm test` | Build package artifacts and run every non-live Vitest project |
+| `npm run check` | Run repo-wide pre-commit and full CLI/plugin coverage checks |
+| `npm run check:diff` | Reproduce `pre-commit`, `commit-msg`, and `pre-push` checks for the diff from `origin/main` |
+| `npm run format` | Auto-format Biome-supported source files |
+| `npm run typecheck:cli` | Type-check the root TypeScript project using `tsconfig.cli.json` |
+| `npm test` | Build package artifacts and run every non-live Vitest project for broad changes |
 | `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
 | `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
+| [`npm run bench`](scripts/bench/README.md) | Run the advisory inference and trace-backed value benchmark |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
 | `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
 | `npm run docs:preview:watch` | Publish branch-based Fern previews when docs files change |
 | `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
-| `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
 ### Test Titles as Behavioral Documentation
 
@@ -203,24 +203,22 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, skill frontmatter validation, Vitest (plugin) |
+| **pre-commit** | Cheap structural and file-local checks, including fixers, formatters, linters, and skill frontmatter validation |
 | **commit-msg** | commitlint (Conventional Commits) |
-| **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
+| **pre-push** | Path-scoped incremental CLI/plugin TypeScript checks and checked-JavaScript checks |
 
-For PR preparation, normal commit and push hooks are valid verification when they ran without `--no-verify`.
-If hooks were skipped, missing, failed, or uncertain, use a scoped fallback: `npx prek run --from-ref <base> --to-ref HEAD`.
-Reserve `npx prek run --all-files` for whole-repository baselines, such as hook, formatter, generated-check, or repo-wide validation changes.
+For PR preparation, normal `pre-commit`, `commit-msg`, and `pre-push` hooks are valid verification when they pass and were not bypassed with `--no-verify`.
+If hooks were skipped, missing, failed, or uncertain, run `npm run check:diff` once to reproduce those checks for the diff from `origin/main`.
+Refresh that remote-tracking base with `git fetch origin main` before relying on the fallback.
 
-For TypeScript changes under `src/`, `test/`, `scripts/`, `bin/`, or
-`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), the pre-push
-hook runs `npm run typecheck:cli` before the branch is pushed.
-CI runs this unconditionally.
-If the pre-push hook was skipped or unavailable, run `npm run typecheck:cli`
-manually before opening a PR.
+Pre-push selects the root TypeScript, checked-JavaScript, and plugin type checks from the paths changed relative to the push base, and uses incremental compilation for the TypeScript projects.
+The `check:diff` fallback applies the same path selection, so do not rerun type checks separately solely to prepare a PR.
+CI runs the complete type-check gates independently; local path selection is a fast-feedback optimization, not the authoritative trust boundary.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
-`make check` remains the primary documented linter entry point.
+`npm run check` is the whole-repository pre-commit and full CLI/plugin coverage baseline for broad changes to hooks, formatters, generated checks, or shared validation behavior.
+It is not part of routine PR preparation for a focused change.
 
 For doc-only changes, you do not need to run the full test suite by default.
 Commit and push normally so the hooks run, then run the docs build:
@@ -229,10 +227,12 @@ Commit and push normally so the hooks run, then run the docs build:
 npm run docs
 ```
 
-Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD` before opening the PR.
-For code changes, run targeted tests for the changed behavior.
-Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
+Leave the broad-gate verification item unchecked unless you actually ran the applicable command.
+If hooks were skipped or unavailable, run `npm run check:diff` before opening the PR.
+For code changes, run the targeted tests for changed behavior once per relevant change set and record that command as evidence.
+Do not rerun them solely because hooks passed, but do rerun after later edits or hook autofixes that can affect the tested behavior.
+Reserve `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
+Reserve `npm run check` for repo-wide hook, formatter, generated-check, or coverage-baseline changes.
 
 ## Project Structure
 
@@ -332,8 +332,8 @@ Follow these steps to submit a pull request.
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
 3. Run the relevant checks.
-   Let normal commit and push hooks provide hook verification, run targeted tests for changed behavior, and run `npm run docs` for doc changes.
-   If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
+   Run targeted tests once per relevant change set, let normal hooks provide verification, and run `npm run docs` for doc changes.
+   Rerun targeted tests after later behavior-affecting edits or hook autofixes. If hooks were skipped or unavailable, run `npm run check:diff` once instead of reproducing the checks separately.
 4. Confirm the PR description includes the DCO declaration and every commit appears as `Verified` in GitHub.
 5. Open a PR.
 

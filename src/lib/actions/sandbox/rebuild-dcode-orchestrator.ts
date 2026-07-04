@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { WebSearchConfig } from "../../inference/web-search";
 import type { Session } from "../../state/onboard-session";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import {
   createDcodeRebuildPreflightScope,
   type DcodeRebuildPreflightBail,
@@ -11,7 +13,7 @@ import {
   revalidateDcodeReplacementAtMutationEdge,
 } from "./rebuild-dcode-preflight";
 import { DCODE_AGENT_NAME } from "./rebuild-dcode-target";
-import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import type { RebuildAgentBaseImageOptions, RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 
 type DcodeRebuildOrchestratorDeps = {
@@ -22,7 +24,11 @@ type DcodeRebuildOrchestratorDeps = {
     log: (message: string) => void,
     bail: DcodeRebuildPreflightBail,
   ): boolean;
-  ensureAgentBaseImage(agentName: string | null, bail: DcodeRebuildPreflightBail): boolean;
+  ensureAgentBaseImage(
+    agentName: string | null,
+    bail: DcodeRebuildPreflightBail,
+    options?: RebuildAgentBaseImageOptions,
+  ): boolean;
 };
 
 type CreateDcodeRebuildOrchestratorOptions = {
@@ -42,19 +48,39 @@ export type DcodeRebuildOrchestrator = {
   preflightCredentials(): Promise<boolean>;
   prepareImage(
     resumeConfig: RebuildResumeConfig,
+    webSearchConfig: WebSearchConfig | null,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
+    baseImageOptions?: RebuildAgentBaseImageOptions,
   ): Promise<boolean>;
   revalidateBeforeDelete(
     resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
     skipLiveRoute: boolean,
     gatewayPort: number,
   ): Promise<boolean>;
+  checkAtDeleteEdge(
+    resumeConfig: RebuildResumeConfig,
+    toolDisclosure: ToolDisclosure,
+    skipLiveRoute: boolean,
+    gatewayPort: number,
+  ): Promise<{ ok: true } | { ok: false; message: string; code?: number }>;
   clearManagedCustomDockerfile(session: Session): void;
   storedDockerfile(sessionMatchesSandbox: boolean, session: Session | null): string | null;
   applyDockerGpuPatchNetwork(): () => void;
   cleanup(): void;
 };
+
+class CapturedDcodeRebuildBail extends Error {
+  readonly code: number | undefined;
+
+  constructor(message: string, code?: number) {
+    super(message);
+    this.name = "CapturedDcodeRebuildBail";
+    this.code = code;
+  }
+}
 
 export function isDcodeRebuildAgent(agentName: string | null): boolean {
   return agentName === DCODE_AGENT_NAME;
@@ -107,13 +133,24 @@ export function createDcodeRebuildOrchestrator(
         }
         return deps.preflightCredentials(sandboxName, entry, log, scope.bail);
       }),
-    prepareImage: (resumeConfig, skipLiveRoute, gatewayPort) =>
+    prepareImage: (
+      resumeConfig,
+      webSearchConfig,
+      toolDisclosure,
+      skipLiveRoute,
+      gatewayPort,
+      baseImageOptions,
+    ) =>
       run(async () => {
-        if (!scope.enabled) return deps.ensureAgentBaseImage(rebuildAgent, scope.bail);
+        if (!scope.enabled) {
+          return deps.ensureAgentBaseImage(rebuildAgent, scope.bail, baseImageOptions);
+        }
         const replacement = await prepareDcodeReplacementBeforeMutation({
           sandboxName,
           entry,
           resumeConfig,
+          webSearchConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -127,7 +164,7 @@ export function createDcodeRebuildOrchestrator(
         scope.adopt(replacement);
         return true;
       }),
-    revalidateBeforeDelete: (resumeConfig, skipLiveRoute, gatewayPort) =>
+    revalidateBeforeDelete: (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) =>
       run(async () => {
         if (!scope.enabled) return true;
         const replacement = scope.preparedReplacement;
@@ -136,6 +173,7 @@ export function createDcodeRebuildOrchestrator(
           sandboxName,
           entry,
           resumeConfig,
+          toolDisclosure,
           skipLiveRoute,
           gatewayPort,
           log,
@@ -144,6 +182,44 @@ export function createDcodeRebuildOrchestrator(
           replacement,
         });
       }),
+    checkAtDeleteEdge: async (resumeConfig, toolDisclosure, skipLiveRoute, gatewayPort) => {
+      if (!scope.enabled) return { ok: true };
+      const replacement = scope.preparedReplacement;
+      if (!replacement) {
+        return { ok: false, message: "DCode replacement preflight was not retained." };
+      }
+      const capturedBail = (message: string, code?: number): never => {
+        throw new CapturedDcodeRebuildBail(message, code);
+      };
+      try {
+        const valid = await revalidateDcodeReplacementAtMutationEdge({
+          sandboxName,
+          entry,
+          resumeConfig,
+          toolDisclosure,
+          skipLiveRoute,
+          gatewayPort,
+          log,
+          bail: capturedBail,
+          checkGatewaySchema: () => deps.checkGatewaySchema(sandboxName, capturedBail),
+          replacement,
+        });
+        if (!valid) {
+          scope.cleanup();
+          return {
+            ok: false,
+            message: "DCode replacement validation failed before sandbox deletion.",
+          };
+        }
+        return { ok: true };
+      } catch (error) {
+        scope.cleanup();
+        if (error instanceof CapturedDcodeRebuildBail) {
+          return { ok: false, message: error.message, code: error.code };
+        }
+        throw error;
+      }
+    },
     clearManagedCustomDockerfile(session) {
       if (scope.enabled) session.metadata = { ...session.metadata, fromDockerfile: null };
     },

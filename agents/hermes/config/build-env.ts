@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 
 import { normalizeProviderPlaceholderForEnvKey } from "../../../src/lib/messaging/provider-placeholders.ts";
+import { readToolDisclosureEnv } from "../../../src/lib/tool-disclosure.ts";
 
 export type HermesWebSearchProvider = "tavily";
 
@@ -13,6 +14,7 @@ export type HermesBuildSettings = {
   providerKey: string;
   upstreamProvider: string;
   inferenceApi: string;
+  toolDisclosure: "progressive" | "direct";
   webSearchProvider: HermesWebSearchProvider | null;
   messagingCredentialPlaceholders: Array<{
     envKey: string;
@@ -34,6 +36,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
     upstreamProvider: env.NEMOCLAW_UPSTREAM_PROVIDER || env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
+    toolDisclosure: readToolDisclosureEnv(env),
     webSearchProvider: readWebSearchProvider(env),
     messagingCredentialPlaceholders: readMessagingCredentialPlaceholders(env),
     managedToolGateways: {

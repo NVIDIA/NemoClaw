@@ -1,9 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, vi } from "vitest";
 import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import {
   createRebuildFlowSession,
   installTerminalStepFailureMock,
@@ -20,6 +24,7 @@ const requireDist = createRequire(
 const rebuildModulePath = "./rebuild.js";
 requireDist(rebuildModulePath);
 delete require.cache[requireDist.resolve(rebuildModulePath)];
+const harnessTempDirs: string[] = [];
 
 export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
   delete require.cache[requireDist.resolve(rebuildModulePath)];
@@ -30,6 +35,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
 
   const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
   const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const dockerInspect = requireDist("../../adapters/docker/inspect.js");
   const sandboxList = requireDist("../../openshell-sandbox-list.js");
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const agentDefs = requireDist("../../agent/defs.js");
@@ -45,6 +51,8 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const gatewayState = requireDist("./gateway-state.js");
   const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
   const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
+  const rebuildPreparedImageContext = requireDist("./rebuild-prepared-image-context.js");
+  const buildContextFingerprint = requireDist("../../adapters/fs/build-context-fingerprint.js");
   const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
   const rebuildShields = requireDist("./rebuild-shields.js");
   const nim = requireDist("../../inference/nim.js");
@@ -75,14 +83,53 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     state: overrides.staleRecovery ? "missing" : "present",
     output: "",
   });
-  vi.spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage").mockReturnValue(
-    overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
-  );
+  const ensureRebuildAgentBaseImageSpy = vi
+    .spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage")
+    .mockReturnValue(
+      overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
+    );
+  if (overrides.sandboxBaseImageLabelsOutput !== undefined) {
+    vi.spyOn(dockerInspect, "dockerImageInspectFormat").mockImplementation(
+      () => overrides.sandboxBaseImageLabelsOutput,
+    );
+  }
   const ensureTargetGatewaySpy = vi
     .spyOn(rebuildFlowHelpers, "ensureRebuildTargetGatewaySelected")
     .mockResolvedValue(true);
+  const preparedBuildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-flow-image-"));
+  harnessTempDirs.push(preparedBuildCtx);
+  const preparedDockerfile = path.join(preparedBuildCtx, "Dockerfile");
+  fs.writeFileSync(preparedDockerfile, "FROM scratch\n");
+  const rebuildAgent =
+    typeof overrides.sandboxEntry?.agent === "string" ? overrides.sandboxEntry.agent : null;
+  const fromDockerfile =
+    typeof overrides.sandboxEntry?.fromDockerfile === "string"
+      ? path.resolve(overrides.sandboxEntry.fromDockerfile)
+      : null;
+  const defaultImagePreflight = {
+    ok: true as const,
+    imageTag: "nemoclaw-rebuild-preflight:test",
+    prepared: {
+      buildCtx: preparedBuildCtx,
+      stagedDockerfile: preparedDockerfile,
+      cleanupBuildCtx: () => {
+        fs.rmSync(preparedBuildCtx, { recursive: true, force: true });
+        return true;
+      },
+      buildId: "rebuild-flow-prepared",
+      contextFingerprint: buildContextFingerprint.fingerprintBuildContext(preparedBuildCtx),
+      verifyBuildCtx: rebuildPreparedImageContext.createBuildContextVerifier(
+        preparedBuildCtx,
+        buildContextFingerprint.fingerprintBuildContext(preparedBuildCtx),
+      ),
+      rebuildTarget: {
+        agentName: rebuildAgent && rebuildAgent !== "openclaw" ? rebuildAgent : null,
+        fromDockerfile,
+      },
+    },
+  };
   vi.spyOn(rebuildCustomImagePreflight, "preflightRebuildImage").mockResolvedValue(
-    overrides.customImagePreflight ?? { ok: true, imageTag: null },
+    overrides.customImagePreflight ?? defaultImagePreflight,
   );
   vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true);
   const warnUnpreservedUserManagedFilesSpy = vi
@@ -169,18 +216,23 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       window.relocked = true;
       return true;
     });
-  const backupSandboxStateSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
-    success: true,
-    backedUpDirs: ["workspace"],
-    backedUpFiles: ["user.md"],
-    failedDirs: [],
-    failedFiles: [],
-    manifest: {
-      backupPath: "/tmp/nemoclaw-rebuild-backup",
-      timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
-    },
-  });
+  const backupSandboxStateSpy = vi
+    .spyOn(sandboxState, "backupSandboxState")
+    .mockImplementation(() => {
+      overrides.beforeBackup?.();
+      return {
+        success: true,
+        backedUpDirs: ["workspace"],
+        backedUpFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+        manifest: {
+          backupPath: "/tmp/nemoclaw-rebuild-backup",
+          timestamp: "2026-06-01T00:00:00.000Z",
+          policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+        },
+      };
+    });
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => {
       const manifest = args[2] as Record<string, unknown>;
@@ -217,9 +269,12 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     .mockImplementation(overrides.removeSandboxRegistryEntry ?? (() => undefined));
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
-    await overrides.onboard?.(session);
-  });
+  const onboardSpy = vi
+    .spyOn(onboardMod, "onboard")
+    .mockImplementation(async (...args: unknown[]) => {
+      const options = args[0] as RebuildRecreateOnboardOpts;
+      await overrides.onboard?.(session, options);
+    });
   vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
   const ensureValidatedBraveSearchCredentialSpy = vi
     .spyOn(onboardMod, "ensureValidatedWebSearchCredential")
@@ -289,6 +344,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     errorSpy,
     executeSandboxCommandSpy,
     ensureMessagingHostForwardAfterRebuildSpy,
+    ensureRebuildAgentBaseImageSpy,
     ensureTargetGatewaySpy,
     ensureValidatedBraveSearchCredentialSpy,
     logSpy,
@@ -318,6 +374,9 @@ export function installRebuildFlowTestHooks(): void {
   afterEach(() => {
     vi.restoreAllMocks();
     delete require.cache[requireDist.resolve(rebuildModulePath)];
+    for (const dir of harnessTempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
     if (originalSandboxName === undefined) {
       delete process.env.NEMOCLAW_SANDBOX_NAME;
     } else {

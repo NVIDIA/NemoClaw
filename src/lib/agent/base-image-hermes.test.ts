@@ -59,6 +59,9 @@ describe("agent base image provisioning", () => {
         imageTag: trackedRef?.[1],
         built: false,
       });
+      expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
+        expect.objectContaining({ pinnedRemoteRef: trackedRef?.[1] }),
+      );
 
       const differentRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"0".repeat(64)}`;
       resolveSandboxBaseImageMock.mockReturnValue({
@@ -70,6 +73,15 @@ describe("agent base image provisioning", () => {
       expect(() => ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toThrow(
         "Hermes final image does not accept base image ref",
       );
+    });
+  });
+
+  it("fails before candidate resolution when the Hermes final Dockerfile is unreadable", () => {
+    withMockedDocker(({ ensureAgentBaseImage, resolveSandboxBaseImageMock }) => {
+      expect(() =>
+        ensureAgentBaseImage(makeAgent({ dockerfilePath: "/missing/hermes/Dockerfile" })),
+      ).toThrow("Failed to read Hermes final Dockerfile");
+      expect(resolveSandboxBaseImageMock).not.toHaveBeenCalled();
     });
   });
 

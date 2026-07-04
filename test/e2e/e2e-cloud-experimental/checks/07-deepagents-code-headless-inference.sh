@@ -77,7 +77,7 @@ sandbox_login_proxy_contract() {
 
 sandbox_artifact_scan_command() {
   cat <<'SCAN'
-for path in /sandbox/.deepagents/config.toml /sandbox/.deepagents/.env /sandbox/.deepagents/.mcp.json /tmp/nemoclaw-proxy-env.sh; do
+for path in /sandbox/.deepagents/config.toml /sandbox/.deepagents/.env /sandbox/.deepagents/.mcp.json /sandbox/.deepagents/.nemoclaw-mcp.json /tmp/nemoclaw-proxy-env.sh; do
   if [ -e "$path" ]; then
     cat "$path" 2>/dev/null || true
   fi

@@ -13,12 +13,15 @@ import {
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
+import { toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
+import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
 
@@ -130,6 +133,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
+      createIntent: SandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -368,6 +372,10 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
+      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
+      state.session,
+    );
     return decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
@@ -385,6 +393,7 @@ class SandboxStateFlow<
         recordedToolGateways,
         effectiveToolGateways,
       ),
+      ...toolDisclosureSignals,
     });
   }
 
@@ -470,6 +479,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
     messagingPlan: SandboxMessagingPlan | null,
+    decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
       this.options.agent as { name?: string } | null,
@@ -504,6 +514,10 @@ class SandboxStateFlow<
           resourceProfile,
           effectiveHermesToolGateways,
           this.options.hermesAuthMethod,
+          {
+            recreate: decision.kind !== "create",
+            toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+          },
         ),
     );
     // createSandbox() owns the build fingerprint. In particular, reusing an
@@ -587,6 +601,7 @@ class SandboxStateFlow<
       },
       requestedSandboxName,
       messaging.plan,
+      decision,
     );
   }
 

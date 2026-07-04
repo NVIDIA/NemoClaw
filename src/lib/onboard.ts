@@ -33,6 +33,8 @@ const {
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
+const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
+const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
@@ -41,6 +43,7 @@ const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gatew
 const extraPlaceholderKeysModule: typeof import("./onboard/extra-placeholder-keys") = require("./onboard/extra-placeholder-keys");
 const preparedDcodeRebuild: typeof import("./onboard/prepared-dcode-rebuild") = require("./onboard/prepared-dcode-rebuild");
 const sandboxBuildPatchConfig: typeof import("./onboard/sandbox-build-patch-config") = require("./onboard/sandbox-build-patch-config");
+const baseImageResolutionFlow: typeof import("./onboard/base-image-resolution-flow") = require("./onboard/base-image-resolution-flow");
 const sandboxMessagingPreflight: typeof import("./onboard/sandbox-messaging-preflight") = require("./onboard/sandbox-messaging-preflight");
 const sandboxCreatePlan: typeof import("./onboard/sandbox-create-plan") = require("./onboard/sandbox-create-plan");
 const sandboxCreateLaunch: typeof import("./onboard/sandbox-create-launch") = require("./onboard/sandbox-create-launch");
@@ -535,6 +538,7 @@ const fatalRuntimePreflight: typeof import("./onboard/fatal-runtime-preflight") 
   require("./onboard/fatal-runtime-preflight");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
+const overlayfsAutoFix: typeof import("./onboard/overlayfs-auto-fix") = require("./onboard/overlayfs-auto-fix");
 const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo } = preflightUtils;
 const {
   assertDockerBridgeAndContainerDnsHealthy,
@@ -596,6 +600,11 @@ import {
 } from "./onboard/policy-selection";
 import { createPolicySelectionPromptHelpers } from "./onboard/policy-selection-prompts";
 import {
+  printLowMemoryWarning,
+  printMessagingProviderMissing,
+  printSwapCreationFailed,
+} from "./onboard/preflight-messages";
+import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
 } from "./onboard/sandbox-backup-on-recreate";
@@ -607,7 +616,11 @@ import {
 } from "./onboard/sandbox-gpu-mode";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
-import type { ModelValidationResult, OnboardOptions, ValidationFailureLike } from "./onboard/types";
+import type {
+  ModelValidationResult,
+  OnboardOptions as SharedOnboardOptions,
+  ValidationFailureLike,
+} from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
 import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
@@ -655,6 +668,11 @@ const {
 import type { JsonObject as LooseObject } from "./core/json-types";
 import type { PreparedSandboxBuildContext } from "./onboard/build-context-stage";
 
+type OnboardOptions = SharedOnboardOptions & {
+  baseImageResolutionHint?:
+    | import("./sandbox-base-image").SandboxBaseImageResolutionMetadata
+    | null;
+};
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -672,8 +690,8 @@ function isNonInteractive(): boolean {
   return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
-function isRecreateSandbox(): boolean {
-  return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+function isRecreateSandbox(requested = false): boolean {
+  return requested || RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
 function isAutoYes(): boolean {
@@ -997,23 +1015,11 @@ function upsertMessagingProviders(
 const providerExistsInGateway = (name: string) =>
   onboardProviders.providerExistsInGateway(name, runOpenshell);
 
-function verifyInferenceRoute(_provider: string, _model: string): void {
-  const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
-  if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
-    console.error("  OpenShell inference route was not configured.");
-    process.exit(1);
-  }
-}
-
-function isInferenceRouteReady(provider: string, model: string): boolean {
-  const live = parseGatewayInference(
-    runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
-  );
-  return Boolean(live && live.provider === provider && live.model === model);
-}
+const { verifyInferenceRoute, isInferenceRouteReady } =
+  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
 
 const {
-  reconcileSandboxForCreate,
+  inspectSandboxForCreate,
   pruneStaleSandboxEntry,
   confirmRecreateForSelectionDrift,
   isOpenclawReady,
@@ -1626,6 +1632,7 @@ async function preflight(
     cliDisplayName: cliDisplayName(),
     dashboardPort: getOnboardDashboardPort(),
     log: console.log,
+    warn: console.warn,
     runOpenshell,
     destroyGateway,
     destroyGatewayForReuse,
@@ -1806,9 +1813,7 @@ async function preflight(
     const mem = getMemoryInfo();
     if (mem) {
       if (mem.totalMB < 12000) {
-        console.log(
-          `  ⚠ Low memory detected (${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap = ${mem.totalMB} MB total)`,
-        );
+        printLowMemoryWarning(mem);
 
         let proceedWithSwap: boolean = false;
         if (!isNonInteractive()) {
@@ -1834,8 +1839,7 @@ async function preflight(
               console.log(`  ✓ Memory OK: ${mem.totalRamMB} MB RAM + ${mem.totalSwapMB} MB swap`);
             }
           } else {
-            console.log(`  ⚠ Could not create swap: ${swapResult.reason}`);
-            console.log("  Sandbox creation may fail with OOM on low-memory systems.");
+            printSwapCreationFailed(swapResult.reason);
           }
         }
       } else {
@@ -2277,83 +2281,10 @@ function getGatewayStartEnv(): Record<string, string> {
   return gatewayEnv;
 }
 
-/** Cache the overlayfs auto-fix result per upstream image for this onboard process. */
-const overlayFixResultCache = new Map<string, string | null>();
-
-/**
- * When the host runs Docker 26+ with the new containerd-snapshotter overlayfs
- * driver, k3s inside the upstream cluster image cannot mount nested overlays
- * and crashes. Build a tiny patched image locally that selects fuse-overlayfs
- * (or `native` via NEMOCLAW_OVERLAY_SNAPSHOTTER) and return its tag so the
- * caller can route OPENSHELL_CLUSTER_IMAGE to it. Returns null on every host
- * that is not affected, when the user opts out, or when the build fails (in
- * which case we fall through to the upstream image and let the existing
- * doctor diagnostics surface the underlying error).
- */
-function applyOverlayfsAutoFix(upstreamImage: string): string | null {
-  if (process.env.NEMOCLAW_DISABLE_OVERLAY_FIX === "1") {
-    return null;
-  }
-  if (overlayFixResultCache.has(upstreamImage)) {
-    return overlayFixResultCache.get(upstreamImage) ?? null;
-  }
-  let assessment: ReturnType<typeof preflightUtils.assessHost>;
-  try {
-    assessment = preflightUtils.assessHost();
-  } catch (err) {
-    // Don't silently swallow — log a breadcrumb so a future regression in
-    // assessHost (or a Docker-daemon hang past `2>/dev/null`) doesn't make
-    // the auto-fix mysteriously stop firing without any user-visible signal.
-    const reason = err instanceof Error ? err.message : String(err);
-    console.warn(`  Skipping overlayfs auto-fix: host assessment failed (${reason}).`);
-    overlayFixResultCache.set(upstreamImage, null);
-    return null;
-  }
-  if (!assessment.hasNestedOverlayConflict) {
-    overlayFixResultCache.set(upstreamImage, null);
-    return null;
-  }
-
-  const requestedSnapshotter = (process.env.NEMOCLAW_OVERLAY_SNAPSHOTTER || "")
-    .trim()
-    .toLowerCase();
-  let snapshotter: "fuse-overlayfs" | "native" = "fuse-overlayfs";
-  if (requestedSnapshotter === "native" || requestedSnapshotter === "fuse-overlayfs") {
-    snapshotter = requestedSnapshotter;
-  } else if (requestedSnapshotter !== "") {
-    // Reject typos like 'NATIVE' or 'fuse' loudly so the user gets the image
-    // they intended, not a silent default.
-    console.warn(
-      `  NEMOCLAW_OVERLAY_SNAPSHOTTER='${requestedSnapshotter}' is not recognized. ` +
-        "Valid values are 'fuse-overlayfs' or 'native'. Falling back to 'fuse-overlayfs'.",
-    );
-  }
-
-  console.log(
-    `  Detected Docker 26+ containerd-snapshotter overlayfs (driver=${assessment.dockerStorageDriver}). ` +
-      `Routing through a locally-built ${snapshotter} cluster image to bypass nested-overlay break.`,
-  );
-  console.log(
-    "  Set NEMOCLAW_DISABLE_OVERLAY_FIX=1 to disable this auto-fix; see docs for the manual daemon.json workaround.",
-  );
-
-  try {
-    const patchedTag = clusterImagePatch.ensurePatchedClusterImage({
-      upstreamImage,
-      snapshotter,
-    });
-    overlayFixResultCache.set(upstreamImage, patchedTag);
-    return patchedTag;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error(`  Patched cluster image build failed: ${reason}`);
-    console.error(
-      "  Falling back to the upstream image. The k3s server will likely fail; see docs/reference/troubleshooting.mdx.",
-    );
-    overlayFixResultCache.set(upstreamImage, null);
-    return null;
-  }
-}
+const applyOverlayfsAutoFix = overlayfsAutoFix.createOverlayfsAutoFix({
+  assessHost: preflightUtils.assessHost,
+  ensurePatchedClusterImage: clusterImagePatch.ensurePatchedClusterImage,
+});
 
 async function recoverGatewayRuntime() {
   if (isLinuxDockerDriverGatewayEnabled()) {
@@ -2432,7 +2363,10 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     runCaptureOpenshell,
   });
 
-async function createSandbox(
+// ── Step 5: Sandbox ──────────────────────────────────────────────
+
+async function createSandboxWithBaseImageResolution(
+  baseImageResolutionContext: import("./onboard/base-image-resolution-flow").BaseImageResolutionContext,
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
   provider: string,
@@ -2447,6 +2381,7 @@ async function createSandbox(
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
   hermesAuthMethod: HermesAuthMethod | null = null,
+  createIntent: import("./onboard/types").SandboxCreateIntent | null = null,
   preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
@@ -2455,6 +2390,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
   );
+  preparedDcodeRebuild.assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
@@ -2521,12 +2457,11 @@ async function createSandbox(
     },
   );
 
-  const { existingEntry, preservedMcpState, liveExists } = reconcileSandboxForCreate(sandboxName);
+  // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
-  // Declared outside the liveExists block so it is accessible during
-  // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
   let notReadyRecreateInProgress = false;
@@ -2542,9 +2477,9 @@ async function createSandbox(
     const existingSandboxState = getSandboxReuseState(sandboxName);
     const requestedAgentName = getRequestedSandboxAgentName(agent);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
-    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox();
+    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
-    if (agentDrift.changed && !isRecreateSandbox()) {
+    if (agentDrift.changed && !isRecreateSandbox(createIntent?.recreate)) {
       console.log(
         `  Sandbox '${sandboxName}' already exists as ${formatSandboxAgentName(agentDrift.existingAgentName)}.`,
       );
@@ -2606,13 +2541,14 @@ async function createSandbox(
       : { changed: false, changedProviders: [] };
 
     if (
-      !isRecreateSandbox() &&
+      !isRecreateSandbox(createIntent?.recreate) &&
       !recreateForAgentDrift &&
       !needsProviderMigration &&
       !sandboxGpuDrift &&
       !credentialRotation.changed &&
       !hermesToolGatewayDrift &&
-      !hermesDashboardDrift
+      !hermesDashboardDrift &&
+      !toolDisclosureMigrationNeeded
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -2763,6 +2699,8 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (hermesDashboardDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
+    } else if (toolDisclosureMigrationNote) {
+      note(toolDisclosureMigrationNote);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -2776,12 +2714,16 @@ async function createSandbox(
         `  Sandbox '${sandboxName}' has managed MCP servers. Refusing the generic onboard recreation path.`,
       );
       console.error(
-        `  Run \`${cliName()} ${sandboxName} rebuild --yes\` so MCP providers and adapter state are preserved transactionally.`,
+        `  Run \`${cliName()} ${sandboxName} rebuild --yes --tool-disclosure ${effectiveToolDisclosure}\` so MCP providers and adapter state are preserved transactionally.`,
       );
       process.exit(1);
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
+    baseImageResolutionFlow.captureBaseResolution(
+      baseImageResolutionContext,
+      previousEntry?.imageTag,
+    );
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
@@ -2823,12 +2765,22 @@ async function createSandbox(
   // in env args, so it must not persist in /tmp after a failed sandbox create.
   // run() calls process.exit() on failure (bypassing normal control flow), so
   // we register a process 'exit' handler to guarantee cleanup in all cases.
-  const { buildCtx, stagedDockerfile, cleanupBuildCtx } =
-    preparedDcodeRebuild.resolveSandboxBuildContext({
-      preparedBuildContext,
-      agent,
-      fromDockerfile,
-    });
+  const { buildCtx, stagedDockerfile, origin, cleanupBuildCtx } =
+    preparedDcodeRebuild.resolveSandboxBuildContext(
+      {
+        preparedBuildContext,
+        agent,
+        fromDockerfile,
+      },
+      {
+        createAgentSandbox: (selectedAgent) =>
+          baseImageResolutionFlow.createAgentSandboxWithResolution(
+            baseImageResolutionContext,
+            selectedAgent,
+            agentOnboard.createAgentSandbox,
+          ),
+      },
+    );
   // Returns true if the build context was fully removed, false otherwise.
   // The caller uses this to decide whether the process 'exit' safety net
   // can be deregistered — if inline cleanup fails, we leave the handler
@@ -2840,6 +2792,7 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
+  const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
@@ -2860,7 +2813,7 @@ async function createSandbox(
     extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    dockerDriverGateway,
     appendResourceFlags: (args) =>
       appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
         isNonInteractive,
@@ -2908,8 +2861,10 @@ async function createSandbox(
     provider,
     preferredInferenceApi,
     webSearchConfig,
+    toolDisclosure: effectiveToolDisclosure,
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
+    ...baseImageResolutionFlow.getBaseImageResolutionPatchOptions(baseImageResolutionContext),
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
@@ -2925,8 +2880,7 @@ async function createSandbox(
       hermesDashboardState,
       manageDashboard,
       openshellShellCommand,
-      // Transitional BuildKit handoff removal is tracked by #6258.
-      prebuild: { buildCtx, buildId, dockerDriverGateway: isLinuxDockerDriverGatewayEnabled() },
+      prebuild: { buildCtx, buildId, dockerDriverGateway, origin },
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
@@ -3048,7 +3002,7 @@ async function createSandbox(
     // when applicable, then gates host-network local inference reachability (#4509).
     dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
       sandboxName,
-      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      dockerDriverGateway,
       useDockerGpuPatch,
       verifyDirectSandboxGpu,
       verifyGpuOrExit: dockerGpuCreatePatch.verifyGpuOrExit,
@@ -3087,6 +3041,7 @@ async function createSandbox(
     agentVersionKnown: !fromDockerfile,
     imageTag: resolvedImageTag,
     appliedPolicies: initialSandboxPolicy.appliedPresets,
+    toolDisclosure: effectiveToolDisclosure,
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
     plannedMessagingState,
@@ -3133,11 +3088,7 @@ async function createSandbox(
   // cannot be verified via CLI yet — only gateway-level existence is checked).
   for (const p of messagingProviders) {
     if (!providerExistsInGateway(p)) {
-      console.error(`  ⚠ Messaging provider '${p}' was not found in the gateway.`);
-      console.error(`    The credential may not be available inside the sandbox.`);
-      console.error(
-        `    To fix: openshell provider create --name ${p} --type generic --credential <KEY>`,
-      );
+      printMessagingProviderMissing(p);
     }
   }
 
@@ -3148,6 +3099,18 @@ async function createSandbox(
   // #4614: arm rollback only when the sandbox was not live before (never a recreate/rebuild).
   if (!liveExists) sandboxCancelRollback.arm(sandboxName);
   return sandboxName;
+}
+
+type CreateSandboxArgs =
+  Parameters<typeof createSandboxWithBaseImageResolution> extends [unknown, ...infer Args]
+    ? Args
+    : never;
+
+async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
+  return createSandboxWithBaseImageResolution(
+    baseImageResolutionFlow.createBaseImageResolutionContext({ fresh: false }),
+    ...args,
+  );
 }
 
 // ── Step 3: Inference selection ──────────────────────────────────
@@ -4583,6 +4546,9 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  const requestedToolDisclosure = toolDisclosureFlow.applyOnboardToolDisclosureRequest(
+    opts.toolDisclosure,
+  );
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
@@ -4619,7 +4585,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     );
-  // Fail fast for NEMOCLAW_POLICY_TIER only where selectPolicyTier reads it.
+  const baseImageResolutionContext = baseImageResolutionFlow.createBaseImageResolutionContext({
+    fresh,
+    initialHint: opts.baseImageResolutionHint,
+  });
   if (isNonInteractive()) policyTierEnv.validatePolicyTierEnvEarly();
   const noticeAccepted = await ensureUsageNoticeConsent({
     nonInteractive: isNonInteractive(),
@@ -4725,6 +4694,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
+        requestedToolDisclosure,
       },
       {
         loadSession: onboardSession.loadSession,
@@ -5016,7 +4986,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           rootDir: ROOT,
         },
         sandboxDeps: {
-          resolvePath: path.resolve,
+          resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
           agentSupportsWebSearch,
           agentSupportsWebSearchProvider,
           note,
@@ -5047,7 +5017,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
             selectResourceProfileForSandbox({ isNonInteractive, note, prompt, promptOrDefault }),
           stopStaleDashboardListenersForSandbox,
           listRegistrySandboxes: registry.listSandboxes,
-          createSandbox: preparedDcodeRuntime.bindCreateSandbox(createSandbox),
+          createSandbox: preparedDcodeRuntime.bindCreateSandbox(
+            createSandboxWithBaseImageResolution.bind(null, baseImageResolutionContext),
+          ),
           updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
           getSandboxAgentRegistryFields,
           recordStepComplete,

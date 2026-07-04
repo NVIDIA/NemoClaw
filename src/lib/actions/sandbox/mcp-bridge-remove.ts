@@ -229,12 +229,22 @@ async function removeMcpBridgeUnlocked(
       // retains its helper/lifecycle validation; Deep Agents intentionally
       // skips only the marker that an older image cannot expose.
       assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
-      unregisterAgentAdapter(
+      const adapterRemoval = unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
         entry,
-        { force: options.force === true, envValues: adapterEnvValues },
+        {
+          force: options.force === true,
+          envValues: adapterEnvValues,
+          teardown: true,
+        },
       );
+      if (adapterRemoval === "unowned") {
+        adapterCleanupProved = false;
+        throw new McpBridgeError(
+          `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'. Preserved provider, policy, and registry ownership state.`,
+        );
+      }
       if (adapter === "hermes-config") {
         assertHermesMcpRuntimeIntent(sandboxName, {
           entries: Object.values(bridgeState(sandbox)).filter(

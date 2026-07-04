@@ -18,11 +18,13 @@ import {
   type RebuildBail,
   type RebuildLog,
 } from "./rebuild-credential-preflight";
+import type { PreparedRebuildImage } from "./rebuild-custom-image-preflight";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import type { RebuildDurableConfig } from "./rebuild-durable-config";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
+import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import type { RebuildTargetConfig } from "./rebuild-target-config";
 
@@ -65,6 +67,10 @@ async function preflightRebuildWebSearchCredential(
   }
 }
 
+export type RebuildTargetRuntimePreflightResult =
+  | { ok: true; preparedImage: PreparedRebuildImage | null }
+  | { ok: false };
+
 export async function preflightRebuildTargetRuntime(
   target: RebuildTargetConfig,
   sb: RebuildSandboxEntry,
@@ -72,7 +78,7 @@ export async function preflightRebuildTargetRuntime(
   log: RebuildLog,
   bail: RebuildBail,
   options: { skipImagePreflight?: boolean } = {},
-): Promise<boolean> {
+): Promise<RebuildTargetRuntimePreflightResult> {
   const webSearchConfig = target.durableConfig.webSearchConfig;
   const webSearchProvider = webSearchConfig ? webSearchProviderForConfig(webSearchConfig) : null;
   if (
@@ -90,7 +96,7 @@ export async function preflightRebuildTargetRuntime(
       `Recorded ${label} is unsupported by the rebuild image`,
       bail,
     );
-    return false;
+    return { ok: false };
   }
   if (webSearchProvider) {
     const credentialEnv = webSearchEnvFor(webSearchProvider);
@@ -104,7 +110,7 @@ export async function preflightRebuildTargetRuntime(
         "Web Search and MCP credential ownership conflict",
         bail,
       );
-      return false;
+      return { ok: false };
     }
   }
 
@@ -124,7 +130,7 @@ export async function preflightRebuildTargetRuntime(
       "Recorded sandbox GPU state is invalid",
       bail,
     );
-    return false;
+    return { ok: false };
   }
   try {
     await enforceDockerGpuPatchPreserveNetwork(target.resumeConfig.provider, sandboxGpuConfig, {
@@ -139,9 +145,10 @@ export async function preflightRebuildTargetRuntime(
       "Sandbox GPU network preflight failed",
       bail,
     );
-    return false;
+    return { ok: false };
   }
 
+  let preparedImage: PreparedRebuildImage | null = null;
   if (!options.skipImagePreflight) {
     const customImage = await rebuildImagePreflight.preflightRebuildImage({
       agent: target.agentDefinition,
@@ -151,6 +158,7 @@ export async function preflightRebuildTargetRuntime(
       preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
       compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
       webSearchConfig: target.durableConfig.webSearchConfig,
+      toolDisclosure: target.durableConfig.toolDisclosure,
       hermesToolGateways: target.hermesToolGateways,
       sandboxGpuConfig,
       gatewayPort: recreateOptions.targetGatewayPort,
@@ -165,25 +173,39 @@ export async function preflightRebuildTargetRuntime(
         "Replacement sandbox image preflight failed",
         bail,
       );
-      return false;
+      return { ok: false };
     }
+    preparedImage = customImage.prepared;
   }
-  if (!(await preflightRebuildWebSearchCredential(target.durableConfig, bail))) return false;
+  try {
+    if (!(await preflightRebuildWebSearchCredential(target.durableConfig, bail))) {
+      return { ok: false };
+    }
 
-  // Credential preflight must use the same trusted selection. Legacy registry
-  // rows may recover provider/model from their own matching onboard session;
-  // checking the raw row first would miss that remote credential requirement.
-  return preflightRebuildCredentials(
-    {
-      ...sb,
-      provider: target.resumeConfig.provider,
-      model: target.resumeConfig.model,
-      credentialEnv: target.credentialEnv,
-      hermesAuthMethod: target.durableConfig.hermesAuthMethod,
-    },
-    log,
-    bail,
-  );
+    // Credential preflight must use the same trusted selection. Legacy registry
+    // rows may recover provider/model from their own matching onboard session;
+    // checking the raw row first would miss that remote credential requirement.
+    if (
+      !preflightRebuildCredentials(
+        {
+          ...sb,
+          provider: target.resumeConfig.provider,
+          model: target.resumeConfig.model,
+          credentialEnv: target.credentialEnv,
+          hermesAuthMethod: target.durableConfig.hermesAuthMethod,
+        },
+        log,
+        bail,
+      )
+    ) {
+      return { ok: false };
+    }
+    const result: RebuildTargetRuntimePreflightResult = { ok: true, preparedImage };
+    preparedImage = null;
+    return result;
+  } finally {
+    if (preparedImage) disposePreparedBuildContext(preparedImage);
+  }
 }
 
 export async function preflightAuthoritativeOnboardRuntime(

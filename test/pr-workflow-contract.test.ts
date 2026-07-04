@@ -31,8 +31,22 @@ type CodebaseGrowthGuardrailsWorkflow = {
 type PrekConfig = {
   default_stages?: string[];
   repos: Array<{
-    hooks?: Array<{ id: string; stages?: string[] }>;
+    hooks?: Array<{
+      id: string;
+      always_run?: boolean;
+      entry?: string;
+      files?: string;
+      stages?: string[];
+    }>;
   }>;
+};
+
+type PackageJson = {
+  scripts: Record<string, string>;
+};
+
+type TypeScriptConfig = {
+  include: string[];
 };
 
 const sharedActionPaths = {
@@ -165,6 +179,44 @@ function runWorkflowShellStep(
   };
 }
 
+function runLoggedPackageScript(script: string): string[][] {
+  const temp = mkdtempSync(join(tmpdir(), "nemoclaw-package-script-"));
+  const fakeBin = join(temp, "bin");
+  const commandLog = join(temp, "commands.jsonl");
+  mkdirSync(fakeBin);
+
+  for (const command of ["npm", "npx", "tsx", "vitest"]) {
+    writeFileSync(
+      join(fakeBin, command),
+      [
+        "#!/usr/bin/env node",
+        'const fs = require("node:fs");',
+        `fs.appendFileSync(process.env.COMMAND_LOG, JSON.stringify(["${command}", ...process.argv.slice(2)]) + "\\n");`,
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+  }
+
+  try {
+    const result = spawnSync("sh", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMMAND_LOG: commandLog,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+      },
+    });
+    expect(result.status, `Package script failed: ${result.stderr}`).toBe(0);
+    return readFileSync(commandLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as string[]);
+  } finally {
+    rmSync(temp, { force: true, recursive: true });
+  }
+}
+
 function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): boolean {
   const filterStep = workflow.jobs.changes.steps?.find((step) => step.id === "filter");
   const quantifier = filterStep?.with?.["predicate-quantifier"];
@@ -207,6 +259,10 @@ describe("pull request and main workflow contracts", () => {
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
+  const packageJson = JSON.parse(readFileSync("package.json", "utf8")) as PackageJson;
+  const cliTypeScriptConfig = JSON.parse(
+    readFileSync("tsconfig.cli.json", "utf8"),
+  ) as TypeScriptConfig;
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
@@ -500,13 +556,15 @@ describe("pull request and main workflow contracts", () => {
     ).toBe(true);
   });
 
-  it("keeps ordinary hooks in pre-commit and heavyweight push hooks explicit", () => {
+  it("keeps ordinary hooks automatic and full coverage explicit", () => {
     const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
     const hook = (id: string) => hooks.find((candidate) => candidate.id === id);
 
     expect(prekConfig.default_stages).toEqual(["pre-commit"]);
-    expect(hook("test-cli")?.stages).toBeUndefined();
-    expect(hook("test-plugin")?.stages).toBeUndefined();
+    expect(hook("test-cli")?.stages).toEqual(["manual"]);
+    expect(hook("test-cli")?.entry).toBe("npm run test:coverage:cli");
+    expect(hook("test-plugin")?.stages).toEqual(["manual"]);
+    expect(hook("test-plugin")?.entry).toBe("npm run test:coverage:plugin");
     for (const id of [
       "trailing-whitespace",
       "end-of-file-fixer",
@@ -520,6 +578,136 @@ describe("pull request and main workflow contracts", () => {
     for (const id of ["tsc-plugin", "tsc-js", "tsc-cli", "version-tag-sync"]) {
       expect(hook(id)?.stages, id).toEqual(["pre-push"]);
     }
+  });
+
+  it("scopes pre-push typechecks to project and transitive inputs", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const pluginTypecheck = hooks.find((candidate) => candidate.id === "tsc-plugin");
+    const cliTypecheck = hooks.find((candidate) => candidate.id === "tsc-cli");
+    const jsTypecheck = hooks.find((candidate) => candidate.id === "tsc-js");
+    const pluginFiles = new RegExp(pluginTypecheck?.files ?? "(?!)", "u");
+    const files = new RegExp(cliTypecheck?.files ?? "(?!)", "u");
+    const jsFiles = new RegExp(jsTypecheck?.files ?? "(?!)", "u");
+
+    expect(cliTypecheck?.entry).toBe("npm run typecheck:cli -- --incremental");
+    expect(cliTypecheck?.always_run).toBeUndefined();
+    for (const include of cliTypeScriptConfig.include) {
+      const representativeInput = include.replace("**/*", "nested/input");
+      expect(files.test(representativeInput), include).toBe(true);
+    }
+    for (const path of [
+      ".agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts",
+      ".agents/skills/nemoclaw-maintainer-day/scripts/pra-gate.ts",
+      ".agents/skills/nemoclaw-maintainer-day/scripts/shared.ts",
+      "agents/hermes/generate-config.ts",
+      "bin/nemoclaw.ts",
+      "scripts/check.ts",
+      "scripts/check.mts",
+      "src/lib/runner.ts",
+      "test/runner.test.ts",
+      "tools/e2e/workflow-boundary.mts",
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw-blueprint/scripts/render.ts",
+      "src/lib/actions/sandbox/credentials.json",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.cli.json",
+      "vitest.config.ts",
+    ]) {
+      expect(files.test(path), path).toBe(true);
+    }
+    for (const path of [
+      ".agents/skills/example/scripts/unchecked.ts",
+      "agents/hermes/start.sh",
+      "docs/get-started/quickstart.mdx",
+      "nemoclaw/src/commands/status.ts",
+      "scripts/check.js",
+    ]) {
+      expect(files.test(path), path).toBe(false);
+    }
+    for (const path of [
+      "nemoclaw/src/lib/subprocess-env.ts",
+      "nemoclaw/src/blueprint/private-networks.ts",
+      "nemoclaw/src/commands/status.ts",
+    ]) {
+      expect(pluginFiles.test(path), path).toBe(true);
+    }
+    expect(pluginFiles.test(".agents/skills/example/scripts/unchecked.ts")).toBe(false);
+    for (const path of ["bin/nemoclaw.js", "jsconfig.json", "package.json", "package-lock.json"]) {
+      expect(jsFiles.test(path), path).toBe(true);
+    }
+    expect(jsFiles.test("docs/_ext/nemoclaw.js")).toBe(false);
+  });
+
+  it("executes repo-wide coverage and diff-scoped automatic hook commands", () => {
+    const scripts = packageJson.scripts;
+    const cliCoverageCalls = runLoggedPackageScript(scripts["test:coverage:cli"]);
+    const pluginCoverageCalls = runLoggedPackageScript(scripts["test:coverage:plugin"]);
+    const repoCheckCalls = runLoggedPackageScript(scripts.check);
+    const diffCheckCalls = runLoggedPackageScript(scripts["check:diff"]);
+
+    expect(cliCoverageCalls.map(([command]) => command)).toEqual([
+      "npm",
+      "npm",
+      "tsx",
+      "vitest",
+      "tsx",
+    ]);
+    expect(cliCoverageCalls[3]).toEqual(
+      expect.arrayContaining(["--project", "cli", "integration", "--coverage"]),
+    );
+    expect(cliCoverageCalls[4]).toEqual([
+      "tsx",
+      "scripts/check-coverage-ratchet.ts",
+      "coverage/cli/coverage-summary.json",
+      "ci/coverage-threshold-cli.json",
+      "CLI coverage",
+    ]);
+    expect(pluginCoverageCalls[0]).toEqual(
+      expect.arrayContaining([
+        "--project",
+        "plugin",
+        "--coverage.include=nemoclaw/src/**/*.ts",
+        "--coverage.include=nemoclaw/src/**/*.cts",
+      ]),
+    );
+    expect(pluginCoverageCalls[1]).toEqual([
+      "tsx",
+      "scripts/check-coverage-ratchet.ts",
+      "coverage/plugin/coverage-summary.json",
+      "ci/coverage-threshold-plugin.json",
+      "Plugin coverage",
+    ]);
+    expect(repoCheckCalls).toEqual([
+      ["npx", "prek", "run", "--all-files", "--stage", "pre-commit"],
+      ["npx", "prek", "run", "--all-files", "--stage", "manual"],
+    ]);
+    expect(diffCheckCalls).toEqual([
+      [
+        "npx",
+        "prek",
+        "run",
+        "--from-ref",
+        "origin/main",
+        "--to-ref",
+        "HEAD",
+        "--stage",
+        "pre-commit",
+      ],
+      ["npx", "commitlint", "--from", "origin/main", "--to", "HEAD"],
+      [
+        "npx",
+        "prek",
+        "run",
+        "--from-ref",
+        "origin/main",
+        "--to-ref",
+        "HEAD",
+        "--stage",
+        "pre-push",
+      ],
+    ]);
   });
 
   it("reuses the same shared CI actions in PR and main workflows", () => {
@@ -719,16 +907,17 @@ describe("pull request and main workflow contracts", () => {
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
     expect(staticRuns).toContain("npm run validate:configs");
+    expect(staticRuns).toContain("npm run typecheck:scorecard");
     expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");
     for (const skippedHook of [
-      "test-cli",
-      "test-plugin",
       "source-shape-test-budget",
       "test-file-size-budget",
       "test-skills-yaml",
     ]) {
       expect(staticPrekRun).toContain(`--skip ${skippedHook}`);
     }
+    expect(staticPrekRun).not.toContain("--skip test-cli");
+    expect(staticPrekRun).not.toContain("--skip test-plugin");
     expect(staticRuns).toContain("npm run source-shape:check");
     expect(staticRuns).toContain("npm run test-size:check");
     expect(staticRuns).toContain("npx vitest run test/skills-frontmatter.test.ts");

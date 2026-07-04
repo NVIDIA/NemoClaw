@@ -48,7 +48,16 @@ function mockSandboxExecCurl(command, options = {}) {
   return null;
 }
 
+function mockOnboardRunCapture(command, options = {}) {
+  const normalized = normalizeCommand(command);
+  if (/^docker run --rm --entrypoint \/usr\/bin\/ldd \S+ --version$/.test(normalized)) {
+    return "ldd (GNU libc) 2.41";
+  }
+  return mockSandboxExecCurl(command, options);
+}
+
 module.exports = {
+  mockOnboardRunCapture,
   mockSandboxExecCurl,
   normalizeCommand,
 };

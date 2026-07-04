@@ -31,7 +31,7 @@ nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
 
-The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
+The image installs hash-locked Deep Agents Code `0.1.30` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
 Fresh and resumed onboarding exit nonzero instead of reporting the runtime ready when the installed version is too old, uses an incompatible version scheme, or cannot be verified.
 If the version check fails, review the reported version error and run `nemo-deepagents <sandbox-name> rebuild` before resuming onboarding.
@@ -72,8 +72,12 @@ The managed model constructor accepts only Deep Agents Code's `openai` provider 
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
 Project and user-defined subagents remain available, but they inherit the managed chat model instead of accepting their own model override.
-MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through the single managed user-level config and OpenShell egress policy; arbitrary project and user MCP configuration remains blocked.
-Before launch, NemoClaw validates the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders; stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
+MCP servers registered through `nemoclaw <sandbox-name> mcp add` remain available through NemoClaw's dedicated `/sandbox/.deepagents/.nemoclaw-mcp.json` projection and OpenShell egress policy.
+Project and user MCP files are never auto-loaded.
+Sandboxes with the older managed MCP v1 runtime must rebuild before `mcp add` or `mcp restart`; remove, rebuild, and destroy can still scrub exact registry-owned legacy entries without claiming unrelated user content.
+Before launch, NemoClaw validates and canonicalizes the complete managed file as HTTPS-only definitions with exact OpenShell credential placeholders, then gives Deep Agents Code a process-local, integrity-bound snapshot for server starts and restarts.
+It prefers a sealed in-memory file when available; the OpenShell-compatible anonymous read-only descriptor fallback verifies the inode, size, and SHA-256 digest and fails closed on drift.
+Stdio commands, extra headers, raw credentials, and unrelated top-level configuration fail closed.
 For authenticated MCP setup and credential rotation, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 This isolated-mode guarantee applies to those managed launchers, not arbitrary Python commands in the sandbox.
 
@@ -108,13 +112,16 @@ Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, and generated config when those files exist.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
-NemoClaw intentionally does not back up `.deepagents/.env` or user-authored portions of `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
-NemoClaw restores its managed MCP definitions separately from the credential-free registry; service credentials remain in OpenShell provider state.
+NemoClaw intentionally does not back up `.deepagents/.env` or the user-owned `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.
+The managed `.deepagents/.nemoclaw-mcp.json` projection is also excluded because NemoClaw reconstructs it from the credential-free registry after recreation.
+Service credentials remain in OpenShell provider state.
 It also does not preserve `hooks.json`; executable Deep Agents Code hooks are disabled in the managed harness.
 If `.deepagents/.state/auth.json` contains upstream credentials, or `.deepagents/.state/chatgpt-auth.json` exists, the managed Deep Agents Code launch paths refuse to start until that credential state is removed.
-Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, successfully builds the replacement from a pinned base and fingerprinted context, and revalidates the target and route.
+Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects its recorded OpenShell gateway, tests the recorded inference route through `https://inference.local`, and prepares the replacement from the recorded provider, model, reasoning, and web search settings with a pinned base and fingerprinted context.
 Initial failures stop before backup.
-NemoClaw checks the target, route, and retained build inputs again after backup, immediately before deletion, so late failures can leave a backup but keep the existing sandbox intact.
+After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
+If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
+Rebuild also preserves the standalone Deep Agents Code `tavily` preset and replays recorded custom policies from their exact stored content.
 
 ## Optional Web Search
 

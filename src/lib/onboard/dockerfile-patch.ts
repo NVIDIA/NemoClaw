@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-
 import { getSandboxInferenceConfig } from "../inference/config";
 import {
   isWebSearchEnabled,
@@ -11,63 +9,29 @@ import {
 } from "../inference/web-search";
 import { hydrateDerivedSandboxMessagingPlanFields, MessagingSetupApplier } from "../messaging";
 import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
+import {
+  formatSandboxBaseImageResolutionLabels,
+  type SandboxBaseImageResolutionMetadata,
+} from "../sandbox-base-image";
+import {
+  DEFAULT_TOOL_DISCLOSURE,
+  normalizeToolDisclosure,
+  type ToolDisclosure,
+} from "../tool-disclosure";
+import {
+  dockerfileInstructions,
+  readDockerfilePatchSnapshot,
+  replaceDockerfilePatchSnapshot,
+  validateToolDisclosureDockerfileContract,
+} from "./dockerfile-tool-disclosure-contract";
+
+export { assertToolDisclosureDockerfileContract } from "./dockerfile-tool-disclosure-contract";
 
 const SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 const PROXY_HOST_RE = /^[A-Za-z0-9._-]+$/;
 const POSITIVE_INT_RE = /^[1-9][0-9]*$/;
 
 type LooseObject = Record<string, unknown>;
-const O_NOFOLLOW = fs.constants.O_NOFOLLOW;
-
-function errnoCode(err: unknown): string | null {
-  return typeof err === "object" && err !== null && "code" in err
-    ? String((err as { code?: unknown }).code)
-    : null;
-}
-
-function openExistingRegularDockerfileNoFollow(dockerfilePath: string, flags: number): number {
-  if (typeof O_NOFOLLOW !== "number") {
-    throw new Error("Refusing to patch Dockerfile: O_NOFOLLOW is unavailable on this platform.");
-  }
-  let fd: number;
-  try {
-    fd = fs.openSync(dockerfilePath, flags | O_NOFOLLOW, 0o600);
-  } catch (err) {
-    if (errnoCode(err) === "ELOOP") {
-      throw new Error(`Refusing to patch Dockerfile through a symlink: ${dockerfilePath}`);
-    }
-    throw err;
-  }
-  try {
-    const stat = fs.fstatSync(fd);
-    if (!stat.isFile()) {
-      throw new Error(`Refusing to patch non-regular Dockerfile path: ${dockerfilePath}`);
-    }
-    return fd;
-  } catch (err) {
-    fs.closeSync(fd);
-    throw err;
-  }
-}
-
-function readExistingDockerfileNoFollow(dockerfilePath: string): string {
-  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_RDONLY);
-  try {
-    return fs.readFileSync(fd, "utf8");
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-function writeExistingDockerfileNoFollow(dockerfilePath: string, dockerfile: string): void {
-  const fd = openExistingRegularDockerfileNoFollow(dockerfilePath, fs.constants.O_WRONLY);
-  try {
-    fs.ftruncateSync(fd, 0);
-    fs.writeFileSync(fd, dockerfile, { encoding: "utf8" });
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 export function encodeDockerJsonArg(value: unknown): string {
   return Buffer.from(JSON.stringify(value ?? {}), "utf8").toString("base64");
@@ -85,6 +49,9 @@ export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
 
 export interface PatchStagedDockerfileOptions {
   buildIdPolicy?: DockerfileBuildIdPolicy;
+  toolDisclosure?: ToolDisclosure;
+  requireToolDisclosureContract?: boolean;
+  baseImageResolutionMetadata?: SandboxBaseImageResolutionMetadata | null;
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -122,7 +89,17 @@ export function patchStagedDockerfile(
     inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
       ? inferenceBaseUrlOverride
       : sandboxInference.inferenceBaseUrl;
-  let dockerfile = readExistingDockerfileNoFollow(dockerfilePath);
+  const patchSnapshot = readDockerfilePatchSnapshot(dockerfilePath);
+  let dockerfile = patchSnapshot.content;
+  const toolDisclosure = normalizeToolDisclosure(options.toolDisclosure) ?? DEFAULT_TOOL_DISCLOSURE;
+  const toolDisclosureInstruction = options.requireToolDisclosureContract
+    ? validateToolDisclosureDockerfileContract(dockerfile, toolDisclosure)
+    : dockerfileInstructions(dockerfile).find((instruction) =>
+        /^ARG\s+NEMOCLAW_TOOL_DISCLOSURE\s*=/.test(instruction.text),
+      );
+  if (toolDisclosureInstruction) {
+    dockerfile = `${dockerfile.slice(0, toolDisclosureInstruction.start)}ARG NEMOCLAW_TOOL_DISCLOSURE=${sanitizeDockerArg(toolDisclosure)}${dockerfile.slice(toolDisclosureInstruction.end)}`;
+  }
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from
   // blueprint.yaml, whose digest belongs to a different registry.
@@ -322,6 +299,13 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
     );
   }
+
+  const baseResolutionLabels = formatSandboxBaseImageResolutionLabels(
+    options.baseImageResolutionMetadata,
+  );
+  if (baseResolutionLabels) {
+    dockerfile = `${dockerfile.trimEnd()}\n\n# NemoClaw sandbox-base warm-resolution metadata\n${baseResolutionLabels}\n`;
+  }
   // NEMOCLAW_EXTRA_AGENTS_JSON — bake secondary OpenClaw agents into
   // agents.list[] alongside the canonical "main" entry. Pass the raw operator
   // payload through to the build-time validator in
@@ -338,5 +322,5 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
-  writeExistingDockerfileNoFollow(dockerfilePath, dockerfile);
+  replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }

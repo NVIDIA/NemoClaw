@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 
 import {
   buildRebuildRecreateOnboardOpts,
@@ -170,7 +171,17 @@ describe("buildRebuildRecreateOnboardOpts", () => {
       sandboxGpu: "disable",
       sandboxGpuDevice: null,
       autoYes: true,
+      toolDisclosure: "progressive",
     });
+  });
+
+  it("carries an explicit direct tool-disclosure selection into inner onboard", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { ...dashboard, toolDisclosure: "direct" },
+    });
+
+    expect(opts.toolDisclosure).toBe("direct");
   });
 
   it("forwards noGpu:true for legacy entries with gpuEnabled:false and no sandboxGpuMode", () => {
@@ -226,6 +237,16 @@ describe("buildRebuildRecreateOnboardOpts", () => {
     expect(opts.noGpu).toBe(true);
   });
 
+  it("passes the sandbox-specific base-image hint directly into recreate onboarding (#4680)", () => {
+    const hint = { key: "sandbox-a" } as SandboxBaseImageResolutionMetadata;
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: dashboard,
+      baseImageResolutionHint: hint,
+    });
+    expect(opts.baseImageResolutionHint).toBe(hint);
+  });
+
   it("forwards the ephemeral prepared DCode rebuild handoff as one capability (#6195)", () => {
     const preparedDcodeRebuild = {
       buildContext: {
@@ -233,6 +254,7 @@ describe("buildRebuildRecreateOnboardOpts", () => {
         stagedDockerfile: "/tmp/dcode-rebuild/Dockerfile",
         buildId: "dcode-build",
         cleanupBuildCtx: () => true,
+        origin: "generated" as const,
       },
       gatewayName: "nemoclaw",
     };

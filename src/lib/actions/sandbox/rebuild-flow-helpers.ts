@@ -23,6 +23,7 @@ import {
   printSandboxListFailureWithRecoveryContext,
 } from "../../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -39,6 +40,11 @@ export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] }
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+};
+
+export type RebuildAgentBaseImageOptions = {
+  resolutionHint?: SandboxBaseImageResolutionMetadata | null;
+  forceBaseImageRefresh?: boolean;
 };
 
 export type RebuildAgentBaseImagePreflight = {
@@ -199,6 +205,7 @@ export function openRebuildShieldsWindowForState(
 export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
+  options: RebuildAgentBaseImageOptions = {},
 ): RebuildAgentBaseImagePreflight {
   if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
@@ -206,7 +213,11 @@ export function ensureRebuildAgentBaseImage(
   const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
   try {
     const result = ensureAgentBaseImage(agentDef, {
-      forceBaseImageRebuild: !hasExplicitOverride,
+      forceBaseImageRebuild: !hasExplicitOverride && !options.resolutionHint,
+      ...(options.resolutionHint !== undefined ? { resolutionHint: options.resolutionHint } : {}),
+      ...(options.forceBaseImageRefresh !== undefined
+        ? { forceBaseImageRefresh: options.forceBaseImageRefresh }
+        : {}),
     });
     const imageRef =
       hasExplicitOverride && result.imageTag

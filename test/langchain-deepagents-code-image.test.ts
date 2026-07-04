@@ -8,7 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 import {
   DCODE_CANONICAL_PATH,
@@ -20,11 +20,8 @@ import {
   runStartScriptProxyProbe,
   TRACING_ENABLE_ENV_NAMES,
 } from "./helpers/langchain-deepagents-code-headless.ts";
+import { CANONICAL_SECRET_POSITIVE_VECTORS } from "./helpers/langchain-deepagents-code-secret-patterns.ts";
 import { makeStartScriptFixture as makeIdentityStartScriptFixture } from "./support/dcode-start-script-fixture.ts";
-
-function fingerprint(patterns: readonly RegExp[]): string[] {
-  return patterns.map((re) => `${re.source}::${re.flags}`);
-}
 
 function containsTokenShapedSecret(value: string): boolean {
   return TOKEN_PREFIX_PATTERNS.some((pattern) => {
@@ -63,8 +60,8 @@ const MANAGED_MCP_VALIDATOR_INVOCATION = [
 ].join("\n");
 
 function stubManagedMcpValidator(source: string): string {
-  expect(source).toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
-  return source.replace(MANAGED_MCP_VALIDATOR_INVOCATION, 'managed_mcp_config=""');
+  expect(source).not.toContain(MANAGED_MCP_VALIDATOR_INVOCATION);
+  return source;
 }
 
 function makeWrapperFixture(
@@ -310,10 +307,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(wrapper).toContain("unset PYTHONHOME PYTHONPATH");
     expect(wrapper).toContain('/opt/venv/bin/python3 -I - "$auth_file"');
     expect(wrapper).toContain("exec /opt/venv/bin/python3 -I -m deepagents_code");
-    expect(wrapper).toContain("extra_args=(--sandbox none)");
-    expect(wrapper).toContain('extra_args+=(--mcp-config "$managed_mcp_config")');
+    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
+    expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
-    expect(wrapper).toContain("extra_args+=(--no-mcp)");
     expect(wrapper).toContain("assert_no_auth_store_credentials");
     expect(wrapper).toContain("assert_no_codex_auth_credentials");
     for (const s of [
@@ -331,6 +327,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(wrapper).toContain(s);
     }
     for (const s of [
+      "managed-dcode-runtime.py",
       "patch-managed-deepagents-code.py",
       "DEEPAGENTS_CODE_LANGSMITH_TRACING=false",
       "LANGSMITH_TRACING=false",
@@ -344,6 +341,18 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code",
     );
+    expect(dockerfile).toContain(
+      "COPY agents/langchain-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain(
+      "python3 /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain(
+      "rm -f /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
+    );
+    expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
+    expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
+    expect(dockerfile).toContain("progressive|direct)");
     expect(launcher).toContain('exec "$MANAGED_DCODE_WRAPPER" "$@"');
     expect(policy).not.toContain("/usr/local/bin/dcode.real");
     expect(policy).not.toContain("dcode.upstream");
@@ -352,33 +361,45 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("exposes an exact managed MCP capability marker without starting dcode", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mcp-capability-"));
     try {
-      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {});
+      const { wrapperPath, ranMarker, authFile, codexAuthFile } = makeWrapperFixture(tempDir);
+      fs.writeFileSync(authFile, '{"api_key":"forbidden"}\n', "utf8");
+      fs.writeFileSync(codexAuthFile, '{"access_token":"forbidden"}\n', "utf8");
+      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {
+        OPENAI_API_KEY: "forbidden",
+        NEMOCLAW_DEEPAGENTS_CODE_AUTH_MODE: "invalid",
+      });
 
       expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n");
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=2\n");
       expect(fs.existsSync(ranMarker)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 
-  it("uses the pinned Deep Agents Code user-level MCP discovery path", () => {
+  it("keeps NemoClaw MCP state separate from user discovery", () => {
     const requirements = readAgentFile("requirements.lock");
     const wrapper = readAgentFile("dcode-wrapper.sh");
+    const managedRuntime = readAgentFile("managed-dcode-runtime.py");
     const patcher = readAgentFile("patch-managed-deepagents-code.py");
     const manifest = readAgentFile("manifest.yaml");
-    const userLevelPath = "/sandbox/.deepagents/.mcp.json";
+    const managedPath = "/sandbox/.deepagents/.nemoclaw-mcp.json";
 
-    // The pinned Deep Agents Code release discovers ~/.deepagents/.mcp.json as user-level
-    // config. /sandbox/.mcp.json is project-level and headless `dcode -n`
-    // rejects it unless the project trust gate has been satisfied.
+    // The pinned release's user/project .mcp.json files remain user-authored.
+    // Managed images suppress discovery and pass only an integrity-bound
+    // snapshot of NemoClaw's dedicated projection.
     expect(requirements).toContain("deepagents-code==0.1.30");
-    expect(wrapper).toContain("managed_mcp_config_path");
-    expect(patcher).toContain(`_MCP_CONFIG_FILE = Path("${userLevelPath}")`);
+    expect(wrapper).toContain("extra_args=(--sandbox none --no-mcp)");
+    expect(managedRuntime).toContain(`_MCP_CONFIG_FILE = Path("${managedPath}")`);
     expect(patcher).toContain("managed_mcp_config = _nemoclaw_managed_mcp_config_path()");
+    expect(managedRuntime).toContain("if not servers:\n        return None");
+    expect(managedRuntime).toContain("or descriptor != _MANAGED_MCP_FD");
+    expect(patcher).toContain("def discover_mcp_configs(");
+    expect(patcher).toContain("return []");
     expect(manifest).toContain("- .deepagents/.mcp.json");
+    expect(manifest).toContain(".deepagents/.nemoclaw-mcp.json projection");
     expect(wrapper).not.toContain("--mcp-config /sandbox/.mcp.json");
+    expect(wrapper).not.toContain("managed_mcp_config_path");
     expect(patcher).not.toContain('managed_mcp_config = "/sandbox/.mcp.json"');
   });
 
@@ -1417,72 +1438,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS fingerprint to surface drift", () => {
-    expect(fingerprint(TOKEN_PREFIX_PATTERNS)).toEqual([
-      "nvapi-[A-Za-z0-9_-]{10,}::g",
-      "nvcf-[A-Za-z0-9_-]{10,}::g",
-      "ghp_[A-Za-z0-9_-]{10,}::g",
-      "(?:github_pat_)[A-Za-z0-9_]{30,}::g",
-      "sk-proj-[A-Za-z0-9_-]{10,}::g",
-      "sk-ant-[A-Za-z0-9_-]{10,}::g",
-      "sk-[A-Za-z0-9_-]{20,}::g",
-      "(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}::g",
-      "A(?:K|S)IA[A-Z0-9]{16}::g",
-      "hf_[A-Za-z0-9]{10,}::g",
-      "glpat-[A-Za-z0-9_-]{10,}::g",
-      "gsk_[A-Za-z0-9]{10,}::g",
-      "pypi-[A-Za-z0-9_-]{10,}::g",
-      "\\bbot\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
-      "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
-      "\\b[A-Za-z0-9]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}\\b::g",
-      "tvly-[A-Za-z0-9_-]{10,}::g",
-      "lsv2_(?:pt|sk)_[A-Za-z0-9]{10,}(?:_[A-Za-z0-9]+)*::g",
-    ]);
-  });
-
-  it("pins the wrapper parity contract to the canonical CONTEXT_PATTERNS fingerprint to surface drift", () => {
-    expect(fingerprint(CONTEXT_PATTERNS)).toEqual([
-      "(?<=Bearer\\s+)[A-Za-z0-9_.+/=-]{10,}::gi",
-      "(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['\"]?)[A-Za-z0-9_.+/=-]{10,}::gi",
-    ]);
-  });
-
-  it("rejects every canonical token shape declared by the secret-pattern contract", () => {
-    const cases: Array<{ name: string; sample: string }> = [
-      { name: "nvapi", sample: "nvapi-abcdefghijklmnop" },
-      { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" },
-      { name: "ghp", sample: "ghp_abcdefghijklmnopqr" },
-      { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
-      { name: "sk_proj", sample: "sk-proj-abcdefghij" },
-      { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
-      { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
-      { name: "xoxb", sample: "xoxb-1234567890" },
-      { name: "xoxp", sample: "xoxp-1234567890" },
-      { name: "xoxa", sample: ["xoxa", "1234567890"].join("-") },
-      { name: "xoxs", sample: "xoxs-1234567890" },
-      { name: "xapp", sample: ["xapp", "1", "A1B2C3", "12345", "abcde"].join("-") },
-      { name: "akia", sample: ["AKIA", "ABCDEFGHIJKLMNOP"].join("") },
-      { name: "asia", sample: ["ASIA", "ABCDEFGHIJKLMNOP"].join("") },
-      { name: "hf", sample: "hf_abcdefghijklmnopq" },
-      { name: "glpat", sample: "glpat-abcdefghijklmn" },
-      { name: "gsk", sample: "gsk_abcdefghijklmnop" },
-      { name: "pypi", sample: "pypi-abcdefghijklmnop" },
-      { name: "tavily", sample: "tvly-abcdefghijklmnop" },
-      { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-      { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-      { name: "discord", sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ" },
-      { name: "langsmith_pt", sample: `lsv2_pt_${"a".repeat(36)}_${"b".repeat(10)}` },
-      { name: "langsmith_sk", sample: `lsv2_sk_${"a".repeat(36)}_${"b".repeat(10)}` },
-    ];
-    for (const { name, sample } of cases) {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${name}-`));
-      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-      const varName = `NEMOCLAW_PARITY_${name.toUpperCase()}`;
-      const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: sample });
-      expect(result.status, `${name} via runtime env not rejected`).not.toBe(0);
-      expect(result.stderr).toContain(varName);
-      expect(result.stderr).not.toContain(sample);
-      expect(fs.existsSync(ranMarker)).toBe(false);
+  it("rejects the canonical positive secret corpus before dcode starts (#6195)", () => {
+    for (const { label, value } of CANONICAL_SECRET_POSITIVE_VECTORS) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${label}-`));
+      try {
+        const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+        const varName = `NEMOCLAW_PARITY_${label.toUpperCase()}`;
+        const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: value });
+        expect(result.status, `${label} via runtime env not rejected`).not.toBe(0);
+        expect(result.stderr).toContain(varName);
+        expect(result.stderr).not.toContain(value);
+        expect(fs.existsSync(ranMarker)).toBe(false);
+      } finally {
+        fs.rmSync(tempDir, { force: true, recursive: true });
+      }
     }
   });
 });

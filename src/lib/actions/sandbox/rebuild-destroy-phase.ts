@@ -5,6 +5,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import { removeSandboxRegistryEntry } from "./destroy";
 import type { RebuildBackupManifest } from "./rebuild-backup-phase";
@@ -17,6 +18,10 @@ import {
   reattachMcpAfterDeleteFailure,
 } from "./rebuild-mcp-phase";
 
+export type RebuildDeleteValidationResult =
+  | { ok: true }
+  | { ok: false; message: string; code?: number };
+
 export interface RebuildDestroyPhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
@@ -25,6 +30,7 @@ export interface RebuildDestroyPhaseInput {
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
+  validateAfterMcpPreparation?: () => Promise<RebuildDeleteValidationResult>;
   onDeleted: () => void;
 }
 
@@ -43,6 +49,7 @@ export async function runRebuildDestroyPhase(
     log,
     bail,
     relockShieldsIfNeeded,
+    validateAfterMcpPreparation,
     onDeleted,
   } = input;
 
@@ -56,6 +63,39 @@ export async function runRebuildDestroyPhase(
   );
   const mcpPreparation = await prepareMcpBeforeBestEffortNimStop({
     prepareMcp: () => prepareMcpForRebuild(sandboxName, staleRecovery, relockShieldsIfNeeded, bail),
+    afterPrepare: async (preparation) => {
+      // MCP preparation removes only adapter entries whose exact ownership
+      // fingerprints match the registry. Probe afterward so a Deep Agents
+      // user `.mcp.json` is not confused with the separate managed projection.
+      // This can block on SSH, so it must finish before the final DCode check.
+      if (!staleRecovery) warnUnpreservedUserManagedFiles(sandboxName, log);
+      if (validateAfterMcpPreparation) {
+        let validation: RebuildDeleteValidationResult;
+        try {
+          validation = await validateAfterMcpPreparation();
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          log(`Unexpected DCode replacement validation failure: ${redactFull(detail)}`);
+          validation = {
+            ok: false,
+            message: "DCode replacement validation failed before sandbox deletion.",
+          };
+        }
+        if (validation.ok) return;
+        const mcpRecoveryFailure = await reattachMcpAfterDeleteFailure(
+          sandboxName,
+          preparation.detachedProviderEntries,
+          preparation.scrubbedAdapterEntries,
+        );
+        relockShieldsIfNeeded(true);
+        bail(
+          mcpRecoveryFailure
+            ? `${validation.message} MCP provider recovery also failed: ${mcpRecoveryFailure}`
+            : validation.message,
+          validation.code,
+        );
+      }
+    },
     stopNim: () => {
       if (sbMeta && sbMeta.nimContainer) {
         log(`Stopping NIM container: ${sbMeta.nimContainer}`);
@@ -68,11 +108,6 @@ export async function runRebuildDestroyPhase(
     log,
   });
   if (!mcpPreparation) return null;
-  // MCP preparation removes only adapter entries whose exact ownership
-  // fingerprints match the registry. Probe afterward so a Deep Agents
-  // `.mcp.json` containing only NemoClaw-managed entries is not mislabeled as
-  // unpreserved user state; any file that remains still needs the warning.
-  if (!staleRecovery) warnUnpreservedUserManagedFiles(sandboxName, log);
   const rebuildMcpEntries = mcpPreparation.entries;
   const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
   const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;

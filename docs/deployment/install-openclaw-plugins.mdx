@@ -74,6 +74,8 @@ To run a second sandbox alongside an existing one, use a dedicated build directo
 ## Build Performance
 
 Custom plugin images are normal Docker builds, so build time depends on the build context size and the Docker layer cache rather than on NemoClaw.
+NemoClaw sends user-supplied `--from` contexts to the OpenShell gateway builder and reserves its host-side local BuildKit prebuild for contexts that NemoClaw generates itself.
+On a local Docker-driver gateway, a `Local BuildKit build skipped` notice is expected and the custom image build continues through the gateway.
 
 Keep the build context small and dedicated.
 The Dockerfile's parent directory is staged as the build context before the Docker build starts, so a broad directory can make onboarding look stuck while Docker is only preparing context.

@@ -152,6 +152,7 @@ describe("onboard session", () => {
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.toolDisclosure).toBe("progressive");
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",

@@ -38,6 +38,9 @@ describe("rebuild MCP and local NIM ordering", () => {
           order.push("mcp-prepared");
           return { entries: 1 };
         },
+        afterPrepare: async () => {
+          order.push("validated");
+        },
         stopNim: () => {
           order.push("nim-stop");
           throw new Error("runtime unavailable");
@@ -45,7 +48,22 @@ describe("rebuild MCP and local NIM ordering", () => {
         log,
       }),
     ).resolves.toEqual({ entries: 1 });
-    expect(order).toEqual(["mcp-prepared", "nim-stop"]);
+    expect(order).toEqual(["mcp-prepared", "validated", "nim-stop"]);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("runtime unavailable"));
+  });
+
+  it("does not stop NIM when post-MCP validation aborts", async () => {
+    const stopNim = vi.fn();
+    await expect(
+      prepareMcpBeforeBestEffortNimStop({
+        prepareMcp: async () => ({ entries: 1 }),
+        afterPrepare: async () => {
+          throw new Error("replacement drift");
+        },
+        stopNim,
+        log: vi.fn(),
+      }),
+    ).rejects.toThrow("replacement drift");
+    expect(stopNim).not.toHaveBeenCalled();
   });
 });

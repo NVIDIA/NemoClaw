@@ -15,6 +15,7 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
+import type { ToolDisclosure } from "../../tool-disclosure";
 import { type RebuildBail, type RebuildLog } from "./rebuild-credential-preflight";
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { ensureRebuildUsageNoticeAccepted } from "./rebuild-usage-notice";
@@ -24,7 +25,12 @@ export type RebuildVersionCheck = ReturnType<typeof sandboxVersion.checkAgentVer
 export function createRebuildCommandContext(
   options: string[] | RebuildSandboxOptions,
   opts: { throwOnError?: boolean },
-): { bail: RebuildBail; log: RebuildLog; skipConfirm: boolean } {
+): {
+  bail: RebuildBail;
+  log: RebuildLog;
+  requestedToolDisclosure: ToolDisclosure | undefined;
+  skipConfirm: boolean;
+} {
   const normalized = normalizeRebuildSandboxOptions(options);
   const verbose = normalized.verbose === true || process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
   return {
@@ -32,6 +38,7 @@ export function createRebuildCommandContext(
       ? (message: string) =>
           console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(message)}${R}`)
       : () => {},
+    requestedToolDisclosure: normalized.toolDisclosure,
     skipConfirm: normalized.yes === true || normalized.force === true,
     bail: opts.throwOnError
       ? (message: string) => {

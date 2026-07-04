@@ -3,10 +3,111 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession } from "../../state/onboard-session";
+import { createSession, normalizeSession } from "../../state/onboard-session";
 import { resolveRebuildDurableConfig } from "./rebuild-durable-config";
 
 describe("resolveRebuildDurableConfig", () => {
+  it("keeps the registry tool-disclosure selection authoritative", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "direct", nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("lets an explicit transactional rebuild override the recorded selection", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "progressive", nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "progressive" }),
+      undefined,
+      "direct",
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("recovers tool disclosure from a matching legacy session", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", provider: "ollama-local", model: "model", nemoclawVersion: "0.1.0" },
+      createSession({
+        sandboxName: "alpha",
+        provider: "ollama-local",
+        model: "model",
+        toolDisclosure: "direct",
+      }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("defaults missing legacy tool-disclosure state to progressive", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      null,
+    );
+
+    expect(config.toolDisclosure).toBe("progressive");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
+  it("fails closed for corrupt durable tool-disclosure state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      null,
+    );
+
+    expect(config.toolDisclosure).toBe("progressive");
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("does not let an explicit override mask corrupt durable state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: "everything" as never, nemoclawVersion: "0.1.0" },
+      null,
+      undefined,
+      "direct",
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("fails closed for corrupt matching-session state when the registry value is missing", () => {
+    const session = normalizeSession({
+      version: 1,
+      sandboxName: "alpha",
+      toolDisclosure: "everything",
+    } as never);
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", nemoclawVersion: "0.1.0" },
+      session,
+    );
+
+    expect(config.toolDisclosureError).toContain("progressive or direct");
+  });
+
+  it("uses a matching direct session when a legacy registry stores null", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      { name: "alpha", toolDisclosure: null as never, nemoclawVersion: "0.1.0" },
+      createSession({ sandboxName: "alpha", toolDisclosure: "direct" }),
+    );
+
+    expect(config.toolDisclosure).toBe("direct");
+    expect(config.toolDisclosureError).toBeNull();
+  });
+
   it("uses a legacy built-in Brave policy for a nonmatching session", () => {
     const session = createSession({ sandboxName: "other", webSearchConfig: null });
     const config = resolveRebuildDurableConfig(
@@ -102,6 +203,37 @@ describe("resolveRebuildDurableConfig", () => {
     expect(config.webSearchError).toBeNull();
   });
 
+  it("recovers provider-less Tavily for an explicitly enabled DCode selection", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent: "langchain-deepagents-code",
+        policies: ["tavily"],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it.each([null, "hermes"])('migrates a provider-less Tavily policy for agent "%s"', (agent) => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        agent,
+        policies: ["tavily"],
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
   it("backfills a legacy enabled provider from the matching Tavily session", () => {
     const config = resolveRebuildDurableConfig(
       "alpha",
@@ -134,6 +266,84 @@ describe("resolveRebuildDurableConfig", () => {
       createSession({ sandboxName: "other" }),
     );
     expect(config.webSearchConfig).toBeNull();
+  });
+
+  it("does not infer managed Tavily from a custom same-name policy", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["tavily"],
+        customPolicies: [{ name: "tavily", content: "allow: []" }],
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+  });
+
+  it("fails closed when provider-less durable policies select both web-search providers", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+    expect(config.webSearchError).toContain("more than one provider");
+  });
+
+  it("lets an explicit provider resolve stale dual-policy state", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it("uses the unshadowed provider when the other policy name is custom", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["brave", "tavily"],
+        customPolicies: [{ name: "brave", content: "allow: []" }],
+        webSearchEnabled: true,
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toEqual({ fetchEnabled: true, provider: "tavily" });
+    expect(config.webSearchError).toBeNull();
+  });
+
+  it("fails closed when the managed provider is shadowed by a custom same-name policy", () => {
+    const config = resolveRebuildDurableConfig(
+      "alpha",
+      {
+        name: "alpha",
+        policies: ["tavily"],
+        customPolicies: [{ name: "tavily", content: "allow: []" }],
+        webSearchEnabled: true,
+        webSearchProvider: "tavily",
+        nemoclawVersion: "0.1.0",
+      },
+      createSession({ sandboxName: "other", webSearchConfig: null }),
+    );
+    expect(config.webSearchConfig).toBeNull();
+    expect(config.webSearchError).toContain("conflicts with a custom same-name policy");
   });
 
   it("fails closed for an invalid durable web-search provider", () => {

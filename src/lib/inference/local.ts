@@ -175,8 +175,10 @@ export interface GpuInfo {
    * `true` for integrated/iGPU class devices whose token-generation throughput
    * is too low to clear agent-loop timeouts on 30B-class models, even when
    * advertised memory ostensibly fits. Populated for Jetson (Tegra/Thor/Orin)
-   * platforms. Drives the `computeIntensive` exclusion in the bootstrap-model
-   * selector so compute-constrained hosts are not steered onto 30B+ tags.
+   * platforms and the Windows-ARM N1X integrated GPU (the JMJWOA-Generic
+   * placeholder that clears the bounded Docker CUDA proof). Drives the
+   * `computeIntensive` exclusion in the bootstrap-model selector so
+   * compute-constrained hosts are not steered onto 30B+ tags.
    */
   computeConstrained?: boolean;
 }

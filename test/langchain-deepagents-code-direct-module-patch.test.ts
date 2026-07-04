@@ -9,6 +9,42 @@ import { describe, expect, it } from "vitest";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const patcher = path.join(agentDir, "patch-managed-deepagents-code.py");
+const progressiveDisclosureHarness = path.join(
+  process.cwd(),
+  "test",
+  "fixtures",
+  "deepagents-progressive-disclosure-harness.py",
+);
+const DARWIN_FCNTL_FIXTURE_MARKER = "# NemoClaw test-only Darwin fcntl seal constants.";
+
+function addDarwinFcntlSealConstants(
+  helper: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const shouldPatch = platform === "darwin" && !helper.includes(DARWIN_FCNTL_FIXTURE_MARKER);
+  const patched = helper.replace(
+    "import fcntl\n",
+    `import fcntl
+
+${DARWIN_FCNTL_FIXTURE_MARKER}
+for _name, _value in (
+    ("F_ADD_SEALS", 1033),
+    ("F_GET_SEALS", 1034),
+    ("F_SEAL_SEAL", 0x0001),
+    ("F_SEAL_SHRINK", 0x0002),
+    ("F_SEAL_GROW", 0x0004),
+    ("F_SEAL_WRITE", 0x0008),
+):
+    if not hasattr(fcntl, _name):
+        setattr(fcntl, _name, _value)
+`,
+  );
+  expect(
+    !shouldPatch || patched !== helper,
+    "Darwin fcntl seal shim injection point not found in helper module",
+  ).toBe(true);
+  return shouldPatch ? patched : helper;
+}
 
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
   const target = path.join(root, relativePath);
@@ -110,109 +146,10 @@ def cli_main():
   writeFixtureFile(
     packageDir,
     "app.py",
-    `
-from __future__ import annotations
-
-
-class UserMessage:
-    def __init__(self, value):
-        self.value = value
-
-
-class AppMessage(UserMessage):
-    pass
-
-
-class _Event:
-    def __init__(self):
-        self.was_set = False
-
-    def set(self):
-        self.was_set = True
-
-
-class DeepAgentsApp:
-    def __init__(self):
-        self.messages = []
-        self.notifications = []
-        self.original_commands = []
-        self.original_auth_manager = False
-        self.original_mcp_login = False
-        self.original_service_key = False
-        self.original_tavily = False
-        self.original_update_action = False
-        self.original_switch_kwargs = "not-called"
-        self._update_check_done = _Event()
-        self._auto_approve = True
-        self._status_bar = None
-        self._session_state = None
-        self._rubric_model = "attacker:model"
-        self._server_kwargs = {"rubric_model": "attacker:model"}
-
-    async def _mount_message(self, message):
-        self.messages.append(message.value)
-
-    def notify(self, message, **kwargs):
-        self.notifications.append((message, kwargs))
-
-    async def _handle_command(self, command):
-        self.original_commands.append(command)
-
-    async def _switch_model(self, model_spec, **kwargs):
-        del model_spec
-        self.original_switch_kwargs = kwargs.get("extra_kwargs")
-
-    async def _check_for_updates(self, *, periodic=False):
-        del periodic
-
-    async def _handle_update_command(self, command="/update"):
-        del command
-
-    async def _handle_install_command(self, command):
-        del command
-
-    async def _install_extra(self, *args, **kwargs):
-        del args, kwargs
-        return True
-
-    async def _handle_install_package(self, *args, **kwargs):
-        del args, kwargs
-
-    async def _handle_auto_update_toggle(self):
-        return None
-
-    async def _prompt_launch_tavily(self):
-        self.original_tavily = True
-
-    async def _prompt_model_auth_if_needed(self, model_spec):
-        del model_spec
-        return True
-
-    async def _show_auth_manager(self, **kwargs):
-        del kwargs
-        self.original_auth_manager = True
-
-    async def _enter_service_api_key(self, *args, **kwargs):
-        del args, kwargs
-        self.original_service_key = True
-
-    async def _handle_update_action(self, *args, **kwargs):
-        del args, kwargs
-        self.original_update_action = True
-
-    def _start_mcp_login(self, server_name):
-        del server_name
-        self.original_mcp_login = True
-
-    async def _on_auto_approve_enabled(self):
-        self._auto_approve = True
-
-    async def action_toggle_auto_approve(self):
-        self._auto_approve = not self._auto_approve
-
-    async def _set_rubric_model(self, model_spec):
-        self._rubric_model = model_spec
-`,
+    fs.readFileSync(
+      path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "app.py"),
+      "utf8",
+    ),
   );
   writeFixtureFile(
     packageDir,
@@ -339,15 +276,35 @@ def list_subagents(*args, **kwargs):
   writeFixtureFile(
     packageDir,
     "server.py",
+    fs.readFileSync(
+      path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "server.py"),
+      "utf8",
+    ),
+  );
+  writeFixtureFile(
+    packageDir,
+    "_server_config.py",
     `
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
 
-def _build_server_env():
-    return dict(os.environ)
+def _normalize_path(raw_path, project_context, label):
+    if not raw_path:
+        return None
+    if project_context is not None:
+        return str(project_context.resolve_user_path(raw_path))
+    return str(Path(raw_path).expanduser().resolve())
 `,
+  );
+  writeFixtureFile(
+    packageDir,
+    "mcp_tools.py",
+    fs.readFileSync(
+      path.join(process.cwd(), "test", "fixtures", "langchain-deepagents-code", "mcp_tools.py"),
+      "utf8",
+    ),
   );
   writeFixtureFile(
     packageDir,
@@ -635,8 +592,7 @@ function patchFixture(tempDir: string): void {
   });
   const managedBaseUrlFile = path.join(tempDir, "managed-inference-base-url");
   const helperPath = path.join(tempDir, "deepagents_code", "_nemoclaw_managed.py");
-  const helper = fs
-    .readFileSync(helperPath, "utf8")
+  const helper = addDarwinFcntlSealConstants(fs.readFileSync(helperPath, "utf8"))
     .replace(
       '"/usr/local/share/nemoclaw/dcode-inference-base-url"',
       JSON.stringify(managedBaseUrlFile),
@@ -646,6 +602,12 @@ function patchFixture(tempDir: string): void {
 }
 
 describe("LangChain Deep Agents Code managed package patch", () => {
+  it("fails fast when the Darwin fcntl seal injection anchor is missing", () => {
+    expect(() => addDarwinFcntlSealConstants("from pathlib import Path\n", "darwin")).toThrow(
+      "Darwin fcntl seal shim injection point not found in helper module",
+    );
+  });
+
   it("patches every 0.1.30 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
@@ -667,6 +629,8 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       "widgets/model_selector.py",
       "widgets/approval.py",
       "server.py",
+      "_server_config.py",
+      "mcp_tools.py",
       "subagents.py",
       "hooks.py",
       "non_interactive.py",
@@ -838,7 +802,9 @@ describe("LangChain Deep Agents Code managed package patch", () => {
             "from pathlib import Path",
             "from deepagents_code import _nemoclaw_managed as managed",
             "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
-            "print(managed.managed_mcp_config_path() or 'absent')",
+            "snapshot = managed.managed_mcp_config_path() if sys.platform == 'linux' else None",
+            "canonical = managed.managed_mcp_config_bytes(snapshot) if snapshot else managed._canonicalize_managed_mcp_config(managed._read_managed_mcp_config() or b'')",
+            "print(canonical.decode() if canonical else 'absent', end='')",
           ].join("; "),
           configPath,
         ],
@@ -858,7 +824,7 @@ describe("LangChain Deep Agents Code managed package patch", () => {
 
     const valid = validate({ mcpServers: { github: validServer } });
     expect(valid.status, valid.stderr).toBe(0);
-    expect(valid.stdout.trim()).toBe(configPath);
+    expect(JSON.parse(valid.stdout)).toEqual({ mcpServers: { github: validServer } });
 
     for (const config of [
       { mcpServers: { github: { command: "bash", args: ["-c", "id"] } } },
@@ -878,6 +844,48 @@ describe("LangChain Deep Agents Code managed package patch", () => {
           github: { ...validServer, url: "https://127.0.0.1/mcp/" },
         },
       },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://2130706433/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://0177.0.0.1/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com:443/mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com/a/../mcp/" },
+        },
+      },
+      {
+        mcpServers: {
+          github: { ...validServer, url: "https://api.githubcopilot.com/mcp path/" },
+        },
+      },
+      ...[
+        "mcp_bad.example.test",
+        "-mcp.example.test",
+        "mcp-.example.test",
+        "mcp..example.test",
+        `${"a".repeat(64)}.example.test`,
+        `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(63)}`,
+      ].map((hostname) => ({
+        mcpServers: {
+          github: { ...validServer, url: `https://${hostname}/mcp/` },
+        },
+      })),
+      {
+        mcpServers: Object.fromEntries(
+          Array.from({ length: 65 }, (_, index) => [`server${index}`, validServer]),
+        ),
+      },
     ]) {
       const result = validate(config);
       expect(result.status, JSON.stringify(config)).not.toBe(0);
@@ -887,6 +895,216 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     expect(badMode.status).not.toBe(0);
     expect(badMode.stderr).toContain("unsafe ownership or mode");
   });
+
+  it("rejects duplicate keys and configs beyond the 256 KiB cap", () => {
+    const tempDir = createPackageFixture();
+    patchFixture(tempDir);
+    const configPath = path.join(tempDir, ".mcp.json");
+    const run = () =>
+      spawnSync(
+        "python3",
+        [
+          "-c",
+          [
+            "import sys",
+            "from pathlib import Path",
+            "from deepagents_code import _nemoclaw_managed as managed",
+            "managed._MCP_CONFIG_FILE = Path(sys.argv[1])",
+            "managed.managed_mcp_config_path()",
+          ].join("; "),
+          configPath,
+        ],
+        {
+          env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+          encoding: "utf8",
+        },
+      );
+
+    fs.writeFileSync(
+      configPath,
+      '{"mcpServers":{"github":{"type":"http","type":"http","url":"https://api.githubcopilot.com/mcp/","headers":{"Authorization":"Bearer openshell:resolve:env:GITHUB_MCP_TOKEN"}}}}\n',
+      { mode: 0o600 },
+    );
+    const duplicate = run();
+    expect(duplicate.status).not.toBe(0);
+    expect(duplicate.stderr).toContain("duplicate JSON key");
+
+    fs.writeFileSync(configPath, " ".repeat(262_145), { mode: 0o600 });
+    const oversized = run();
+    expect(oversized.status).not.toBe(0);
+    expect(oversized.stderr).toContain("invalid size");
+
+    const targetPath = path.join(tempDir, "symlink-target.json");
+    fs.writeFileSync(targetPath, '{"mcpServers":{}}\n', { mode: 0o600 });
+    fs.rmSync(configPath);
+    fs.symlinkSync(targetPath, configPath);
+    const symlinked = run();
+    expect(symlinked.status).not.toBe(0);
+  });
+
+  it.runIf(process.platform === "linux")(
+    "passes sealed and anonymous MCP snapshots through ServerProcess restart",
+    () => {
+      const tempDir = createPackageFixture();
+      patchFixture(tempDir);
+      const configPath = path.join(tempDir, ".nemoclaw-mcp.json");
+      const managedConfig = {
+        mcpServers: {
+          github: {
+            type: "http",
+            url: "https://api.githubcopilot.com/mcp/",
+            headers: {
+              Authorization: "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN",
+            },
+          },
+        },
+      };
+      for (const snapshotKind of ["sealed-memfd", "anonymous-otmpfile"] as const) {
+        fs.writeFileSync(configPath, `${JSON.stringify(managedConfig)}\n`, { mode: 0o600 });
+
+        const result = spawnSync(
+          "python3",
+          [
+            "-c",
+            `
+import asyncio
+import errno
+import fcntl
+import json
+import os
+import sys
+from pathlib import Path
+
+from deepagents_code import _nemoclaw_managed as managed
+from deepagents_code import _server_config, app, mcp_tools
+from deepagents_code.server import ServerProcess
+
+real_memfd_create = os.memfd_create
+if sys.argv[2] == "anonymous-otmpfile":
+    def blocked_memfd(*_args, **_kwargs):
+        raise PermissionError(errno.EPERM, "blocked by seccomp")
+    managed.os.memfd_create = blocked_memfd
+managed._MCP_CONFIG_FILE = Path(sys.argv[1])
+snapshot_path = managed.managed_mcp_config_path()
+assert snapshot_path is not None
+descriptor = int(snapshot_path.removeprefix("/proc/self/fd/"))
+binding = managed._MANAGED_MCP_BINDING
+assert binding is not None
+required_seals = (
+    fcntl.F_SEAL_WRITE
+    | fcntl.F_SEAL_GROW
+    | fcntl.F_SEAL_SHRINK
+    | fcntl.F_SEAL_SEAL
+)
+if binding["kind"] == managed._MCP_SEALED_KIND:
+    assert fcntl.fcntl(descriptor, fcntl.F_GET_SEALS) == required_seals
+else:
+    assert binding["kind"] == managed._MCP_ANONYMOUS_KIND
+    assert fcntl.fcntl(descriptor, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY
+assert managed.managed_mcp_config_bytes(snapshot_path) == managed.managed_mcp_config_bytes(snapshot_path)
+assert _server_config._normalize_path(snapshot_path, None, "MCP config") == snapshot_path
+assert app.DeepAgentsApp._absolutize_launch_relative_path(
+    snapshot_path, Path.cwd()
+) == snapshot_path
+assert mcp_tools.discover_mcp_configs() == []
+expected_config = json.loads(managed.managed_mcp_config_bytes(snapshot_path))
+
+class RejectingProjectContext:
+    def resolve_user_path(self, _path):
+        raise AssertionError("managed descriptor path must not be resolved")
+
+child = (
+    "import json, os; from deepagents_code.mcp_tools import load_mcp_config; "
+    "config = load_mcp_config(os.environ['DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH']); "
+    "assert 'NEMOCLAW_DCODE_MCP_BINDING' not in os.environ; "
+    "print(json.dumps(config), end='')"
+)
+def server_for_path(config_path):
+    env = os.environ.copy()
+    env["DEEPAGENTS_CODE_SERVER_MCP_CONFIG_PATH"] = config_path
+    env["NEMOCLAW_DCODE_MCP_BINDING"] = "hostile-binding"
+    return ServerProcess([sys.executable, "-c", child], os.getcwd(), env)
+
+def make_descriptor_server(name, payload, seals):
+    descriptor = real_memfd_create(name, flags=os.MFD_ALLOW_SEALING)
+    os.write(descriptor, payload)
+    fcntl.fcntl(descriptor, fcntl.F_ADD_SEALS, seals)
+    return descriptor, server_for_path(f"/proc/self/fd/{descriptor}")
+
+server = server_for_path(snapshot_path)
+unsealed_descriptor, unsealed_server = make_descriptor_server(
+    "unsealed-dcode-mcp", b"{}", 0
+)
+empty_descriptor, empty_server = make_descriptor_server(
+    "empty-dcode-mcp", b"", required_seals
+)
+oversized_descriptor, oversized_server = make_descriptor_server(
+    "oversized-dcode-mcp", b"x" * 262_145, required_seals
+)
+
+async def exercise():
+    resolved_configs = await mcp_tools.resolve_and_load_mcp_tools(
+        explicit_config_path=snapshot_path,
+        project_context=RejectingProjectContext(),
+    )
+    assert resolved_configs == [expected_config]
+    await server.start()
+    Path(sys.argv[1]).write_text(
+        json.dumps({
+            "mcpServers": {
+                "attacker": {
+                    "type": "http",
+                    "url": "https://attacker.example/mcp/",
+                    "headers": {
+                        "Authorization": "Bearer openshell:resolve:env:ATTACKER_TOKEN"
+                    },
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+    await server.restart()
+    for invalid_server in (unsealed_server, empty_server, oversized_server):
+        try:
+            await invalid_server.start()
+        except RuntimeError as exc:
+            assert "not process-local" in str(exc)
+            assert not hasattr(invalid_server, "_log_file")
+        else:
+            raise AssertionError("invalid MCP descriptor was inherited")
+
+asyncio.run(exercise())
+for descriptor in (unsealed_descriptor, empty_descriptor, oversized_descriptor):
+    os.close(descriptor)
+print(json.dumps({
+    "path": snapshot_path,
+    "kind": binding["kind"],
+    "outputs": [json.loads(output) for output in server.outputs],
+}))
+`,
+            configPath,
+            snapshotKind,
+          ],
+          {
+            cwd: tempDir,
+            env: { PATH: process.env.PATH, PYTHONPATH: tempDir },
+            encoding: "utf8",
+          },
+        );
+
+        expect(result.status, result.stderr).toBe(0);
+        const proof = JSON.parse(result.stdout) as {
+          path: string;
+          kind: string;
+          outputs: unknown[];
+        };
+        expect(proof.path).toMatch(/^\/proc\/self\/fd\/[0-9]+$/);
+        expect(proof.kind).toBe(snapshotKind);
+        expect(proof.outputs).toEqual([managedConfig, managedConfig]);
+        expect(result.stdout).not.toContain("attacker");
+      }
+    },
+  );
 
   it("blocks TUI commands, credential screens, dotenv, OAuth, and install backends", () => {
     const tempDir = createPackageFixture();
@@ -909,8 +1127,19 @@ describe("LangChain Deep Agents Code managed package patch", () => {
     );
     const validation = `
 import asyncio
+import importlib.util
 import os
+import sys
 from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "progressive_disclosure_harness",
+    ${JSON.stringify(progressiveDisclosureHarness)},
+)
+assert spec is not None and spec.loader is not None
+progressive_disclosure_harness = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(progressive_disclosure_harness)
+progressive_disclosure_harness._install_stubs()
 
 from deepagents_code import agent, app, auth_store, config, hooks, main as dcode_main, model_config, non_interactive, server, subagents, update_check
 from deepagents_code import _nemoclaw_managed
@@ -1092,10 +1321,26 @@ async def validate():
     assert headless_kwargs["interpreter_ptc"] is None
     assert headless_kwargs["rubric_model"] is None
     assert non_interactive.settings.shell_allow_list is None
-    _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    if sys.platform == "linux":
+        _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(managedMcpPath)})
+    else:
+        _nemoclaw_managed._MCP_CONFIG_FILE = Path(${JSON.stringify(
+          path.join(tempDir, "absent-managed-mcp.json"),
+        )})
+    _nemoclaw_managed._MANAGED_MCP_FD = _nemoclaw_managed._MANAGED_MCP_BINDING = None
+    _nemoclaw_managed._MANAGED_MCP_READY = False
     managed_args = dcode_main.parse_args()
-    assert managed_args.mcp_config == ${JSON.stringify(managedMcpPath)}
-    assert managed_args.no_mcp is False
+    snapshot_mcp_path = managed_args.mcp_config
+    if sys.platform == "linux":
+        assert snapshot_mcp_path.startswith("/proc/self/fd/")
+        assert Path(snapshot_mcp_path).is_file()
+        assert instance._absolutize_launch_relative_path(
+            snapshot_mcp_path, Path.cwd()
+        ) == snapshot_mcp_path
+        assert managed_args.no_mcp is False
+    else:
+        assert snapshot_mcp_path is None
+        assert managed_args.no_mcp is True
     assert managed_args.trust_project_mcp is False
     managed_headless_kwargs = await non_interactive.run_non_interactive(
         "message",
@@ -1104,8 +1349,8 @@ async def validate():
         no_mcp=True,
         trust_project_mcp=True,
     )
-    assert managed_headless_kwargs["mcp_config_path"] == ${JSON.stringify(managedMcpPath)}
-    assert managed_headless_kwargs["no_mcp"] is False
+    assert managed_headless_kwargs["mcp_config_path"] == snapshot_mcp_path
+    assert managed_headless_kwargs["no_mcp"] is (sys.platform != "linux")
     assert managed_headless_kwargs["trust_project_mcp"] is False
     assert model_config.ModelConfig().get_class_path("openai") is None
     managed_kwargs = config._get_provider_kwargs("openai")

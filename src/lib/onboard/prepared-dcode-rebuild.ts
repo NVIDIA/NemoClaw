@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import type { AgentDefinition } from "../agent/defs";
 import { ROOT } from "../runner";
 import { OPENCLAW_SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } from "../sandbox-base-image";
@@ -27,11 +29,20 @@ export interface PreparedDcodeRebuildHandoff {
   gatewayName: string;
 }
 
+export interface PreparedImageRebuildHandoff {
+  buildContext: PreparedSandboxBuildContext;
+  gatewayName: string;
+}
+
 export interface PreparedDcodeRebuildOptions {
   resume?: boolean;
   recreateSandbox?: boolean;
+  authoritativeResumeConfig?: boolean;
+  onboardLockAlreadyHeld?: boolean;
   agent?: string | null;
+  fromDockerfile?: string | null;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
+  preparedImageRebuild?: PreparedImageRebuildHandoff;
 }
 
 export interface PreparedDcodeRebuildDeps {
@@ -43,6 +54,7 @@ export interface PreparedDcodeRebuildDeps {
 
 export interface PreparedDcodeRebuildRuntime {
   applyGatewayEnv(env: NodeJS.ProcessEnv): void;
+  resolveDockerfileProbePath(fromDockerfile: string): string;
   bindCreateSandbox<Args extends unknown[], Result>(
     createSandbox: (
       ...args: [...Args, preparedBuildContext: PreparedSandboxBuildContext | null]
@@ -65,13 +77,50 @@ function loadPrepareSandboxDockerfilePatch(): PrepareSandboxDockerfilePatch {
   ).prepareSandboxDockerfilePatch;
 }
 
-function assertPreparedDcodeTarget(
+function normalizedDockerfilePath(fromDockerfile: string | null | undefined): string | null {
+  return fromDockerfile ? path.resolve(fromDockerfile) : null;
+}
+
+function normalizedAgentIdentity(agentName: string | null | undefined): string {
+  return agentName?.trim() || "openclaw";
+}
+
+function assertPreparedTargetIdentity(
+  preparedBuildContext: PreparedSandboxBuildContext,
+  agentName: string | null,
+  fromDockerfile: string | null,
+): void {
+  const target = preparedBuildContext.rebuildTarget;
+  if (target) {
+    if (
+      normalizedAgentIdentity(target.agentName) !== normalizedAgentIdentity(agentName) ||
+      target.fromDockerfile !== normalizedDockerfilePath(fromDockerfile)
+    ) {
+      throw new Error("A prepared rebuild image cannot be used for this sandbox target.");
+    }
+    return;
+  }
+  if (agentName !== DCODE_AGENT || fromDockerfile) {
+    throw new Error("A prepared DCode build context cannot be used for this sandbox target.");
+  }
+}
+
+function verifyPreparedBuildContextForUse(preparedBuildContext: PreparedSandboxBuildContext): void {
+  if (
+    typeof preparedBuildContext.verifyBuildCtx === "function" &&
+    !preparedBuildContext.verifyBuildCtx()
+  ) {
+    throw new Error("Prepared rebuild image context changed before use.");
+  }
+}
+
+export function assertPreparedDcodeTarget(
   preparedBuildContext: PreparedSandboxBuildContext | null,
   agent: AgentDefinition | null | undefined,
   fromDockerfile: string | null,
 ): void {
-  if (preparedBuildContext && (agent?.name !== DCODE_AGENT || fromDockerfile)) {
-    throw new Error("A prepared DCode build context cannot be used for this sandbox target.");
+  if (preparedBuildContext) {
+    assertPreparedTargetIdentity(preparedBuildContext, agent?.name ?? null, fromDockerfile);
   }
 }
 
@@ -79,33 +128,73 @@ export function createPreparedDcodeRebuildRuntime(
   options: PreparedDcodeRebuildOptions,
   expectedGatewayName: string,
 ): PreparedDcodeRebuildRuntime {
-  const prepared = options.preparedDcodeRebuild ?? null;
+  const preparedDcode = options.preparedDcodeRebuild ?? null;
+  const preparedImage = options.preparedImageRebuild ?? null;
+  if (preparedDcode && preparedImage) {
+    throw new Error("Only one prepared rebuild image handoff may be provided.");
+  }
   if (
-    prepared &&
+    preparedDcode &&
     (options.resume !== true || options.recreateSandbox !== true || options.agent !== DCODE_AGENT)
   ) {
     throw new Error("A prepared DCode rebuild can only be used by DCode resume recreation.");
   }
+  if (
+    preparedImage &&
+    (options.resume !== true ||
+      options.recreateSandbox !== true ||
+      options.authoritativeResumeConfig !== true ||
+      options.onboardLockAlreadyHeld !== true)
+  ) {
+    throw new Error(
+      "A prepared rebuild image can only be used by authoritative resume recreation.",
+    );
+  }
+  if (preparedImage) {
+    if (!preparedImage.buildContext.rebuildTarget) {
+      throw new Error("Prepared rebuild image target is missing or invalid.");
+    }
+    if (typeof preparedImage.buildContext.verifyBuildCtx !== "function") {
+      throw new Error("Prepared rebuild image verifier is missing or invalid.");
+    }
+    assertPreparedTargetIdentity(
+      preparedImage.buildContext,
+      options.agent ?? null,
+      normalizedDockerfilePath(options.fromDockerfile),
+    );
+  }
+  const prepared = preparedImage ?? preparedDcode;
+  const preparedLabel = preparedImage ? "Prepared rebuild image" : "Prepared DCode rebuild";
   if (prepared && typeof prepared.gatewayName !== "string") {
-    throw new Error("Prepared DCode rebuild gateway is missing or invalid.");
+    throw new Error(`${preparedLabel} gateway is missing or invalid.`);
   }
   const gatewayName = prepared?.gatewayName.trim() ?? null;
   if (gatewayName !== null && gatewayName !== expectedGatewayName) {
     throw new Error(
-      `Prepared DCode rebuild gateway '${gatewayName}' does not match '${expectedGatewayName}'.`,
+      `${preparedLabel} gateway '${gatewayName}' does not match '${expectedGatewayName}'.`,
     );
   }
 
+  const retainedBuildContext = preparedImage?.buildContext ?? null;
   let pendingBuildContext = prepared?.buildContext ?? null;
   return {
     applyGatewayEnv(env) {
       if (gatewayName) env.OPENSHELL_GATEWAY = gatewayName;
       else delete env.OPENSHELL_GATEWAY;
     },
+    resolveDockerfileProbePath(fromDockerfile) {
+      const resolvedDockerfile = path.resolve(fromDockerfile);
+      if (!retainedBuildContext) return resolvedDockerfile;
+      assertPreparedTargetIdentity(retainedBuildContext, options.agent ?? null, resolvedDockerfile);
+      return retainedBuildContext.rebuildTarget?.fromDockerfile
+        ? retainedBuildContext.stagedDockerfile
+        : resolvedDockerfile;
+    },
     bindCreateSandbox(createSandbox) {
-      return (...args) => {
+      return async (...args) => {
         const buildContext = pendingBuildContext;
         pendingBuildContext = null;
+        if (buildContext) verifyPreparedBuildContextForUse(buildContext);
         return createSandbox(...args, buildContext);
       };
     },
@@ -122,7 +211,10 @@ export function resolveSandboxBuildContext(
 ): CreateSandboxBuildContextResult {
   const { preparedBuildContext, agent, fromDockerfile } = input;
   assertPreparedDcodeTarget(preparedBuildContext, agent, fromDockerfile);
-  if (preparedBuildContext) return preparedBuildContext;
+  if (preparedBuildContext) {
+    verifyPreparedBuildContextForUse(preparedBuildContext);
+    return preparedBuildContext;
+  }
 
   const staged = (deps.stageCreateSandboxBuildContext ?? loadStageCreateSandboxBuildContext())({
     root: ROOT,
@@ -147,7 +239,10 @@ export async function resolveSandboxBuildId(
 ): Promise<string> {
   const { preparedBuildContext, ...patchInput } = input;
   assertPreparedDcodeTarget(preparedBuildContext, patchInput.agent, patchInput.fromDockerfile);
-  if (preparedBuildContext) return preparedBuildContext.buildId;
+  if (preparedBuildContext) {
+    verifyPreparedBuildContextForUse(preparedBuildContext);
+    return preparedBuildContext.buildId;
+  }
 
   const result: SandboxDockerfilePatchResult = await (
     deps.prepareSandboxDockerfilePatch ?? loadPrepareSandboxDockerfilePatch()

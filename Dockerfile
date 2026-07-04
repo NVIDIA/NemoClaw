@@ -595,12 +595,16 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY --from=runtime-preload-builder /opt/nemoclaw-root/dist/lib/messaging/channels/ /usr/local/lib/nemoclaw/preloads-compiled-channels/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /scripts/generate-openclaw-config.mts
+COPY scripts/validate-openclaw-tool-search.mts /scripts/validate-openclaw-tool-search.mts
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /scripts/generate-openclaw-config.mts \
+        /scripts/validate-openclaw-tool-search.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
+    && chmod 444 /src/lib/tool-disclosure.ts \
     && chmod -R a+rX /src/lib/messaging \
     && chown root:root /usr/local/bin/nemoclaw-gateway-control \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
@@ -645,6 +649,7 @@ ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_CONTEXT_WINDOW=131072
 ARG NEMOCLAW_MAX_TOKENS=4096
 ARG NEMOCLAW_REASONING=false
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # Comma-separated list of input modalities accepted by the primary model
 # (e.g. "text" or "text,image" for vision-capable models). OpenClaw's
 # model schema currently accepts "text" and "image". See #2421.
@@ -714,6 +719,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_CONTEXT_WINDOW=${NEMOCLAW_CONTEXT_WINDOW} \
     NEMOCLAW_MAX_TOKENS=${NEMOCLAW_MAX_TOKENS} \
     NEMOCLAW_REASONING=${NEMOCLAW_REASONING} \
+    NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     NEMOCLAW_INFERENCE_INPUTS=${NEMOCLAW_INFERENCE_INPUTS} \
     NEMOCLAW_AGENT_TIMEOUT=${NEMOCLAW_AGENT_TIMEOUT} \
     NEMOCLAW_AGENT_HEARTBEAT_EVERY=${NEMOCLAW_AGENT_HEARTBEAT_EVERY} \
@@ -761,6 +767,31 @@ USER sandbox
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
+
+# Validate the patched OpenClaw tool-search contract against real generated
+# configs for both supported disclosure modes. This runs at image build time so
+# OpenClaw dist drift or a generator/schema mismatch fails the build closed.
+# hadolint ignore=DL3059
+RUN set -eu; \
+    validation_root="$(mktemp -d /tmp/nemoclaw-openclaw-tool-search.XXXXXX)"; \
+    trap 'rm -rf "$validation_root"' EXIT; \
+    for mode in progressive direct; do \
+        validation_home="$validation_root/$mode"; \
+        mkdir -p "$validation_home"; \
+        HOME="$validation_home" \
+            NEMOCLAW_MODEL=test-model \
+            NEMOCLAW_PRIMARY_MODEL_REF=inference/test-model \
+            NEMOCLAW_TOOL_DISCLOSURE="$mode" \
+            NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 \
+            node --experimental-strip-types /scripts/generate-openclaw-config.mts; \
+        node --experimental-strip-types /scripts/validate-openclaw-tool-search.mts \
+            /usr/local/lib/node_modules/openclaw/dist \
+            "$validation_home/.openclaw/openclaw.json" \
+            "$mode" \
+            "$OPENCLAW_VERSION"; \
+    done; \
+    rm -rf "$validation_root"; \
+    trap - EXIT
 
 # Install non-messaging OpenClaw plugins that need to match the runtime.
 # hadolint ignore=DL3059,DL4006
