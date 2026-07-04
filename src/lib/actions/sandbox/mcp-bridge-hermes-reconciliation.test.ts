@@ -168,6 +168,24 @@ describe("Hermes MCP host reconciliation", () => {
     expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
   });
 
+  it("fails closed when a Hermes bridge is attached to another explicit agent", () => {
+    mocks.getSandbox.mockReturnValue(sandbox({ agent: "openclaw" }));
+
+    expect(inspectHermesMcpRuntimeIntent("alpha")).toEqual({
+      ok: false,
+      state: "error",
+      detail: "Registry entry agent mismatch for Hermes MCP sandbox 'alpha'.",
+    });
+    expect(mocks.runOpenshellProviderCommand).not.toHaveBeenCalled();
+  });
+
+  it("retains the Hermes adapter fallback for legacy entries without an agent", () => {
+    mocks.getSandbox.mockReturnValue(sandbox({ agent: null }));
+
+    expect(inspectHermesMcpRuntimeIntent("alpha")).toEqual({ ok: true, state: "matched" });
+    expect(mocks.runOpenshellProviderCommand).toHaveBeenCalledOnce();
+  });
+
   it("fails closed when a corrupted registry key returns another sandbox name", () => {
     mocks.getSandbox.mockReturnValue(sandbox({ name: "other" }));
 

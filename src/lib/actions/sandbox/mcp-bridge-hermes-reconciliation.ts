@@ -137,6 +137,16 @@ export function inspectHermesMcpRuntimeIntent(
   if (!appliesToHermes(sandbox, entries) || (!sandbox.mcp && options.entries === undefined)) {
     return { ok: true, state: "not-applicable" };
   }
+  if (sandbox.agent != null && sandbox.agent !== "hermes") {
+    return {
+      ok: false,
+      state: "error",
+      detail: sanitizeHermesMcpReconciliationDetail(
+        `Registry entry agent mismatch for Hermes MCP sandbox '${sandboxName}'.`,
+        entries,
+      ),
+    };
+  }
 
   const payload = buildHermesMcpIntentPayload(entries, managedServerNames);
   let result: ReturnType<typeof runOpenshellProviderCommand>;
