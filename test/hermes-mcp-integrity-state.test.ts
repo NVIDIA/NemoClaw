@@ -264,7 +264,7 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
     expect(JSON.parse(result.stdout)).toEqual({ state: "current", config_reads: 1 });
   });
 
-  it("commits pending state only after root startup health and stops on commit failure", () => {
+  it("commits pending state after root gateway health before continuing startup", () => {
     const success = runHermesRootMcpStartup(0);
     expect(success.status, success.stderr).toBe(0);
     expect(success.stdout.trim().split("\n")).toEqual([
@@ -276,7 +276,9 @@ print(json.dumps({"state": state, "config_reads": config_reads}))
       "restore-permissions",
       "startup-complete",
     ]);
+  });
 
+  it("fails root startup closed when the applied-state commit fails after gateway health", () => {
     const failure = runHermesRootMcpStartup(1);
     expect(failure.status).toBe(1);
     expect(failure.stdout.trim().split("\n")).toEqual([

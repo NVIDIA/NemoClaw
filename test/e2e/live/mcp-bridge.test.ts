@@ -24,6 +24,7 @@ import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   assertHermesConfig,
+  assertHermesInspectionRejectsUnmanagedFields,
   assertHermesRemovalSurvivesGatewayRestart,
 } from "./mcp-bridge-hermes-lifecycle.ts";
 import {
@@ -1268,6 +1269,7 @@ liveAgentMatrixTest(
       mcpUrl,
     });
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
+    await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
