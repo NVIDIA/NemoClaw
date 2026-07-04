@@ -17,12 +17,14 @@ const progressiveDisclosureHarness = path.join(
 );
 const DARWIN_FCNTL_FIXTURE_MARKER = "# NemoClaw test-only Darwin fcntl seal constants.";
 
-function addDarwinFcntlSealConstants(helper: string): string {
-  return process.platform !== "darwin" || helper.includes(DARWIN_FCNTL_FIXTURE_MARKER)
-    ? helper
-    : helper.replace(
-        "import fcntl\n",
-        `import fcntl
+function addDarwinFcntlSealConstants(
+  helper: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const shouldPatch = platform === "darwin" && !helper.includes(DARWIN_FCNTL_FIXTURE_MARKER);
+  const patched = helper.replace(
+    "import fcntl\n",
+    `import fcntl
 
 ${DARWIN_FCNTL_FIXTURE_MARKER}
 for _name, _value in (
@@ -36,7 +38,12 @@ for _name, _value in (
     if not hasattr(fcntl, _name):
         setattr(fcntl, _name, _value)
 `,
-      );
+  );
+  expect(
+    !shouldPatch || patched !== helper,
+    "Darwin fcntl seal shim injection point not found in helper module",
+  ).toBe(true);
+  return shouldPatch ? patched : helper;
 }
 
 function writeFixtureFile(root: string, relativePath: string, content: string): void {
@@ -595,6 +602,12 @@ function patchFixture(tempDir: string): void {
 }
 
 describe("LangChain Deep Agents Code managed package patch", () => {
+  it("fails fast when the Darwin fcntl seal injection anchor is missing", () => {
+    expect(() => addDarwinFcntlSealConstants("from pathlib import Path\n", "darwin")).toThrow(
+      "Darwin fcntl seal shim injection point not found in helper module",
+    );
+  });
+
   it("patches every 0.1.30 mutation and credential boundary idempotently", () => {
     const tempDir = createPackageFixture();
     patchFixture(tempDir);
