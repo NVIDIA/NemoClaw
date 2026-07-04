@@ -463,7 +463,7 @@ def load_state():
         'identity': load(root / 'identity' / 'device.json'),
         'auth': load(root / 'identity' / 'device-auth.json'),
     }
-def scopes(value, keys):
+def bounded_scope_views(value, keys):
     views=[]
     for key in keys:
         if key not in value: continue
@@ -471,10 +471,12 @@ def scopes(value, keys):
         if not isinstance(raw, list): return None
         view={norm(item) for item in raw if norm(item)}
         if 'operator.write' in view: view.add('operator.read')
+        if not view or not view.issubset(allowed): return None
         views.append(view)
-    if (not views or any(not view or not view.issubset(allowed) for view in views)
-            or any(view != views[0] for view in views[1:])):
-        return None
+    return views or None
+def scopes(value, keys):
+    views=bounded_scope_views(value, keys)
+    if views is None or any(view != views[0] for view in views[1:]): return None
     return views[0]
 def roles(value):
     raw=value.get('roles') or []
@@ -639,26 +641,31 @@ if mode == 'prepare':
     if not isinstance(public_key, str) or public_key != public_key.strip() or not public_key:
         fail('repair request has no exact public key')
     context=paired_context(state, public_key)
+    requested_views=bounded_scope_views(request, ('scopes','requestedScopes'))
     requested=scopes(request, ('scopes','requestedScopes'))
     target_expected=target.get('expectedScopes') if isinstance(target.get('expectedScopes'), list) else []
-    successor_closure=set(requested or [])
-    if {'operator.read','operator.write'}.intersection(successor_closure):
-        successor_closure.add('operator.pairing')
+    successor_closures=[]
+    for view in requested_views or []:
+        closure=set(view)
+        if {'operator.read','operator.write'}.intersection(closure):
+            closure.add('operator.pairing')
+        successor_closures.append(closure)
     is_upgrade=(
         context is not None and requested is not None
         and context['scopes'] != final_scopes
+        and bool({'operator.read','operator.write'}.intersection(requested))
         and context['scopes'] | requested == final_scopes
     )
     is_final_successor=(
-        bool(target) and context is not None and requested is not None
+        bool(target) and context is not None and requested_views is not None
         and context['scopes'] == final_scopes
-        and successor_closure == final_scopes
+        and all(closure == final_scopes for closure in successor_closures)
         and set(target_expected) == final_scopes
     )
-    if (context is None or not auth_matches(state, context) or requested is None
-            or not {'operator.read','operator.write'}.intersection(requested)
+    if (context is None or not auth_matches(state, context)
             or not (is_upgrade or is_final_successor)):
         fail('request is not the exact canonical operator scope upgrade')
+    candidate_requested=final_scopes if is_final_successor else requested
     candidate={
         'requestId': want,
         'deviceId': expected_device_id,
@@ -667,7 +674,7 @@ if mode == 'prepare':
         'clientMode': 'cli',
         'baselineScopes': sorted(context['scopes']),
         'baselineTokenHash': hashlib.sha256(context['token'].encode()).hexdigest(),
-        'requestedScopes': sorted(requested),
+        'requestedScopes': sorted(candidate_requested),
         'expectedScopes': sorted(final_scopes),
     }
     if target:
