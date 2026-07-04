@@ -21,12 +21,12 @@ const runtimePrefix = "npm --prefix /usr/local/lib/nemoclaw/mcporter-runtime";
 function extractIntegrityGate(contents: string): string {
   const startMarker = 'MCPORTER_EXPECTED_INTEGRITY=""';
   const start = contents.indexOf(startMarker);
-  const end = [
-    contents.indexOf("# Always reinstall from the committed lock", start),
-    contents.indexOf("&& rm -rf /usr/local/lib/node_modules/mcporter", start),
+  const [end = -1] = [
+    contents.indexOf('MCPORTER_LOCK_SHA256="', start),
+    contents.indexOf("&& MCPORTER_REGISTRY_INTEGRITY=", start),
   ]
     .filter((index) => index > start)
-    .sort((left, right) => left - right)[0];
+    .sort((left, right) => left - right);
   expect(start).toBeGreaterThanOrEqual(0);
   expect(end).toBeGreaterThan(start);
   return contents
