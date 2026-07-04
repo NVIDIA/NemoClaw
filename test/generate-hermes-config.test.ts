@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 import { generateHermesConfig } from "../agents/hermes/config/generate.ts";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
@@ -191,6 +191,29 @@ function writeRegistryManifest(
   return path.join(blueprintDir, "model-specific-setup");
 }
 
+function writeManagedToolGatewayMatrixFixture(
+  filename: string,
+  provider: string,
+  envValue: string,
+): string {
+  const matrixPath = path.join(tmpDir, filename);
+  fs.writeFileSync(
+    matrixPath,
+    JSON.stringify({
+      "nous-audio": {
+        service: provider,
+        config: {
+          tts: { provider, use_gateway: true },
+          stt: { provider, use_gateway: true },
+        },
+        envKey: "FIXTURE_AUDIO_GATEWAY_URL",
+        envValue,
+      },
+    }),
+  );
+  return matrixPath;
+}
+
 function copyConfigGeneratorFixture(fixtureRoot: string): string {
   const fixtureScriptPath = path.join(fixtureRoot, "agents", "hermes", "generate-config.ts");
   const fixtureConfigDir = path.join(fixtureRoot, "agents", "hermes", "config");
@@ -262,23 +285,53 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
 describe("agents/hermes/generate-config.ts", () => {
   it(
-    "runs as a strip-types executable and leaves messaging render to the build applier",
+    "matches direct generation as a strip-types executable with an explicit gateway matrix",
     async () => {
+      const matrixPath = writeManagedToolGatewayMatrixFixture(
+        "managed-tool-gateway-matrix.json",
+        "fixture-audio",
+        "https://matrix.example.test/audio",
+      );
+      const decoyMatrixPath = writeManagedToolGatewayMatrixFixture(
+        "decoy-managed-tool-gateway-matrix.json",
+        "decoy-audio",
+        "https://decoy.example.test/audio",
+      );
+      vi.stubEnv("NEMOCLAW_HERMES_TOOL_GATEWAY_MATRIX_PATH", decoyMatrixPath);
       const env = await buildHermesTestEnvDirect({
         NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
       });
-      const result = runConfigScriptRaw({
+      const overrides = {
+        NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
         NEMOCLAW_MESSAGING_PLAN_B64: env.NEMOCLAW_MESSAGING_PLAN_B64,
+        NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+        NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-audio"]),
+        NEMOCLAW_HERMES_TOOL_GATEWAY_MATRIX_PATH: matrixPath,
+      };
+      const directEnv = buildHermesTestEnv(overrides);
+      fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
+      generateHermesConfig({
+        env: directEnv,
+        scriptDir: SCRIPT_DIR,
+        homeDir: tmpDir,
+        log: () => {},
       });
+      const direct = readGeneratedConfig();
+      fs.rmSync(path.join(tmpDir, ".hermes"), { recursive: true, force: true });
+
+      const result = runConfigScriptRaw(overrides);
       expect(result.status, result.stderr).toBe(0);
-      const hermesDir = path.join(tmpDir, ".hermes");
-      const config = YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8"));
-      const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
+      const { config, envFile } = readGeneratedConfig();
+      expect(config).toEqual(direct.config);
+      expect(envFile).toBe(direct.envFile);
+      expect(config.tts).toEqual({ provider: "fixture-audio", use_gateway: true });
+      expect(envFile).toContain("FIXTURE_AUDIO_GATEWAY_URL=https://matrix.example.test/audio\n");
       expect(config.platforms.telegram).toBeUndefined();
       expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
     },

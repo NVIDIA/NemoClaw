@@ -40,8 +40,8 @@ export function generateHermesConfig({
     { env, scriptDir },
   );
 
-  const config = buildHermesConfig(settings);
-  const envLines = buildHermesEnvLines(settings);
+  const config = buildHermesConfig(settings, env);
+  const envLines = buildHermesEnvLines(settings, env);
   finalizeHermesPlatformToolsets(config, settings);
   const written = writeHermesConfigFiles(config, envLines, homeDir);
 
