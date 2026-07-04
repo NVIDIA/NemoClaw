@@ -158,15 +158,19 @@ function runInstallBlock(
   const mcporterBin = path.join(tmp, "bin", "mcporter");
   fs.mkdirSync(path.dirname(mcporterBin), { recursive: true });
   fs.writeFileSync(blueprint, fs.readFileSync(BLUEPRINT, "utf-8"));
-  if (baseProvenance !== null) {
-    if (baseProvenanceSymlink) {
-      const target = path.join(tmp, "openclaw-base-provenance-target");
-      fs.writeFileSync(target, baseProvenance);
-      fs.symlinkSync(target, provenancePath);
-    } else {
-      fs.writeFileSync(provenancePath, baseProvenance, { mode: 0o444 });
-    }
-  }
+  const writeProvenanceFile = () => {
+    fs.writeFileSync(provenancePath, baseProvenance as string, { mode: 0o444 });
+  };
+  const writeProvenanceSymlink = () => {
+    const target = path.join(tmp, "openclaw-base-provenance-target");
+    fs.writeFileSync(target, baseProvenance as string);
+    fs.symlinkSync(target, provenancePath);
+  };
+  const writePresentProvenance = baseProvenanceSymlink
+    ? writeProvenanceSymlink
+    : writeProvenanceFile;
+  const setupProvenance = baseProvenance === null ? () => undefined : writePresentProvenance;
+  setupProvenance();
   const script = [
     "#!/usr/bin/env bash",
     "set -euo pipefail",
