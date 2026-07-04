@@ -161,6 +161,31 @@ hermes                     Self-improving AI agent with learning loop (Nous Rese
 langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
 ```
 
+### `$$nemoclaw completion`
+
+Generate a shell completion script for bash, zsh, or fish.
+Tab completion covers global commands, registered sandbox names, sandbox subcommands, and per-command flags.
+Sandbox names are resolved at completion time from `$$nemoclaw list --json`, so new sandboxes appear without regenerating the script.
+When the shell argument is omitted, the target shell is detected from the `SHELL` environment variable and defaults to bash.
+
+For bash, add to `~/.bashrc` or `~/.bash_profile`:
+
+```bash
+source <($$nemoclaw completion bash)
+```
+
+For zsh, add to `~/.zshrc`:
+
+```bash
+source <($$nemoclaw completion zsh)
+```
+
+For fish, install the script once:
+
+```bash
+$$nemoclaw completion fish > ~/.config/fish/completions/nemoclaw.fish
+```
+
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
