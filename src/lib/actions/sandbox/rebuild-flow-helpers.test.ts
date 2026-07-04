@@ -210,6 +210,94 @@ describe("rebuild agent base image preflight", () => {
   });
 });
 
+describe("backupSandboxStateForRebuild with --force", () => {
+  let warnSpy: MockInstance;
+  let errorSpy: MockInstance;
+  let backupSpy: MockInstance;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    backupSpy = vi.spyOn(sandboxState, "backupSandboxState");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns null (skip) when backup fails completely and force is set", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: ["config.toml"],
+      manifest: null,
+    });
+    const result = backupSandboxStateForRebuild(
+      "alpha",
+      makeSandboxEntry(),
+      false,
+      () => undefined,
+      () => true,
+      makeBail(),
+      { force: true },
+    );
+
+    expect(result).toBeNull();
+    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(warnLines.some((line: string) => line.includes("--force was specified"))).toBe(true);
+  });
+
+  it("aborts with hint when backup fails completely without force", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+    });
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+
+    const errorLines = errorSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+    expect(errorLines.some((line: string) => line.includes("rebuild --force"))).toBe(true);
+  });
+
+  it("aborts without force even when force option is explicitly false", () => {
+    backupSpy.mockReturnValue({
+      success: false,
+      backedUpDirs: [],
+      backedUpFiles: [],
+      failedDirs: [".state"],
+      failedFiles: [],
+      manifest: null,
+    });
+    expect(() =>
+      backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+        { force: false },
+      ),
+    ).toThrow("bail: Failed to back up sandbox state.");
+  });
+});
+
 describe("warnUnpreservedUserManagedFiles", () => {
   let warnSpy: MockInstance;
   let logSpy: MockInstance;

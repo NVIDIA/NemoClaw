@@ -29,6 +29,7 @@ export interface RebuildBackupPhaseInput {
   preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
   webSearchConfig: WebSearchConfig | null;
+  force?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -140,6 +141,7 @@ export function runRebuildBackupPhase(
       input.log,
       input.relockShieldsIfNeeded,
       input.bail,
+      { force: input.force },
     );
   if (backupManifest === undefined) return null;
 
