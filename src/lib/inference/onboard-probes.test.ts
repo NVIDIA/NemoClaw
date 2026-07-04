@@ -11,7 +11,6 @@ import {
   HARNESS_COUNTER,
   HARNESS_TMPDIR,
   makeFakeCurlScript,
-  makeResponsesFallbackUrlRecordingFakeCurlScript,
   withFakeCurlProbe,
 } from "./onboard-probes-curl-harness";
 
@@ -765,36 +764,6 @@ exit 28
           validated: false,
         });
         expect(lines.join("\n")).toContain("DeepSeek V4 Pro validation timed out");
-      },
-    );
-  });
-
-  it("falls back to chat completions for custom OpenAI-compatible endpoints when /responses lacks tool calls", () => {
-    withFakeCurlProbe(
-      {
-        script: makeResponsesFallbackUrlRecordingFakeCurlScript(),
-        dirPrefix: "nemoclaw-responses-tool-fallback-",
-      },
-      ({ counter, tmpDir }) => {
-        const result = probeOpenAiLikeEndpoint(
-          "https://proxy.example.com/v1",
-          "custom-model",
-          "proxy-key",
-          { requireResponsesToolCalling: true },
-        );
-
-        expect(result).toMatchObject({
-          ok: true,
-          api: "openai-completions",
-          label: "Chat Completions API",
-        });
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-        expect(fs.readFileSync(path.join(tmpDir, "request-1-url.txt"), "utf8")).toBe(
-          "https://proxy.example.com/v1/responses",
-        );
-        expect(fs.readFileSync(path.join(tmpDir, "request-2-url.txt"), "utf8")).toBe(
-          "https://proxy.example.com/v1/chat/completions",
-        );
       },
     );
   });

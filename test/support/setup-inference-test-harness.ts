@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { vi } from "vitest";
 import type { SetupInference, SetupInferenceDeps } from "../../src/lib/onboard/setup-inference.js";
 
@@ -48,6 +52,152 @@ type DirectCommandRoute = {
   matches(command: string): boolean;
   results: readonly [DirectRunStubResult | undefined, ...(DirectRunStubResult | undefined)[]];
 };
+
+export type ProductionOpenshellCommandRecord = {
+  argv: string[];
+  env: Record<string, string>;
+};
+
+export type ProductionSetupInferenceBoundaryResult = {
+  commands: ProductionOpenshellCommandRecord[];
+  credentialEvidence: {
+    argvContainingSecret: string[];
+    parentCredentialUnchanged: boolean;
+    providerCommand: ProductionOpenshellCommandRecord;
+    secretBearingCommands: string[];
+    setupCredentialValues: Array<string | null>;
+    unscopedCommandKinds: string[];
+    unscopedCommandsContainingSecret: string[];
+    unscopedCredentialValues: Array<string | null>;
+  };
+  setupCredentialAfter: string | null;
+  setupCredentialBefore: string | null;
+};
+
+export function runProductionSetupInferenceCredentialBoundary(options: {
+  credentialEnv: string;
+  credentialValue: string;
+  endpointUrl?: string | null;
+  model: string;
+  provider: string;
+  timeoutMs?: number;
+}): ProductionSetupInferenceBoundaryResult {
+  const parentCredentialBefore = process.env[options.credentialEnv];
+  const repoRoot = path.join(import.meta.dirname, "..", "..");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-setup-inference-boundary-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const openshellPath = path.join(fakeBin, "openshell");
+  const commandLogPath = path.join(tmpDir, "openshell-commands.jsonl");
+  const setupResultPath = path.join(tmpDir, "setup-result.json");
+  const childScriptPath = path.join(tmpDir, "setup-inference-boundary.js");
+  const onboardPath = path.join(repoRoot, "src", "lib", "onboard.ts");
+  const sourceHookPath = path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs");
+
+  try {
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      openshellPath,
+      `#!${process.execPath}
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ argv, env: process.env }) + "\\n");
+if (argv[0] === "inference" && argv[1] === "get") {
+  process.stdout.write("Gateway inference:\\n  Provider: configured\\n  Model: configured\\n");
+}
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      childScriptPath,
+      `const fs = require("node:fs");
+const { setupInference } = require(${JSON.stringify(onboardPath)});
+const credentialEnv = ${JSON.stringify(options.credentialEnv)};
+const setupCredentialBefore = process.env[credentialEnv] || null;
+(async () => {
+  await setupInference(
+    null,
+    ${JSON.stringify(options.model)},
+    ${JSON.stringify(options.provider)},
+    ${JSON.stringify(options.endpointUrl ?? null)},
+    credentialEnv,
+  );
+  fs.writeFileSync(
+    ${JSON.stringify(setupResultPath)},
+    JSON.stringify({
+      setupCredentialBefore,
+      setupCredentialAfter: process.env[credentialEnv] || null,
+    }),
+  );
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+`,
+    );
+
+    const result = spawnSync(process.execPath, [childScriptPath], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      timeout: options.timeoutMs ?? 15_000,
+      env: {
+        HOME: tmpDir,
+        NODE_ENV: "test",
+        NODE_OPTIONS: `--require=${sourceHookPath}`,
+        NEMOCLAW_OPENSHELL_BIN: openshellPath,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
+        TMPDIR: tmpDir,
+        VITEST: "true",
+        [options.credentialEnv]: options.credentialValue,
+      },
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0) {
+      throw new Error(
+        `Production setupInference boundary exited ${result.status}: ${result.stderr || result.stdout}`,
+      );
+    }
+
+    const commands = fs
+      .readFileSync(commandLogPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as ProductionOpenshellCommandRecord);
+    const setupResult = JSON.parse(fs.readFileSync(setupResultPath, "utf8")) as Omit<
+      ProductionSetupInferenceBoundaryResult,
+      "commands" | "credentialEvidence"
+    >;
+    const commandKind = ({ argv }: ProductionOpenshellCommandRecord) => argv.slice(0, 2).join(" ");
+    const providerCommand = commands.find(({ argv }) =>
+      /^provider (create|update) /.test(argv.join(" ")),
+    );
+    if (!providerCommand) throw new Error("Production setupInference did not mutate a provider");
+    const unscopedPatterns = [/^gateway select /, /^provider get /, /^inference set /];
+    const unscopedCommands = unscopedPatterns
+      .map((pattern) => commands.find(({ argv }) => pattern.test(argv.join(" "))))
+      .filter((command): command is ProductionOpenshellCommandRecord => command !== undefined);
+    const containsSecret = ({ env }: ProductionOpenshellCommandRecord) =>
+      Object.values(env).some((value) => value.includes(options.credentialValue));
+    const credentialEvidence = {
+      argvContainingSecret: commands
+        .filter(({ argv }) => argv.some((arg) => arg.includes(options.credentialValue)))
+        .map(commandKind),
+      parentCredentialUnchanged: process.env[options.credentialEnv] === parentCredentialBefore,
+      providerCommand,
+      secretBearingCommands: commands.filter(containsSecret).map(commandKind),
+      setupCredentialValues: [setupResult.setupCredentialBefore, setupResult.setupCredentialAfter],
+      unscopedCommandKinds: unscopedCommands.map(commandKind),
+      unscopedCommandsContainingSecret: unscopedCommands.filter(containsSecret).map(commandKind),
+      unscopedCredentialValues: unscopedCommands.map(
+        ({ env }) => env[options.credentialEnv] ?? null,
+      ),
+    };
+    return { commands, credentialEvidence, ...setupResult };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
 
 export async function withProcessEnv<T>(
   values: Record<string, string | undefined>,

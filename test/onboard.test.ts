@@ -21,6 +21,7 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 import {
   createDirectCommandRouter,
   createDirectSetupInferenceHarnessFactory,
+  runProductionSetupInferenceCredentialBoundary,
   withProcessEnv,
 } from "./support/setup-inference-test-harness.js";
 
@@ -723,27 +724,26 @@ startGateway(null).catch(() => {});
     expect(SANDBOX_NAME_REGEX.test("")).toBe(false);
   });
 
-  it("passes credential names to openshell without embedding secret values in argv", async () => {
-    await withProcessEnv({ NVIDIA_INFERENCE_API_KEY: "nvapi-TEST-NOT-A-REAL-VALUE" }, async () => {
-      const harness = createDirectSetupInferenceHarness({
-        runOpenshell: (args) =>
-          args.slice(0, 2).join(" ") === "provider get"
-            ? { status: 0, stdout: "", stderr: "" }
-            : undefined,
-      });
-
-      await harness.setupInference("test-box", "nvidia/nemotron-3-super-120b-a12b", "nvidia-nim");
-
-      const commands = harness.commands;
-      assert.equal(commands.length, 4);
-      assert.match(commands[0].command, /gateway select nemoclaw/);
-      assert.match(commands[1].command, /provider get/);
-      assert.match(commands[2].command, /--credential NVIDIA_INFERENCE_API_KEY/);
-      assert.doesNotMatch(commands[2].command, /nvapi-TEST-NOT-A-REAL-VALUE/);
-      assert.match(commands[2].command, /provider update/);
-      assert.match(commands[3].command, /inference set/);
-      assert.equal(process.env.NVIDIA_INFERENCE_API_KEY, "nvapi-TEST-NOT-A-REAL-VALUE");
+  it("passes credential names to openshell without embedding secret values in argv", () => {
+    const credentialValue = "nvapi-TEST-NOT-A-REAL-VALUE";
+    const { credentialEvidence: evidence } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      credentialValue,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "nvidia-nim",
     });
+    assert.match(evidence.providerCommand.argv.join(" "), /--credential NVIDIA_INFERENCE_API_KEY/);
+    assert.deepEqual(evidence.argvContainingSecret, []);
+    assert.deepEqual(evidence.secretBearingCommands, ["provider update"]);
+    assert.equal(evidence.providerCommand.env.NVIDIA_INFERENCE_API_KEY, credentialValue);
+    assert.equal(
+      evidence.unscopedCommandKinds.join(","),
+      "gateway select,provider get,inference set",
+    );
+    assert.deepEqual(evidence.unscopedCredentialValues, [null, null, null]);
+    assert.deepEqual(evidence.unscopedCommandsContainingSecret, []);
+    assert.deepEqual(evidence.setupCredentialValues, [credentialValue, credentialValue]);
+    assert.equal(evidence.parentCredentialUnchanged, true);
   });
   it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
     await withProcessEnv(
