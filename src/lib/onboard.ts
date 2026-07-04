@@ -674,8 +674,8 @@ function isNonInteractive(): boolean {
   return NON_INTERACTIVE || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
-function isRecreateSandbox(): boolean {
-  return RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
+function isRecreateSandbox(requested = false): boolean {
+  return requested || RECREATE_SANDBOX || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
 }
 
 function isAutoYes(): boolean {
@@ -2464,6 +2464,7 @@ async function createSandbox(
   resourceProfile: import("./resources-cmd").ResourceProfile | null = null,
   hermesToolGateways: string[] = [],
   hermesAuthMethod: HermesAuthMethod | null = null,
+  createIntent: import("./onboard/types").SandboxCreateIntent | null = null,
   preparedBuildContext: PreparedSandboxBuildContext | null = null,
 ) {
   step(6, 8, "Creating sandbox");
@@ -2540,11 +2541,10 @@ async function createSandbox(
   );
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, fromDockerfile, isRecreateSandbox(), inspectSandboxForCreate);
+  const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
-  // Keep restore state outside liveExists for post-creation restoration.
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
   let notReadyRecreateInProgress = false;
@@ -2560,9 +2560,9 @@ async function createSandbox(
     const existingSandboxState = getSandboxReuseState(sandboxName);
     const requestedAgentName = getRequestedSandboxAgentName(agent);
     const agentDrift = getSandboxAgentDrift(sandboxName, requestedAgentName);
-    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox();
+    let recreateForAgentDrift = agentDrift.changed && isRecreateSandbox(createIntent?.recreate);
 
-    if (agentDrift.changed && !isRecreateSandbox()) {
+    if (agentDrift.changed && !isRecreateSandbox(createIntent?.recreate)) {
       console.log(
         `  Sandbox '${sandboxName}' already exists as ${formatSandboxAgentName(agentDrift.existingAgentName)}.`,
       );
@@ -2624,7 +2624,7 @@ async function createSandbox(
       : { changed: false, changedProviders: [] };
 
     if (
-      !isRecreateSandbox() &&
+      !isRecreateSandbox(createIntent?.recreate) &&
       !recreateForAgentDrift &&
       !needsProviderMigration &&
       !sandboxGpuDrift &&
@@ -5038,7 +5038,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           rootDir: ROOT,
         },
         sandboxDeps: {
-          resolvePath: path.resolve,
+          resolvePath: preparedDcodeRuntime.resolveDockerfileProbePath,
           agentSupportsWebSearch,
           agentSupportsWebSearchProvider,
           note,

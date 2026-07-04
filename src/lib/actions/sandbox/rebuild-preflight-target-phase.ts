@@ -7,6 +7,7 @@ import * as registry from "../../state/registry";
 import type { ToolDisclosure } from "../../tool-disclosure";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
+import type { PreparedRebuildImage } from "./rebuild-custom-image-preflight";
 import { isDcodeRebuildAgent } from "./rebuild-dcode-orchestrator";
 import { validatedRebuildRegistryUpdate } from "./rebuild-durable-config";
 import {
@@ -20,6 +21,7 @@ import type { RebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import { preflightRebuildMessagingConflicts } from "./rebuild-messaging-conflict-preflight";
 import { stageRebuildMessagingPlanOrBail } from "./rebuild-messaging-phase";
 import { checkRebuildGatewaySchemaPreflight } from "./rebuild-preflight-guards";
+import { disposePreparedBuildContext } from "./rebuild-prepared-image-context";
 import {
   hydrateMessagingConfigForRebuild,
   preflightAuthoritativeOnboardRuntime,
@@ -35,6 +37,7 @@ export interface RebuildPreparedTarget {
   recreateOptions: RebuildRecreateOnboardOpts;
   messagingPlan: SandboxMessagingPlan | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
+  preparedImage: PreparedRebuildImage | null;
 }
 
 /** Resolve, validate, and persist the complete non-destructive recreate target. */
@@ -119,9 +122,11 @@ export async function prepareRebuildTargetPreflights(args: {
     : ensureRebuildAgentBaseImage(rebuildAgent, bail);
   if (!baseImagePreflight.ok) return null;
   const restoreBaseImageOverride = pinRebuildAgentBaseImageForRecreate(baseImagePreflight);
-  let targetRuntimeReady = false;
+  let targetRuntimePreflight: Awaited<ReturnType<typeof preflightRebuildTargetRuntime>> = {
+    ok: false,
+  };
   try {
-    targetRuntimeReady = await preflightRebuildTargetRuntime(
+    targetRuntimePreflight = await preflightRebuildTargetRuntime(
       targetConfig,
       sandboxEntry,
       recreateOptions,
@@ -132,19 +137,38 @@ export async function prepareRebuildTargetPreflights(args: {
   } finally {
     restoreBaseImageOverride();
   }
-  if (!targetRuntimeReady) return null;
+  if (!targetRuntimePreflight.ok) return null;
 
-  const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
-    resumeConfig,
-    durableConfig,
-    fromDockerfile,
-    credentialEnv,
-  );
-  if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
-    bail("Sandbox registry entry disappeared during rebuild preflight");
-    return null;
+  const preparedImage = targetRuntimePreflight.preparedImage;
+  let retainPreparedImage = false;
+  try {
+    const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
+      resumeConfig,
+      durableConfig,
+      fromDockerfile,
+      credentialEnv,
+    );
+    if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
+      bail("Sandbox registry entry disappeared during rebuild preflight");
+      return null;
+    }
+    Object.assign(sandboxEntry, validatedRegistryUpdate);
+    if (preparedImage) {
+      recreateOptions.preparedImageRebuild = {
+        buildContext: preparedImage,
+        gatewayName: recreateOptions.targetGatewayName,
+      };
+    }
+
+    retainPreparedImage = true;
+    return {
+      targetConfig,
+      recreateOptions,
+      messagingPlan,
+      baseImagePreflight,
+      preparedImage,
+    };
+  } finally {
+    if (!retainPreparedImage && preparedImage) disposePreparedBuildContext(preparedImage);
   }
-  Object.assign(sandboxEntry, validatedRegistryUpdate);
-
-  return { targetConfig, recreateOptions, messagingPlan, baseImagePreflight };
 }

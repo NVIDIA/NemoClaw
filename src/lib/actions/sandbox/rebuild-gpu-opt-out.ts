@@ -7,7 +7,10 @@ import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import type { PreparedDcodeRebuildHandoff } from "../../onboard/prepared-dcode-rebuild";
+import type {
+  PreparedDcodeRebuildHandoff,
+  PreparedImageRebuildHandoff,
+} from "../../onboard/prepared-dcode-rebuild";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
 
@@ -87,6 +90,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
+  preparedImageRebuild?: PreparedImageRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
   noGpu?: true;

@@ -5,7 +5,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createBuildContextVerifier,
+  fingerprintBuildContext,
+} from "../../src/lib/actions/sandbox/rebuild-prepared-image-context";
 import {
   createRebuildFlowHarness,
   installRebuildFlowTestHooks,
@@ -41,6 +45,118 @@ export function registerRebuildFlowTargetImageTests(): void {
 
       expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
       expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it("recreates from the retained context after the source Dockerfile symlink changes", async () => {
+      const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-source-link-"));
+      const preparedDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-prepared-"));
+      const sourceDockerfile = path.join(sourceDir, "Dockerfile");
+      const preparedDockerfile = path.join(preparedDir, "Dockerfile");
+      fs.writeFileSync(path.join(sourceDir, "Dockerfile.safe"), "FROM scratch\n# safe\n");
+      fs.writeFileSync(path.join(sourceDir, "Dockerfile.changed"), "FROM scratch\n# changed\n");
+      fs.symlinkSync("Dockerfile.safe", sourceDockerfile);
+      fs.writeFileSync(preparedDockerfile, "FROM scratch\n# safe\n");
+      const cleanupBuildCtx = vi.fn(() => {
+        fs.rmSync(preparedDir, { recursive: true, force: true });
+        return true;
+      });
+      const prepared = {
+        buildCtx: preparedDir,
+        stagedDockerfile: preparedDockerfile,
+        cleanupBuildCtx,
+        buildId: "source-link-prepared",
+        contextFingerprint: fingerprintBuildContext(preparedDir),
+        verifyBuildCtx: createBuildContextVerifier(
+          preparedDir,
+          fingerprintBuildContext(preparedDir),
+        ),
+        rebuildTarget: { agentName: null, fromDockerfile: sourceDockerfile },
+      };
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { fromDockerfile: sourceDockerfile },
+        customImagePreflight: {
+          ok: true,
+          imageTag: "nemoclaw-rebuild-preflight:source-link",
+          prepared,
+        },
+        beforeBackup: () => {
+          fs.unlinkSync(sourceDockerfile);
+          fs.symlinkSync("Dockerfile.changed", sourceDockerfile);
+        },
+        onboard: (_session, options) => {
+          expect(options.fromDockerfile).toBe(sourceDockerfile);
+          expect(options.preparedImageRebuild?.buildContext).toBe(prepared);
+          expect(fs.readFileSync(sourceDockerfile, "utf8")).toContain("# changed");
+          expect(fs.readFileSync(preparedDockerfile, "utf8")).toContain("# safe");
+        },
+      });
+
+      try {
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).resolves.toBeUndefined();
+
+        expect(harness.onboardSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            fromDockerfile: sourceDockerfile,
+            preparedImageRebuild: expect.objectContaining({ buildContext: prepared }),
+          }),
+        );
+        expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(sourceDir, { recursive: true, force: true });
+        fs.rmSync(preparedDir, { recursive: true, force: true });
+      }
+    });
+
+    it("aborts before delete when the retained context changes after preflight", async () => {
+      const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-source-"));
+      const preparedDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-rebuild-prepared-"));
+      const sourceDockerfile = path.join(sourceDir, "Dockerfile");
+      const preparedDockerfile = path.join(preparedDir, "Dockerfile");
+      fs.writeFileSync(sourceDockerfile, "FROM scratch\n# source\n");
+      fs.writeFileSync(preparedDockerfile, "FROM scratch\n# prepared\n");
+      const cleanupBuildCtx = vi.fn(() => {
+        fs.rmSync(preparedDir, { recursive: true, force: true });
+        return true;
+      });
+      const prepared = {
+        buildCtx: preparedDir,
+        stagedDockerfile: preparedDockerfile,
+        cleanupBuildCtx,
+        buildId: "mutated-prepared",
+        contextFingerprint: fingerprintBuildContext(preparedDir),
+        verifyBuildCtx: createBuildContextVerifier(
+          preparedDir,
+          fingerprintBuildContext(preparedDir),
+        ),
+        rebuildTarget: { agentName: null, fromDockerfile: sourceDockerfile },
+      };
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { fromDockerfile: sourceDockerfile },
+        customImagePreflight: {
+          ok: true,
+          imageTag: "nemoclaw-rebuild-preflight:mutated",
+          prepared,
+        },
+        beforeBackup: () => fs.writeFileSync(preparedDockerfile, "FROM scratch\n# changed\n"),
+      });
+
+      try {
+        await expect(
+          harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+        ).rejects.toThrow("Replacement sandbox image context changed before delete");
+
+        expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+          ["sandbox", "delete", "alpha"],
+          expect.anything(),
+        );
+        expect(harness.onboardSpy).not.toHaveBeenCalled();
+        expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      } finally {
+        fs.rmSync(sourceDir, { recursive: true, force: true });
+        fs.rmSync(preparedDir, { recursive: true, force: true });
+      }
     });
 
     it("rebuilds a known-remote target even when the session belongs to another sandbox (#5735)", async () => {

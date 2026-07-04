@@ -15,6 +15,7 @@ import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/o
 import type { SandboxEntry } from "../../../state/registry";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
 import { withSandboxPhaseTrace } from "../../tracing";
+import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
 import {
@@ -131,6 +132,7 @@ export interface SandboxStateOptions<
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
       hermesAuthMethod: HermesAuthMethod | null,
+      createIntent: SandboxCreateIntent,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -481,6 +483,7 @@ class SandboxStateFlow<
     state: SandboxStepState<WebSearchConfig>,
     requestedSandboxName: string,
     messagingPlan: SandboxMessagingPlan | null,
+    decision: SandboxCreationDecision,
   ): Promise<SandboxStepState<WebSearchConfig>> {
     const effectiveHermesToolGateways = effectiveHermesToolGatewaysForWebSearch(
       this.options.agent as { name?: string } | null,
@@ -515,6 +518,10 @@ class SandboxStateFlow<
           resourceProfile,
           effectiveHermesToolGateways,
           this.options.hermesAuthMethod,
+          {
+            recreate: decision.kind !== "create",
+            toolDisclosure: toolDisclosureOrDefault(state.session?.toolDisclosure),
+          },
         ),
     );
     // createSandbox() owns the build fingerprint. In particular, reusing an
@@ -598,6 +605,7 @@ class SandboxStateFlow<
       },
       requestedSandboxName,
       messaging.plan,
+      decision,
     );
   }
 

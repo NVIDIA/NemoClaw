@@ -14,7 +14,12 @@ import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
 import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
+import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  disposePreparedBuildContext,
+  verifyPreparedBuildContext,
+} from "./rebuild-prepared-image-context";
 import {
   type RebuildSandboxExecutionOptions,
   revalidatePreparedRecoveryBeforeDelete,
@@ -79,6 +84,7 @@ async function rebuildSandboxUnlocked(
     liveState,
     recoveryManifest: validatedRecoveryManifest,
     dcodePreflight,
+    preparedImage,
     releaseOnboardLock,
     log,
     bail,
@@ -138,6 +144,19 @@ async function rebuildSandboxUnlocked(
         relockShieldsIfNeeded,
       });
       if (!backup) return;
+
+      // The post-delete create must consume the exact context that passed the
+      // image preflight. Revalidate at the last safe point so mutation of the
+      // retained copy cannot cross the destructive boundary.
+      if (preparedImage && !verifyPreparedBuildContext(preparedImage)) {
+        printRebuildPreflightFailure(
+          "the retained replacement image context changed after preflight.",
+          "Retry the rebuild so the replacement inputs can be staged again.",
+          "Replacement sandbox image context changed before delete",
+          bail,
+        );
+        return;
+      }
 
       // DCode's retained replacement and live inference route must still match at
       // the last safe point. This check intentionally precedes MCP adapter scrub,
@@ -233,6 +252,9 @@ async function rebuildSandboxUnlocked(
     }
   } finally {
     dcodePreflight.cleanup();
+    if (preparedImage && !disposePreparedBuildContext(preparedImage)) {
+      console.warn("  Warning: temporary rebuild image inputs could not be fully removed.");
+    }
     process.removeListener("exit", releaseOnboardLock);
     releaseOnboardLock();
   }

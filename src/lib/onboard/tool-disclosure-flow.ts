@@ -31,12 +31,13 @@ export function prepareSandboxToolDisclosure(
   fromDockerfile: string | null,
   recreate: boolean,
   inspectSandboxForCreate: SandboxLifecycleHelpers["inspectSandboxForCreate"],
+  desiredToolDisclosure: ToolDisclosure | null = null,
 ) {
   const { existingEntry, preservedMcpState, liveExists } = inspectSandboxForCreate(sandboxName);
   let mode: ToolDisclosure;
   try {
     mode = resolveSandboxToolDisclosure({
-      requested: resolveToolDisclosureRequest(null, process.env),
+      requested: desiredToolDisclosure ?? resolveToolDisclosureRequest(null, process.env),
       recorded: existingEntry?.toolDisclosure,
       session: onboardSession.loadSession()?.toolDisclosure,
       sandboxExists: liveExists,

@@ -7,7 +7,21 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ROOT } from "../../runner";
-import { preflightRebuildImage } from "./rebuild-custom-image-preflight";
+import {
+  preflightRebuildImage,
+  type RebuildImagePreflightResult,
+} from "./rebuild-custom-image-preflight";
+import {
+  disposePreparedBuildContext,
+  verifyPreparedBuildContext,
+} from "./rebuild-prepared-image-context";
+
+type SuccessfulPreflight = Extract<RebuildImagePreflightResult, { ok: true }>;
+
+function successful(result: RebuildImagePreflightResult): SuccessfulPreflight {
+  expect(result.ok).toBe(true);
+  return result as SuccessfulPreflight;
+}
 
 function input(fromDockerfile: string | null) {
   return {
@@ -35,26 +49,40 @@ function input(fromDockerfile: string | null) {
 
 describe("preflightRebuildImage", () => {
   it("prebuilds the managed OpenClaw image instead of deferring its first build until delete", async () => {
+    const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-managed-preflight-"));
+    const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+    fs.writeFileSync(stagedDockerfile, "FROM scratch\n");
     const buildImage = vi.fn(() => ({ status: 0 }) as never);
-    const cleanupBuildCtx = vi.fn(() => true);
+    const cleanupBuildCtx = vi.fn(() => {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+      return true;
+    });
     const stageBuildContext = vi.fn(() => ({
-      buildCtx: "/tmp/rebuild-managed-context",
-      stagedDockerfile: "/tmp/rebuild-managed-context/Dockerfile",
+      buildCtx,
+      stagedDockerfile,
       cleanupBuildCtx,
     }));
-    const result = await preflightRebuildImage(input(null), {
-      stageBuildContext,
-      prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
-      buildImage,
-      removeImage: vi.fn(),
-    });
+    try {
+      const result = successful(
+        await preflightRebuildImage(input(null), {
+          stageBuildContext,
+          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          buildImage,
+          removeImage: vi.fn(() => ({ status: 0 }) as never),
+        }),
+      );
 
-    expect(result.ok).toBe(true);
-    expect(stageBuildContext).toHaveBeenCalledWith(
-      expect.objectContaining({ root: ROOT, agent: null }),
-    );
-    expect(buildImage).toHaveBeenCalledOnce();
-    expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+      expect(stageBuildContext).toHaveBeenCalledWith(
+        expect.objectContaining({ root: ROOT, agent: null }),
+      );
+      expect(buildImage).toHaveBeenCalledOnce();
+      expect(cleanupBuildCtx).not.toHaveBeenCalled();
+      expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+      expect(cleanupBuildCtx).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(buildCtx, { recursive: true, force: true });
+    }
   });
 
   it.each([
@@ -64,7 +92,7 @@ describe("preflightRebuildImage", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-"));
     const dockerfile = path.join(dir, "Dockerfile.custom");
     fs.writeFileSync(dockerfile, dockerfileContents);
-    const removeImage = vi.fn();
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
     try {
       const result = await preflightRebuildImage(input(dockerfile), {
         prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
@@ -83,14 +111,15 @@ describe("preflightRebuildImage", () => {
     const dockerfile = path.join(dir, "Dockerfile.custom");
     fs.writeFileSync(dockerfile, "FROM scratch\n");
     const buildImage = vi.fn(() => ({ status: 0 }) as never);
-    const removeImage = vi.fn();
+    const removeImage = vi.fn(() => ({ status: 0 }) as never);
     try {
-      const result = await preflightRebuildImage(input(dockerfile), {
-        prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
-        buildImage,
-        removeImage,
-      });
-      expect(result.ok).toBe(true);
+      const result = successful(
+        await preflightRebuildImage(input(dockerfile), {
+          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          buildImage,
+          removeImage,
+        }),
+      );
       expect(buildImage).toHaveBeenCalledWith(
         expect.stringContaining("Dockerfile"),
         expect.stringMatching(/^nemoclaw-rebuild-preflight:/),
@@ -98,7 +127,79 @@ describe("preflightRebuildImage", () => {
         expect.objectContaining({ ignoreError: true }),
       );
       expect(removeImage).toHaveBeenCalledOnce();
+      expect(fs.existsSync(result.prepared.buildCtx)).toBe(true);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
     } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pins a symlinked Dockerfile before the source link can be swapped", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-link-"));
+    const dockerfile = path.join(dir, "Dockerfile");
+    fs.writeFileSync(path.join(dir, "Dockerfile.safe"), "FROM scratch\n# safe\n");
+    fs.writeFileSync(path.join(dir, "Dockerfile.changed"), "FROM scratch\n# changed\n");
+    fs.symlinkSync("Dockerfile.safe", dockerfile);
+    const builtDockerfiles: string[] = [];
+    try {
+      const result = successful(
+        await preflightRebuildImage(input(dockerfile), {
+          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          buildImage: vi.fn((stagedDockerfile) => {
+            builtDockerfiles.push(fs.readFileSync(stagedDockerfile, "utf8"));
+            return { status: 0 } as never;
+          }),
+          removeImage: vi.fn(() => ({ status: 0 }) as never),
+        }),
+      );
+
+      fs.unlinkSync(dockerfile);
+      fs.symlinkSync("Dockerfile.changed", dockerfile);
+
+      expect(builtDockerfiles).toEqual(["FROM scratch\n# safe\n"]);
+      expect(fs.lstatSync(result.prepared.stagedDockerfile).isSymbolicLink()).toBe(false);
+      expect(fs.readFileSync(result.prepared.stagedDockerfile, "utf8")).toBe(
+        "FROM scratch\n# safe\n",
+      );
+      expect(verifyPreparedBuildContext(result.prepared)).toBe(true);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns and retries at process exit when a built preflight image cannot be removed", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-custom-preflight-cleanup-"));
+    const dockerfile = path.join(dir, "Dockerfile.custom");
+    fs.writeFileSync(dockerfile, "FROM scratch\n");
+    const removeImage = vi
+      .fn()
+      .mockReturnValueOnce({ status: 1 } as never)
+      .mockReturnValueOnce({ status: 0 } as never);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const processOnce = vi.spyOn(process, "once").mockImplementation((event, listener) => {
+      expect(event).toBe("exit");
+      listener(0);
+      return process;
+    });
+    try {
+      const result = successful(
+        await preflightRebuildImage(input(dockerfile), {
+          prepareDockerfilePatch: vi.fn(async () => ({ buildId: "1", resolvedBaseImage: null })),
+          buildImage: vi.fn(() => ({ status: 0 }) as never),
+          removeImage,
+        }),
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("failed to remove temporary rebuild preflight image"),
+      );
+      expect(processOnce).toHaveBeenCalledWith("exit", expect.any(Function));
+      expect(removeImage).toHaveBeenCalledTimes(2);
+      expect(disposePreparedBuildContext(result.prepared)).toBe(true);
+    } finally {
+      processOnce.mockRestore();
+      warn.mockRestore();
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });

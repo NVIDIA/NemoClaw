@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import { hashCredential } from "../../../security/credential-hash";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { resolveSandboxToolDisclosure } from "../../../tool-disclosure";
 import { detectMessagingChannelsFromEnv } from "../../messaging-channel-setup";
+import type { SandboxCreateIntent } from "../../types";
 import { handleSandboxState, type SandboxStateOptions } from "./sandbox";
 
 vi.mock("../../messaging-channel-setup", () => ({
@@ -269,6 +271,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { recreate: false, toolDisclosure: "progressive" },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -335,6 +338,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
+      { recreate: false, toolDisclosure: "progressive" },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -453,6 +457,66 @@ describe("handleSandboxState", () => {
     );
     expect(calls.removeSandbox).not.toHaveBeenCalled();
     expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["progressive", "direct"],
+    ["direct", "progressive"],
+  ] as const)("propagates resumed %s-to-%s tool-disclosure drift through the downstream create lifecycle", async (recordedMode, requestedMode) => {
+    const session = createSession({ sandboxName: "saved", toolDisclosure: requestedMode });
+    session.steps.sandbox.status = "complete";
+    const lifecycle: Array<{ action: "recreate" | "reuse"; mode: string }> = [];
+    const createSandbox = vi.fn(async (...args: unknown[]) => {
+      const createIntent = args[14] as SandboxCreateIntent | undefined;
+      const recreate = createIntent?.recreate ?? false;
+      const mode = resolveSandboxToolDisclosure({
+        requested: createIntent?.toolDisclosure ?? null,
+        recorded: recordedMode,
+        session: session.toolDisclosure,
+        sandboxExists: true,
+        recreate,
+      });
+      lifecycle.push({ action: recreate ? "recreate" : "reuse", mode });
+      return "saved";
+    });
+    const { deps, calls } = createDeps({
+      createSandbox,
+      getSandboxReuseState: () => "ready",
+      updateSession: vi.fn(
+        (mutator: (value: Session) => Session | void) => mutator(session) ?? session,
+      ),
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        nemoclawVersion: "0.1.0",
+        toolDisclosure: recordedMode,
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+    });
+
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(createSandbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "model",
+      "provider",
+      "openai-completions",
+      "saved",
+      null,
+      [],
+      null,
+      null,
+      null,
+      { sandboxGpuEnabled: false, mode: "0" },
+      null,
+      [],
+      null,
+      { recreate: true, toolDisclosure: requestedMode },
+    );
+    expect(lifecycle).toEqual([{ action: "recreate", mode: requestedMode }]);
   });
 
   it("recreates a legacy custom image so its tool-disclosure contract is validated", async () => {
@@ -677,6 +741,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { recreate: true, toolDisclosure: "progressive" },
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -790,6 +855,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
+      { recreate: true, toolDisclosure: "progressive" },
     );
     expect(result.webSearchConfig).toBeNull();
   });

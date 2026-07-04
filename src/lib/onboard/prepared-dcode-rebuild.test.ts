@@ -29,6 +29,29 @@ const preparedOptions: PreparedDcodeRebuildOptions = {
     gatewayName: " nemoclaw ",
   },
 };
+const preparedImageBuildContext: PreparedSandboxBuildContext = {
+  buildCtx: "/tmp/prepared-custom",
+  stagedDockerfile: "/tmp/prepared-custom/Dockerfile",
+  buildId: "custom-prepared",
+  cleanupBuildCtx: () => true,
+  verifyBuildCtx: () => true,
+  rebuildTarget: {
+    agentName: null,
+    fromDockerfile: "/tmp/custom/Dockerfile",
+  },
+};
+const preparedImageOptions: PreparedDcodeRebuildOptions = {
+  resume: true,
+  recreateSandbox: true,
+  authoritativeResumeConfig: true,
+  onboardLockAlreadyHeld: true,
+  agent: null,
+  fromDockerfile: "/tmp/custom/Dockerfile",
+  preparedImageRebuild: {
+    buildContext: preparedImageBuildContext,
+    gatewayName: "nemoclaw",
+  },
+};
 const sandboxGpuConfig: SandboxGpuConfig = {
   mode: "0",
   hostGpuDetected: false,
@@ -112,6 +135,36 @@ describe("prepared DCode rebuild adapter", () => {
     await expect(bound(1)).rejects.toThrow("first attempt failed");
     await expect(bound(2)).resolves.toBe(2);
     expect(contexts).toEqual([preparedBuildContext, null]);
+  });
+
+  it("rejects retained-context mutation at the post-delete one-shot boundary", async () => {
+    const verifyBuildCtx = vi.fn(() => false);
+    const create = vi.fn(async (_context: PreparedSandboxBuildContext | null) => true);
+    const bound = createPreparedDcodeRebuildRuntime(
+      {
+        ...preparedImageOptions,
+        preparedImageRebuild: {
+          ...preparedImageOptions.preparedImageRebuild!,
+          buildContext: { ...preparedImageBuildContext, verifyBuildCtx },
+        },
+      },
+      "nemoclaw",
+    ).bindCreateSandbox(create);
+
+    await expect(bound()).rejects.toThrow("context changed before use");
+    expect(verifyBuildCtx).toHaveBeenCalledOnce();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("treats explicit OpenClaw and the legacy null agent as the same prepared target", () => {
+    const runtime = createPreparedDcodeRebuildRuntime(
+      { ...preparedImageOptions, agent: "openclaw" },
+      "nemoclaw",
+    );
+
+    expect(runtime.resolveDockerfileProbePath("/tmp/custom/Dockerfile")).toBe(
+      preparedImageBuildContext.stagedDockerfile,
+    );
   });
 
   it("keeps prepared cleanup with rebuild and registers ordinary staged cleanup", () => {
