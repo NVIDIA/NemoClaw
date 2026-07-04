@@ -15,6 +15,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { failLine } from "../cli/terminal-style";
 import { DASHBOARD_PORT } from "../core/ports";
 import {
   assessNvidiaCdiHost,
@@ -728,7 +729,9 @@ export function assertCdiNvidiaGpuSpecPresent(
   )
     return;
   console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    failLine(
+      "Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+    ),
   );
   printRemediationActions(planHostRemediation(host));
   exitProcess(1);
