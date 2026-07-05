@@ -139,10 +139,12 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
         status: "Gateway: nemoclaw\nConnection refused",
       },
       expectedState: "gateway_unreachable_after_restart",
+      expectedGatewayRecoveryFailed: undefined,
     },
     {
       lifecycle: { state: "missing_named", status: "No gateway configured" },
       expectedState: "gateway_missing_after_restart",
+      expectedGatewayRecoveryFailed: undefined,
     },
     {
       lifecycle: {
@@ -151,8 +153,13 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
         status: "Gateway: openshell\nStatus: Connected",
       },
       expectedState: "gateway_error",
+      expectedGatewayRecoveryFailed: true,
     },
-  ])("maps failed gateway recovery to $expectedState", async ({ lifecycle, expectedState }) => {
+  ])("maps failed gateway recovery to $expectedState", async ({
+    lifecycle,
+    expectedState,
+    expectedGatewayRecoveryFailed,
+  }) => {
     getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
 
     const lookup = await gatewayState.getReconciledSandboxGatewayState("instance-a", {
@@ -160,9 +167,7 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
     });
 
     expect(lookup.state).toBe(expectedState);
-    if (expectedState === "gateway_error") {
-      expect(lookup.gatewayRecoveryFailed).toBe(true);
-    }
+    expect(lookup.gatewayRecoveryFailed).toBe(expectedGatewayRecoveryFailed);
   });
 
   it("prints reconnect and recreate guidance when identity drift persists", async () => {

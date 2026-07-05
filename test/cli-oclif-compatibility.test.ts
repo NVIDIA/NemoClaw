@@ -665,9 +665,7 @@ describe("oclif compatibility dispatch", () => {
           const output = stderr.join("\n");
           expect(output).toContain("'nemoclaw status' shows the global sandbox/service overview");
           expect(output).toContain(`Run: ${command}`);
-          if (argv.includes("--help")) {
-            expect(output).not.toContain("nemoclaw alpha status --json --help");
-          }
+          expect(output).not.toContain("nemoclaw alpha status --json --help");
           expect(exitSpy).toHaveBeenCalledWith(2);
           expect(runOclifArgv).not.toHaveBeenCalled();
           expect(runOclifCommandById).not.toHaveBeenCalled();

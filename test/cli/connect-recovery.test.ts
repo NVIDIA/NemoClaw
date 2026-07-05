@@ -17,11 +17,12 @@ import {
 type GatewayControlDockerStubOptions = {
   callsFile: string;
   stateFile: string;
+  recoveryStatus?: number;
 };
 
 function writeGatewayControlDockerStub(
   localBin: string,
-  { callsFile, stateFile }: GatewayControlDockerStubOptions,
+  { callsFile, stateFile, recoveryStatus = 0 }: GatewayControlDockerStubOptions,
 ): void {
   fs.writeFileSync(
     path.join(localBin, "docker"),
@@ -29,6 +30,7 @@ function writeGatewayControlDockerStub(
       "#!/usr/bin/env bash",
       `calls=${JSON.stringify(callsFile)}`,
       `state_file=${JSON.stringify(stateFile)}`,
+      `recovery_status=${recoveryStatus}`,
       'printf \'%s\\n\' "$*" >> "$calls"',
       'if [ "$1" = "info" ]; then echo "24.0.0"; exit 0; fi',
       'if [ "$1" = "ps" ]; then',
@@ -41,6 +43,10 @@ function writeGatewayControlDockerStub(
       "fi",
       'if [ "$1" = "exec" ]; then',
       '  if [[ "$*" == *"/usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
+      '    if [ "$recovery_status" -ne 0 ]; then',
+      "      echo 'privileged gateway control failed' >&2",
+      '      exit "$recovery_status"',
+      "    fi",
       '    echo recovered > "$state_file"',
       "    echo 'GATEWAY_PID=123'",
       "    exit 0",
@@ -220,6 +226,77 @@ describe("CLI connect recovery process contracts", () => {
     },
   );
 
+  it(
+    "fails closed when privileged gateway recovery exits non-zero",
+    testTimeoutOptions(15_000),
+    async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-failure-"));
+      const localBin = path.join(home, "bin");
+      const openshellCalls = path.join(home, "openshell-calls");
+      const dockerCalls = path.join(home, "docker-calls");
+      const sshCalls = path.join(home, "ssh-calls");
+      const stateFile = path.join(home, "probe-state");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home);
+      fs.writeFileSync(stateFile, "stopped");
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          `calls=${JSON.stringify(openshellCalls)}`,
+          `state_file=${JSON.stringify(stateFile)}`,
+          'printf \'%s\\n\' "$*" >> "$calls"',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo",
+          "  echo '  Id: abc'",
+          "  echo '  Name: alpha'",
+          "  echo '  Namespace: openshell'",
+          "  echo '  Phase: Ready'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
+          '  cmd="$8"',
+          '  if [[ "$cmd" == *"curl -so"* ]]; then',
+          "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
+          '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',
+          "    exit 0",
+          "  fi",
+          "fi",
+          'if [ "$1" = "forward" ] && [ "$2" = "list" ]; then echo "alpha 127.0.0.1 18789 12345 running"; exit 0; fi',
+          'if [ "$1" = "forward" ]; then exit 99; fi',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeGatewayControlDockerStub(localBin, {
+        callsFile: dockerCalls,
+        stateFile,
+        recoveryStatus: 42,
+      });
+      writeRecordingCommand(localBin, "ssh", sshCalls, 98);
+      const stopForwardListeners = await startForwardListeners([18789]);
+
+      try {
+        const result = runWithEnv("alpha connect --probe-only", {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        });
+
+        expect(result.code).toBe(1);
+        expect(fs.readFileSync(stateFile, "utf8")).toBe("stopped");
+        const openshellLog = fs.readFileSync(openshellCalls, "utf8");
+        expect(openshellLog).toContain("sandbox exec --name alpha -- sh -c");
+        expect(openshellLog).not.toContain("sandbox ssh-config alpha");
+        expect(openshellLog).not.toContain("sandbox connect alpha");
+        expect(fs.existsSync(sshCalls)).toBe(false);
+        expectGatewayControlRecovery(dockerCalls);
+      } finally {
+        await stopForwardListeners();
+      }
+    },
+  );
+
   it("recovers stopped Hermes agents through privileged Docker control instead of SSH", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-agent-"));
     const localBin = path.join(home, "bin");
@@ -285,5 +362,121 @@ describe("CLI connect recovery process contracts", () => {
     } finally {
       await stopForwardListeners();
     }
+  });
+
+  it("connect recovers a named sandbox from the last onboard session when the registry is empty", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-recover-session-"));
+    const localBin = path.join(home, "bin");
+    const nemoclawDir = path.join(home, ".nemoclaw");
+    const markerFile = path.join(home, "connect-args");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(nemoclawDir, "onboard-session.json"),
+      JSON.stringify(
+        {
+          version: 1,
+          sessionId: "session-1",
+          resumable: true,
+          status: "complete",
+          mode: "interactive",
+          startedAt: "2026-03-31T00:00:00.000Z",
+          updatedAt: "2026-03-31T00:00:00.000Z",
+          lastStepStarted: "policies",
+          lastCompletedStep: "policies",
+          failure: null,
+          sandboxName: "alpha",
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+          endpointUrl: null,
+          credentialEnv: null,
+          preferredInferenceApi: null,
+          nimContainer: null,
+          policyPresets: null,
+          metadata: { gatewayName: "nemoclaw" },
+          steps: {
+            preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
+            gateway: { status: "complete", startedAt: null, completedAt: null, error: null },
+            sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+            provider_selection: {
+              status: "complete",
+              startedAt: null,
+              completedAt: null,
+              error: null,
+            },
+            inference: { status: "complete", startedAt: null, completedAt: null, error: null },
+            openclaw: { status: "complete", startedAt: null, completedAt: null, error: null },
+            policies: { status: "complete", startedAt: null, completedAt: null, error: null },
+          },
+        },
+        null,
+        2,
+      ),
+      { mode: 0o600 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `marker_file=${JSON.stringify(markerFile)}`,
+        'printf \'%s\\n\' "$*" >> "$marker_file"',
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Server Status'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  echo '  Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway Info'",
+        "  echo",
+        "  echo '  Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'NAME           STATUS     AGE'",
+        "  echo 'alpha          Ready      2m ago'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "--version" ]; then',
+        "  echo 'openshell 0.0.16'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = runWithEnv("alpha connect", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(result.code).toBe(0);
+    const calls = fs.readFileSync(markerFile, "utf8");
+    expect(calls).toContain("sandbox list");
+    expect(calls).toContain("sandbox get alpha");
+    expect(calls).toContain("sandbox connect alpha");
+    const recoveredRegistry = JSON.parse(
+      fs.readFileSync(path.join(nemoclawDir, "sandboxes.json"), "utf8"),
+    );
+    expect(recoveredRegistry.sandboxes.alpha).toEqual(
+      expect.objectContaining({
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "nvidia-prod",
+      }),
+    );
   });
 });
