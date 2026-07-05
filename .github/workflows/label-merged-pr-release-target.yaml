@@ -30,8 +30,10 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            // Keep this privileged workflow inline so it never checks out or executes
-            // repository or PR code. Tests execute this exact pinned-action script.
+            // This intentionally deviates from the shell+gh pull_request_target pattern.
+            // Extracting it to TypeScript would require this privileged job to check out
+            // and execute repository files. The pinned action supplies Octokit without a
+            // checkout, and tests execute this exact inline script.
             const RELEASE_LABEL_COLOR = '1d76db';
             const RELEASE_LABEL_DESCRIPTION = 'Release target';
             const RELEASE_TAG_PATTERN = /^v(\d+)\.(\d+)\.(\d+)$/;
@@ -56,6 +58,9 @@ jobs:
               }
               if (!Array.isArray(pullRequest.labels)) {
                 throw new Error('Invalid pull_request_target payload: labels must be an array');
+              }
+              if (pullRequest.merged !== true) {
+                throw new Error('Invalid pull_request_target payload: merged must be true');
               }
               return {
                 mergeSha: validateSha(
@@ -187,9 +192,11 @@ jobs:
                 .filter((name) => typeof name === 'string' && RELEASE_TAG_PATTERN.test(name));
             }
 
-            // The label name is the idempotency key. A concurrent run may create it
-            // after our 404, so a 422 is verified by re-reading the label. This is
-            // covered by the concurrent-creation regression test.
+            // Invalid state: another run creates the same label after our 404, yielding
+            // a 422. The source boundary is GitHub's Labels API, which has no atomic
+            // create-or-get operation, so this workflow verifies the winner by re-reading
+            // the label. The concurrent-creation regression test covers the workaround;
+            // remove it when the API offers an atomic equivalent.
             async function ensureReleaseLabel(targetLabel) {
               if (ensuredLabels.has(targetLabel)) return;
               try {

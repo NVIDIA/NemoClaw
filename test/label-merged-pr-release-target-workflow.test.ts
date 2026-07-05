@@ -130,6 +130,7 @@ function createHarness(tags: TagFixture[], pullRequestLabels: string[] = []) {
       pull_request: {
         labels: pullRequestLabels.map((name) => ({ name })),
         merge_commit_sha: MERGE_SHA,
+        merged: true,
         number: 123,
       },
       repository: { default_branch: "main" },
@@ -194,18 +195,23 @@ describe("merged PR release target workflow", () => {
     ["pull request", undefined, "pull_request is missing"],
     [
       "PR number",
-      { labels: [], merge_commit_sha: MERGE_SHA, number: 0 },
+      { labels: [], merge_commit_sha: MERGE_SHA, merged: true, number: 0 },
       "Invalid merged pull request number: 0",
     ],
     [
       "labels",
-      { labels: null, merge_commit_sha: MERGE_SHA, number: 123 },
+      { labels: null, merge_commit_sha: MERGE_SHA, merged: true, number: 123 },
       "labels must be an array",
     ],
     [
       "merge SHA",
-      { labels: [], merge_commit_sha: "not-a-sha", number: 123 },
+      { labels: [], merge_commit_sha: "not-a-sha", merged: true, number: 123 },
       "Invalid merge commit SHA for PR #123",
+    ],
+    [
+      "merged state",
+      { labels: [], merge_commit_sha: MERGE_SHA, merged: false, number: 123 },
+      "merged must be true",
     ],
   ])("rejects malformed %s metadata before calling GitHub", async (_field, pullRequest, error) => {
     const harness = createHarness([{ name: "v0.0.10", status: "ahead" }]);
