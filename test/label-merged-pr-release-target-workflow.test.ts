@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import assert from "node:assert/strict";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { readYaml, type WorkflowJob } from "./helpers/e2e-workflow-contract";
@@ -60,7 +62,7 @@ function createHarness(tags: TagFixture[], pullRequestLabels: string[] = []) {
   });
   const getRef = vi.fn(async ({ ref }: { ref: string }) => {
     const fixture = fixtureByName.get(ref.replace(/^tags\//u, ""));
-    if (!fixture) throw new Error(`Unexpected tag ref: ${ref}`);
+    assert(fixture, `Unexpected tag ref: ${ref}`);
     return {
       data: {
         object: {
@@ -72,7 +74,7 @@ function createHarness(tags: TagFixture[], pullRequestLabels: string[] = []) {
   });
   const getTag = vi.fn(async ({ tag_sha: tagSha }: { tag_sha: string }) => {
     const fixture = fixtureByObjectSha.get(tagSha);
-    if (!fixture) throw new Error(`Unexpected tag object: ${tagSha}`);
+    assert(fixture, `Unexpected tag object: ${tagSha}`);
     return {
       data: {
         object: {
@@ -86,8 +88,8 @@ function createHarness(tags: TagFixture[], pullRequestLabels: string[] = []) {
   const compareCommitsWithBasehead = vi.fn(async ({ basehead }: { basehead: string }) => {
     const [base, head] = basehead.split("...");
     const fixture = fixtureByCommitSha.get(base);
-    if (!fixture) throw new Error(`Unexpected comparison base: ${base}`);
-    if (head !== MERGE_SHA) throw new Error(`Unexpected comparison head: ${head}`);
+    assert(fixture, `Unexpected comparison base: ${base}`);
+    assert.equal(head, MERGE_SHA, `Unexpected comparison head: ${head}`);
     const status = fixture.status ?? "ahead";
     return {
       data: {
@@ -341,29 +343,30 @@ describe("merged PR release target workflow", () => {
     harness.getBranch.mockResolvedValueOnce({ data: { commit: { sha: mainCommit } } });
     harness.compareCommitsWithBasehead.mockImplementation(
       async ({ basehead }: { basehead: string }) => {
-        if (basehead === `${latest.commitSha}...${mainCommit}`) {
-          return {
-            data: {
-              status: "ahead",
-              ahead_by: 1,
-              behind_by: 0,
-              total_commits: 1,
-              commits: [{ sha: MERGE_SHA }],
-            },
-          };
+        switch (basehead) {
+          case `${latest.commitSha}...${mainCommit}`:
+            return {
+              data: {
+                status: "ahead",
+                ahead_by: 1,
+                behind_by: 0,
+                total_commits: 1,
+                commits: [{ sha: MERGE_SHA }],
+              },
+            };
+          case `${previous.commitSha}...${latest.commitSha}`:
+            return {
+              data: {
+                status: "ahead",
+                ahead_by: 1,
+                behind_by: 0,
+                total_commits: 1,
+                commits: [{ sha: completedReleaseCommit }],
+              },
+            };
+          default:
+            throw new Error(`Unexpected reconciliation comparison: ${basehead}`);
         }
-        if (basehead === `${previous.commitSha}...${latest.commitSha}`) {
-          return {
-            data: {
-              status: "ahead",
-              ahead_by: 1,
-              behind_by: 0,
-              total_commits: 1,
-              commits: [{ sha: completedReleaseCommit }],
-            },
-          };
-        }
-        throw new Error(`Unexpected reconciliation comparison: ${basehead}`);
       },
     );
     harness.listPullRequestsAssociatedWithCommit.mockImplementation(
@@ -410,9 +413,11 @@ describe("merged PR release target workflow", () => {
     harness.getBranch.mockResolvedValueOnce({ data: { commit: { sha: mainCommit } } });
     harness.compareCommitsWithBasehead.mockImplementation(
       async ({ basehead }: { basehead: string }) => {
-        if (basehead !== `${latest.commitSha}...${mainCommit}`) {
-          throw new Error(`Unexpected expired release comparison: ${basehead}`);
-        }
+        assert.equal(
+          basehead,
+          `${latest.commitSha}...${mainCommit}`,
+          `Unexpected expired release comparison: ${basehead}`,
+        );
         return {
           data: {
             status: "identical",
@@ -446,32 +451,31 @@ describe("merged PR release target workflow", () => {
     harness.getBranch.mockResolvedValue({ data: { commit: { sha: mainCommit } } });
     harness.compareCommitsWithBasehead.mockImplementation(
       async ({ basehead }: { basehead: string }) => {
-        if (basehead === `${v11.commitSha}...${mainCommit}`) {
-          return {
-            data: {
-              status: "ahead",
-              ahead_by: 1,
-              behind_by: 0,
-              total_commits: 1,
-              commits: [{ sha: MERGE_SHA }],
-            },
-          };
+        switch (basehead) {
+          case `${v11.commitSha}...${mainCommit}`:
+            return {
+              data: {
+                status: "ahead",
+                ahead_by: 1,
+                behind_by: 0,
+                total_commits: 1,
+                commits: [{ sha: MERGE_SHA }],
+              },
+            };
+          case `${v10.commitSha}...${v11.commitSha}`:
+          case `${v09.commitSha}...${v10.commitSha}`:
+            return {
+              data: {
+                status: "ahead",
+                ahead_by: 1,
+                behind_by: 0,
+                total_commits: 1,
+                commits: [{ sha: "c".repeat(40) }],
+              },
+            };
+          default:
+            throw new Error(`Unexpected tag-change comparison: ${basehead}`);
         }
-        if (
-          basehead === `${v10.commitSha}...${v11.commitSha}` ||
-          basehead === `${v09.commitSha}...${v10.commitSha}`
-        ) {
-          return {
-            data: {
-              status: "ahead",
-              ahead_by: 1,
-              behind_by: 0,
-              total_commits: 1,
-              commits: [{ sha: "c".repeat(40) }],
-            },
-          };
-        }
-        throw new Error(`Unexpected tag-change comparison: ${basehead}`);
       },
     );
     harness.listPullRequestsAssociatedWithCommit.mockImplementation(
