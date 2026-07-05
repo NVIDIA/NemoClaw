@@ -7,11 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  applyMessagingBuildPhase,
   OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY,
+  readMessagingBuildPlanFromEnv,
   reviewedOpenClawPluginTarballUrlByPackageSpec,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { testTimeout } from "./helpers/timeouts";
-import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
+import { withLegacyMessagingPlanEnvDirect } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(
   import.meta.dirname,
@@ -51,10 +53,19 @@ function fakeSlackNpmScript(): string {
   ].join("\n");
 }
 
+function thrownMessage(run: () => void): string {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  throw new Error("Expected operation to throw");
+}
+
 describe("messaging-build-applier.mts: plugin archive integrity", () => {
   it(
     "accepts the reviewed messaging plugin registry tarball URL before install",
-    () => {
+    async () => {
       expect(OPENCLAW_MESSAGING_PLUGIN_ARCHIVE_PROVENANCE_POLICY).toEqual({
         schemaVersion: 1,
         packageIdentity: "exact-npm-package-spec",
@@ -79,7 +90,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       );
 
       try {
-        const env = withLegacyMessagingPlanEnv(
+        const env = await withLegacyMessagingPlanEnvDirect(
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
@@ -90,25 +101,9 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           },
           "openclaw",
         );
-        const result = spawnSync(
-          "node",
-          [
-            "--experimental-strip-types",
-            SCRIPT_PATH,
-            "--agent",
-            "openclaw",
-            "--phase",
-            "agent-install",
-          ],
-          {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            env,
-            timeout: 10_000,
-          },
-        );
+        const plan = readMessagingBuildPlanFromEnv(env, "openclaw");
 
-        expect(result.status, result.stderr).toBe(0);
+        expect(applyMessagingBuildPhase(plan, "agent-install", env)).toEqual([]);
         const trace = fs.readFileSync(tracePath, "utf-8");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.tarball");
@@ -140,7 +135,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
   it(
     "fails closed before installing when the messaging plugin registry tarball URL drifts",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-tarball-"));
       const tracePath = path.join(tmp, "openclaw.trace");
       fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
@@ -156,7 +151,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       );
 
       try {
-        const env = withLegacyMessagingPlanEnv(
+        const env = await withLegacyMessagingPlanEnvDirect(
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
@@ -169,30 +164,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           },
           "openclaw",
         );
-        const result = spawnSync(
-          "node",
-          [
-            "--experimental-strip-types",
-            SCRIPT_PATH,
-            "--agent",
-            "openclaw",
-            "--phase",
-            "agent-install",
-          ],
-          {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            env,
-            timeout: 10_000,
-          },
-        );
+        const plan = readMessagingBuildPlanFromEnv(env, "openclaw");
+        const message = thrownMessage(() => applyMessagingBuildPhase(plan, "agent-install", env));
 
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(
+        expect(message).toContain(
           "OpenClaw plugin @openclaw/slack@2026.6.10 npm tarball URL mismatch",
         );
-        expect(result.stderr).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_10_TARBALL}`);
-        expect(result.stderr).toContain(
+        expect(message).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_10_TARBALL}`);
+        expect(message).toContain(
           "Actual: https://unexpected.invalid/openclaw/slack-2026.6.10.tgz",
         );
         const trace = fs.readFileSync(tracePath, "utf-8");
@@ -209,7 +188,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
   it(
     "fails closed before installing the 2026.6.10 Slack plugin when the packed archive integrity drifts",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-pack-"));
       const tracePath = path.join(tmp, "openclaw.trace");
       fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
@@ -225,7 +204,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       );
 
       try {
-        const env = withLegacyMessagingPlanEnv(
+        const env = await withLegacyMessagingPlanEnvDirect(
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
@@ -236,30 +215,14 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
           },
           "openclaw",
         );
-        const result = spawnSync(
-          "node",
-          [
-            "--experimental-strip-types",
-            SCRIPT_PATH,
-            "--agent",
-            "openclaw",
-            "--phase",
-            "agent-install",
-          ],
-          {
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            env,
-            timeout: 10_000,
-          },
-        );
+        const plan = readMessagingBuildPlanFromEnv(env, "openclaw");
+        const message = thrownMessage(() => applyMessagingBuildPhase(plan, "agent-install", env));
 
-        expect(result.status).not.toBe(0);
-        expect(result.stderr).toContain(
+        expect(message).toContain(
           "OpenClaw plugin @openclaw/slack@2026.6.10 downloaded tarball integrity mismatch",
         );
-        expect(result.stderr).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_10_INTEGRITY}`);
-        expect(result.stderr).toContain("Actual: sha512-packed-drift");
+        expect(message).toContain(`Expected: ${OPENCLAW_SLACK_2026_6_10_INTEGRITY}`);
+        expect(message).toContain("Actual: sha512-packed-drift");
         const trace = fs.readFileSync(tracePath, "utf-8");
         expect(trace).toContain("npm|view|@openclaw/slack@2026.6.10|dist.integrity");
         expect(trace).toContain("npm|pack|@openclaw/slack@2026.6.10|--pack-destination");
@@ -273,7 +236,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
 
   it(
     "rejects packed archive filenames outside the fresh pack directory",
-    () => {
+    async () => {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-pack-path-"));
       const tracePath = path.join(tmp, "openclaw.trace");
       fs.writeFileSync(path.join(tmp, "npm"), fakeSlackNpmScript(), { mode: 0o755 });
@@ -289,7 +252,7 @@ describe("messaging-build-applier.mts: plugin archive integrity", () => {
       );
 
       try {
-        const env = withLegacyMessagingPlanEnv(
+        const env = await withLegacyMessagingPlanEnvDirect(
           {
             PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
             OPENCLAW_TRACE: tracePath,
