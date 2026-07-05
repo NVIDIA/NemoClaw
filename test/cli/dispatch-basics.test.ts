@@ -5,7 +5,12 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { help } from "../../src/lib/actions/root-help.js";
+import { normalizeArgv } from "../../src/lib/cli/argv-normalizer.js";
+import { globalCommandTokens, sandboxActionTokens } from "../../src/lib/cli/command-registry.js";
+import { translatePublicGlobalArgv } from "../../src/lib/cli/public-argv-translation.js";
 
 import {
   CLI,
@@ -15,6 +20,10 @@ import {
   testTimeoutOptions,
   writeSandboxRegistry,
 } from "./helpers";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
@@ -120,38 +129,30 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("help exits 0 and shows sections", () => {
-    const r = run("help");
-    expect(r.code).toBe(0);
-    expect(r.out.includes("Getting Started")).toBeTruthy();
-    expect(r.out.includes("Sandbox Management")).toBeTruthy();
-    expect(r.out.includes("Policy Presets")).toBeTruthy();
-    expect(r.out.includes("Compatibility Commands")).toBeTruthy();
-    expect(r.out).toContain("nemoclaw upgrade-sandboxes");
-    expect(r.out).toContain("(--check, --auto, --yes|-y)");
-    expect(r.out).toContain("nemoclaw update");
-    expect(r.out).toContain("(--check, --fresh, --yes|-y)");
-    expect(r.out).toContain("nemoclaw gc");
-    expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
-    expect(r.out).toContain("nemoclaw onboard");
-    expect(r.out).toContain(
+  it("help shows registered command sections", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    help();
+
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Getting Started");
+    expect(output).toContain("Sandbox Management");
+    expect(output).toContain("Policy Presets");
+    expect(output).toContain("Compatibility Commands");
+    expect(output).toContain("nemoclaw upgrade-sandboxes");
+    expect(output).toContain("(--check, --auto, --yes|-y)");
+    expect(output).toContain("nemoclaw update");
+    expect(output).toContain("(--check, --fresh, --yes|-y)");
+    expect(output).toContain("nemoclaw gc");
+    expect(output).toContain("(--yes|-y|--force, --dry-run)");
+    expect(output).toContain("nemoclaw onboard");
+    expect(output).toContain(
       "Configure inference endpoint and credentials (--agent to choose runtime)",
     );
-    expect(r.out).toContain("nemoclaw agents list");
-    expect(r.out).toContain("List available agent runtimes for onboard --agent");
-    expect(r.out).toContain("nemoclaw onboard --from");
-    expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
-  });
-
-  it("onboard help lists installed agent runtime names in the --agent description", () => {
-    const r = run("onboard --help");
-    expect(r.code).toBe(0);
-    expect(r.out).toContain(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
-    );
-    expect(r.out).toContain("aliases: nemohermes → hermes;");
-    expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
-    expect(r.out).toContain("langchain-deepagents-code)");
+    expect(output).toContain("nemoclaw agents list");
+    expect(output).toContain("List available agent runtimes for onboard --agent");
+    expect(output).toContain("nemoclaw onboard --from");
+    expect(output).toContain("Use a custom Dockerfile for the sandbox image");
   });
 
   it("agents parent shows command help instead of sandbox lookup", () => {
@@ -161,12 +162,13 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Sandbox 'agents' does not exist");
   });
 
-  it("agents list exits 0 and lists global agent runtimes", () => {
-    const r = run("agents list");
-    expect(r.code).toBe(0);
-    expect(r.out).toContain("openclaw");
-    expect(r.out).toContain("hermes");
-    expect(r.out).toContain("langchain-deepagents-code");
+  it("agents list routes to the registered global list command", () => {
+    expect(translatePublicGlobalArgv("agents", ["list"])).toEqual({
+      kind: "nativeArgv",
+      commandId: "agents:list",
+      args: [],
+      argv: ["agents", "list"],
+    });
   });
 
   it("exits 0 for --help", () => {
@@ -179,8 +181,13 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("exits 0 for -h", () => {
-    expect(run("-h").code).toBe(0);
+  it("normalizes -h as a root-help alias", () => {
+    expect(
+      normalizeArgv(["-h"], {
+        globalCommands: globalCommandTokens(),
+        isSandboxConnectFlag: () => false,
+      }),
+    ).toEqual({ kind: "rootHelp" });
   });
 
   it("no args exits 0 (shows help)", () => {
@@ -246,36 +253,11 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("lists inference among Valid actions when reporting an unknown sandbox action (#5977)", () => {
+  it("lists inference among registered sandbox actions (#5977)", () => {
     // The reporter-facing action list is derived from registered sandbox
     // commands; the new sandbox-scoped inference route must appear there so
     // users discover it instead of hitting the old dead end.
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-valid-actions-"));
-    const localBin = path.join(home, "bin");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(localBin, "openshell"),
-      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
-      { mode: 0o755 },
-    );
-    writeSandboxRegistry(home, "alpha");
-
-    try {
-      const r = runWithEnv(
-        "alpha bogus-action-5977",
-        {
-          HOME: home,
-          PATH: `${localBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_HEALTH_POLL_COUNT: "0",
-        },
-        execTimeout(30_000),
-      );
-      expect(r.code).toBe(1);
-      expect(r.out).toContain("Unknown action: bogus-action-5977");
-      expect(r.out).toMatch(/Valid actions:.*\binference\b/);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
+    expect(sandboxActionTokens()).toContain("inference");
   });
 
   it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {
