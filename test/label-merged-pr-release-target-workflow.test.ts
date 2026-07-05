@@ -190,6 +190,33 @@ describe("merged PR release target workflow", () => {
     expect(job.steps?.some((step) => typeof step.run === "string")).toBe(false);
   });
 
+  it.each([
+    ["pull request", undefined, "pull_request is missing"],
+    [
+      "PR number",
+      { labels: [], merge_commit_sha: MERGE_SHA, number: 0 },
+      "Invalid merged pull request number: 0",
+    ],
+    [
+      "labels",
+      { labels: null, merge_commit_sha: MERGE_SHA, number: 123 },
+      "labels must be an array",
+    ],
+    [
+      "merge SHA",
+      { labels: [], merge_commit_sha: "not-a-sha", number: 123 },
+      "Invalid merge commit SHA for PR #123",
+    ],
+  ])("rejects malformed %s metadata before calling GitHub", async (_field, pullRequest, error) => {
+    const harness = createHarness([{ name: "v0.0.10", status: "ahead" }]);
+    Object.assign(harness.context.payload, { pull_request: pullRequest });
+
+    await expect(runScript(harness)).rejects.toThrow(error);
+
+    expect(harness.listTags).not.toHaveBeenCalled();
+    expect(harness.addLabels).not.toHaveBeenCalled();
+  });
+
   it("uses numeric semver order and ignores non-release tags", async () => {
     const harness = createHarness([
       { name: "v0.0.9", status: "ahead" },
@@ -503,5 +530,31 @@ describe("merged PR release target workflow", () => {
     expect(harness.addLabels).toHaveBeenCalledWith(
       expect.objectContaining({ issue_number: 123, labels: ["v0.0.12"] }),
     );
+  });
+
+  it("stops after two reconciliation restarts when release tags keep changing", async () => {
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+    const harness = createHarness(
+      ["v0.0.13", "v0.0.12", "v0.0.11", "v0.0.10", "v0.0.9"].map((name) => ({
+        name,
+        taggedAt: eightDaysAgo,
+      })),
+    );
+    const [v13, v12, v11, v10, v09] = harness.fixtures;
+    harness.context.eventName = "schedule";
+    harness.listTags
+      .mockResolvedValueOnce({ data: [v10, v09] })
+      .mockResolvedValueOnce({ data: [v11, v10, v09] })
+      .mockResolvedValueOnce({ data: [v12, v11, v10, v09] })
+      .mockResolvedValueOnce({ data: [v13, v12, v11, v10, v09] });
+
+    await expect(runScript(harness)).rejects.toThrow(
+      "Newest release tag kept changing during reconciliation",
+    );
+
+    expect(harness.listTags).toHaveBeenCalledTimes(4);
+    expect(harness.warning).toHaveBeenCalledTimes(2);
+    expect(harness.getBranch).not.toHaveBeenCalled();
+    expect(harness.addLabels).not.toHaveBeenCalled();
   });
 });
