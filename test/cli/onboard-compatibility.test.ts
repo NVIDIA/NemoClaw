@@ -6,7 +6,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import DeployCliCommand from "../../src/commands/deploy";
 import OnboardCliCommand from "../../src/commands/onboard";
 import SetupCliCommand from "../../src/commands/setup";
 import SetupSparkCliCommand from "../../src/commands/setup-spark";
@@ -19,7 +18,6 @@ vi.mock("../../src/lib/agent/defs", () => ({
 }));
 
 vi.mock("../../src/lib/actions/global", () => ({
-  runDeployAction: vi.fn().mockResolvedValue(undefined),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -257,13 +255,12 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
   });
 
-  it("setup-spark exposes native deprecated-alias help metadata", () => {
-    expect(SetupSparkCliCommand.state).toBe("deprecated");
-    expect(SetupSparkCliCommand.deprecationOptions.message).toContain(
-      "Deprecated: 'nemoclaw setup-spark' is now 'nemoclaw onboard'",
-    );
-    expect(SetupSparkCliCommand.usage).toEqual(["setup-spark [flags]"]);
-    expect(SetupSparkCliCommand.flags).toHaveProperty("resume");
+  it("setup-spark --help exits 0 and shows native deprecated-alias usage", () => {
+    const r = run("setup-spark --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Deprecated: 'nemoclaw setup-spark' is now 'nemoclaw onboard'");
+    expect(r.out).toContain("$ nemoclaw setup-spark [flags]");
+    expect(r.out).not.toContain("Unknown onboard option");
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", async () => {
@@ -282,8 +279,10 @@ describe("CLI onboard compatibility", () => {
     );
   });
 
-  it("deploy exposes deprecated compatibility help metadata", () => {
-    expect(DeployCliCommand.usage).toEqual(["deploy [instance-name]"]);
-    expect(DeployCliCommand.summary).toBe("Deprecated Brev-specific bootstrap path");
+  it("deploy --help exits 0 and shows deprecated usage", () => {
+    const r = run("deploy --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("deploy [instance-name]");
+    expect(r.out).toContain("Deprecated Brev-specific bootstrap path");
   });
 });

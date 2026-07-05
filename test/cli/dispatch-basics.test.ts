@@ -9,8 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { help } from "../../src/lib/actions/root-help.js";
 import { normalizeArgv } from "../../src/lib/cli/argv-normalizer.js";
-import { globalCommandTokens, sandboxActionTokens } from "../../src/lib/cli/command-registry.js";
-import { translatePublicGlobalArgv } from "../../src/lib/cli/public-argv-translation.js";
+import { globalCommandTokens } from "../../src/lib/cli/command-registry.js";
 
 import {
   CLI,
@@ -162,13 +161,12 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Sandbox 'agents' does not exist");
   });
 
-  it("agents list routes to the registered global list command", () => {
-    expect(translatePublicGlobalArgv("agents", ["list"])).toEqual({
-      kind: "nativeArgv",
-      commandId: "agents:list",
-      args: [],
-      argv: ["agents", "list"],
-    });
+  it("agents list exits 0 and lists global agent runtimes", () => {
+    const r = run("agents list");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("openclaw");
+    expect(r.out).toContain("hermes");
+    expect(r.out).toContain("langchain-deepagents-code");
   });
 
   it("exits 0 for --help", () => {
@@ -253,11 +251,36 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("lists inference among registered sandbox actions (#5977)", () => {
+  it("lists inference among Valid actions when reporting an unknown sandbox action (#5977)", () => {
     // The reporter-facing action list is derived from registered sandbox
     // commands; the new sandbox-scoped inference route must appear there so
     // users discover it instead of hitting the old dead end.
-    expect(sandboxActionTokens()).toContain("inference");
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-inference-valid-actions-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+    writeSandboxRegistry(home, "alpha");
+
+    try {
+      const r = runWithEnv(
+        "alpha bogus-action-5977",
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_HEALTH_POLL_COUNT: "0",
+        },
+        execTimeout(30_000),
+      );
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Unknown action: bogus-action-5977");
+      expect(r.out).toMatch(/Valid actions:.*\binference\b/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {
