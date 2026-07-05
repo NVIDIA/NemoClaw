@@ -62,7 +62,6 @@ function createRecoveryHarness(
   delete require.cache[requireDist.resolve(upgradeModulePath)];
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
 
-  const gatewayDrift = requireDist("../adapters/openshell/gateway-drift.js");
   const coreVersion = requireDist("../core/version.js");
   const sandboxList = requireDist("../openshell-sandbox-list.js");
   const sandboxVersion = requireDist("../sandbox/version.js");
@@ -72,16 +71,10 @@ function createRecoveryHarness(
 
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
-  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
-  vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: {
-      status: 0,
-      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
-    },
-    recoveryAttempted: false,
-    recoverySucceeded: false,
+  vi.spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit").mockResolvedValue({
+    status: 0,
+    output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: names.map((name) => ({

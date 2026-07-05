@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
 import { B, D, G, R, YW } from "../cli/terminal-style";
 import { getVersion } from "../core/version";
@@ -20,10 +15,7 @@ import {
   splitRebuildableSandboxes,
   type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
-import {
-  captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext,
-} from "../openshell-sandbox-list";
+import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
@@ -140,29 +132,10 @@ export async function upgradeSandboxes(
   }
 
   // Query live sandboxes so we can tell the user which are running
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
-  if (preflightIssue) {
-    printOpenShellStateRpcIssue(preflightIssue, {
-      action: "checking sandbox upgrade state",
-      command: `${CLI_NAME} upgrade-sandboxes`,
-    });
-    process.exit(1);
-  }
-
-  const liveRecovery = await captureSandboxListWithGatewayRecovery();
-  const liveResult = liveRecovery.result;
-  const resultIssue = detectOpenShellStateRpcResultIssue(liveResult);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, {
-      action: "checking sandbox upgrade state",
-      command: `${CLI_NAME} upgrade-sandboxes`,
-    });
-    process.exit(1);
-  }
-  if (liveResult.status !== 0) {
-    printSandboxListFailureWithRecoveryContext(liveRecovery);
-    process.exit(liveResult.status || 1);
-  }
+  const liveResult = await captureSandboxListWithGatewayPreflightOrExit({
+    action: "checking sandbox upgrade state",
+    command: `${CLI_NAME} upgrade-sandboxes`,
+  });
   const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Absence from the selected gateway is not evidence of failure: a registered
   // sandbox may be Ready on another recorded gateway. Only an explicitly
