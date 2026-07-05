@@ -10,6 +10,12 @@ import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-dr
 type GatewayStateModule = typeof import("./gateway-state");
 
 const requireDist = createRequire(import.meta.url);
+const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+const dockerDriverRecovery = requireDist("../../onboard/docker-driver-sandbox-recovery.js");
+const registry = requireDist("../../state/registry.js");
+const gatewayState: GatewayStateModule = requireDist("./gateway-state.js");
 
 const driftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -28,7 +34,6 @@ function mockExit() {
 }
 
 describe("sandbox gateway state drift guard", () => {
-  let gatewayState: GatewayStateModule;
   let exitSpy: ReturnType<typeof mockExit>;
   let errorSpy: MockInstance;
   let spies: MockInstance[];
@@ -41,16 +46,10 @@ describe("sandbox gateway state drift guard", () => {
   let runOpenshellSpy: MockInstance;
   let removeSandboxSpy: MockInstance;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     spies = [];
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const dockerDriverRecovery = requireDist("../../onboard/docker-driver-sandbox-recovery.js");
-    const registry = requireDist("../../state/registry.js");
 
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
 
@@ -102,8 +101,6 @@ describe("sandbox gateway state drift guard", () => {
         .mockReturnValue({ recovered: false, via: null }),
       removeSandboxSpy,
     );
-
-    gatewayState = requireDist("./gateway-state.js");
   });
 
   afterEach(() => {

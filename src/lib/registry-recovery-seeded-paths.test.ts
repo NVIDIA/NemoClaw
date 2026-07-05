@@ -53,14 +53,10 @@ vi.mock("./runtime-recovery.js", () => ({
   parseLiveSandboxEntries: vi.fn(),
 }));
 
-vi.mock("./runner.js", () => ({
-  validateName: (name: string) =>
-    /^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)
-      ? name
-      : (() => {
-          throw new Error(`Invalid sandbox name: '${name}'`);
-        })(),
-}));
+vi.mock("./runner.js", async () => {
+  const actual = await vi.importActual<typeof import("./runner.js")>("./runner.js");
+  return { validateName: actual.validateName };
+});
 
 import { resolveOpenshell } from "./adapters/openshell/resolve.js";
 import { captureOpenshell } from "./adapters/openshell/runtime.js";

@@ -57,7 +57,6 @@ export type StatusFlowHarnessOptions = {
   lookup?: SandboxGatewayState;
   lookupState?: "present" | "missing";
   preflight?: SandboxStatusPreflightResult;
-  processRunning?: boolean | null;
   sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
     agent?: string | null;
     agentVersion?: string | null;
@@ -165,9 +164,7 @@ export function createStatusFlowHarness(options: StatusFlowHarnessOptions = {}):
       health: "unhealthy",
       paused: false,
     });
-  vi.spyOn(processRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(
-    options.processRunning ?? false,
-  );
+  vi.spyOn(processRecovery, "isSandboxGatewayRunningForStatus").mockResolvedValue(false);
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
