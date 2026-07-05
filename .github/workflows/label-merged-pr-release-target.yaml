@@ -18,7 +18,9 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: read
+  # GITHUB_TOKEN requires PR write access when the issues labels endpoint
+  # targets a pull request; issues:write alone returns 403.
+  pull-requests: write
 
 jobs:
   label-release-target:

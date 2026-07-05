@@ -179,7 +179,7 @@ describe("merged PR release target workflow", () => {
     expect(workflow.permissions).toEqual({
       contents: "read",
       issues: "write",
-      "pull-requests": "read",
+      "pull-requests": "write",
     });
     expect(job.if).toBe(
       "${{ github.event_name != 'pull_request_target' || github.event.pull_request.merged == true }}",
