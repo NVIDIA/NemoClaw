@@ -1248,7 +1248,9 @@ hermes-box  127.0.0.1  8642  12346  running`;
       status: 0,
       output: `SANDBOX  BIND  PORT  PID  STATUS\nbeta  127.0.0.1  18789  12345  running`,
     });
-    vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
 
     withFakeOpenshellBinary(() =>
       checkAndRecoverSandboxProcesses("beta", {
@@ -1257,6 +1259,11 @@ hermes-box  127.0.0.1  8642  12346  running`;
       }),
     );
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
+    expect(
+      runOpenshell.mock.calls.some(
+        ([rawArgs]) => Array.isArray(rawArgs) && rawArgs[0] === "forward" && rawArgs[1] === "start",
+      ),
+    ).toBe(false);
   });
 
   it("fails safe on a running Hermes gateway when the supervisor channel is unreachable", () => {

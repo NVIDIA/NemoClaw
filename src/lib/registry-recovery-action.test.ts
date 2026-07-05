@@ -73,10 +73,26 @@ import { recoverRegistryEntries } from "./registry-recovery-action.js";
 import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
+function resetRegistryRecoveryDependencyMocks(): void {
+  vi.mocked(loadSession).mockReset().mockReturnValue(null);
+  vi.mocked(resolveOpenshell).mockReset().mockReturnValue(null);
+  vi.mocked(recoverNamedGatewayRuntime)
+    .mockReset()
+    .mockResolvedValue({ recovered: false } as never);
+  vi.mocked(getNamedGatewayLifecycleState)
+    .mockReset()
+    .mockReturnValue({ state: "missing_named" } as never);
+  vi.mocked(captureOpenshell)
+    .mockReset()
+    .mockReturnValue({ output: "", status: 0 } as never);
+  vi.mocked(parseLiveSandboxEntries).mockReset().mockReturnValue([]);
+}
+
 describe("recoverRegistryEntries seed-time guard (#2753)", () => {
   beforeEach(() => {
     mockRegistryState.sandboxes = {};
     mockRegistryState.defaultSandbox = null;
+    resetRegistryRecoveryDependencyMocks();
   });
 
   afterEach(() => {
@@ -224,18 +240,89 @@ describe("recoverRegistryEntries seed-time guard (#2753)", () => {
     expect(mockRegistryState.sandboxes["alpha"]).toBeDefined();
     expect(result.sandboxes.find((s) => s.name === "alpha")).toBeDefined();
   });
+
+  it("merges a confirmed session and additional live sandboxes without replacing the default", async () => {
+    mockRegistryState.sandboxes.gamma = {
+      name: "gamma",
+      provider: "existing-provider",
+      model: "existing-model",
+      gpuEnabled: false,
+      policies: ["npm"],
+    };
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: ["pypi"],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "live sandboxes", status: 0 } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
+      { name: "alpha", phase: "Ready" },
+      { name: "beta", phase: "Ready" },
+    ]);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.recoveredFromSession).toBe(true);
+    expect(result.recoveredFromGateway).toBe(1);
+    expect(result.sandboxes.map((sandbox) => sandbox.name).sort()).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect(mockRegistryState.sandboxes.alpha?.policies).toEqual(["pypi"]);
+    expect(mockRegistryState.defaultSandbox).toBe("gamma");
+  });
+
+  it("skips invalid session and live sandbox names during seeded recovery", async () => {
+    mockRegistryState.sandboxes.gamma = {
+      name: "gamma",
+      provider: "existing-provider",
+      model: "existing-model",
+      gpuEnabled: false,
+      policies: [],
+    };
+    mockRegistryState.defaultSandbox = "gamma";
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "Alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "complete", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(captureOpenshell).mockReturnValue({ output: "live sandboxes", status: 0 } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([
+      { name: "alpha", phase: "Ready" },
+      { name: "Bad_Name", phase: "Ready" },
+    ]);
+
+    const result = await recoverRegistryEntries();
+
+    expect(result.sandboxes.map((sandbox) => sandbox.name).sort()).toEqual(["alpha", "gamma"]);
+    expect(mockRegistryState.sandboxes.Alpha).toBeUndefined();
+    expect(mockRegistryState.sandboxes.Bad_Name).toBeUndefined();
+    expect(mockRegistryState.defaultSandbox).toBe("gamma");
+  });
 });
 
 describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     mockRegistryState.sandboxes = {};
     mockRegistryState.defaultSandbox = null;
-    vi.mocked(loadSession).mockReturnValue(null);
+    resetRegistryRecoveryDependencyMocks();
     vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
-    vi.mocked(captureOpenshell).mockReturnValue({ output: "", status: 0 } as never);
-    vi.mocked(parseLiveSandboxEntries).mockReturnValue([]);
-    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "missing_named" } as never);
   });
 
   afterEach(() => {
@@ -272,6 +359,33 @@ describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", 
     expect(recovered?.recoveredFromGateway).toBe(true);
     // Trusted live PHASE is carried for display so list agrees with status.
     expect(recovered?.livePhase).toBe("Ready");
+  });
+
+  it("persists a requested live sandbox and makes it the default", async () => {
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    const result = await recoverRegistryEntries({ requestedSandboxName: "alpha" });
+
+    expect(recoverNamedGatewayRuntime).toHaveBeenCalledOnce();
+    expect(getNamedGatewayLifecycleState).not.toHaveBeenCalled();
+    expect(result.recoveredFromGateway).toBe(1);
+    expect(result.sandboxes.map((sandbox) => sandbox.name)).toEqual(["alpha"]);
+    expect(mockRegistryState.sandboxes.alpha).toBeDefined();
+    expect(mockRegistryState.defaultSandbox).toBe("alpha");
+  });
+
+  it("keeps a missing requested sandbox absent while recovering other live entries", async () => {
+    vi.mocked(recoverNamedGatewayRuntime).mockResolvedValue({ recovered: true } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "alpha", phase: "Ready" }]);
+
+    const result = await recoverRegistryEntries({ requestedSandboxName: "beta" });
+
+    expect(result.recoveredFromGateway).toBe(1);
+    expect(result.sandboxes.map((sandbox) => sandbox.name)).toEqual(["alpha"]);
+    expect(mockRegistryState.sandboxes.alpha).toBeDefined();
+    expect(mockRegistryState.sandboxes.beta).toBeUndefined();
+    expect(mockRegistryState.defaultSandbox).toBeNull();
   });
 
   it("treats an incomplete (phantom) session as unseeded — stays in read-only/display-only path", async () => {
