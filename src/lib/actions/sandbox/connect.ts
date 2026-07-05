@@ -31,8 +31,10 @@ import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
 import {
+  isSandboxReady,
   isTerminalSandboxPhase,
   parseSandboxPhase,
+  parseSandboxStatus,
   TERMINAL_SANDBOX_PHASES,
 } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
@@ -904,7 +906,6 @@ export async function connectSandbox(
   // express-vLLM model preflight for them (it only steers the install path
   // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).
   if (!probeOnly) preflightVllmModelEnvOrExit();
-  const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
   const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   // Fast-fail on a Docker daemon outage before the probe-only health check and
