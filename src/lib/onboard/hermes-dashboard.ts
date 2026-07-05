@@ -59,18 +59,15 @@ export function resolveHermesDashboardOnboardState({
   }
 
   if (config.enabled) {
-    if (config.port === effectivePort) {
-      const message = `${HERMES_DASHBOARD_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
+    const rawHermesDashboardPort = env[HERMES_DASHBOARD_PORT_ENV]?.trim();
+    if (rawHermesDashboardPort && config.port !== effectivePort) {
+      const message = `${HERMES_DASHBOARD_PORT_ENV} must match the NemoClaw dashboard port (${effectivePort}). Set NEMOCLAW_DASHBOARD_PORT or --control-ui-port to change the Hermes WebUI port.`;
       if (fail) return fail(message);
       throw new Error(message);
     }
+    config = { ...config, port: effectivePort };
     if (config.port === config.internalPort) {
-      const message = `${HERMES_DASHBOARD_PORT_ENV} must not equal ${HERMES_DASHBOARD_INTERNAL_PORT_ENV}.`;
-      if (fail) return fail(message);
-      throw new Error(message);
-    }
-    if (config.internalPort === effectivePort) {
-      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`;
+      const message = `${HERMES_DASHBOARD_INTERNAL_PORT_ENV} must not equal the Hermes WebUI port (${config.port}).`;
       if (fail) return fail(message);
       throw new Error(message);
     }

@@ -11,14 +11,51 @@ import {
 } from "./hermes-dashboard";
 
 describe("onboard Hermes dashboard helpers", () => {
-  it("rejects dashboard/API port overlap before sandbox create", () => {
-    expect(() =>
+  it("uses the effective NemoClaw dashboard port as the Hermes WebUI public port (#6277)", () => {
+    expect(
       resolveHermesDashboardOnboardState({
         agentName: "hermes",
         effectivePort: 9119,
         env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
       }),
-    ).toThrow(/must not equal the Hermes API port/);
+    ).toMatchObject({
+      enabled: true,
+      config: {
+        port: 9119,
+        internalPort: 19119,
+      },
+    });
+  });
+
+  it("accepts a matching legacy Hermes dashboard port alias (#6277)", () => {
+    expect(
+      resolveHermesDashboardOnboardState({
+        agentName: "hermes",
+        effectivePort: 9119,
+        env: {
+          NEMOCLAW_HERMES_DASHBOARD: "1",
+          NEMOCLAW_HERMES_DASHBOARD_PORT: "9119",
+        },
+      }),
+    ).toMatchObject({
+      enabled: true,
+      config: {
+        port: 9119,
+      },
+    });
+  });
+
+  it("rejects a separate Hermes dashboard public port that would not match the OpenShell forward (#6277)", () => {
+    expect(() =>
+      resolveHermesDashboardOnboardState({
+        agentName: "hermes",
+        effectivePort: 18789,
+        env: {
+          NEMOCLAW_HERMES_DASHBOARD: "1",
+          NEMOCLAW_HERMES_DASHBOARD_PORT: "9119",
+        },
+      }),
+    ).toThrow(/must match the NemoClaw dashboard port \(18789\)/);
   });
 
   it("rejects the internal dashboard port colliding with the OpenClaw dashboard port", () => {
@@ -31,14 +68,14 @@ describe("onboard Hermes dashboard helpers", () => {
         effectivePort: 19119,
         env: { NEMOCLAW_HERMES_DASHBOARD: "1" },
       }),
-    ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT must not equal the Hermes API port/);
+    ).toThrow(/NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT must not equal the Hermes WebUI port/);
   });
 
   it("tracks registry drift for enabled dashboard settings", () => {
     const state = resolveHermesDashboardOnboardState({
-      // 18789 = realistic resolved dashboard port; 8642 is the reserved API port (#4984).
+      // 9120 = user-selected Hermes WebUI port; 8642 is the reserved API port (#4984).
       agentName: "hermes",
-      effectivePort: 18789,
+      effectivePort: 9120,
       env: {
         NEMOCLAW_HERMES_DASHBOARD: "1",
         NEMOCLAW_HERMES_DASHBOARD_PORT: "9120",
