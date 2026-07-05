@@ -19,6 +19,11 @@ export function isTransientInferenceSetFailure(result: ShellProbeResult): boolea
   return TRANSIENT_INFERENCE_SET_FAILURE.test(`${result.stdout}\n${result.stderr}`);
 }
 
+export function inferenceResponseModel(raw: string): string {
+  const response = JSON.parse(raw) as { model?: unknown };
+  return typeof response.model === "string" ? response.model : "";
+}
+
 export async function runInferenceSetWithRetry(options: {
   attempts: number;
   delay?: (milliseconds: number) => Promise<void>;

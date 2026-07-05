@@ -495,6 +495,8 @@ test.skipIf(!shouldRunLiveE2E())(
           "build",
           "--build-arg",
           `OPENCLAW_VERSION=${OLD_OPENCLAW_VERSION}`,
+          "--build-arg",
+          "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
           "-f",
           path.join(REPO_ROOT, "Dockerfile.base"),
           "-t",

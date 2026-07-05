@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -15,22 +14,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 import {
   applyMessagingAgentRenderToObject,
+  applyMessagingBuildPhase,
   readMessagingBuildPlanFromEnv,
 } from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
-const APPLIER_PATH = path.join(
-  import.meta.dirname,
-  "..",
-  "src",
-  "lib",
-  "messaging",
-  "applier",
-  "build",
-  "messaging-build-applier.mts",
-);
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV: Record<string, string> = {
@@ -101,30 +91,13 @@ function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T 
 }
 
 function runMessagingPostInstall(env: Record<string, string>): void {
-  const result = spawnSync(
-    "node",
-    [
-      "--experimental-strip-types",
-      APPLIER_PATH,
-      "--agent",
-      "openclaw",
-      "--phase",
+  withEnv(env, () =>
+    applyMessagingBuildPhase(
+      readMessagingBuildPlanFromEnv(env, "openclaw"),
       "post-agent-install",
-    ],
-    {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
       env,
-      timeout: 10_000,
-    },
+    ),
   );
-  if (result.status !== 0) {
-    throw new Error(
-      `Messaging applier failed (exit ${result.status}):
-stdout: ${result.stdout}
-stderr: ${result.stderr}`,
-    );
-  }
 }
 
 function runConfigScript(envOverrides: Record<string, string> = {}): any {

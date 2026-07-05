@@ -204,6 +204,7 @@ describe("prepareRebuildResumeConfig", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       pinEndpoint: false,
       endpointUrl: "http://127.0.0.1:19999/v1",
+      registryInferenceRoute: null,
     });
   });
 
@@ -218,6 +219,7 @@ describe("prepareRebuildResumeConfig", () => {
         provider: "compatible-endpoint",
         model: "m",
         endpointUrl: "https://registry.example.test/v1?x=1#frag",
+        preferredInferenceApi: "openai-completions",
       }),
       null,
       noopLog,
@@ -228,6 +230,13 @@ describe("prepareRebuildResumeConfig", () => {
       model: "m",
       pinEndpoint: true,
       endpointUrl: "https://registry.example.test/v1",
+    });
+    expect(config?.registryInferenceRoute).toEqual({
+      provider: "compatible-endpoint",
+      model: "m",
+      endpointUrl: "https://registry.example.test/v1",
+      preferredInferenceApi: "openai-completions",
+      source: "registry",
     });
   });
 
@@ -363,6 +372,7 @@ describe("prepareRebuildResumeConfig", () => {
         model: "m",
         pinEndpoint: true,
         endpointUrl: "http://127.0.0.1:19999/v1",
+        registryInferenceRoute: null,
       });
     } finally {
       restore();
@@ -488,6 +498,13 @@ describe("prepareRebuildResumeConfig", () => {
       compatibleEndpointReasoning: "true",
       pinEndpoint: true,
       endpointUrl: "http://127.0.0.1:19999/v1",
+      registryInferenceRoute: {
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "http://127.0.0.1:19999/v1",
+        preferredInferenceApi: "openai-completions",
+        source: "registry",
+      },
     });
   });
 

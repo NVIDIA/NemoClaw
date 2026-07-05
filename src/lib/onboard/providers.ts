@@ -15,6 +15,7 @@ const {
 } = require("../inference/config");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -500,6 +501,7 @@ module.exports = {
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
+  readGatewayProviderMetadata,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

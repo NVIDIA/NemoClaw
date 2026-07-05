@@ -289,6 +289,51 @@ describe("executeSandboxExecCommand", () => {
     }
   });
 
+  it("honors the sandbox-exec timeout without falling back to SSH", () => {
+    const childProcess = requireSource("node:child_process");
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
+    const timeoutError = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: null,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\n",
+      stderr: "",
+      error: timeoutError,
+    } as never);
+    vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockReturnValue([
+      "exec",
+      "--user",
+      "root",
+      "openshell-alpha",
+      "sh",
+      "-c",
+      "marked-command",
+    ]);
+    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      status: null,
+      stdout: "",
+      stderr: "",
+      error: timeoutError,
+    } as never);
+    const previousTimeout = process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS;
+    process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = "50";
+
+    try {
+      const result = withFakeOpenshellBinary(() =>
+        executeSandboxExecCommand("alpha", "printf RUNNING"),
+      );
+
+      expect(result).toBeNull();
+      expect(spawn.mock.calls.some(([command]) => command === "ssh")).toBe(false);
+      expect(spawn.mock.calls[0]?.[2]).toEqual(expect.objectContaining({ timeout: 50 }));
+      expect(dockerSpawnSync.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ timeout: 50 }));
+    } finally {
+      previousTimeout === undefined
+        ? delete process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS
+        : (process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS = previousTimeout);
+    }
+  });
+
   it("parses stdout-framed root exec output after the startup marker", () => {
     const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({

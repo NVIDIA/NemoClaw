@@ -3,6 +3,7 @@
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
+import { hydrateCredentialEnv } from "../../onboard/credential-env";
 import type { RebuildManifest } from "../../state/sandbox";
 import {
   preflightRebuildCredentials,
@@ -42,6 +43,7 @@ import {
   type RebuildSandboxExecutionOptions,
   validatePreparedRecoveryManifest,
 } from "./rebuild-prepared-recovery";
+import { checkRebuildGatewayCredentialReuseOrBail } from "./rebuild-provider-preflight";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
 export interface RebuildPreflightPhaseResult {
@@ -157,6 +159,23 @@ export async function runRebuildPreflightPhase(
         );
         if (!imageReady || !dcodePreflight.preparedReplacement) return null;
         preparedTarget.recreateOptions.preparedDcodeRebuild = dcodePreflight.preparedReplacement;
+      }
+      // Keep credential-reuse validation after DCode's live-route/image proofs,
+      // but before shields, backup, or any destructive rebuild work begins.
+      const { resumeConfig } = preparedTarget.targetConfig;
+      const hostCredentialAvailable = Boolean(
+        resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
+      );
+      if (
+        !checkRebuildGatewayCredentialReuseOrBail(
+          sandboxName,
+          resumeConfig,
+          hostCredentialAvailable,
+          log,
+          bail,
+        )
+      ) {
+        return null;
       }
       retainOnboardLock = true;
       retainDcodePreflight = true;

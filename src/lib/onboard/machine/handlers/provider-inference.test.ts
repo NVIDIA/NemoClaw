@@ -493,7 +493,7 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
-  it("refreshes compatible-endpoint route on OpenClaw messaging resume", async () => {
+  it("refreshes compatible-endpoint route directly when the host credential is available", async () => {
     const session = createSession({
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
@@ -502,7 +502,7 @@ describe("handleProviderInferenceState", () => {
     });
     session.steps.provider_selection.status = "complete";
     const { deps, calls } = createDeps({
-      hydrateCredentialEnv: vi.fn(() => null),
+      hydrateCredentialEnv: vi.fn(() => "host-key"),
       isInferenceRouteReady: vi.fn(() => true),
     });
 
@@ -526,14 +526,14 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { allowToolsIncompatible: false, skipHostInferenceSmoke: true },
+      { allowToolsIncompatible: false },
     );
     expect(calls.log).toHaveBeenCalledWith(
-      "  [resume] Refreshing compatible-endpoint inference route with the stored gateway credential.",
+      "  [resume] Refreshing compatible-endpoint inference route for messaging.",
     );
   });
 
-  it("refreshes compatible-endpoint route when messaging is only recorded in the session plan", async () => {
+  it("revalidates recovered identity before reusing a gateway credential on messaging resume", async () => {
     const session = createSession({
       provider: "compatible-endpoint",
       model: "nvidia/nemotron",
@@ -567,7 +567,18 @@ describe("handleProviderInferenceState", () => {
       },
     });
     session.steps.provider_selection.status = "complete";
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      model: "nvidia/nemotron",
+      provider: "compatible-endpoint",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      skipHostInferenceSmoke: true,
+      reuseGatewayCredentialWithoutLocalKey: true,
+    }));
     const { deps, calls } = createDeps({
+      setupNim,
       hydrateCredentialEnv: vi.fn(() => null),
       isInferenceRouteReady: vi.fn(() => true),
     });
@@ -578,6 +589,7 @@ describe("handleProviderInferenceState", () => {
       sandboxName: "my-assistant",
     });
 
+    expect(setupNim).toHaveBeenCalledOnce();
     expect(calls.setupInference).toHaveBeenCalledWith(
       "my-assistant",
       "nvidia/nemotron",
@@ -586,7 +598,14 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
-      { allowToolsIncompatible: false, skipHostInferenceSmoke: true },
+      {
+        allowToolsIncompatible: false,
+        skipHostInferenceSmoke: true,
+        reuseGatewayCredentialWithoutLocalKey: true,
+      },
+    );
+    expect(calls.log).toHaveBeenCalledWith(
+      "  [resume] Revalidating recovered compatible-endpoint identity before reusing its gateway credential.",
     );
   });
 

@@ -3,6 +3,10 @@
 
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import {
+  createRebuildRouteHandoff,
+  type RegistryInferenceRoute,
+} from "../../onboard/rebuild-route-handoff";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import * as onboardSession from "../../state/onboard-session";
 import type { RebuildBail } from "./rebuild-credential-preflight";
@@ -18,15 +22,17 @@ import {
 import { printRebuildPreflightFailure } from "./rebuild-preflight-error";
 
 export function prepareRebuildRecreateOptions(
+  sandboxName: string,
   sb: RebuildSandboxEntry,
   rebuildAgent: string | null,
   storedFromDockerfile: string | null,
+  registryInferenceRoute: RegistryInferenceRoute | null,
   autoYes: boolean,
   baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null,
   bail: RebuildBail,
 ): RebuildRecreateOnboardOpts | null {
   try {
-    return buildRebuildRecreateOnboardOpts({
+    const options = buildRebuildRecreateOnboardOpts({
       sb,
       rebuildAgent,
       storedFromDockerfile,
@@ -34,6 +40,15 @@ export function prepareRebuildRecreateOptions(
       baseImageResolutionHint,
       usageNoticeAccepted: true,
     });
+    return registryInferenceRoute
+      ? {
+          ...options,
+          rebuildRegistryInferenceRoute: createRebuildRouteHandoff(
+            sandboxName,
+            registryInferenceRoute,
+          ),
+        }
+      : options;
   } catch (err) {
     printRebuildPreflightFailure(
       "the recorded recreate target is invalid.",

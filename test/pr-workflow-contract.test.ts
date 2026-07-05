@@ -1223,6 +1223,7 @@ describe("pull request and main workflow contracts", () => {
       "static-checks",
       "build-typecheck",
       "installer-integration",
+      "real-openclaw-dist-harness",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -1232,6 +1233,7 @@ describe("pull request and main workflow contracts", () => {
       "static-checks",
       "build-typecheck",
       "installer-integration",
+      "real-openclaw-dist-harness",
       "cli-tests",
       "plugin-tests",
       "test-e2e-ollama-proxy",
@@ -1250,6 +1252,8 @@ describe("pull request and main workflow contracts", () => {
     expect(runs).toContain("Build-time package/import guard only");
     expect(runs).toContain("_MCP_HTTP_AVAILABLE");
     expect(runs).toContain("layout_ok");
+    expect(runs).toContain("mapfile -t tracked_refs");
+    expect(runs).toContain('candidates=("$tracked_ref")');
     expect(runs).toContain("HERMES_BASE_IMAGE=${digest_ref}");
     expect(runs).toContain("HERMES_BASE_IMAGE=nemoclaw-hermes-base-local");
   });
@@ -1306,7 +1310,7 @@ describe("pull request and main workflow contracts", () => {
           ...process.env,
           DOCKER_LOG: dockerLog,
           GITHUB_ENV: githubEnv,
-          GITHUB_SHA: "",
+          GITHUB_SHA: "1".repeat(40),
           PATH: `${fakeBin}:${process.env.PATH ?? ""}`,
           REMOTE_DIGEST: remoteDigest,
         },
@@ -1323,6 +1327,11 @@ describe("pull request and main workflow contracts", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line) as string[]);
+      const firstPull = calls.find((args) => args[0] === "pull");
+      expect(firstPull?.[0]).toBe("pull");
+      expect(firstPull?.[1]).toMatch(
+        /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/,
+      );
       const remoteProbe = calls.findIndex(
         (args) => args.includes("/opt/hermes/.venv/bin/python") && args.includes(remoteDigest),
       );

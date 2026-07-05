@@ -76,7 +76,21 @@ runs:
           return 0
         }
 
-        candidates=()
+        # The final Hermes Dockerfile is the trust anchor for remote base
+        # images. Prefer its immutable digest so a newly published, mutable
+        # source-SHA tag cannot outrank the reviewed pin during E2E.
+        mapfile -t tracked_refs < <(
+          sed -nE \
+            's|^ARG BASE_IMAGE=(ghcr\.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:[0-9a-f]{64})$|\1|p' \
+            agents/hermes/Dockerfile
+        )
+        if (( ${#tracked_refs[@]} != 1 )); then
+          echo "::error::Expected exactly one immutable Hermes BASE_IMAGE ref in agents/hermes/Dockerfile"
+          exit 1
+        fi
+
+        tracked_ref="${tracked_refs[0]}"
+        candidates=("$tracked_ref")
         if [[ -n "${GITHUB_SHA:-}" ]]; then
           candidates+=("${image}:${GITHUB_SHA:0:8}" "${image}:${GITHUB_SHA:0:7}")
         fi

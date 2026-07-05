@@ -60,7 +60,10 @@ describe("agent base image provisioning", () => {
         built: false,
       });
       expect(resolveSandboxBaseImageMock).toHaveBeenCalledWith(
-        expect.objectContaining({ pinnedRemoteRef: trackedRef?.[1] }),
+        expect.objectContaining({
+          pinnedRemoteRef: trackedRef?.[1],
+          preferPinnedRemoteRef: true,
+        }),
       );
 
       const differentRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"0".repeat(64)}`;

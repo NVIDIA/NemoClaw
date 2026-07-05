@@ -446,6 +446,207 @@ describe("registry", () => {
     expect(registry.removeSandbox("nope")).toBe(false);
   });
 
+  it("atomically returns the exact registry row it removes", () => {
+    registry.registerSandbox({ name: "receipt", model: "captured", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("receipt");
+    expect(receipt?.entry).toMatchObject({
+      name: "receipt",
+      model: "captured",
+      imageTag: "old-image",
+    });
+    expect(receipt).toMatchObject({
+      wasDefault: true,
+      fallbackDefault: null,
+      postRemovalDefaultSelectionRevision: 2,
+    });
+    expect(registry.getSandbox("receipt")).toBeNull();
+    expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
+  });
+
+  it("restores a removed row after an intervening registry registration", () => {
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+
+    registry.registerSandbox({ name: "concurrent", model: "new" });
+    expect(registry.setDefault("concurrent")).toBe(true);
+
+    expect(registry.restoreSandboxEntryIfMissing(receipt!)).toBe(true);
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      name: "alpha",
+      model: "original",
+      imageTag: "old-image",
+    });
+    expect(registry.getSandbox("concurrent")).toMatchObject({
+      name: "concurrent",
+      model: "new",
+    });
+    expect(registry.getDefault()).toBe("concurrent");
+  });
+
+  it("serializes a spawned registration that starts during an atomic restore", () => {
+    const { spawnSync } = require("child_process");
+    registry.registerSandbox({ name: "alpha", model: "original", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta", model: "existing" });
+    registry.setDefault("alpha");
+    const receipt = registry.removeSandboxWithReceipt("alpha");
+    expect(receipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+
+    const registryPath = path.resolve(
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
+    );
+    const homeDir = path.dirname(path.dirname(regFile));
+    const coordinationDir = fs.mkdtempSync(path.join(os.tmpdir(), "registry-restore-race-"));
+    const restoreEntered = path.join(coordinationDir, "restore-entered");
+    const writerBlocked = path.join(coordinationDir, "writer-blocked");
+    const releaseRestore = path.join(coordinationDir, "release-restore");
+    const pauseSource =
+      "const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);";
+    const restoreScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      ${pauseSource}
+      const registry = require(${JSON.stringify(registryPath)});
+      const realReadFile = fs.readFileSync;
+      let pausedRegistryLoad = false;
+      fs.readFileSync = (target, options) => {
+        if (!pausedRegistryLoad && String(target) === registry.REGISTRY_FILE) {
+          pausedRegistryLoad = true;
+          fs.writeFileSync(${JSON.stringify(restoreEntered)}, "ready");
+          const deadline = Date.now() + 10_000;
+          while (!fs.existsSync(${JSON.stringify(releaseRestore)})) {
+            if (Date.now() >= deadline) throw new Error("timed out waiting to release restore");
+            pause(10);
+          }
+        }
+        return realReadFile(target, options);
+      };
+      const restored = registry.restoreSandboxEntryIfMissing(JSON.parse(process.argv[1]));
+      process.exit(restored ? 0 : 2);
+    `;
+    const writerScript = `
+      process.env.HOME = ${JSON.stringify(homeDir)};
+      const fs = require("fs");
+      const registry = require(${JSON.stringify(registryPath)});
+      const realMkdir = fs.mkdirSync;
+      fs.mkdirSync = (target, options) => {
+        try {
+          return realMkdir(target, options);
+        } catch (error) {
+          if (String(target) === registry.LOCK_DIR && error?.code === "EEXIST") {
+            fs.writeFileSync(
+              ${JSON.stringify(writerBlocked)},
+              fs.readFileSync(registry.LOCK_OWNER, "utf-8").trim(),
+            );
+          }
+          throw error;
+        }
+      };
+      registry.registerSandbox({ name: "concurrent", model: "new" });
+    `;
+    const orchestrator = `
+      const { spawn } = require("child_process");
+      const fs = require("fs");
+      ${pauseSource}
+      const waitForFile = (file) => {
+        const deadline = Date.now() + 10_000;
+        while (!fs.existsSync(file)) {
+          if (Date.now() >= deadline) throw new Error("timed out waiting for " + file);
+          pause(10);
+        }
+      };
+      const waitForExit = (child) => new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      (async () => {
+        const restore = spawn(process.execPath, ["-e", ${JSON.stringify(restoreScript)}, ${JSON.stringify(JSON.stringify(receipt))}], { stdio: "inherit" });
+        const restoreExit = waitForExit(restore);
+        waitForFile(${JSON.stringify(restoreEntered)});
+        const writer = spawn(process.execPath, ["-e", ${JSON.stringify(writerScript)}], { stdio: "inherit" });
+        const writerExit = waitForExit(writer);
+        waitForFile(${JSON.stringify(writerBlocked)});
+        const lockOwnerPid = Number(fs.readFileSync(${JSON.stringify(writerBlocked)}, "utf-8"));
+        if (lockOwnerPid !== restore.pid) {
+          throw new Error(
+            "writer blocked on lock owner " + lockOwnerPid + ", expected restore pid " + restore.pid,
+          );
+        }
+        fs.writeFileSync(${JSON.stringify(releaseRestore)}, "go");
+        const [restoreResult, writerResult] = await Promise.all([
+          restoreExit,
+          writerExit,
+        ]);
+        if (restoreResult.code !== 0 || writerResult.code !== 0) {
+          console.error(JSON.stringify({ restoreResult, writerResult }));
+          process.exit(1);
+        }
+      })().catch((error) => {
+        console.error(error);
+        process.exit(1);
+      });
+    `;
+
+    try {
+      const result = spawnSync(process.execPath, ["-e", orchestrator], {
+        encoding: "utf-8",
+        timeout: 30_000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(registry.getSandbox("alpha")).toMatchObject({ model: "original" });
+      expect(registry.getSandbox("beta")).toMatchObject({ model: "existing" });
+      expect(registry.getSandbox("concurrent")).toMatchObject({ model: "new" });
+      expect(registry.getDefault()).toBe("alpha");
+      const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect(Object.keys(persisted.sandboxes).sort()).toEqual(["alpha", "beta", "concurrent"]);
+      expect(persisted.defaultSandbox).toBe("alpha");
+      expect(
+        fs.readdirSync(path.dirname(regFile)).filter((name) => name.includes(".tmp.")),
+      ).toEqual([]);
+    } finally {
+      fs.rmSync(coordinationDir, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a rebuild entry only while its name is unclaimed", () => {
+    registry.registerSandbox({ name: "alpha", model: "old", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta" });
+    registry.registerSandbox({ name: "gamma" });
+    registry.setDefault("alpha");
+    const original = registry.getSandbox("alpha");
+
+    const firstReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(firstReceipt).not.toBeNull();
+    expect(registry.getDefault()).toBe("beta");
+    expect(
+      registry.restoreSandboxEntryIfMissing({
+        ...firstReceipt!,
+        entry: { ...original, imageTag: null },
+      }),
+    ).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+    expect(registry.getSandbox("alpha").imageTag).toBe(null);
+
+    registry.updateSandbox("alpha", {
+      model: "replacement",
+      imageTag: "replacement-image",
+    });
+    expect(registry.restoreSandboxEntryIfMissing(firstReceipt!)).toBe(false);
+    expect(registry.getSandbox("alpha").model).toBe("replacement");
+    expect(registry.getSandbox("alpha").imageTag).toBe("replacement-image");
+
+    const secondReceipt = registry.removeSandboxWithReceipt("alpha");
+    expect(secondReceipt).not.toBeNull();
+    registry.setDefault("gamma");
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("gamma");
+
+    registry.clearAll();
+    expect(registry.restoreSandboxEntryIfMissing(secondReceipt!)).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+  });
+
   it("getSandbox returns null for nonexistent", () => {
     expect(registry.getSandbox("nope")).toBe(null);
   });
@@ -474,6 +675,7 @@ describe("registry", () => {
     expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
       sandboxes: {},
       defaultSandbox: null,
+      defaultSelectionRevision: 3,
     });
   });
 

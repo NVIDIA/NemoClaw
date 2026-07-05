@@ -71,9 +71,11 @@ export async function prepareRebuildTargetPreflights(args: {
   const baseImageResolutionHint = readSandboxBaseImageResolutionMetadata(sandboxEntry.imageTag);
   const forceBaseImageRefresh = isSandboxBaseImageRefreshRequested(process.env);
   const recreateOptions = prepareRebuildRecreateOptions(
+    sandboxName,
     sandboxEntry,
     rebuildAgent,
     fromDockerfile,
+    resumeConfig.registryInferenceRoute,
     autoYes,
     baseImageResolutionHint,
     bail,

@@ -25,10 +25,12 @@ export function effectiveManagedToolGatewayPresets(
   );
 }
 
-export function loadManagedToolGatewayMatrix(): ManagedToolGatewayMatrix {
+export function loadManagedToolGatewayMatrix(
+  env: NodeJS.ProcessEnv = process.env,
+): ManagedToolGatewayMatrix {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    process.env.NEMOCLAW_HERMES_TOOL_GATEWAY_MATRIX_PATH,
+    env.NEMOCLAW_HERMES_TOOL_GATEWAY_MATRIX_PATH,
     join(scriptDir, "hermes-managed-tool-gateway-matrix.json"),
     join(scriptDir, "../hermes-managed-tool-gateway-matrix.json"),
     join(scriptDir, "../host/managed-tool-gateway-matrix.json"),

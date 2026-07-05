@@ -40,7 +40,10 @@ function hermesApiMode(inferenceApi: string): string | null {
   }
 }
 
-export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
+export function buildHermesConfig(
+  settings: HermesBuildSettings,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, unknown> {
   const remotePlatformToolsets = buildHermesRemotePlatformToolsets(settings);
   const modelProviderName = "custom";
   const pickerProviderName = settings.upstreamProvider || "nemoclaw-inference";
@@ -167,7 +170,7 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
 
   const managedToolGatewayPresets = effectiveManagedToolGatewayPresets(settings);
   if (managedToolGatewayPresets.length > 0) {
-    const matrix = loadManagedToolGatewayMatrix();
+    const matrix = loadManagedToolGatewayMatrix(env);
     for (const preset of managedToolGatewayPresets) {
       const entry = matrix[preset];
       if (!entry) {

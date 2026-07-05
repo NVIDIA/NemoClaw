@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib");
+const INSTALLED_APPROVAL_POLICY = "/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py";
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
 const CHANNEL_RUNTIME_SCRIPTS = path.join(import.meta.dirname, "..", "src/lib/messaging/channels");
 const JSON5_MODULE = path.join(import.meta.dirname, "..", "nemoclaw", "node_modules", "json5");
@@ -158,8 +159,8 @@ function startScriptHeredoc(src: string, marker: string): string {
   }).outputText;
 }
 
-function trustedApprovalPolicyFile(): string {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
+function trustedApprovalPolicyFile(tmpDir?: string): string {
+  tmpDir ??= fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-helper-"));
   const helperPath = path.join(tmpDir, "openclaw_device_approval_policy.py");
   fs.copyFileSync(path.join(APPROVAL_POLICY_DIR, "openclaw_device_approval_policy.py"), helperPath);
   fs.chmodSync(helperPath, 0o444);
@@ -882,10 +883,9 @@ describe("nemoclaw-start configure guard behavior", () => {
       `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
-    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
-      "/tmp/nemoclaw-proxy-env.sh",
-      proxyEnv,
-    );
+    const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`
+      .replaceAll("/tmp/nemoclaw-proxy-env.sh", proxyEnv)
+      .replaceAll(INSTALLED_APPROVAL_POLICY, trustedApprovalPolicyFile(tmpDir));
     const wrapper = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
@@ -976,7 +976,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
+  it("unsets gateway env and leaves failed approval state to OpenClaw (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -987,11 +987,11 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.mkdirSync(devicesDir, { recursive: true });
       fs.writeFileSync(
         pendingFile,
-        '{"original":{"requestId":"request-1","deviceId":"device-1","scopes":["operator.write"]}}',
+        '{"original":{"requestId":"request-1","deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.write"]}}',
       );
       fs.writeFileSync(
         pairedFile,
-        '{"device-1":{"deviceId":"device-1","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
+        '{"device-1":{"deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
       );
     };
     fs.writeFileSync(
@@ -999,7 +999,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       `#!/usr/bin/env bash
 printf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(setup.commandLog)}
 cat > "\${OPENCLAW_STATE_DIR}/devices/pending.json" <<'JSON'
-{"replacement":{"requestId":"replacement-1","deviceId":"device-1","scopes":["operator.write","operator.pairing","operator.read","operator.admin"]}}
+{"replacement":{"requestId":"replacement-1","deviceId":"device-1","publicKey":"public-key-1","role":"operator","roles":["operator"],"scopes":["operator.write","operator.pairing","operator.read","operator.admin"],"isRepair":true}}
 JSON
 if [ -n "\${CASE_REPLACEMENT_ID:-}" ]; then echo "gateway connect failed: GatewayClientRequestError: scope upgrade pending approval (requestId: \${CASE_REPLACEMENT_ID})" >&2; else echo "gateway connect failed: G" >&2; fi
 exit 1
@@ -1007,11 +1007,7 @@ exit 1
       { mode: 0o755 },
     );
     try {
-      for (const [replacementId, shouldRecover] of [
-        ["replacement-1", true],
-        ["replacement-10", false],
-        ["", true],
-      ] as const) {
+      for (const replacementId of ["replacement-1", "replacement-10", ""]) {
         resetState();
         const result = runGuardedShell(setup, [
           `export OPENCLAW_STATE_DIR=${JSON.stringify(stateDir)}`,
@@ -1020,27 +1016,20 @@ exit 1
         ]);
         const paired = readJson(pairedFile);
         const pending = readJson(pendingFile);
-        expect(result.status).toBe(shouldRecover ? 0 : 1);
+        expect(result.status).toBe(1);
         expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain(
           "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         );
-        const expectedScopes = shouldRecover
-          ? ["operator.pairing", "operator.read", "operator.write"]
-          : ["operator.pairing"];
         for (const scopes of [
           paired["device-1"].approvedScopes,
           paired["device-1"].scopes,
           paired["device-1"].tokens.operator.scopes,
         ]) {
-          expect(scopes).toEqual(expectedScopes);
+          expect(scopes).toEqual(["operator.pairing"]);
         }
         expect(JSON.stringify(paired)).not.toContain("operator.admin");
-        expect(shouldRecover ? pending : pending.replacement.requestId).toEqual(
-          shouldRecover ? {} : "replacement-1",
-        );
-        expect(
-          shouldRecover ? JSON.parse(result.stdout).compatibility : pending.replacement.requestId,
-        ).toBe(shouldRecover ? "openclaw-approve-recovered-replacement" : "replacement-1");
+        expect(pending.replacement.requestId).toBe("replacement-1");
+        expect(result.stderr).toContain("gateway connect failed");
       }
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
@@ -1554,7 +1543,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     }
   });
 
-  it("approves only whitelisted clients and does not reprocess handled requests", () => {
+  it("approves only known client identities and does not reprocess handled requests", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "list-count");
@@ -1624,19 +1613,16 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] approved request=ok-browser client=openclaw-control-ui",
       );
-      expect(run.stdout).toContain("[auto-pair] approved request=ok-webchat client=other-client");
+      expect(run.stdout).toContain("[auto-pair] rejected unknown client=other-client mode=webchat");
       expect(run.stdout).toContain("[auto-pair] rejected unknown client=evil-client mode=unknown");
       expect(run.stdout).toContain(
-        "[auto-pair] browser pairing converged; entering slow-mode approvals=2",
+        "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
-      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
-        "ok-browser",
-        "ok-webchat",
-      ]);
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual(["ok-browser"]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
       expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
       expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
-      expect(envLogLines).toContain("approve:ok-webchat:unset:unset:unset");
+      expect(envLogLines).not.toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

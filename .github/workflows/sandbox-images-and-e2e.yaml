@@ -86,7 +86,13 @@ jobs:
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production .
 
       - name: Build sandbox test image (fixtures layered on production)
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
@@ -146,7 +152,13 @@ jobs:
         uses: ./.github/actions/resolve-hermes-base-image
 
       - name: Build Hermes production image
-        run: docker build -f agents/hermes/Dockerfile --build-arg BASE_IMAGE=${{ env.HERMES_BASE_IMAGE }} -t nemoclaw-hermes-production .
+        env:
+          HERMES_BASE_IMAGE: ${{ env.HERMES_BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(-f agents/hermes/Dockerfile --build-arg "BASE_IMAGE=${HERMES_BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-hermes-production .
 
       - name: Verify sandbox user can read copied files
         run: |
@@ -224,7 +236,13 @@ jobs:
         uses: ./.github/actions/resolve-sandbox-base-image
 
       - name: Build production image on arm64
-        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+        env:
+          BASE_IMAGE: ${{ env.BASE_IMAGE }}
+        run: |
+          set -euo pipefail
+          build_args=(--build-arg "BASE_IMAGE=${BASE_IMAGE}")
+          scripts/check-production-build-args.sh "${build_args[@]}"
+          docker build "${build_args[@]}" -t nemoclaw-production-arm64 .
 
       - name: Build sandbox test image on arm64
         run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .

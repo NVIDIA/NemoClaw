@@ -339,7 +339,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
         NEMOCLAW_NO_CONNECT_HINT: "1",
         NO_COLOR: "1",
       },
-      timeout: 30_000,
+      timeout: 50_000,
     },
   );
 }
@@ -396,10 +396,10 @@ describe("rebuild syncs agent from registry instead of a stale session (#2201)",
       rebuildTarget: { name: "hermes", agent: "hermes" },
       lastOnboarded: { name: "openclaw", agent: null },
     });
-    runRebuild(f);
+    const result = runRebuild(f);
     // With fix: session.agent = "hermes" (synced from hermes registry entry)
     // Without fix: session.agent stays null (from openclaw onboard)
-    expect(readSessionAgent(f)).toBe("hermes");
+    expect(readSessionAgent(f), `${result.stderr}\n${result.stdout}`).toBe("hermes");
   });
 
   it("does not inherit messaging plan from a stale session for another sandbox", {

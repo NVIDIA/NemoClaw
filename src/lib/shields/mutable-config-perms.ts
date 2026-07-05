@@ -202,7 +202,8 @@ export function inspectMutableConfigPerms(
  * OpenClaw agents and for shields-up/corrupt sandboxes (where weakening the
  * lock would be a regression). `applyMutableContract` performs the privileged
  * normalization (in ./index.ts this invokes the same descriptor-safe helper as
- * sandbox startup) and throws if it cannot apply the contract.
+ * sandbox startup without entering a shields-down transition) and throws if it
+ * cannot apply the contract.
  */
 export function repairMutableConfigPerms(
   target: MutableConfigTarget,

@@ -25,6 +25,7 @@ import {
   revalidatePreparedRecoveryBeforeDelete,
 } from "./rebuild-prepared-recovery";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
+import { createRebuildRegistryRollback } from "./rebuild-registry-rollback";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
 
@@ -109,6 +110,13 @@ async function rebuildSandboxUnlocked(
   let recoveryRegistrySnapshot = preparedBackupRecovery
     ? JSON.parse(JSON.stringify(registry.load()))
     : liveState.staleRegistrySnapshot;
+  const registryRollback = createRebuildRegistryRollback({
+    sandboxName,
+    preparedBackupRecovery,
+    staleRecovery,
+    getRecoveryRegistrySnapshot: () => recoveryRegistrySnapshot,
+    log,
+  });
   try {
     const shieldsPhase = runRebuildShieldsPhase(
       sandboxName,
@@ -195,6 +203,7 @@ async function rebuildSandboxUnlocked(
         },
       });
       if (!mcpPreparation) return;
+      registryRollback.recordRemoval(mcpPreparation.removalReceipt);
 
       const restoreDcodeGpuPatchNetwork = dcodePreflight.applyDockerGpuPatchNetwork();
       let recreated: boolean;
@@ -217,7 +226,7 @@ async function rebuildSandboxUnlocked(
           credentialEnv,
           baseImagePreflight,
           recoveryRecreate,
-          recoveryRegistrySnapshot,
+          registryRollback,
           backupManifest: backup.backupManifest,
           mcpEntries: mcpPreparation.entries,
           rebuildShieldsWindow,

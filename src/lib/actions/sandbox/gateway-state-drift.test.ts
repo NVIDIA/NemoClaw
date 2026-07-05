@@ -10,6 +10,12 @@ import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-dr
 type GatewayStateModule = typeof import("./gateway-state");
 
 const requireDist = createRequire(import.meta.url);
+const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+const dockerDriverRecovery = requireDist("../../onboard/docker-driver-sandbox-recovery.js");
+const registry = requireDist("../../state/registry.js");
+const gatewayState: GatewayStateModule = requireDist("./gateway-state.js");
 
 const driftIssue: OpenShellStateRpcIssue = {
   kind: "image_drift",
@@ -28,7 +34,6 @@ function mockExit() {
 }
 
 describe("sandbox gateway state drift guard", () => {
-  let gatewayState: GatewayStateModule;
   let exitSpy: ReturnType<typeof mockExit>;
   let errorSpy: MockInstance;
   let spies: MockInstance[];
@@ -41,15 +46,10 @@ describe("sandbox gateway state drift guard", () => {
   let runOpenshellSpy: MockInstance;
   let removeSandboxSpy: MockInstance;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     spies = [];
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-
-    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-    const registry = requireDist("../../state/registry.js");
 
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
 
@@ -96,10 +96,11 @@ describe("sandbox gateway state drift guard", () => {
       getNamedGatewayLifecycleStateSpy,
       getSandboxSpy,
       recoverNamedGatewayRuntimeSpy,
+      vi
+        .spyOn(dockerDriverRecovery, "recoverDockerDriverSandbox")
+        .mockReturnValue({ recovered: false, via: null }),
       removeSandboxSpy,
     );
-
-    gatewayState = requireDist("./gateway-state.js");
   });
 
   afterEach(() => {
@@ -144,6 +145,96 @@ describe("sandbox gateway state drift guard", () => {
 
     expect(removeSandboxSpy).not.toHaveBeenCalled();
     expect(captureOpenshellSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves a local registry entry when a healthy named gateway still lacks the sandbox", async () => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output: 'Error: status: NotFound, message: "sandbox not found"',
+    });
+    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "healthy_named",
+      status: "Gateway: nemoclaw\nStatus: Connected",
+    });
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Your local registry entry has been preserved — nothing was removed.");
+    expect(output).toContain("nemoclaw alpha rebuild --yes");
+    expect(output).toContain("nemoclaw alpha destroy");
+    expect(removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it("preserves registry state and prints deterministic guidance when gateway selection cannot expose the sandbox (#2276)", async () => {
+    vi.stubEnv("NEMOCLAW_NON_INTERACTIVE", "1");
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output: 'Error: status: NotFound, message: "sandbox not found"',
+    });
+    getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "connected_other",
+      activeGateway: "openshell",
+      status: "Gateway: openshell\nStatus: Connected",
+    });
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow("process.exit(1)");
+
+    const output = errorSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Your sandbox has NOT been removed");
+    expect(output).toContain("openshell gateway select nemoclaw");
+    expect(output).not.toMatch(/Press (?:enter|any key)|\?\s+\[/i);
+    expect(runOpenshellSpy).toHaveBeenCalledWith(
+      ["gateway", "select", "nemoclaw"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(removeSandboxSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      lifecycle: { state: "missing_named", status: "No gateway configured" },
+      expected: "gateway is no longer configured after restart/rebuild",
+    },
+    {
+      lifecycle: {
+        state: "named_unreachable",
+        status: "Gateway: nemoclaw\nConnection refused",
+      },
+      expected: "gateway is still refusing connections after restart",
+    },
+  ])("preserves registry state when the named gateway reports $lifecycle.state", async ({
+    lifecycle,
+    expected,
+  }) => {
+    detectPreflightIssueSpy.mockReturnValue(null);
+    getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+    captureOpenshellSpy.mockReturnValue({
+      status: 1,
+      output: 'Error: status: NotFound, message: "sandbox not found"',
+    });
+    getNamedGatewayLifecycleStateSpy.mockReturnValue(lifecycle);
+
+    await expect(gatewayState.ensureLiveSandboxOrExit("alpha")).rejects.toThrow("process.exit(1)");
+
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(expected);
+    expect(removeSandboxSpy).not.toHaveBeenCalled();
   });
 
   it("propagates schema mismatch after selecting the named gateway", () => {
@@ -256,5 +347,6 @@ describe("sandbox gateway state drift guard", () => {
       ["gateway", "select", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(removeSandboxSpy).not.toHaveBeenCalled();
   });
 });

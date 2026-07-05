@@ -4,8 +4,8 @@
 // Hermes Provider inference setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
-import type { HermesAuthMethod } from "../hermes-auth";
 import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
+import type { HermesAuthMethod } from "../hermes-auth";
 import type { HermesDeps, SetupInferenceResult } from "./types";
 
 export async function setupHermesProviderInference(
@@ -73,6 +73,9 @@ export async function setupHermesProviderInference(
     verifyOnboardInferenceSmoke,
     isNonInteractive,
     registry,
+    exitProcess,
+    error,
+    log,
     hermesProviderAuth,
     getHermesToolGatewayBroker,
     providerExistsInGateway,
@@ -99,10 +102,10 @@ export async function setupHermesProviderInference(
       : HERMES_AUTH_METHOD_OAUTH);
   const providerStore = checkHermesProviderStoreReachable(runOpenshell);
   if (!providerStore.ok) {
-    console.error("  ✗ OpenShell provider storage is unreachable.");
-    console.error(`    ${providerStore.message}`);
-    console.error("    Restart or recreate the OpenShell gateway, then rerun onboarding.");
-    if (isNonInteractive()) process.exit(1);
+    error("  ✗ OpenShell provider storage is unreachable.");
+    error(`    ${providerStore.message}`);
+    error("    Restart or recreate the OpenShell gateway, then rerun onboarding.");
+    if (isNonInteractive()) return exitProcess(1);
     return { retry: "selection" };
   }
   const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
@@ -120,8 +123,9 @@ export async function setupHermesProviderInference(
     hasFreshNousApiKey ||
     (resolvedHermesAuthMethod === HERMES_AUTH_METHOD_OAUTH && !isNonInteractive());
   if (shouldPrepareHermesCredentials) {
+    let state: unknown;
     try {
-      const state =
+      state =
         resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
           ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
               apiKey: resolveHermesNousApiKey(),
@@ -134,22 +138,20 @@ export async function setupHermesProviderInference(
               baseUrl: resolvedEndpointUrl || undefined,
               toolGatewayPresets: hermesToolGateways,
             });
-      if (!state) {
-        const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
-        console.error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
-        console.error(
-          "    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.",
-        );
-        process.exit(1);
-      }
     } catch (err) {
-      console.error(
+      error(
         `  ✗ Failed to prepare Hermes Provider credentials: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
-      if (isNonInteractive()) process.exit(1);
+      if (isNonInteractive()) return exitProcess(1);
       return { retry: "selection" };
+    }
+    if (!state) {
+      const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
+      error(`  ✗ Hermes Provider ${authLabel} is not available on the host.`);
+      error("    Re-run `nemoclaw onboard --agent hermes` interactively to configure credentials.");
+      return exitProcess(1);
     }
   }
 
@@ -161,8 +163,8 @@ export async function setupHermesProviderInference(
     const message =
       compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
       `Failed to configure inference provider '${provider}'.`;
-    console.error(`  ${message}`);
-    if (isNonInteractive()) process.exit(applyResult.status || 1);
+    error(`  ${message}`);
+    if (isNonInteractive()) return exitProcess(applyResult.status || 1);
     return { retry: "selection" };
   }
 
@@ -171,6 +173,6 @@ export async function setupHermesProviderInference(
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }
-  console.log(`  ✓ Inference route set: ${provider} / ${model}`);
+  log(`  ✓ Inference route set: ${provider} / ${model}`);
   return { ok: true };
 }

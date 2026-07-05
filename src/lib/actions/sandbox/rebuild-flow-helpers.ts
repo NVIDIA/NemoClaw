@@ -277,6 +277,7 @@ export function backupSandboxStateForRebuild(
   const hasAnyBackup = backup.backedUpDirs.length > 0 || backup.backedUpFiles.length > 0;
   if (!backup.success && !hasAnyBackup) {
     console.error("  Failed to back up sandbox state.");
+    if (backup.error) console.error(`  Reason: ${backup.error}`);
     if (backup.failedDirs.length > 0) console.error(`  Failed: ${backup.failedDirs.join(", ")}`);
     if (backup.failedFiles.length > 0)
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);

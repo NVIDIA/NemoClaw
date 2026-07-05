@@ -6,15 +6,24 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { appendHostProxyEnvArgs } from "../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
   maybePromptForInferenceInputCapability,
   shouldPromptForInferenceInputCapability,
 } from "../src/lib/onboard/inference-input-capability.js";
+import { createInferenceRouteHelpers } from "../src/lib/onboard/inference-route.js";
+import { createLocalInferenceRouteApplier } from "../src/lib/onboard/local-inference-route.js";
+import type { SetupInference, SetupInferenceDeps } from "../src/lib/onboard/setup-inference.js";
 import { stageOptimizedSandboxBuildContext } from "../src/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
+import {
+  createDirectCommandRouter,
+  createDirectSetupInferenceHarnessFactory,
+  runProductionSetupInferenceCredentialBoundary,
+  withProcessEnv,
+} from "./support/setup-inference-test-harness.js";
 
 type ShimScalar = string | number | boolean | null | undefined;
 type ShimCallable = (...args: readonly string[]) => ShimValue;
@@ -23,6 +32,7 @@ type ShimFn<TReturn = void> = (...args: ShimValue[]) => TReturn;
 type CommandEntry = {
   command: string;
   env?: Record<string, string | undefined>;
+  ignoreError?: boolean;
   policyContent?: string;
   policyReadError?: string;
   dockerfileContent?: string;
@@ -46,6 +56,7 @@ type OnboardTestInternals = {
     selectedAgentName: string,
   ) => T;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
+  createSetupInference: (overrides?: Partial<SetupInferenceDeps>) => SetupInference;
   SANDBOX_BASE_IMAGE: string;
 };
 
@@ -91,8 +102,14 @@ const {
   getResumeConfigConflicts,
   getResumeSandboxConflict,
   clearAgentScopedResumeState,
+  createSetupInference,
   SANDBOX_BASE_IMAGE,
 } = onboardTestInternals;
+
+const bedrockRuntimeOnboard =
+  require("../src/lib/onboard/bedrock-runtime") as typeof import("../src/lib/onboard/bedrock-runtime.js");
+const createDirectSetupInferenceHarness =
+  createDirectSetupInferenceHarnessFactory(createSetupInference);
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardScriptMocksPath = JSON.stringify(
@@ -229,6 +246,9 @@ describe("onboard helpers", () => {
     "prints doctor logs automatically when gateway fails to start (#1605)",
     testTimeoutOptions(20_000),
     () => {
+      // Intentional process-contract coverage: this case verifies the real child exit status and
+      // stdout/stderr handling across the Node -> shell -> OpenShell adapter boundary. The
+      // setupInference cases below are unit-shaped and run directly through typed dependencies.
       const repoRoot = path.join(import.meta.dirname, "..");
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
       const fakeBin = path.join(tmpDir, "bin");
@@ -705,283 +725,154 @@ startGateway(null).catch(() => {});
   });
 
   it("passes credential names to openshell without embedding secret values in argv", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-inference-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: nvidia-nim",
-      "  Model: nvidia/nemotron-3-super-120b-a12b",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-TEST-NOT-A-REAL-VALUE";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "nvidia/nemotron-3-super-120b-a12b", "nvidia-nim");
-  console.log(JSON.stringify({ commands, nvidiaApiKey: process.env.NVIDIA_INFERENCE_API_KEY || null }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+    const credentialValue = "nvapi-TEST-NOT-A-REAL-VALUE";
+    const { credentialEvidence: evidence } = runProductionSetupInferenceCredentialBoundary({
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      credentialValue,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "nvidia-nim",
     });
-
-    expect(result.status).toBe(0);
-    const payload = parseStdoutJson<{ commands: CommandEntry[]; nvidiaApiKey: string | null }>(
-      result.stdout,
+    assert.match(evidence.providerCommand.argv.join(" "), /--credential NVIDIA_INFERENCE_API_KEY/);
+    assert.deepEqual(evidence.argvContainingSecret, []);
+    assert.deepEqual(evidence.secretBearingCommands, ["provider update"]);
+    assert.equal(evidence.providerCommand.env.NVIDIA_INFERENCE_API_KEY, credentialValue);
+    assert.equal(
+      evidence.unscopedCommandKinds.join(","),
+      "gateway select,provider get,inference set",
     );
-    const commands = payload.commands;
-    assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get/);
-    assert.match(commands[2].command, /--credential NVIDIA_INFERENCE_API_KEY/);
-    assert.doesNotMatch(commands[2].command, /nvapi-TEST-NOT-A-REAL-VALUE/);
-    assert.match(commands[2].command, /provider update/);
-    assert.match(commands[3].command, /inference set/);
-    assert.equal(payload.nvidiaApiKey, "nvapi-TEST-NOT-A-REAL-VALUE");
+    assert.deepEqual(evidence.unscopedCredentialValues, [null, null, null]);
+    assert.deepEqual(evidence.unscopedCommandsContainingSecret, []);
+    assert.deepEqual(evidence.setupCredentialValues, [credentialValue, credentialValue]);
+    assert.equal(evidence.parentCredentialUnchanged, true);
   });
-
-  it("reuses a registered Hermes Provider without re-collecting host credentials", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-reuse-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-hermes-reuse-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get hermes-provider")) {
-    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: hermes-provider",
-      "  Model: moonshotai/kimi-k2.6",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.NOUS_API_KEY = "nous-host-secret";
-process.env.OPENAI_API_KEY = "openai-host-secret";
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "moonshotai/kimi-k2.6", "hermes-provider", "https://8.8.8.8/v1", "OPENAI_API_KEY", "oauth");
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reuses a registered Hermes Provider without re-collecting host credentials", async () => {
+    await withProcessEnv(
+      {
+        NOUS_API_KEY: "nous-host-secret",
+        OPENAI_API_KEY: "openai-host-secret",
       },
-    });
+      async () => {
+        const harness = createDirectSetupInferenceHarness({
+          runOpenshell: (args) =>
+            args.join(" ") === "provider get hermes-provider"
+              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              : undefined,
+          overrides: { isNonInteractive: () => true },
+        });
 
-    expect(result.status).toBe(0);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider list/);
-    assert.match(commands[2].command, /provider get hermes-provider/);
-    assert.match(commands[3].command, /inference set --no-verify --provider hermes-provider/);
-    assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
-    assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
-    assert.ok(
-      !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
-      "host credential values must not appear in argv",
+        await harness.setupInference(
+          "test-box",
+          "moonshotai/kimi-k2.6",
+          "hermes-provider",
+          "https://8.8.8.8/v1",
+          "OPENAI_API_KEY",
+          "oauth",
+        );
+
+        const commands = harness.commands;
+        assert.equal(commands.length, 4);
+        assert.match(commands[0].command, /gateway select nemoclaw/);
+        assert.match(commands[1].command, /provider list/);
+        assert.match(commands[2].command, /provider get hermes-provider/);
+        assert.match(commands[3].command, /inference set --no-verify --provider hermes-provider/);
+        assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
+        assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
+        assert.ok(
+          !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
+          "host credential values must not appear in argv",
+        );
+      },
     );
   });
+  it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", async () => {
+    await withProcessEnv({ COMPATIBLE_ANTHROPIC_API_KEY: "bedrock-bearer" }, async () => {
+      const updateSandbox = vi.fn(() => true);
+      const ensureAdapter = vi.fn(async () => ({
+        baseUrl: "http://host.openshell.internal:11436/v1",
+        localBaseUrl: "http://127.0.0.1:11436/v1",
+        credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+        token: "adapter-token",
+        region: "us-east-1",
+        logPath: "/tmp/bedrock-adapter.log",
+      }));
+      const setupBedrockRuntimeInference = bedrockRuntimeOnboard.setupBedrockRuntimeInference;
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.join(" ") === "provider get compatible-anthropic-endpoint"
+            ? { status: 1, stdout: "", stderr: "" }
+            : undefined,
+        overrides: {
+          updateSandbox,
+          bedrockRuntimeOnboard: {
+            setupBedrockRuntimeInference: (
+              input: Parameters<typeof setupBedrockRuntimeInference>[0],
+            ) => setupBedrockRuntimeInference({ ...input, ensureAdapter }),
+          },
+        },
+      });
+      const consoleOutput: string[] = [];
+      const captureConsole = (...args: unknown[]) => consoleOutput.push(args.map(String).join(" "));
+      const error = vi.spyOn(console, "error").mockImplementation(captureConsole);
+      const log = vi.spyOn(console, "log").mockImplementation(captureConsole);
+      try {
+        await harness.setupInference(
+          "test-box",
+          "anthropic.claude-3-5-sonnet-20240620-v1:0",
+          "compatible-anthropic-endpoint",
+          "https://bedrock-runtime.us-east-1.amazonaws.com",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        );
+      } finally {
+        error.mockRestore();
+        log.mockRestore();
+      }
 
-  it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bedrock-runtime-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-bedrock-runtime-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const adapterPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "bedrock-runtime-adapter.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const adapter = require(${adapterPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get compatible-anthropic-endpoint")) {
-    return { status: 1, stdout: "", stderr: "" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: compatible-anthropic-endpoint",
-      "  Model: anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-adapter.ensureBedrockRuntimeAdapter = async ({ classification, compatibleCredential }) => ({
-  baseUrl: "http://host.openshell.internal:11436/v1",
-  localBaseUrl: "http://127.0.0.1:11436/v1",
-  credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
-  token: "adapter-token",
-  region: classification.region,
-  compatibleCredential,
-});
-
-process.env.COMPATIBLE_ANTHROPIC_API_KEY = "bedrock-bearer";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference(
-    "test-box",
-    "anthropic.claude-3-5-sonnet-20240620-v1:0",
-    "compatible-anthropic-endpoint",
-    "https://bedrock-runtime.us-east-1.amazonaws.com",
-    "COMPATIBLE_ANTHROPIC_API_KEY",
-  );
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      const commands = harness.commands;
+      const providerCommand = commands.find((entry) => /provider create/.test(entry.command));
+      assert.ok(providerCommand, "expected hidden adapter provider registration");
+      assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
+      assert.match(providerCommand.command, /--type openai/);
+      assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
+      assert.match(
+        providerCommand.command,
+        /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
+      );
+      assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
+      assert.ok(
+        !JSON.stringify(commands).includes("bedrock-bearer"),
+        "Bedrock bearer token must not appear in OpenShell argv or env",
+      );
+      assert.deepEqual(harness.errors, []);
+      assert.deepEqual(harness.logs, [
+        "  Bedrock Runtime adapter ready: region us-east-1, sandbox route http://host.openshell.internal:11436/v1, host log /tmp/bedrock-adapter.log",
+        "  ✓ Inference route set: compatible-anthropic-endpoint / anthropic.claude-3-5-sonnet-20240620-v1:0",
+      ]);
+      assert.doesNotMatch(
+        [...harness.logs, ...harness.errors, ...consoleOutput].join("\n"),
+        /bedrock-bearer|adapter-token/,
+        "Bedrock tokens must not appear in onboarding console output",
+      );
+      const sandboxCommands = commands.filter((entry) => /\bsandbox\b/.test(entry.command));
+      assert.ok(
+        !sandboxCommands.some((entry) =>
+          JSON.stringify(entry).includes("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"),
+        ),
+        "adapter credential env must not be passed to sandbox commands",
+      );
+      assert.ok(
+        !sandboxCommands.some((entry) => JSON.stringify(entry).includes("adapter-token")),
+        "adapter token must not be passed to sandbox commands",
+      );
+      assert.match(
+        commands.at(-1)?.command || "",
+        /inference set --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
+      );
+      expect(updateSandbox).toHaveBeenCalledWith("test-box", {
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        provider: "compatible-anthropic-endpoint",
+      });
     });
-
-    expect(result.status).toBe(0);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    const providerCommand = commands.find((entry) => /provider create/.test(entry.command));
-    assert.ok(providerCommand, "expected hidden adapter provider registration");
-    assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
-    assert.match(providerCommand.command, /--type openai/);
-    assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
-    assert.match(
-      providerCommand.command,
-      /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
-    );
-    assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
-    assert.ok(
-      !JSON.stringify(commands).includes("bedrock-bearer"),
-      "Bedrock bearer token must not appear in OpenShell argv or env",
-    );
-    const sandboxCommands = commands.filter((entry) => /\bsandbox\b/.test(entry.command));
-    assert.ok(
-      !sandboxCommands.some((entry) =>
-        JSON.stringify(entry).includes("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"),
-      ),
-      "adapter credential env must not be passed to sandbox commands",
-    );
-    assert.ok(
-      !sandboxCommands.some((entry) => JSON.stringify(entry).includes("adapter-token")),
-      "adapter token must not be passed to sandbox commands",
-    );
-    assert.ok(
-      !result.stderr.includes("bedrock-bearer") && !result.stderr.includes("adapter-token"),
-      "Bedrock tokens must not appear in onboarding stderr",
-    );
-    assert.match(
-      commands.at(-1)?.command || "",
-      /inference set --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
-    );
   });
-
   it("resolves a sandbox name before reconciling Hermes Provider on resume", {
     timeout: 60_000,
   }, () => {
@@ -1221,292 +1112,135 @@ const { onboard } = require(${onboardPath});
     );
   });
 
-  it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-update-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-hermes-update-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const normalized = _n(command);
-  commands.push({ command: normalized, env: opts.env || null });
-  if (normalized.includes("provider get hermes-provider")) {
-    return { status: 0, stdout: "Provider: hermes-provider", stderr: "" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: hermes-provider",
-      "  Model: moonshotai/kimi-k2.6",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.NOUS_API_KEY = "nous-host-secret";
-delete process.env.OPENAI_API_KEY;
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference(
-    "test-box",
-    "moonshotai/kimi-k2.6",
-    "hermes-provider",
-    "https://8.8.8.8/v1",
-    "NOUS_API_KEY",
-    "api_key",
-  );
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("reconciles a registered Hermes Provider when a fresh shell Nous key is selected", async () => {
+    await withProcessEnv(
+      {
+        NOUS_API_KEY: "nous-host-secret",
+        OPENAI_API_KEY: undefined,
       },
-    });
+      async () => {
+        const harness = createDirectSetupInferenceHarness({
+          runOpenshell: (args) =>
+            args.join(" ") === "provider get hermes-provider"
+              ? { status: 0, stdout: "Provider: hermes-provider", stderr: "" }
+              : undefined,
+          overrides: { isNonInteractive: () => true },
+        });
 
-    expect(result.status).toBe(0);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    const update = commands.find((entry) => /provider update hermes-provider/.test(entry.command));
-    assert.ok(update);
-    assert.match(update.command, /--credential NOUS_API_KEY/);
-    assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
-    assert.ok(
-      !commands.some((entry) => /nous-host-secret/.test(entry.command)),
-      "shell credential value must not appear in argv",
-    );
-    assert.match(
-      commands.at(-1)?.command || "",
-      /inference set --no-verify --provider hermes-provider/,
+        await harness.setupInference(
+          "test-box",
+          "moonshotai/kimi-k2.6",
+          "hermes-provider",
+          "https://8.8.8.8/v1",
+          "NOUS_API_KEY",
+          "api_key",
+        );
+
+        const update = harness.commands.find((entry) =>
+          /provider update hermes-provider/.test(entry.command),
+        );
+        assert.ok(update);
+        assert.match(update.command, /--credential NOUS_API_KEY/);
+        assert.equal(update.env?.NOUS_API_KEY, "nous-host-secret");
+        assert.ok(
+          !harness.commands.some((entry) => /nous-host-secret/.test(entry.command)),
+          "shell credential value must not appear in argv",
+        );
+        assert.match(
+          harness.commands.at(-1)?.command || "",
+          /inference set --no-verify --provider hermes-provider/,
+        );
+      },
     );
   });
-
-  it("does not delete saved OpenAI credentials when configuring local vLLM", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+  it("does not delete saved OpenAI credentials when configuring local vLLM", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-local-vllm-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-local-vllm-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const credentials = require(${credentialsPath});
-const localInference = require(${localInferencePath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const cmd = _n(command);
-  commands.push({ command: cmd, env: opts.env || null });
-  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  const cmd = _n(command);
-  if (cmd.includes("inference") && cmd.includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: vllm-local",
-      "  Model: meta-llama",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-localInference.validateLocalProvider = () => ({ ok: true });
-localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:8000/v1";
-
-credentials.saveCredential("OPENAI_API_KEY", "sk-existing");
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "meta-llama", "vllm-local");
-  console.log(JSON.stringify({
-    commands,
-    savedOpenAiKey: credentials.getCredential("OPENAI_API_KEY"),
-  }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    expect(result.status).toBe(0);
-    const payload = parseStdoutJson<{ commands: CommandEntry[]; savedOpenAiKey: string }>(
-      result.stdout,
-    );
-    const providerCommand = payload.commands.find((entry) =>
-      entry.command.includes("provider create"),
-    );
-    assert.ok(providerCommand, "expected local vLLM provider create command");
-    assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
-    assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
-    assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
-    assert.equal(payload.savedOpenAiKey, "sk-existing");
+    const credentials = require("../src/lib/credentials/store") as {
+      saveCredential(key: string, value: string): void;
+      getCredential(key: string): string | null;
+    };
+    try {
+      await withProcessEnv({ HOME: tmpDir, OPENAI_API_KEY: undefined }, async () => {
+        credentials.saveCredential("OPENAI_API_KEY", "sk-existing");
+        let harness: ReturnType<typeof createDirectSetupInferenceHarness>;
+        const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
+          runOpenshell: (args, options) => harness.runOpenshell(args, options),
+          isNonInteractive: () => false,
+          promptValidationRecovery: async () => "selection",
+          classifyApplyFailure: () => ({}) as never,
+          compactText: (value) => value.trim(),
+          redact: (value) => value,
+          localInferenceTimeoutSecs: 120,
+          error: vi.fn(),
+          exitProcess: () => assert.fail("unexpected exit"),
+        });
+        harness = createDirectSetupInferenceHarness({
+          runOpenshell: (args) =>
+            args.slice(0, 2).join(" ") === "provider get"
+              ? { status: 1, stdout: "", stderr: "" }
+              : undefined,
+          overrides: { applyLocalInferenceRoute },
+        });
+        await harness.setupInference("test-box", "meta-llama", "vllm-local");
+        const providerCommand = harness.commands.find((entry) =>
+          entry.command.includes("provider create"),
+        );
+        assert.ok(providerCommand, "expected local vLLM provider create command");
+        assert.match(providerCommand.command, /--credential NEMOCLAW_VLLM_LOCAL_TOKEN/);
+        assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
+        assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
+        assert.equal(credentials.getCredential("OPENAI_API_KEY"), "sk-existing");
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
-
-  it("recovers the Ollama auth proxy on WSL when the sandbox needs proxy fronting", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-wsl-proxy-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-ollama-wsl-proxy-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
-    );
-    const proxyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
-    );
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const localInference = require(${localInferencePath});
-const proxy = require(${proxyPath});
-const topology = require(${topologyPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-
-const commands = [];
-const proxyCalls = [];
-runner.run = (command, opts = {}) => {
-  const cmd = _n(command);
-  commands.push({ command: cmd, env: opts.env || null });
-  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  const cmd = _n(command);
-  if (cmd.includes("inference") && cmd.includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: ollama-local",
-      "  Model: qwen3.5:9b",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-platform.isWsl = () => true;
-topology.shouldFrontOllamaWithProxy = () => true;
-localInference.validateLocalProvider = () => ({
-  ok: false,
-  message: "container cannot reach Ollama",
-  diagnostic: "simulated WSL native Docker reachability failure",
-});
-localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
-localInference.getOllamaWarmupCommand = () => ["true"];
-localInference.validateOllamaModel = () => ({ ok: true });
-localInference.validateOllamaModelWithToolsOverride = () => ({ ok: true });
-proxy.ensureOllamaAuthProxy = () => {
-  proxyCalls.push("ensure");
-};
-proxy.isProxyHealthy = () => {
-  proxyCalls.push("healthy");
-  return true;
-};
-proxy.getOllamaProxyToken = () => "proxy-token";
-proxy.persistAndProbeOllamaProxy = async (token) => {
-  proxyCalls.push("persist:" + token);
-};
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "qwen3.5:9b", "ollama-local");
-  console.log(JSON.stringify({ commands, proxyCalls }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("recovers the Ollama auth proxy on WSL when the sandbox needs proxy fronting", async () => {
+    const proxyCalls: string[] = [];
+    let harness: ReturnType<typeof createDirectSetupInferenceHarness>;
+    const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
+      runOpenshell: (args, options) => harness.runOpenshell(args, options),
+      isNonInteractive: () => false,
+      promptValidationRecovery: async () => "selection",
+      classifyApplyFailure: () => ({}) as never,
+      compactText: (value) => value.trim(),
+      redact: (value) => value,
+      localInferenceTimeoutSecs: 120,
+      error: vi.fn(),
+      exitProcess: () => assert.fail("unexpected exit"),
+    });
+    harness = createDirectSetupInferenceHarness({
+      runOpenshell: (args) =>
+        args.slice(0, 2).join(" ") === "provider get"
+          ? { status: 1, stdout: "", stderr: "" }
+          : undefined,
+      overrides: {
+        validateLocalProvider: () => ({
+          ok: false,
+          message: "container cannot reach Ollama",
+          diagnostic: "simulated WSL native Docker reachability failure",
+        }),
+        shouldFrontOllamaWithProxy: () => true,
+        ensureOllamaAuthProxy: () => proxyCalls.push("ensure"),
+        isProxyHealthy: () => {
+          proxyCalls.push("healthy");
+          return true;
+        },
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy: async (token: string) => {
+          proxyCalls.push(`persist:${token}`);
+        },
+        applyLocalInferenceRoute,
       },
     });
-
-    assert.equal(result.status, 0, result.stderr || result.stdout);
-    const payload = parseStdoutJson<{ commands: CommandEntry[]; proxyCalls: string[] }>(
-      result.stdout,
-    );
-    assert.deepEqual(payload.proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
-    const providerCommand = payload.commands.find(
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await harness.setupInference("test-box", "qwen3.5:9b", "ollama-local");
+    } finally {
+      warn.mockRestore();
+    }
+    assert.deepEqual(proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
+    const providerCommand = harness.commands.find(
       (entry) =>
         entry.command.includes("provider create") && entry.command.includes("ollama-local"),
     );
@@ -1515,144 +1249,58 @@ const { setupInference } = require(${onboardPath});
     assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
     assert.doesNotMatch(providerCommand.command, /proxy-token/);
     assert.ok(
-      payload.commands.some((entry) =>
+      harness.commands.some((entry) =>
         entry.command.includes("inference set --no-verify --provider ollama-local"),
       ),
       "expected ollama-local inference route to be selected",
     );
   });
-
-  it("surfaces a contextual error and exits when ollama-local inference set fails after the proxy-ready warning (#4257)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-set-fail-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "ollama-set-fail.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
-    );
-    const proxyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
-    );
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const localInference = require(${localInferencePath});
-const proxy = require(${proxyPath});
-const topology = require(${topologyPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-
-let exitCode = null;
-const realExit = process.exit;
-process.exit = (code) => {
-  if (exitCode === null) exitCode = code;
-  const err = new Error("EXIT_CALLED:" + code);
-  err.__exit = true;
-  throw err;
-};
-
-const errLog = [];
-const origErr = console.error;
-console.error = (...args) => {
-  errLog.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
-  origErr.apply(console, args);
-};
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const cmd = _n(command);
-  commands.push({ command: cmd, ignoreError: !!opts.ignoreError });
-  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
-  if (cmd.includes("inference set") && cmd.includes("ollama-local")) {
-    return { status: 7, stdout: "", stderr: "openshell: route apply failed" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  const cmd = _n(command);
-  if (cmd.includes("inference") && cmd.includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: ollama-local",
-      "  Model: qwen3.5:9b",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-platform.isWsl = () => true;
-topology.shouldFrontOllamaWithProxy = () => true;
-localInference.validateLocalProvider = () => ({
-  ok: false,
-  message: "container cannot reach Ollama",
-  diagnostic: "simulated WSL native Docker reachability failure",
-});
-localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
-localInference.getOllamaWarmupCommand = () => ["true"];
-localInference.validateOllamaModel = () => ({ ok: true });
-proxy.ensureOllamaAuthProxy = () => {};
-proxy.isProxyHealthy = () => true;
-proxy.getOllamaProxyToken = () => "proxy-token";
-proxy.persistAndProbeOllamaProxy = async () => {};
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  try {
-    await setupInference("test-box", "qwen3.5:9b", "ollama-local");
-  } catch (err) {
-    if (!err || !err.__exit) {
-      origErr("[TEST] outer error:", err && err.message);
-      process.stdout.write(JSON.stringify({ commands, errLog, exitCode, error: String(err && err.message) }) + "\n");
-      realExit.call(process, 99);
-    }
-  }
-  process.stdout.write(JSON.stringify({ commands, errLog, exitCode }) + "\n");
-  realExit.call(process, 0);
-})();
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        // Force the non-interactive branch so the bug surfaces as a hard exit
-        // rather than a recovery prompt that would hang in CI.
-        NEMOCLAW_NON_INTERACTIVE: "1",
+  it("surfaces a contextual error and exits when ollama-local inference set fails after the proxy-ready warning (#4257)", async () => {
+    const error = vi.fn();
+    const exitProcess = vi.fn((code: number): never => {
+      throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
+    });
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "provider-get",
+        matches: (command) => command.startsWith("provider get"),
+        results: [{ status: 1, stdout: "", stderr: "" }],
+      },
+      {
+        name: "ollama-inference-set",
+        matches: (command) => command.includes("inference set") && command.includes("ollama-local"),
+        results: [{ status: 7, stdout: "", stderr: "openshell: route apply failed" }],
+      },
+    ]);
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
+      overrides: {
+        isNonInteractive: () => true,
+        validateLocalProvider: () => ({
+          ok: false,
+          message: "container cannot reach Ollama",
+          diagnostic: "simulated WSL native Docker reachability failure",
+        }),
+        shouldFrontOllamaWithProxy: () => true,
+        ensureOllamaAuthProxy: () => {},
+        isProxyHealthy: () => true,
+        getOllamaProxyToken: () => "proxy-token",
+        persistAndProbeOllamaProxy: async () => {},
+        applyLocalInferenceRoute: undefined,
+        error,
+        exitProcess,
       },
     });
-
-    // Exit 0 because we override process.exit and end with realExit(0) after
-    // catching the simulated exit. Test asserts on the captured payload instead.
-    expect(result.status).toBe(0);
-    const payload = parseStdoutJson<{
-      commands: { command: string; ignoreError: boolean }[];
-      errLog: string[];
-      exitCode: number | null;
-    }>(result.stdout);
-
-    // Pre-fix, runOpenshell was called without ignoreError, so the runtime
-    // wrapper exited before we could attach context. Post-fix, the local
-    // path must use ignoreError + a contextual error message.
-    const setCmd = payload.commands.find((entry) =>
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await assert.rejects(
+        harness.setupInference("test-box", "qwen3.5:9b", "ollama-local"),
+        (error: Error & { __exit?: boolean }) => error.__exit === true,
+      );
+    } finally {
+      warn.mockRestore();
+    }
+    const setCmd = harness.commands.find((entry) =>
       entry.command.includes("inference set --no-verify --provider ollama-local"),
     );
     assert.ok(setCmd, "expected ollama-local inference set command to be issued");
@@ -1661,110 +1309,43 @@ const { setupInference } = require(${onboardPath});
       true,
       "ollama-local inference set must use ignoreError so onboard can recover",
     );
-
-    // The user must see the no-sandbox / resume-onboard guidance, not a silent stop.
-    const combinedErr = payload.errLog.join("\n");
+    const combinedErr = error.mock.calls.flat().join("\n");
+    assert.equal(exitProcess.mock.calls.length, 1);
+    assert.equal(exitProcess.mock.calls[0]?.[0], 7);
     assert.match(combinedErr, /No sandbox was created/);
     assert.match(combinedErr, /nemoclaw onboard --resume/);
-
-    // And the process should still propagate the nonzero status from openshell,
-    // not exit 0.
-    assert.equal(
-      payload.exitCode,
-      7,
-      "non-interactive onboard must exit with the openshell status",
-    );
   });
-
-  it("surfaces a contextual error and exits when vllm-local inference set fails (#4257)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-set-fail-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "vllm-set-fail.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const localInference = require(${localInferencePath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-
-let exitCode = null;
-const realExit = process.exit;
-process.exit = (code) => {
-  if (exitCode === null) exitCode = code;
-  const err = new Error("EXIT_CALLED:" + code);
-  err.__exit = true;
-  throw err;
-};
-
-const errLog = [];
-const origErr = console.error;
-console.error = (...args) => {
-  errLog.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
-  origErr.apply(console, args);
-};
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  const cmd = _n(command);
-  commands.push({ command: cmd, ignoreError: !!opts.ignoreError });
-  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
-  if (cmd.includes("inference set") && cmd.includes("vllm-local")) {
-    return { status: 13, stdout: "", stderr: "openshell: vllm route apply failed" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = () => "";
-registry.updateSandbox = () => true;
-localInference.validateLocalProvider = () => ({ ok: true });
-localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:8000/v1";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  try {
-    await setupInference("test-box", "meta-llama", "vllm-local");
-  } catch (err) {
-    if (!err || !err.__exit) {
-      origErr("[TEST] outer error:", err && err.message);
-      process.stdout.write(JSON.stringify({ commands, errLog, exitCode, error: String(err && err.message) }) + "\n");
-      realExit.call(process, 99);
-    }
-  }
-  process.stdout.write(JSON.stringify({ commands, errLog, exitCode }) + "\n");
-  realExit.call(process, 0);
-})();
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
+  it("surfaces a contextual error and exits when vllm-local inference set fails (#4257)", async () => {
+    const exitProcess = vi.fn((code: number): never => {
+      throw Object.assign(new Error(`EXIT_CALLED:${code}`), { __exit: true });
+    });
+    const commandRouter = createDirectCommandRouter([
+      {
+        name: "provider-get",
+        matches: (command) => command.startsWith("provider get"),
+        results: [{ status: 1, stdout: "", stderr: "" }],
+      },
+      {
+        name: "vllm-inference-set",
+        matches: (command) => command.includes("inference set") && command.includes("vllm-local"),
+        results: [{ status: 13, stdout: "", stderr: "openshell: vllm route apply failed" }],
+      },
+    ]);
+    const harness = createDirectSetupInferenceHarness({
+      runOpenshell: commandRouter.runOpenshell,
+      overrides: {
+        isNonInteractive: () => true,
+        applyLocalInferenceRoute: undefined,
+        exitProcess,
       },
     });
 
-    expect(result.status).toBe(0);
-    const payload = parseStdoutJson<{
-      commands: { command: string; ignoreError: boolean }[];
-      errLog: string[];
-      exitCode: number | null;
-    }>(result.stdout);
+    await assert.rejects(
+      harness.setupInference("test-box", "meta-llama", "vllm-local"),
+      (error: Error & { __exit?: boolean }) => error.__exit === true,
+    );
 
-    const setCmd = payload.commands.find((entry) =>
+    const setCmd = harness.commands.find((entry) =>
       entry.command.includes("inference set --no-verify --provider vllm-local"),
     );
     assert.ok(setCmd, "expected vllm-local inference set command to be issued");
@@ -1773,18 +1354,12 @@ const { setupInference } = require(${onboardPath});
       true,
       "vllm-local inference set must use ignoreError so onboard can recover",
     );
-
-    const combinedErr = payload.errLog.join("\n");
+    const combinedErr = harness.errors.join("\n");
+    assert.equal(exitProcess.mock.calls.length, 1);
+    assert.equal(exitProcess.mock.calls[0]?.[0], 13);
     assert.match(combinedErr, /No sandbox was created/);
     assert.match(combinedErr, /nemoclaw onboard --resume/);
-
-    assert.equal(
-      payload.exitCode,
-      13,
-      "non-interactive onboard must exit with the openshell status",
-    );
   });
-
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));
@@ -1954,414 +1529,190 @@ console.log(JSON.stringify({
     }
   });
 
-  it("uses native Anthropic provider creation without embedding the secret in argv", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-anthropic-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  it("uses native Anthropic provider creation without embedding the secret in argv", async () => {
+    await withProcessEnv({ ANTHROPIC_API_KEY: "sk-ant-TEST-NOT-A-REAL-VALUE" }, async () => {
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 1, stdout: "", stderr: "" }
+            : undefined,
+      });
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+      await harness.setupInference(
+        "test-box",
+        "claude-sonnet-4-5",
+        "anthropic-prod",
+        "https://api.anthropic.com",
+        "ANTHROPIC_API_KEY",
+      );
 
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  // provider-get returns not-found so we exercise the create path
-  if (_n(command).includes("provider get")) return { status: 1 };
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: anthropic-prod",
-      "  Model: claude-sonnet-4-5",
-      "  Version: 1",
-    ].join("\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.ANTHROPIC_API_KEY = "sk-ant-TEST-NOT-A-REAL-VALUE";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "claude-sonnet-4-5", "anthropic-prod", "https://api.anthropic.com", "ANTHROPIC_API_KEY");
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      const commands = harness.commands;
+      assert.equal(commands.length, 4);
+      assert.match(commands[0].command, /gateway select nemoclaw/);
+      assert.match(commands[1].command, /provider get/);
+      assert.match(commands[2].command, /--type anthropic/);
+      assert.match(commands[2].command, /--credential ANTHROPIC_API_KEY/);
+      assert.doesNotMatch(commands[2].command, /sk-ant-TEST-NOT-A-REAL-VALUE/);
+      assert.match(commands[3].command, /--provider anthropic-prod/);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get/);
-    assert.match(commands[2].command, /--type anthropic/);
-    assert.match(commands[2].command, /--credential ANTHROPIC_API_KEY/);
-    assert.doesNotMatch(commands[2].command, /sk-ant-TEST-NOT-A-REAL-VALUE/);
-    assert.match(commands[3].command, /--provider anthropic-prod/);
   });
+  it("updates OpenAI-compatible providers without passing an unsupported --type flag", async () => {
+    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 0, stdout: "", stderr: "" }
+            : undefined,
+      });
 
-  it("updates OpenAI-compatible providers without passing an unsupported --type flag", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-update-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-openai-update-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+      await harness.setupInference(
+        "test-box",
+        "gpt-5.4",
+        "openai-api",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+      );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-    ].join("\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      const commands = harness.commands;
+      assert.equal(commands.length, 4);
+      assert.match(commands[0].command, /gateway select nemoclaw/);
+      assert.match(commands[1].command, /provider get/);
+      assert.match(commands[2].command, /provider update openai-api/);
+      assert.doesNotMatch(commands[2].command, /--type/);
+      assert.match(commands[3].command, /inference set --no-verify/);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 4);
-    assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get/);
-    assert.match(commands[2].command, /provider update openai-api/);
-    assert.doesNotMatch(commands[2].command, /--type/);
-    assert.match(commands[3].command, /inference set --no-verify/);
   });
+  it("re-prompts for credentials when openshell inference set fails with authorization errors", async () => {
+    await withProcessEnv({ OPENAI_API_KEY: "sk-bad" }, async () => {
+      const commandRouter = createDirectCommandRouter([
+        {
+          name: "provider-get",
+          matches: (command) => command.startsWith("provider get"),
+          results: [{ status: 0, stdout: "", stderr: "" }],
+        },
+        {
+          name: "inference-set",
+          matches: (command) => command.includes("inference set"),
+          results: [{ status: 1, stdout: "", stderr: "HTTP 403: forbidden" }, undefined],
+        },
+      ]);
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: commandRouter.runOpenshell,
+        overrides: {
+          promptValidationRecovery: async () => {
+            process.env.OPENAI_API_KEY = "sk-good";
+            return "retry";
+          },
+        },
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        await harness.setupInference(
+          "test-box",
+          "gpt-5.4",
+          "openai-api",
+          "https://api.openai.com/v1",
+          "OPENAI_API_KEY",
+        );
+      } finally {
+        error.mockRestore();
+      }
 
-  it("re-prompts for credentials when openshell inference set fails with authorization errors", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-auth-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const credentials = require(${credentialsPath});
-
-const commands = [];
-const answers = ["retry", "sk-good"];
-let inferenceSetCalls = 0;
-
-credentials.prompt = async () => answers.shift() || "";
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  if (_n(command).includes("inference set")) {
-    inferenceSetCalls += 1;
-    if (inferenceSetCalls === 1) {
-      return { status: 1, stdout: "", stderr: "HTTP 403: forbidden" };
-    }
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-process.env.OPENAI_API_KEY = "sk-bad";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify({ commands, key: process.env.OPENAI_API_KEY, inferenceSetCalls }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      assert.equal(process.env.OPENAI_API_KEY, "sk-good");
+      assert.equal(commandRouter.callCount("inference-set"), 2);
+      const providerEnvs = harness.commands
+        .filter((entry) => entry.command.includes("provider"))
+        .map((entry) => entry.env?.OPENAI_API_KEY)
+        .filter(Boolean);
+      assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      key: string;
-      inferenceSetCalls: number;
-      commands: CommandEntry[];
-    }>(result.stdout);
-    assert.equal(payload.key, "sk-good");
-    assert.equal(payload.inferenceSetCalls, 2);
-    const providerEnvs = payload.commands
-      .filter((entry: CommandEntry) => entry.command.includes("provider"))
-      .map((entry: CommandEntry) => entry.env && entry.env.OPENAI_API_KEY)
-      .filter(Boolean);
-    assert.deepEqual(providerEnvs, ["sk-bad", "sk-good"]);
   });
+  it("returns control to provider selection when inference apply recovery chooses back", async () => {
+    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+      const commandRouter = createDirectCommandRouter([
+        {
+          name: "provider-get",
+          matches: (command) => command.startsWith("provider get"),
+          results: [{ status: 0, stdout: "", stderr: "" }],
+        },
+        {
+          name: "inference-set",
+          matches: (command) => command.includes("inference set"),
+          results: [{ status: 1, stdout: "", stderr: "HTTP 404: model not found" }],
+        },
+      ]);
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: commandRouter.runOpenshell,
+        overrides: { promptValidationRecovery: async () => "selection" },
+      });
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      let result: Awaited<ReturnType<SetupInference>>;
+      try {
+        result = await harness.setupInference(
+          "test-box",
+          "gpt-5.4",
+          "openai-api",
+          "https://api.openai.com/v1",
+          "OPENAI_API_KEY",
+        );
+      } finally {
+        error.mockRestore();
+      }
 
-  it("returns control to provider selection when inference apply recovery chooses back", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const credentials = require(${credentialsPath});
-
-const commands = [];
-credentials.prompt = async () => "back";
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  if (_n(command).includes("inference set")) {
-    return { status: 1, stdout: "", stderr: "HTTP 404: model not found" };
-  }
-  return { status: 0, stdout: "", stderr: "" };
-};
-runner.runCapture = () => "";
-registry.updateSandbox = () => true;
-
-process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  const result = await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify({ result, commands }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      assert.deepEqual(result, { retry: "selection" });
+      assert.equal(
+        harness.commands.filter((entry) => entry.command.includes("inference set")).length,
+        1,
+      );
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      result: { retry: "selection" };
-      commands: CommandEntry[];
-    }>(result.stdout);
-    assert.deepEqual(payload.result, { retry: "selection" });
-    assert.equal(
-      payload.commands.filter((entry: CommandEntry) => entry.command.includes("inference set"))
-        .length,
-      1,
-    );
   });
-
-  it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
+  it("migrates a legacy credentials.json into env so setupInference can register the provider", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "setup-resume-credential-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    // Pre-seed a pre-fix plaintext credentials.json. hydrateCredentialEnv
-    // stages it non-destructively into process.env via
-    // stageLegacyCredentialsToEnv(); the secure unlink only runs from the
-    // post-onboard cleanup gate when the staged values are confirmed
-    // migrated, so the legacy file must still exist after this test's
-    // setupInference call (asserted further down).
     const legacyDir = path.join(tmpDir, ".nemoclaw");
+    const legacyFile = path.join(legacyDir, "credentials.json");
     fs.mkdirSync(legacyDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
-      path.join(legacyDir, "credentials.json"),
+      legacyFile,
       JSON.stringify({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-STORED-KEY" }),
       { mode: 0o600 },
     );
+    const credentialEnv =
+      require("../src/lib/onboard/credential-env") as typeof import("../src/lib/onboard/credential-env.js");
+    try {
+      await withProcessEnv({ HOME: tmpDir, OPENAI_API_KEY: undefined }, async () => {
+        const harness = createDirectSetupInferenceHarness({
+          runOpenshell: (args) =>
+            args.slice(0, 2).join(" ") === "provider get"
+              ? { status: 0, stdout: "", stderr: "" }
+              : undefined,
+          overrides: { hydrateCredentialEnv: credentialEnv.hydrateCredentialEnv },
+        });
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
+        await harness.setupInference(
+          "test-box",
+          "gpt-5.4",
+          "openai-api",
+          "https://api.openai.com/v1",
+          "OPENAI_API_KEY",
+        );
 
-    const legacyFilePath = JSON.stringify(path.join(legacyDir, "credentials.json"));
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const fs = require("node:fs");
-
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
-      "Gateway inference:",
-      "",
-      "  Route: inference.local",
-      "  Provider: openai-api",
-      "  Model: gpt-5.4",
-      "  Version: 1",
-    ].join("\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-
-delete process.env.OPENAI_API_KEY;
-
-const { setupInference } = require(${onboardPath});
-
-(async () => {
-  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify({
-    commands,
-    openai: process.env.OPENAI_API_KEY || null,
-    legacyFileGone: !fs.existsSync(${legacyFilePath}),
-  }));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{
-      openai: string;
-      commands: CommandEntry[];
-      legacyFileGone: boolean;
-    }>(result.stdout);
-    assert.equal(payload.openai, "sk-TEST-NOT-A-REAL-STORED-KEY");
-    // setupInference's hydrateCredentialEnv only stages the legacy file
-    // (non-destructive). The secure unlink runs only after a full successful
-    // onboard, so an interrupted run can be retried without losing the
-    // user's only copy of their credentials.
-    assert.equal(
-      payload.legacyFileGone,
-      false,
-      "legacy credentials.json must survive the staging-only hydrate path",
-    );
-    // commands[0]=gateway select, [1]=provider get, [2]=provider update
-    const providerUpdate = payload.commands[2];
-    assert.ok(providerUpdate, "expected provider update command");
-    assert.equal(providerUpdate.env?.OPENAI_API_KEY, "sk-TEST-NOT-A-REAL-STORED-KEY");
-    assert.doesNotMatch(providerUpdate.command, /sk-TEST-NOT-A-REAL-STORED-KEY/);
+        assert.equal(process.env.OPENAI_API_KEY, "sk-TEST-NOT-A-REAL-STORED-KEY");
+        assert.equal(
+          fs.existsSync(legacyFile),
+          true,
+          "legacy credentials.json must survive the staging-only hydrate path",
+        );
+        const providerUpdate = harness.commands.find((entry) =>
+          entry.command.includes("provider update openai-api"),
+        );
+        assert.ok(providerUpdate, "expected provider update command");
+        assert.equal(providerUpdate.env?.OPENAI_API_KEY, "sk-TEST-NOT-A-REAL-STORED-KEY");
+        assert.doesNotMatch(providerUpdate.command, /sk-TEST-NOT-A-REAL-STORED-KEY/);
+      });
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
-
   it("drops stale local sandbox registry entries when the live sandbox is gone", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-sandbox-"));
@@ -4528,30 +3879,8 @@ const { createSandbox } = require(${onboardPath});
     );
   });
 
-  it("accepts gateway inference when system inference is separately not configured", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-get-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "inference-get-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
+  it("accepts gateway inference when system inference is separately not configured", async () => {
+    const output = [
       "Gateway inference:",
       "",
       "  Route: inference.local",
@@ -4562,66 +3891,32 @@ runner.runCapture = (command) => {
       "System inference:",
       "",
       "  Not configured",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
-process.env.OPENSHELL_GATEWAY = "nemoclaw";
+    ].join("\n");
+    const route = createInferenceRouteHelpers(() => output);
 
-const { setupInference } = require(${onboardPath});
+    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 0, stdout: "", stderr: "" }
+            : undefined,
+        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
+      });
 
-(async () => {
-  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
+      await harness.setupInference(
+        "test-box",
+        "gpt-5.4",
+        "openai-api",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+      );
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      // gateway select + provider get + provider update + inference set
+      assert.equal(harness.commands.length, 4);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const commands = parseStdoutJson<string[]>(result.stdout);
-    // gateway select + provider get + provider update + inference set
-    assert.equal(commands.length, 4);
   });
-
-  it("accepts gateway inference output that omits the Route line", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-route-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "inference-route-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOkOpenshell(fakeBin);
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
-const registry = require(${registryPath});
-const commands = [];
-runner.run = (command, opts = {}) => {
-  commands.push({ command: _n(command), env: opts.env || null });
-  return { status: 0 };
-};
-runner.runCapture = (command) => {
-  if (_n(command).includes("inference") && _n(command).includes("get")) {
-    return [
+  it("accepts gateway inference output that omits the Route line", async () => {
+    const output = [
       "Gateway inference:",
       "",
       "  Provider: openai-api",
@@ -4631,42 +3926,30 @@ runner.runCapture = (command) => {
       "System inference:",
       "",
       "  Not configured",
-    ].join("\\n");
-  }
-  return "";
-};
-registry.updateSandbox = () => true;
-process.env.OPENAI_API_KEY = "sk-TEST-NOT-A-REAL-VALUE";
-process.env.OPENSHELL_GATEWAY = "nemoclaw";
+    ].join("\n");
+    const route = createInferenceRouteHelpers(() => output);
 
-const { setupInference } = require(${onboardPath});
+    await withProcessEnv({ OPENAI_API_KEY: "sk-TEST-NOT-A-REAL-VALUE" }, async () => {
+      const harness = createDirectSetupInferenceHarness({
+        runOpenshell: (args) =>
+          args.slice(0, 2).join(" ") === "provider get"
+            ? { status: 0, stdout: "", stderr: "" }
+            : undefined,
+        overrides: { verifyInferenceRoute: route.verifyInferenceRoute },
+      });
 
-(async () => {
-  await setupInference("test-box", "gpt-5.4", "openai-api", "https://api.openai.com/v1", "OPENAI_API_KEY");
-  console.log(JSON.stringify(commands));
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
+      await harness.setupInference(
+        "test-box",
+        "gpt-5.4",
+        "openai-api",
+        "https://api.openai.com/v1",
+        "OPENAI_API_KEY",
+      );
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+      // gateway select + provider get + provider update + inference set
+      assert.equal(harness.commands.length, 4);
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const commands = parseStdoutJson<string[]>(result.stdout);
-    // gateway select + provider get + provider update + inference set
-    assert.equal(commands.length, 4);
   });
-
   it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
     // Structural check: verify the constant matches the Dockerfile default
     // and does NOT reference the openshell-community registry.

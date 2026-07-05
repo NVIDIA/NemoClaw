@@ -37,6 +37,35 @@ export function makeFakeCurlScript(bodyLogic: string): string {
   return `${FAKE_CURL_HEADER}${bodyLogic}`;
 }
 
+// Fake curl for the strict Responses API compatibility check. It records each
+// requested URL, returns a successful Responses payload without a tool call,
+// then returns a successful Chat Completions payload so callers can assert the
+// exact fallback order without duplicating shell parsing in a test body.
+export function makeResponsesFallbackUrlRecordingFakeCurlScript(): string {
+  return `#!/usr/bin/env bash
+outfile=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w|-d|--config) shift 2 ;;
+    http://*|https://*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+n=$(cat "${HARNESS_COUNTER}")
+n=$((n + 1))
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$url" > "${HARNESS_TMPDIR}/request-$n-url.txt"
+if echo "$url" | grep -q '/responses$'; then
+  printf '%s' '{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}' > "$outfile"
+else
+  printf '%s' '{"choices":[{"message":{"content":"OK"}}]}' > "$outfile"
+fi
+printf '200'
+`;
+}
+
 // Restore an env var to its pre-test value without branching at the call
 // site (kept identical to the helper the test file uses so restore semantics
 // are unchanged).

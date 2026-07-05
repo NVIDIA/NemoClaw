@@ -142,6 +142,28 @@ describe("sandbox oclif command adapters", () => {
     }
   });
 
+  it("rejects the removed connect permission bypass before dispatch", async () => {
+    const previousExitCode = process.exitCode;
+    const lines: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((line = "") => {
+      lines.push(String(line));
+    });
+    process.exitCode = undefined;
+
+    try {
+      await ConnectCliCommand.run(["alpha", "--dangerously-skip-permissions"], rootDir);
+
+      expect(lines.join("\n")).toContain(
+        "--dangerously-skip-permissions was removed; use shields commands instead.",
+      );
+      expect(process.exitCode).toBe(1);
+      expect(mocks.connectSandbox).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("threads --cleanup-gateway / --no-cleanup-gateway through destroy (#2166)", async () => {
     const originalCleanupGatewayEnv = process.env.NEMOCLAW_CLEANUP_GATEWAY;
     delete process.env.NEMOCLAW_CLEANUP_GATEWAY;

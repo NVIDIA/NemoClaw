@@ -76,8 +76,15 @@ describe("assessAmbientRecreateEnv", () => {
     const result = assessAmbientRecreateEnv("openclaw", {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
+      NEMOCLAW_PREFERRED_API: "chat-completions",
+      NEMOCLAW_REASONING: "true",
     });
-    expect(result.presentVars).toEqual(["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER_KEY"]);
+    expect(result.presentVars).toEqual([
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_PREFERRED_API",
+      "NEMOCLAW_REASONING",
+    ]);
     expect(result.agentMismatch).toEqual({
       envAgent: "langchain-deepagents-code",
       registryAgent: "openclaw",

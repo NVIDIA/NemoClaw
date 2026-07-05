@@ -913,6 +913,7 @@ describe("Hermes supervised auxiliary recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("stop:4242:777\nclear:gateway:\n");
+    expect(result.stdout).not.toContain("unexpected-signal");
   });
 
   it("does not accept a tracked-stop success while the numeric PID remains live", () => {

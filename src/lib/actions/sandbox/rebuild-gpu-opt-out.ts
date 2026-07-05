@@ -11,6 +11,7 @@ import type {
   PreparedDcodeRebuildHandoff,
   PreparedImageRebuildHandoff,
 } from "../../onboard/prepared-dcode-rebuild";
+import type { RebuildRouteHandoff } from "../../onboard/rebuild-route-handoff";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
@@ -91,6 +92,7 @@ export type RebuildRecreateOnboardOpts = {
   targetGatewayPort: number;
   onboardLockAlreadyHeld: true;
   preparedDcodeRebuild?: PreparedDcodeRebuildHandoff;
+  rebuildRegistryInferenceRoute?: RebuildRouteHandoff;
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;

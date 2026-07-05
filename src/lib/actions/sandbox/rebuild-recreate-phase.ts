@@ -27,6 +27,7 @@ import {
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
+import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
 
@@ -48,7 +49,7 @@ export interface RebuildRecreatePhaseInput {
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   recoveryRecreate: boolean;
-  recoveryRegistrySnapshot: ReturnType<typeof registry.load> | null;
+  registryRollback: RebuildRegistryRollback;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
@@ -82,7 +83,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
     recoveryRecreate,
-    recoveryRegistrySnapshot,
+    registryRollback,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
@@ -205,18 +206,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       /* best effort */
     }
 
-    const snapshotEntry = recoveryRegistrySnapshot?.sandboxes?.[sandboxName];
-    if (recoveryRecreate && snapshotEntry) {
-      try {
-        registry.restoreSandboxEntry(snapshotEntry, {
-          reclaimDefault:
-            recoveryRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
-        });
-        log("Recovery recreate failed: restored preserved registry entry for retry");
-      } catch (error) {
-        log(`Failed to restore registry entry after recovery recreate failure: ${String(error)}`);
-      }
-    }
+    registryRollback.restoreForRetry();
     restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
 
     console.error("");

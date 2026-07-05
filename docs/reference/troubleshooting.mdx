@@ -1452,8 +1452,9 @@ Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `T
 Keep the aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
 To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
-For a reproducible live check that also exercises an alias, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `TELEGRAM_BOT_TOKEN_REAL`, either `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`; when prompted, send a fresh direct message from that Telegram client.
-The check waits for `[telegram] [default] inbound update received` and `[telegram] [default] outbound sendMessage attempted` in `/tmp/gateway.log`.
+For a reproducible outbound runtime check, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `NVIDIA_INFERENCE_API_KEY` set.
+The check imports the installed OpenClaw Telegram `runtime-api.js`, calls `sendMessageTelegram` through an OpenShell-rewritten credential against a host-side fake Telegram API, and verifies the captured chat, text, token rewrite, and absence of unresolved placeholders.
+When `TELEGRAM_BOT_TOKEN_REAL` and `TELEGRAM_CHAT_ID_E2E` are also set, the same lane performs an additional real outbound send; it does not prompt for or claim an interactive inbound reply.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 

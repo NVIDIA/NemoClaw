@@ -52,6 +52,7 @@ type RegistryCredentialBinding = {
 };
 
 type RegistrySandboxEntry = {
+  imageTag?: unknown;
   messaging?: {
     plan?: {
       credentialBindings?: RegistryCredentialBinding[];
@@ -99,6 +100,13 @@ function readSandboxRegistryEntry(): RegistrySandboxEntry {
   expect(entry, `registry entry ${SANDBOX_NAME} missing`).toBeTruthy();
   if (!entry) throw new Error(`registry entry ${SANDBOX_NAME} missing`);
   return entry;
+}
+
+function sandboxImageTag(): string {
+  const imageTag = readSandboxRegistryEntry().imageTag;
+  const normalizedImageTag = typeof imageTag === "string" ? imageTag.trim() : "";
+  expect(normalizedImageTag, "registry imageTag missing").not.toBe("");
+  return normalizedImageTag;
 }
 
 function credentialBindings(): RegistryCredentialBinding[] {
@@ -349,6 +357,29 @@ liveTest(
       NEMOCLAW_RECREATE_SANDBOX: "1",
     });
     expect(first.exitCode, resultText(first)).toBe(0);
+
+    // OpenShell removes each deployment image during credential-driven
+    // recreation. Retain one test-owned tag so Docker can reuse the identical
+    // OpenClaw/plugin layers across the three rotations; token values remain in
+    // gateway providers and are never baked into this image.
+    const cacheImageTag = `nemoclaw-token-rotation-cache:${process.pid}`;
+    const retainBuildCache = await host.command(
+      "docker",
+      ["image", "tag", sandboxImageTag(), cacheImageTag],
+      {
+        artifactName: "phase-1-retain-build-cache",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    expect(retainBuildCache.exitCode, resultText(retainBuildCache)).toBe(0);
+    cleanup.add("remove token-rotation build cache tag", async () => {
+      await host.command("docker", ["image", "rm", cacheImageTag], {
+        artifactName: "cleanup-token-rotation-build-cache",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      });
+    });
 
     const openshellVersion = await host.command("openshell", ["--version"], {
       artifactName: "phase-0-openshell-version-token-rotation",

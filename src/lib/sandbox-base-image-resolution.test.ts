@@ -359,6 +359,24 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("prefers an explicitly trusted pin over an available source-SHA image", () => {
+    dockerMocks.imageInspect.mockReturnValue({ status: 0 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
+    });
+
+    expect(resolved).toMatchObject({ ref: REF, source: "pinned" });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledTimes(1);
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("rebuilds changed inputs before using a Dockerfile-pinned baseline (#4680)", () => {
     sourceMocks.inputsChanged.mockReturnValue(true);
     dockerMocks.imageInspect.mockReturnValue({ status: 1 });

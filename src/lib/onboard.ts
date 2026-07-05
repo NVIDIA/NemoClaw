@@ -29,6 +29,7 @@ const {
   createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
   requireProviderChoice,
+  resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
 const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
@@ -198,6 +199,7 @@ const {
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
+const recoveredProviderReuse: typeof import("./onboard/recovered-provider-reuse") = require("./onboard/recovered-provider-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -255,6 +257,8 @@ const { DEFAULT_CLOUD_MODEL, getProviderSelectionConfig, parseGatewayInference }
 
 const onboardProviders = require("./onboard/providers");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
+const setupInferenceFactory: typeof import("./onboard/setup-inference") =
+  require("./onboard/setup-inference");
 const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
@@ -391,9 +395,6 @@ const {
 const {
   createValidationRecoveryPromptHelpers,
 }: typeof import("./onboard/validation-recovery-prompt") = require("./onboard/validation-recovery-prompt");
-const {
-  createLocalInferenceRouteApplier,
-}: typeof import("./onboard/local-inference-route") = require("./onboard/local-inference-route");
 const {
   createOpenshellCliHelpers,
 }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
@@ -835,6 +836,8 @@ const {
   checkHermesProviderStoreReachable,
 } = hermesAuth.createHermesAuthHelpers({
   isNonInteractive,
+  error: (message) => console.error(message),
+  exitProcess: (code) => process.exit(code),
   note,
   prompt,
   getNavigationChoice,
@@ -854,16 +857,6 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
   getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
   exitOnboardFromPrompt,
-});
-
-const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
-  runOpenshell,
-  isNonInteractive,
-  promptValidationRecovery,
-  classifyApplyFailure,
-  compactText,
-  redact,
-  localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
 });
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
@@ -3116,12 +3109,11 @@ async function createSandbox(...args: CreateSandboxArgs): Promise<string> {
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
+type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
-const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
-  providerRecovery.createProviderRecoveryHelpers({
-    parseGatewayInference,
-    runCaptureOpenshell,
-  });
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
+  readRecordedInferenceRoute, readRecordedProviderEndpoints } = providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell });
 
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
@@ -3223,13 +3215,8 @@ type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
-type RemoteProviderSelectionArgs = {
-  selected: ProviderChoice;
-  requestedModel: string | null;
-  recoveredFromSandbox: boolean;
-  recoveredModel: string | null;
-  sandboxName: string | null;
-};
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null };
 
 async function handleVllmSelection(
   state: SetupNimSelectionState,
@@ -3490,10 +3477,8 @@ async function handleNimLocalSelection(
   return "selected";
 }
 
-async function handleRemoteProviderSelection(
-  args: RemoteProviderSelectionArgs,
-  state: SetupNimSelectionState,
-): Promise<SetupNimSelectionResult> {
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, state: SetupNimSelectionState, recoveredRegistryRoute: RebuildRouteHandoff["route"] | null): Promise<SetupNimSelectionResult> {
   const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName } = args;
   const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
   state.provider = remoteConfig.providerName;
@@ -3503,16 +3488,15 @@ async function handleRemoteProviderSelection(
 
   if (selected.key === "custom" || selected.key === "anthropicCompatible") {
     const kind = selected.key === "custom" ? "openai" : "anthropic";
-    const _envUrl = (process.env.NEMOCLAW_ENDPOINT_URL || "").trim();
-    const endpointInput = isNonInteractive()
-      ? _envUrl
-      : (await prompt(
-          _envUrl
-            ? `  ${kind === "openai" ? "OpenAI" : "Anthropic"}-compatible base URL [${_envUrl}]: `
-            : kind === "openai"
-              ? "  OpenAI-compatible base URL (e.g., https://openrouter.ai): "
-              : "  Anthropic-compatible base URL (e.g., https://proxy.example.com): ",
-        )) || _envUrl;
+    const endpointInput = await resolveCompatibleEndpointInput({
+      kind,
+      envUrl: process.env.NEMOCLAW_ENDPOINT_URL,
+      recoveredEndpointUrl: recoveredFromSandbox
+        ? (recoveredRegistryRoute?.endpointUrl ?? readRecordedEndpointUrl(sandboxName))
+        : null,
+      nonInteractive: isNonInteractive(),
+      prompt,
+    });
     const navigation = getNavigationChoice(endpointInput);
     if (navigation === "back") {
       console.log("  Returning to provider selection.");
@@ -3618,12 +3602,14 @@ async function handleRemoteProviderSelection(
   if (selected.key === "build") {
     providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
-      state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
+      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
         helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
         recoveredFromSandbox,
         providerExistsInGateway,
       });
+      state.skipHostInferenceSmoke = reuseGatewayCredential;
+      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
     } else {
       await ensureApiKey();
     }
@@ -3662,6 +3648,9 @@ async function handleRemoteProviderSelection(
       isNonInteractive,
       promptInputModel,
       replaceNamedCredential,
+      exitProcess: (code) => process.exit(code),
+      error: (message) => console.error(message),
+      log: (message) => console.log(message),
     });
     if (bedrockSelection.action === "retry-selection") {
       console.log("  Returning to provider selection.");
@@ -3674,15 +3663,11 @@ async function handleRemoteProviderSelection(
       return "selected";
     }
     if (isNonInteractive()) {
-      if (
-        !resolveProviderCredential(selectedCredentialEnv) &&
-        !providerExistsInGateway(state.provider)
-      ) {
-        console.error(
-          `  Provider credential (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
-        );
-        process.exit(1);
-      }
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+        { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
+        { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell), note },
+      );
     } else {
       const credentialResult = await ensureNamedCredential(
         selectedCredentialEnv,
@@ -3731,12 +3716,14 @@ async function handleRemoteProviderSelection(
         return "retry-selection";
       }
 
-      const validationResult = await validateSelectedRemoteModel({
-        selected,
-        remoteConfig,
-        state,
-        selectedCredentialEnv,
-      });
+      const validationResult = state.reuseGatewayCredentialWithoutLocalKey
+        ? "selected"
+        : await validateSelectedRemoteModel({
+            selected,
+            remoteConfig,
+            state,
+            selectedCredentialEnv,
+          });
       if (validationResult === "selected") break;
       if (validationResult === "retry-selection") return "retry-selection";
     }
@@ -3773,12 +3760,8 @@ async function handleRemoteProviderSelection(
   return "selected";
 }
 
-async function setupNim(
-  gpu: ReturnType<typeof nim.detectGpu>,
-  sandboxName: string | null = null,
-  agent: AgentDefinition | null = null,
-  recoverProvider = true,
-): Promise<ProviderSelectionResult> {
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: string | null = null, agent: AgentDefinition | null = null, recoverProvider = true, rebuildRegistryInferenceRoute: OnboardOptions["rebuildRegistryInferenceRoute"] = null): Promise<ProviderSelectionResult> {
   step(3, 8, "Configuring inference provider");
 
   let model: string | typeof BACK_TO_SELECTION | null = null;
@@ -3791,7 +3774,7 @@ async function setupNim(
   let preferredInferenceApi: string | null = null;
   let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
-  let skipHostInferenceSmoke = false;
+  let reuseGatewayCredential = false;
   const nvidiaFeaturedModels = createNvidiaFeaturedModelSession();
 
   const providerHostState = detectInferenceProviderHostState({
@@ -3820,6 +3803,8 @@ async function setupNim(
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
+  // biome-ignore format: keep the monolithic entrypoint net-neutral; route logic lives in rebuild-route-handoff.ts.
+  const recoveredRegistryRoute = rebuildRegistryInferenceRoute?.sandboxName === sandboxName && rebuildRegistryInferenceRoute.route.source === "registry" ? rebuildRegistryInferenceRoute.route : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
   const blueprintRouterCfg = loadBlueprintProfile("routed");
@@ -3876,9 +3861,11 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          // biome-ignore format: the pre-delete route remains authoritative after its registry row is removed.
+          readRecordedProvider: recoverProvider ? (name) => recoveredRegistryRoute?.provider ?? readRecordedProvider(name) : () => null,
           readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
-          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
+          // biome-ignore format: provider and model must come from the same validated rebuild handoff.
+          readRecordedModel: recoverProvider ? (name) => recoveredRegistryRoute?.model ?? readRecordedModel(name) : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -3928,9 +3915,11 @@ async function setupNim(
           allowToolsIncompatible,
           nvidiaFeaturedModels,
         };
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
           state,
+          recoveredRegistryRoute,
         );
         ({
           model,
@@ -3943,7 +3932,7 @@ async function setupNim(
           allowToolsIncompatible,
         } = state);
         compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
-        skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
+        reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "nim-local") {
@@ -4160,141 +4149,74 @@ async function setupNim(
     compatibleEndpointReasoning,
     nimContainer,
     allowToolsIncompatible,
-    skipHostInferenceSmoke,
+    skipHostInferenceSmoke: reuseGatewayCredential,
+    reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
   };
 }
 
 // ── Step 4: Inference provider ───────────────────────────────────
 
-async function setupInference(
-  sandboxName: string | null,
-  model: string,
-  provider: string,
-  endpointUrl: string | null = null,
-  credentialEnv: string | null = null,
-  hermesAuthMethod: HermesAuthMethod | string | null = null,
-  hermesToolGateways: string[] = [],
-  options: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean } = {},
-): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
-  step(4, 8, "Setting up inference provider");
-  runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
-
-  const commonDeps = {
+function getSetupInferenceDeps(): SetupInferenceDeps {
+  return {
+    step,
+    getGatewayName: () => GATEWAY_NAME,
     runOpenshell,
     upsertProvider,
     verifyInferenceRoute,
     verifyOnboardInferenceSmoke,
     isNonInteractive,
-    registry,
+    updateSandbox: registry.updateSandbox,
+    hermesProviderAuth,
+    getHermesToolGatewayBroker,
+    providerExistsInGateway,
+    normalizeHermesAuthMethod,
+    resolveHermesNousApiKey,
+    checkHermesProviderStoreReachable,
+    hermesAuthMethodLabel,
+    hermesConstants: {
+      HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+      HERMES_AUTH_METHOD_API_KEY,
+      HERMES_AUTH_METHOD_OAUTH,
+    },
+    requireValue,
+    redact,
+    compactText,
+    REMOTE_PROVIDER_CONFIG,
+    hydrateCredentialEnv,
+    promptValidationRecovery,
+    classifyApplyFailure,
+    localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
+    bedrockRuntimeOnboard,
+    validateLocalProvider,
+    getLocalProviderHealthCheck,
+    getLocalProviderBaseUrl,
+    run,
+    vllmLocalCredentialEnv: VLLM_LOCAL_CREDENTIAL_ENV,
+    getOllamaWarmupCommand,
+    shouldFrontOllamaWithProxy,
+    ensureOllamaAuthProxy,
+    isProxyHealthy,
+    getOllamaProxyToken,
+    persistAndProbeOllamaProxy,
+    localInference,
+    ollamaProxyCredentialEnv: OLLAMA_PROXY_CREDENTIAL_ENV,
+    isRoutedInferenceProvider,
+    reconcileModelRouter,
+    routedInference,
+    log: (message: string) => console.log(message),
+    error: (message: string) => console.error(message),
+    exitProcess: (code: number): never => process.exit(code),
   };
-
-  if (provider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    return inferenceProviders.setupHermesProviderInference(
-      {
-        sandboxName,
-        model,
-        provider,
-        endpointUrl,
-        credentialEnv,
-        hermesAuthMethod,
-        hermesToolGateways,
-      },
-      {
-        ...commonDeps,
-        hermesProviderAuth,
-        getHermesToolGatewayBroker,
-        providerExistsInGateway,
-        normalizeHermesAuthMethod,
-        resolveHermesNousApiKey,
-        checkHermesProviderStoreReachable,
-        hermesAuthMethodLabel,
-        hermesConstants: {
-          HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
-          HERMES_AUTH_METHOD_API_KEY,
-          HERMES_AUTH_METHOD_OAUTH,
-        },
-        requireValue,
-        redact,
-        compactText,
-      },
-    );
-  }
-
-  if (inferenceProviders.isRemoteProviderName(provider)) {
-    const outcome = await inferenceProviders.setupRemoteProviderInference(
-      { sandboxName, model, provider, endpointUrl, credentialEnv },
-      {
-        ...commonDeps,
-        REMOTE_PROVIDER_CONFIG,
-        hydrateCredentialEnv,
-        promptValidationRecovery,
-        classifyApplyFailure,
-        LOCAL_INFERENCE_TIMEOUT_SECS,
-        bedrockRuntimeOnboard,
-        redact,
-        compactText,
-      },
-    );
-    if (outcome.done) return outcome.result;
-  } else if (provider === "vllm-local") {
-    const outcome = await inferenceProviders.setupVllmLocalInference(
-      { model, provider },
-      {
-        ...commonDeps,
-        validateLocalProvider,
-        getLocalProviderHealthCheck,
-        getLocalProviderBaseUrl,
-        applyLocalInferenceRoute,
-        run,
-        VLLM_LOCAL_CREDENTIAL_ENV,
-      },
-    );
-    if (outcome.done) return outcome.result;
-  } else if (provider === "ollama-local") {
-    const outcome = await inferenceProviders.setupOllamaLocalInference(
-      { model, provider, allowToolsIncompatible: options.allowToolsIncompatible === true },
-      {
-        ...commonDeps,
-        validateLocalProvider,
-        getLocalProviderBaseUrl,
-        applyLocalInferenceRoute,
-        getOllamaWarmupCommand,
-        run,
-        shouldFrontOllamaWithProxy,
-        ensureOllamaAuthProxy,
-        isProxyHealthy,
-        getOllamaProxyToken,
-        persistAndProbeOllamaProxy,
-        localInference,
-        OLLAMA_PROXY_CREDENTIAL_ENV,
-      },
-    );
-    if (outcome.done) return outcome.result;
-  } else if (isRoutedInferenceProvider(provider)) {
-    await inferenceProviders.setupRoutedInference(
-      { model, provider, endpointUrl, credentialEnv },
-      {
-        ...commonDeps,
-        reconcileModelRouter,
-        routedInference,
-        hydrateCredentialEnv,
-      },
-    );
-  } else {
-    console.error(`  Unsupported provider configuration: ${provider}`);
-    process.exit(1);
-  }
-
-  verifyInferenceRoute(provider, model);
-  if (options.skipHostInferenceSmoke === true)
-    console.log("  Reusing existing gateway credential; skipping host inference smoke.");
-  else verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
-  if (sandboxName) {
-    registry.updateSandbox(sandboxName, { model, provider });
-  }
-  console.log(`  ✓ Inference route set: ${provider} / ${model}`);
-  return { ok: true };
 }
+
+export type SetupInferenceDeps = import("./onboard/setup-inference").SetupInferenceDeps;
+export type SetupInference = import("./onboard/setup-inference").SetupInference;
+
+function createSetupInference(overrides: Partial<SetupInferenceDeps> = {}): SetupInference {
+  return setupInferenceFactory.createSetupInference(getSetupInferenceDeps(), overrides);
+}
+
+const setupInference = createSetupInference();
 
 // ── Step 6: Messaging channels ───────────────────────────────────
 
@@ -4932,7 +4854,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         },
         providerDeps: {
           normalizeHermesAuthMethod,
-          setupNim,
+          setupNim: (gpu, sandboxName, agent, recoverProvider) =>
+            setupNim(gpu, sandboxName, agent, recoverProvider, opts.rebuildRegistryInferenceRoute),
           setupInference,
           startRecordedStep,
           recordStepComplete,
@@ -5303,6 +5226,7 @@ module.exports = {
   runCaptureOpenshell,
   agentSupportsWebSearch,
   agentSupportsWebSearchProvider,
+  createSetupInference,
   setupInference,
   setupMessagingChannels,
   MESSAGING_CHANNELS,
@@ -5315,6 +5239,7 @@ module.exports = {
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
+  readRecordedEndpointUrl,
   isInferenceRouteReady,
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,
