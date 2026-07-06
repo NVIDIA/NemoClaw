@@ -25,7 +25,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
 
@@ -171,7 +171,9 @@ class McpHashState:
 @dataclass(frozen=True)
 class McpIntegritySnapshot:
     state: str
-    config_text: str
+    # Authenticated config bytes can include credentials; never expose them
+    # through the generated dataclass representation.
+    config_text: str = field(repr=False)
     config_path: str
     config_snapshot: FileSnapshot
     env_path: str

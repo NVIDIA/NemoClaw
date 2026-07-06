@@ -109,6 +109,59 @@ print(guard._canonical_mcp_servers_digest(open(sys.argv[2], encoding="utf-8").re
     }
   });
 
+  it("omits authenticated config bytes from integrity snapshot representations", () => {
+    const result = spawnSync(
+      "python3",
+      [
+        "-I",
+        "-c",
+        String.raw`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("hermes_guard", sys.argv[1])
+guard = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = guard
+spec.loader.exec_module(guard)
+metadata = guard.FileSnapshot(
+    dev=1,
+    ino=2,
+    mode=0o600,
+    uid=1000,
+    gid=1000,
+    nlink=1,
+    size=64,
+    mtime_ns=3,
+    ctime_ns=4,
+)
+secret = "API_SERVER_KEY=must-not-appear"
+snapshot = guard.McpIntegritySnapshot(
+    state="current",
+    config_text=secret,
+    config_path="/sandbox/.hermes/config.yaml",
+    config_snapshot=metadata,
+    env_path="/sandbox/.hermes/.env",
+    env_snapshot=metadata,
+    hash_snapshots=(),
+)
+rendered = repr(snapshot)
+print(json.dumps({
+    "contains_config_field": "config_text=" in rendered,
+    "contains_secret": secret in rendered,
+    "is_snapshot_repr": rendered.startswith("McpIntegritySnapshot("),
+}))
+`,
+        GUARD,
+      ],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      contains_config_field: false,
+      contains_secret: false,
+      is_snapshot_repr: true,
+    });
+  });
+
   it("returns current and pending through the guarded CLI status protocol", () => {
     const result = spawnSync(
       "python3",
