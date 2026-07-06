@@ -936,6 +936,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 # base64 sanitized host-side, so this is not an injection vector.
 # hadolint ignore=DL3059,DL4006
 RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      command -v base64 >/dev/null 2>&1 || { echo "[nemoclaw] base64 is required to decode NEMOCLAW_CORPORATE_CA_B64 but is not installed in the build image" >&2; exit 1; }; \
       mkdir -p /usr/local/share/nemoclaw \
       && printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /usr/local/share/nemoclaw/corporate-ca.pem \
       && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \

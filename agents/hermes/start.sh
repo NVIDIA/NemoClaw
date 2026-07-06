@@ -1442,6 +1442,12 @@ merge_corporate_proxy_ca() {
     return 0
   }
   chmod 0444 "$_tmp" 2>/dev/null || true
+  # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
+  # pre-planted a symlink at the target, drop it first so we rename into a fresh
+  # regular file we own rather than through an attacker-controlled link.
+  if [ -L "$_merged" ]; then
+    rm -f "$_merged" 2>/dev/null || true
+  fi
   mv -f "$_tmp" "$_merged" 2>/dev/null || {
     rm -f "$_tmp"
     return 0

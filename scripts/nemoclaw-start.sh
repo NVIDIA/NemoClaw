@@ -2752,6 +2752,12 @@ merge_corporate_proxy_ca() {
     return 0
   }
   chmod 0444 "$_tmp" 2>/dev/null || true
+  # Defense-in-depth for the predictable /tmp path (#6210): if a co-tenant
+  # pre-planted a symlink at the target, drop it first so we rename into a fresh
+  # regular file we own rather than through an attacker-controlled link.
+  if [ -L "$_merged" ]; then
+    rm -f "$_merged" 2>/dev/null || true
+  fi
   mv -f "$_tmp" "$_merged" 2>/dev/null || {
     rm -f "$_tmp"
     return 0
@@ -3333,6 +3339,9 @@ GUARDENVEOF
     # Corporate proxy CA for connect sessions (NemoClaw#6210). Only when a
     # corporate CA was merged at entrypoint startup; keeps the no-corporate-CA
     # path byte-for-byte identical so #1828 behavior is untouched.
+    # GIT_SSL_CAINFO is intentionally NOT in this list: the #2270 block above
+    # already propagates it whenever set (the merge exports it to the same
+    # bundle), so adding it here would emit a duplicate export.
     if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ]; then
       for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS; do
         _ca_env_value="${!_ca_env_name:-}"
