@@ -187,6 +187,7 @@ describe("probeAnthropicEndpoint", () => {
       name: "Anthropic Messages API (streaming)",
       httpStatus: 0,
       curlStatus: 0,
+      diagnosticCodes: ["anthropic-streaming-duplicate-message-start"],
     });
     expect(result.message).toContain("duplicate message_start");
   });

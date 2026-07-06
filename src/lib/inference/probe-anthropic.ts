@@ -8,17 +8,28 @@
 
 import { createXApiKeyAuthConfig } from "../adapters/http/auth-config";
 import {
+  type AnthropicStreamingProbeResult,
   getCurlTimingArgs,
   runAnthropicStreamingEventProbe,
   runCurlProbe,
 } from "../adapters/http/probe";
 import { normalizeCredentialValue } from "../credentials/store";
 
+export type AnthropicStreamingDiagnosticCode =
+  | "anthropic-streaming-content-after-message-stop"
+  | "anthropic-streaming-content-before-message-start"
+  | "anthropic-streaming-duplicate-message-start"
+  | "anthropic-streaming-duplicate-message-stop"
+  | "anthropic-streaming-missing-content-block-delta"
+  | "anthropic-streaming-missing-message-start"
+  | "anthropic-streaming-missing-message-stop";
+
 export interface AnthropicProbeFailureDetail {
   name: string;
   httpStatus: number;
   curlStatus: number;
   message: string;
+  diagnosticCodes?: AnthropicStreamingDiagnosticCode[];
 }
 
 export interface AnthropicProbeResult {
@@ -65,6 +76,41 @@ function anthropicMessagesPayload(model: string, stream: boolean): string {
     ...(stream ? { stream: true } : {}),
     messages: [{ role: "user", content: "Reply with exactly: OK" }],
   });
+}
+
+const DUPLICATE_EVENT_DIAGNOSTICS: Record<string, AnthropicStreamingDiagnosticCode> = {
+  message_start: "anthropic-streaming-duplicate-message-start",
+  message_stop: "anthropic-streaming-duplicate-message-stop",
+};
+
+const MISSING_EVENT_DIAGNOSTICS: Record<string, AnthropicStreamingDiagnosticCode> = {
+  message_start: "anthropic-streaming-missing-message-start",
+  content_block_delta: "anthropic-streaming-missing-content-block-delta",
+  message_stop: "anthropic-streaming-missing-message-stop",
+};
+
+const SEQUENCE_ERROR_DIAGNOSTICS: Record<string, AnthropicStreamingDiagnosticCode> = {
+  "content events before message_start": "anthropic-streaming-content-before-message-start",
+  "content events after message_stop": "anthropic-streaming-content-after-message-stop",
+};
+
+function anthropicStreamingDiagnosticCodes(
+  result: Pick<
+    AnthropicStreamingProbeResult,
+    "duplicateEvents" | "missingEvents" | "sequenceErrors"
+  >,
+): AnthropicStreamingDiagnosticCode[] {
+  return [
+    ...result.duplicateEvents.flatMap((event) =>
+      DUPLICATE_EVENT_DIAGNOSTICS[event] ? [DUPLICATE_EVENT_DIAGNOSTICS[event]] : [],
+    ),
+    ...result.missingEvents.flatMap((event) =>
+      MISSING_EVENT_DIAGNOSTICS[event] ? [MISSING_EVENT_DIAGNOSTICS[event]] : [],
+    ),
+    ...result.sequenceErrors.flatMap((error) =>
+      SEQUENCE_ERROR_DIAGNOSTICS[error] ? [SEQUENCE_ERROR_DIAGNOSTICS[error]] : [],
+    ),
+  ];
 }
 
 export function probeAnthropicEndpoint(
@@ -133,6 +179,7 @@ export function probeAnthropicEndpoint(
               httpStatus: 0,
               curlStatus: streamResult.curlStatus,
               message: streamResult.message,
+              diagnosticCodes: anthropicStreamingDiagnosticCodes(streamResult),
             },
           ],
         };

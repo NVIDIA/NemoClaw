@@ -169,6 +169,7 @@ describe("inference selection validation", () => {
           httpStatus: 0,
           curlStatus: 0,
           message: "duplicate message_start",
+          diagnosticCodes: ["anthropic-streaming-duplicate-message-start"],
         },
       ],
     }));
@@ -194,6 +195,9 @@ describe("inference selection validation", () => {
       expect(promptValidationRecovery).toHaveBeenCalledOnce();
       expect(error.mock.calls.map((args) => args.join(" ")).join("\n")).toContain(
         "Custom Anthropic endpoint endpoint validation failed.",
+      );
+      expect(error.mock.calls.map((args) => args.join(" ")).join("\n")).toContain(
+        "Anthropic Messages API (streaming): duplicate message_start",
       );
     } finally {
       error.mockRestore();

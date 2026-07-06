@@ -33,6 +33,7 @@ describe("summarizeProbeForDisplay", () => {
           httpStatus: 0,
           curlStatus: 28,
           message: "curl failed (exit 28): operation timed out with token secret-key",
+          diagnosticCodes: ["anthropic-streaming-missing-message-stop"],
         },
       ],
     });
@@ -40,6 +41,28 @@ describe("summarizeProbeForDisplay", () => {
     expect(summary).toBe("Chat Completions API: curl exit 28");
     expect(summary).not.toContain("secret-key");
     expect(summary).not.toContain("operation timed out with token");
+  });
+
+  it("surfaces allowlisted streaming diagnostics without raw provider text (#6289)", () => {
+    const summary = summarizeProbeForDisplay({
+      message: "raw provider response with secret-key",
+      failures: [
+        {
+          name: "Anthropic Messages API (streaming)",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: "raw provider response with secret-key",
+          diagnosticCodes: [
+            "anthropic-streaming-duplicate-message-start",
+            "provider-controlled-diagnostic",
+          ],
+        },
+      ],
+    });
+
+    expect(summary).toBe("Anthropic Messages API (streaming): duplicate message_start");
+    expect(summary).not.toContain("secret-key");
+    expect(summary).not.toContain("provider-controlled-diagnostic");
   });
 
   it("falls back to coarse message classification", () => {
