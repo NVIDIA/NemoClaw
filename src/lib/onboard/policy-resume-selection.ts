@@ -11,6 +11,7 @@ import {
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
   pruneDisabledMessagingPolicyPresets,
 } from "./messaging-policy-presets";
+import { isInactiveObservabilityPolicyPreset } from "./observability-policy-presets";
 import {
   isStaleBuiltinWebSearchPolicyPreset,
   mergeRequiredSetupPolicyPresets,
@@ -48,6 +49,7 @@ export function preparePolicyPresetResumeSelection(
     enabledChannels?: string[] | null;
     hermesToolGateways?: string[] | null;
     agent?: string | null;
+    observabilityEnabled?: boolean | null;
     webSearchConfig?: WebSearchConfig | null;
     webSearchConfigChanged?: boolean;
     webSearchSupported?: boolean | null;
@@ -80,11 +82,19 @@ export function preparePolicyPresetResumeSelection(
       webSearchConfig: options.webSearchConfig,
       customPresetNames: customPolicyPresetNames,
     });
+  const isInactiveObservability = (name: string) =>
+    isInactiveObservabilityPolicyPreset(name, {
+      agent: options.agent,
+      observabilityEnabled: options.observabilityEnabled,
+      customPresetNames: customPolicyPresetNames,
+    });
   const recordedBuiltinWebSearchProviderChanged = clampedRecordedPolicyPresets.some(
     (name) => (name === "brave" || name === "tavily") && isStaleBuiltinWebSearch(name),
   );
   let policyPresets = pruneDisabledMessagingPolicyPresets(
-    clampedRecordedPolicyPresets.filter((name) => !isStaleBuiltinWebSearch(name)),
+    clampedRecordedPolicyPresets.filter(
+      (name) => !isStaleBuiltinWebSearch(name) && !isInactiveObservability(name),
+    ),
     options.disabledChannels,
   );
   const appliedPolicyPresetsForSupport = deps.policies
@@ -94,7 +104,7 @@ export function preparePolicyPresetResumeSelection(
       supportOptions,
       customPolicyPresetNames,
     )
-    .filter((name) => !isStaleBuiltinWebSearch(name));
+    .filter((name) => !isStaleBuiltinWebSearch(name) && !isInactiveObservability(name));
   const disabledMessagingPolicyPresetApplied = hasDisabledMessagingPolicyPreset(
     appliedPolicyPresetsForSupport,
     options.disabledChannels,
@@ -109,6 +119,7 @@ export function preparePolicyPresetResumeSelection(
       enabledChannels: options.enabledChannels,
       hermesToolGateways: options.hermesToolGateways,
       agent: options.agent,
+      observabilityEnabled: options.observabilityEnabled,
       knownPresetNames: selectablePolicyPresets.map((preset) => preset.name),
       env: options.env,
       tierName: options.tierName,

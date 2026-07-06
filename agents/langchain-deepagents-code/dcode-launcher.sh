@@ -8,8 +8,20 @@ set -euo pipefail
 unset BASH_ENV ENV
 
 readonly MANAGED_DCODE_WRAPPER="/usr/local/lib/nemoclaw/dcode-wrapper.sh"
+readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Raw OpenShell exec processes do not inherit the sandbox entrypoint's
+# environment. Recover only the credential-free enable bit materialized by
+# start.sh. This marker is convenience state, not an authorization boundary;
+# the host-selected network policy controls whether local OTLP egress exists.
+unset NEMOCLAW_OBSERVABILITY
+if [ -f "$MANAGED_OBSERVABILITY_MARKER" ] \
+  && [ ! -L "$MANAGED_OBSERVABILITY_MARKER" ] \
+  && [ "$(<"$MANAGED_OBSERVABILITY_MARKER")" = "1" ]; then
+  export NEMOCLAW_OBSERVABILITY=1
+fi
 
 # Raw OpenShell exec processes do not inherit the entrypoint's environment or
 # source shell startup files. Rebuild the proxy-only dcode contract here so a

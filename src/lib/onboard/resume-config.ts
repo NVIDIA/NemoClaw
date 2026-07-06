@@ -14,6 +14,7 @@ export interface ResumeSessionLike {
   model?: string | null;
   agent?: string | null;
   toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
   metadata?: { fromDockerfile?: string | null } | null;
   steps?: { sandbox?: { status?: string | null } | null } | null;
 }
@@ -108,6 +109,7 @@ export function getResumeConfigConflicts(
     sandboxName?: string | null;
     agent?: string | null;
     toolDisclosure?: ToolDisclosure | null;
+    observabilityEnabled?: boolean | null;
     /**
      * Internal rebuild-resume mode: the caller already rewrote the session from
      * validated registry state, so credential aliases must not synthesize a new
@@ -181,6 +183,17 @@ export function getResumeConfigConflicts(
       field: "tool disclosure",
       requested: requestedToolDisclosure,
       recorded: recordedToolDisclosure,
+    });
+  }
+
+  if (
+    typeof opts.observabilityEnabled === "boolean" &&
+    opts.observabilityEnabled !== (session?.observabilityEnabled === true)
+  ) {
+    conflicts.push({
+      field: "observability",
+      requested: opts.observabilityEnabled ? "enabled" : "disabled",
+      recorded: session?.observabilityEnabled === true ? "enabled" : "disabled",
     });
   }
 

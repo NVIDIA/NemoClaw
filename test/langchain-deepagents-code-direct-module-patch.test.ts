@@ -639,6 +639,22 @@ describe("LangChain Deep Agents Code managed package patch", () => {
       const source = fs.readFileSync(path.join(packageDir, relativePath), "utf8");
       expect(source.match(/NemoClaw-managed Deep Agents Code hardening v2\./g)).toHaveLength(1);
     }
+    execFileSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import importlib.util",
+          "import sys",
+          "spec = importlib.util.spec_from_file_location('nemoclaw_observability', sys.argv[1])",
+          "module = importlib.util.module_from_spec(spec)",
+          "spec.loader.exec_module(module)",
+          "assert module.initialize_observability() is False",
+        ].join("; "),
+        path.join(packageDir, "nemoclaw_observability.py"),
+      ],
+      { env: { PATH: process.env.PATH } },
+    );
 
     const main = fs.readFileSync(path.join(packageDir, "main.py"), "utf8");
     for (const expected of [

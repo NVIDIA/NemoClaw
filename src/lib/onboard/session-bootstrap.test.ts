@@ -72,6 +72,7 @@ describe("prepareOnboardSession", () => {
         cannotPrompt: false,
         nonInteractive: true,
         requestedToolDisclosure: "direct",
+        requestedObservabilityEnabled: true,
       },
       deps,
     );
@@ -81,6 +82,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.metadata.fromDockerfile).toBe("/abs/Dockerfile.custom");
     expect(result.session?.toolDisclosure).toBe("direct");
+    expect(result.session?.observabilityEnabled).toBe(true);
     expect(getSession()?.sessionId).not.toBe("old-session");
   });
 
@@ -98,6 +100,7 @@ describe("prepareOnboardSession", () => {
       deps,
     );
     expect(result.session?.toolDisclosure).toBe("progressive");
+    expect(result.session?.observabilityEnabled).toBe(false);
   });
 
   it("resumes an existing session and falls back to the recorded Dockerfile", async () => {
@@ -111,6 +114,7 @@ describe("prepareOnboardSession", () => {
       metadata: { gatewayName: "nemoclaw", fromDockerfile: "Dockerfile.recorded" },
       sandboxName: "demo",
       status: "failed",
+      observabilityEnabled: true,
       steps: {
         ...createSession().steps,
         sandbox: completeSandboxStep(),
@@ -135,6 +139,7 @@ describe("prepareOnboardSession", () => {
     expect(result.session?.mode).toBe("non-interactive");
     expect(result.session?.failure).toBeNull();
     expect(result.session?.status).toBe("in_progress");
+    expect(result.session?.observabilityEnabled).toBe(true);
     expect(deps.repairResumeMachineSnapshot).toHaveBeenCalledWith(initial);
     expect(deps.setOnboardBrandingAgent).toHaveBeenCalledWith("hermes");
   });

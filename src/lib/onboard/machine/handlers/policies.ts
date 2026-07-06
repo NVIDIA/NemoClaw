@@ -73,6 +73,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         enabledChannels: string[];
         hermesToolGateways: string[];
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         webSearchConfig: WebSearchConfig | null;
         webSearchConfigChanged: boolean;
         webSearchSupported: boolean;
@@ -98,6 +99,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         webSearchConfig: WebSearchConfig | null;
         provider: string;
         agent?: string | null;
+        observabilityEnabled?: boolean | null;
         webSearchSupported: boolean;
         hermesToolGateways: string[];
         onSelection: (policyPresets: string[]) => void;
@@ -140,6 +142,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   deps,
 }: PoliciesStateOptions<Agent, WebSearchConfig>): Promise<PoliciesStateResult> {
   const latestSession = deps.loadSession();
+  const observabilityEnabled = latestSession?.observabilityEnabled === true;
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
@@ -170,6 +173,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+    observabilityEnabled,
     webSearchConfig,
     webSearchConfigChanged,
     webSearchSupported,
@@ -232,6 +236,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       // to "openclaw" so the auto-suggest gate still fires; explicit
       // Hermes runs keep their own name.
       agent: normalizeAgentName((agent as { name?: string } | null)?.name),
+      observabilityEnabled,
       webSearchSupported,
       hermesToolGateways,
       onSelection: (policyPresets) => {

@@ -115,6 +115,8 @@ export interface Session {
   webSearchConfig: WebSearchConfig | null;
   /** Selected preference, retained even when a model-specific safeguard downgrades it. */
   toolDisclosure: ToolDisclosure;
+  /** Enables credential-free OTLP trace export to NemoClaw's fixed local collector boundary. */
+  observabilityEnabled: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingPlan: SandboxMessagingPlan | null;
@@ -186,6 +188,7 @@ export interface SessionUpdates {
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
   messagingPlan?: SandboxMessagingPlan | null;
@@ -214,6 +217,7 @@ export interface DebugSessionSummary {
   compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   toolDisclosure: ToolDisclosure;
+  observabilityEnabled: boolean;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
@@ -469,6 +473,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig: normalizeWebSearchConfig(overrides.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(overrides.toolDisclosure),
+    observabilityEnabled: overrides.observabilityEnabled === true,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
@@ -513,6 +518,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     toolDisclosure: normalizeSessionToolDisclosure(data.toolDisclosure),
+    observabilityEnabled: data.observabilityEnabled === true,
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
@@ -1010,6 +1016,9 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.webSearchConfig = null;
   }
   assignSafeToolDisclosureUpdate(safe, updates.toolDisclosure);
+  if (typeof updates.observabilityEnabled === "boolean") {
+    safe.observabilityEnabled = updates.observabilityEnabled;
+  }
   if (updates.hermesToolGateways === null) {
     safe.hermesToolGateways = null;
   } else if (Array.isArray(updates.hermesToolGateways)) {
@@ -1304,6 +1313,7 @@ export function summarizeForDebug(
     compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
     toolDisclosure: session.toolDisclosure,
+    observabilityEnabled: session.observabilityEnabled,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,

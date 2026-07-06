@@ -153,6 +153,7 @@ describe("onboard session", () => {
 
     expect(saved.mode).toBe("non-interactive");
     expect(saved.toolDisclosure).toBe("progressive");
+    expect(saved.observabilityEnabled).toBe(false);
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",
@@ -162,6 +163,18 @@ describe("onboard session", () => {
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
+  });
+
+  it("persists observability intent and defaults legacy sessions off", () => {
+    session.saveSession(session.createSession({ observabilityEnabled: true }));
+    expect(requireLoadedSession(session.loadSession()).observabilityEnabled).toBe(true);
+    expect(requireDebugSummary(session.summarizeForDebug()).observabilityEnabled).toBe(true);
+
+    const legacy = session.createSession() as unknown as Record<string, unknown>;
+    delete legacy.observabilityEnabled;
+    expect(
+      requireLoadedSession(session.normalizeSession(legacy as never)).observabilityEnabled,
+    ).toBe(false);
   });
 
   it("redacts credential-bearing endpoint URLs before persisting them", () => {

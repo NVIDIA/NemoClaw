@@ -70,6 +70,7 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
     });
     expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
@@ -88,6 +89,7 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
       recreate: true,
       toolDisclosure: "progressive",
+      observabilityEnabled: false,
     });
   });
 

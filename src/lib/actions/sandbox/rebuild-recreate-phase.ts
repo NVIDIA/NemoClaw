@@ -110,6 +110,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
         hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
         webSearchConfig: rebuildDurableConfig.webSearchConfig,
         toolDisclosure: rebuildDurableConfig.toolDisclosure,
+        observabilityEnabled: recreateOptions.observabilityEnabled,
         telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
         wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
         migratedLegacyValueHashes: sessionMatchesSandbox
@@ -149,6 +150,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
     s.endpointUrl = resumeConfig.endpointUrl;
     s.toolDisclosure = rebuildDurableConfig.toolDisclosure;
+    s.observabilityEnabled = recreateOptions.observabilityEnabled;
     return s;
   });
   const sessionAfter = onboardSession.loadSession();

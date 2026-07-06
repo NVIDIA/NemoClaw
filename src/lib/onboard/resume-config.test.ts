@@ -62,4 +62,20 @@ describe("authoritative rebuild resume config", () => {
       recorded: "invalid",
     });
   });
+
+  it("reports explicit observability drift and ignores an absent request", () => {
+    const session = {
+      sandboxName: "demo",
+      provider: "nvidia-prod",
+      model: "test-model",
+      observabilityEnabled: true,
+    };
+
+    expect(getResumeConfigConflicts(session, {})).toEqual([]);
+    expect(getResumeConfigConflicts(session, { observabilityEnabled: false })).toContainEqual({
+      field: "observability",
+      requested: "disabled",
+      recorded: "enabled",
+    });
+  });
 });

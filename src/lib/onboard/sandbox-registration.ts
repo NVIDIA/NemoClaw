@@ -36,6 +36,7 @@ export interface CreatedSandboxRegistryEntryInput {
   imageTag: string | null;
   appliedPolicies: string[];
   toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
   webSearchEnabled?: boolean;
   webSearchProvider?: SandboxEntry["webSearchProvider"];
   fromDockerfile?: string | null;
@@ -113,6 +114,7 @@ export function buildCreatedSandboxRegistryEntry(
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
     toolDisclosure: input.toolDisclosure ?? DEFAULT_TOOL_DISCLOSURE,
+    observabilityEnabled: input.observabilityEnabled === true,
     webSearchEnabled: input.webSearchEnabled === true,
     webSearchProvider:
       input.webSearchEnabled === true ? (input.webSearchProvider ?? "brave") : null,

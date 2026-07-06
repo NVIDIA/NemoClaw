@@ -5,9 +5,9 @@ title: "Quickstart with LangChain Deep Agents Code"
 sidebar-title: "LangChain Deep Agents Code"
 description: "Create a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness."
 description-agent: "Creates a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness. Use when testing dcode with NemoClaw-managed inference."
-keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent"]
-topics: ["get-started", "terminal-runtime", "langchain-deepagents-code"]
-tags: ["deep-agents-code", "dcode", "managed-inference"]
+keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent", "dcode otlp tracing"]
+topics: ["get-started", "terminal-runtime", "langchain-deepagents-code", "observability"]
+tags: ["deep-agents-code", "dcode", "managed-inference", "otlp"]
 difficulty: "intermediate"
 audience: "operators"
 status: published
@@ -67,7 +67,7 @@ dcode -n "Summarize this repository"
 ```
 
 The managed `dcode`, `dcode.real`, and `deepagents-code` launchers use `/opt/venv/bin/python3 -I` to run the pinned package with an isolated import path and `HOME=/sandbox`.
-They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, LangSmith tracing, and OpenTelemetry export.
+They disable Deep Agents Code package update checks and the LangGraph server version check, block CLI and TUI update/install commands, and disable nested remote sandbox providers, remote async subagents, MCP commands and project auto-loading, startup commands, executable hooks, ACP mode, interpreter tool calling, shell allow-list overrides, native LangSmith tracing, and ambient OpenTelemetry exporter configuration.
 The managed model constructor accepts only Deep Agents Code's `openai` provider path and reads its endpoint from a root-owned image file.
 It supplies the non-secret gateway placeholder key and ignores mutable provider classes, credentials, endpoints, and constructor parameters in Deep Agents Code config.
 CLI and TUI model parameter overrides and custom rubric models are blocked.
@@ -125,7 +125,7 @@ Before a managed Deep Agents Code rebuild changes the sandbox, NemoClaw selects 
 Initial failures stop before backup.
 After backup, NemoClaw rechecks the target, route, and retained build inputs before changing MCP state, then checks again after MCP preparation and before stopping inference or deleting the old sandbox.
 If the final check fails, NemoClaw restores the previous MCP state and keeps the existing sandbox intact.
-Rebuild also preserves the standalone Deep Agents Code `tavily` preset and replays recorded custom policies from their exact stored content.
+Rebuild also preserves the standalone Deep Agents Code `tavily` preset, the recorded observability choice, and recorded custom policies from their exact stored content.
 
 ## Optional Web Search
 
@@ -135,8 +135,8 @@ The gateway injects it at egress instead.
 The managed Deep Agents Code entry points reject credential-shaped process environment values, disable project `.env` and global `/sandbox/.deepagents/.env` loading, and block upstream `/auth`, `/connect`, startup/onboarding credential prompts, model-selector credential prompts, notification-service key prompts, and ChatGPT OAuth.
 These controls apply to Deep Agents Code and do not sanitize arbitrary Python programs in the sandbox.
 Use NemoClaw-managed credential paths when support is available instead of storing service keys inside Deep Agents Code state.
-NemoClaw does not enable Tavily or LangSmith by default for this harness.
-The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+NemoClaw does not enable Tavily or observability by default for this harness.
+The sandbox policy denies `api.tavily.com` until you opt into Tavily and continues to deny direct `api.smith.langchain.com` egress when you enable observability.
 
 To enable Tavily for the target sandbox, apply the maintained `tavily` policy preset, register the credential with the OpenShell gateway, then rebuild the sandbox so the new provider attaches.
 The policy preset is a per-sandbox managed-Python opt-in, but provider registration is gateway-wide: `tavily-search` attaches to every sandbox that you build or rebuild afterward.
@@ -172,14 +172,95 @@ This does not unregister the gateway-wide `tavily-search` provider; its credenti
 When no sandbox needs the provider, destroy those sandboxes or detach it from each one with `openshell sandbox provider detach <sandbox-name> tavily-search`, then remove it globally with `nemo-deepagents credentials reset tavily-search --yes`.
 OpenShell rejects provider deletion while any sandbox still has it attached.
 
-### Tracing (LangSmith and OpenTelemetry)
+## Export Traces Through a Local Collector
 
-NemoClaw does not support LangSmith or OpenTelemetry tracing for this managed harness.
-`start.sh` does not persist user-supplied tracing credentials, projects, or replica endpoints in the shared shell environment.
-No policy preset opens `api.smith.langchain.com`, and no supported mechanism injects `LANGSMITH_API_KEY`.
-The managed launch paths force the supported LangSmith and LangChain tracing enable flags, including their `V2` and `DEEPAGENTS_CODE_`-prefixed variants, to `false`.
-They force `OTEL_ENABLED=false`, reject OTLP exporter endpoints and headers, remove those variables from the LangGraph child process, and reject LangSmith and LangChain replica endpoint configuration.
-Adding egress endpoints alone does not enable tracing; treat it as unsupported until NemoClaw ships a maintained integration.
+NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you operate on the host.
+Start a collector that accepts protobuf trace requests on a host interface reachable through `host.openshell.internal:4318`, then opt in while onboarding the Deep Agents Code sandbox.
+
+```bash
+nemoclaw onboard --agent langchain-deepagents-code --observability
+```
+
+Observability is off when you omit `--observability`.
+NemoClaw records the opt-in with the onboarding session and sandbox, so resume and rebuild operations preserve it without requiring the flag again.
+The Restricted policy tier suppresses the required egress preset even when the opt-in is recorded.
+
+The sandbox always sends headerless OTLP/HTTP protobuf traces to `http://host.openshell.internal:4318/v1/traces`.
+The managed exporter reports `service.name=nemoclaw-langchain-deepagents-code` for routing convenience.
+It cannot select a remote endpoint, add exporter headers, or receive a backend credential.
+The host collector owns backend selection, TLS, authentication, batching, and any additional filtering.
+You can route the same receiver to Jaeger, Phoenix, LangSmith, or another OTLP-compatible backend without rebuilding or reconfiguring the sandbox.
+Exporter initialization, delivery, and flush failures do not stop Deep Agents Code work.
+
+The source-side metadata-only profile retains operation, model, and tool names plus success or error status.
+It excludes prompts, model outputs, tool arguments, tool results, callback metadata, exception text, and human-in-the-loop interrupt values.
+Native LangSmith tracing remains disabled.
+The managed launch paths continue to force LangSmith and LangChain tracing flags to `false`, force `OTEL_ENABLED=false`, reject ambient OTLP endpoints and headers, and remove those values from the LangGraph child process.
+Do not put `LANGSMITH_API_KEY` or other backend credentials in the sandbox.
+
+The collector must satisfy this receiver contract:
+
+- Listen for OTLP/HTTP on a host interface reachable from the sandbox as `host.openshell.internal:4318`.
+- Accept only `POST /v1/traces` for this pipeline.
+- Accept requests without authentication headers from the sandbox.
+- Validate and redact the received spans before forwarding them to a remote backend.
+- Keep all remote endpoints and credentials on the host.
+
+<Warning title="Treat the receiver as a trust boundary">
+The `observability-otlp-local` preset authorizes `/opt/venv/bin/python3*`, which is the executable OpenShell observes for Deep Agents Code.
+That permission is process-wide for the managed Python environment rather than limited to the `dcode` launcher.
+Sandbox Python can forge trace attributes and service identity, so the collector must not treat `service.name` or other span fields as authenticated tenant identity.
+The metadata-only exclusions describe the managed `dcode` instrumentation, not arbitrary or compromised Python in the sandbox.
+Such a process can encode data in span names, status descriptions, events, links, or allowed attribute values even when the sample attribute allowlist is present.
+Restrict the receiver to the sandbox bridge and trusted host clients, enforce an attribute allowlist or equivalent redaction before remote export, and do not use this path as a multi-tenant identity boundary.
+Treat the sample allowlist as protection against accidental leakage, not as a data-loss-prevention or confidentiality boundary.
+</Warning>
+
+### Route Traces to LangSmith
+
+LangSmith is one possible host-side exporter for the backend-neutral receiver.
+The following OpenTelemetry Collector fragment keeps backend credentials on the host and applies a defensive span-attribute allowlist before forwarding traces.
+Use a collector distribution that includes the transform processor.
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: "${env:NEMOCLAW_OTLP_LISTEN_ADDRESS}:4318"
+
+processors:
+  transform/metadata_allowlist:
+    error_mode: propagate
+    trace_statements:
+      - context: resource
+        statements:
+          - keep_keys(attributes, ["service.name"])
+          - set(attributes["service.name"], "nemoclaw-langchain-deepagents-code")
+      - context: span
+        statements:
+          - keep_keys(attributes, ["openinference.span.kind", "llm.model_name", "tool.name", "otel.status_code", "nemo_relay.uuid", "nemo_relay.parent_uuid", "nemo_relay.mark.uuid", "nemo_relay.mark.parent_uuid"])
+  batch: {}
+
+exporters:
+  otlphttp/langsmith:
+    traces_endpoint: "https://api.smith.langchain.com/otel/v1/traces"
+    headers:
+      x-api-key: "${env:LANGSMITH_API_KEY}"
+      Langsmith-Project: "${env:LANGSMITH_PROJECT}"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform/metadata_allowlist, batch]
+      exporters: [otlphttp/langsmith]
+```
+
+Set `NEMOCLAW_OTLP_LISTEN_ADDRESS` to a host address that is reachable through `host.openshell.internal` but not exposed on untrusted host interfaces, and restrict inbound TCP port `4318` with the host firewall or an equivalent ACL.
+Set `LANGSMITH_API_KEY` and `LANGSMITH_PROJECT` only in the host environment that runs the collector.
+Review the collector's effective configuration and exported spans before relying on it for sensitive workloads.
+For regional, self-hosted, and additional redaction settings, refer to the [LangSmith OpenTelemetry gateway documentation](https://docs.langchain.com/langsmith/otel-gateway-trace-redaction).
 
 ## Troubleshooting
 
@@ -205,4 +286,5 @@ There is no dashboard port or long-running gateway process for this harness.
 - [Inference Options](../inference/inference-options) explains how to choose a provider and model.
 - [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
 - [Runtime Controls](../manage-sandboxes/runtime-controls) explains sandbox mutability and host-side control boundaries.
+- [Network Policies](../reference/network-policies#local-otlp-trace-export) explains the local collector egress preset.
 - [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.

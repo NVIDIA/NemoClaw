@@ -56,6 +56,7 @@ export type ModelValidationResult = ModelValidationSuccess | ModelValidationFail
 export interface SandboxCreateIntent {
   readonly recreate: boolean;
   readonly toolDisclosure: import("../tool-disclosure").ToolDisclosure;
+  readonly observabilityEnabled: boolean;
 }
 
 export type OnboardOptions = {
@@ -83,6 +84,7 @@ export type OnboardOptions = {
   acceptThirdPartySoftware?: boolean;
   agent?: string | null;
   toolDisclosure?: import("../tool-disclosure").ToolDisclosure | null;
+  observabilityEnabled?: boolean | null;
   controlUiPort?: number | null;
   gpu?: boolean;
   noGpu?: boolean;

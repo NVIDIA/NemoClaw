@@ -33,6 +33,9 @@ const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./o
 const inferenceInputCapability = require("./onboard/inference-input-capability");
 const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const toolDisclosureFlow: typeof import("./onboard/tool-disclosure-flow") = require("./onboard/tool-disclosure-flow");
+const {
+  isDcodeAgent,
+}: typeof import("./onboard/observability-policy-presets") = require("./onboard/observability-policy-presets");
 const inferenceRouteHelpers: typeof import("./onboard/inference-route") = require("./onboard/inference-route");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
@@ -2803,9 +2806,11 @@ async function createSandboxWithBaseImageResolution(
     gatewayPort: GATEWAY_PORT,
   });
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
+  const observabilityEnabled = createIntent?.observabilityEnabled === true;
   const { createCommand, effectiveDashboardPort, prebuild, sandboxEnv, sandboxStartupCommand } =
     await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
+      observabilityEnabled,
       chatUiUrl,
       createArgs,
       sandboxName,
@@ -3004,6 +3009,7 @@ async function createSandboxWithBaseImageResolution(
           imageTag: resolvedImageTag,
           appliedPolicies: initialSandboxPolicy.appliedPresets,
           toolDisclosure: effectiveToolDisclosure,
+          observabilityEnabled,
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
           ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
           plannedMessagingState,
@@ -4087,6 +4093,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
   const requestedToolDisclosure = toolDisclosureFlow.applyOnboardToolDisclosureRequest(
     opts.toolDisclosure,
   );
+  const requestedObservabilityEnabled =
+    typeof opts.observabilityEnabled === "boolean" ? opts.observabilityEnabled : null;
   const authoritativeGateway =
     authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
@@ -4233,6 +4241,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         agentFlag: opts.agent || null,
         envAgent: process.env.NEMOCLAW_AGENT || null,
         requestedToolDisclosure,
+        requestedObservabilityEnabled,
       },
       {
         loadSession: onboardSession.loadSession,
@@ -4305,6 +4314,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       s.agent = agent?.name ?? null;
       return s;
     });
+    if (session.observabilityEnabled && !isDcodeAgent(agent?.name)) {
+      console.error("  --observability is supported only with --agent langchain-deepagents-code.");
+      process.exit(1);
+    }
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;

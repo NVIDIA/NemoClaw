@@ -42,6 +42,7 @@ function appendOpenClawAutoPairRuntimeEnvArgs(
 
 export interface SandboxCreateLaunchInput {
   agent: AgentDefinition | null | undefined;
+  observabilityEnabled?: boolean;
   chatUiUrl: string;
   createArgs: readonly string[];
   sandboxName?: string;
@@ -116,6 +117,9 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
     const sandboxName = input.sandboxName;
     if (sandboxName) {
       envArgs.push(formatEnvAssignment("NEMOCLAW_SANDBOX_NAME", sandboxName));
+    }
+    if (input.observabilityEnabled === true) {
+      envArgs.push(formatEnvAssignment("NEMOCLAW_OBSERVABILITY", "1"));
     }
   }
 

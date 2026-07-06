@@ -6,6 +6,10 @@ import {
   OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
   requiredOpenclawOtelPolicyPresets,
 } from "./openclaw-otel-policy-presets";
+import {
+  isDcodeAgent,
+  OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET,
+} from "./observability-policy-presets";
 
 export const RESTRICTED_TIER_NAME = "restricted";
 
@@ -18,8 +22,11 @@ export function agentRequiredPresetAdditions(
 }
 
 function restrictedIncompatibleAgentRequiredPresets(agent: string | null | undefined): string[] {
-  if (!isOpenclawAgent(agent)) return [];
-  return ["openclaw-pricing", OPENCLAW_OTEL_LOCAL_POLICY_PRESET];
+  if (isOpenclawAgent(agent)) {
+    return ["openclaw-pricing", OPENCLAW_OTEL_LOCAL_POLICY_PRESET];
+  }
+  if (isDcodeAgent(agent)) return [OBSERVABILITY_OTLP_LOCAL_POLICY_PRESET];
+  return [];
 }
 
 /**

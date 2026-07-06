@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const agentDir = path.join(repoRoot, "agents", "langchain-deepagents-code");
 const middlewarePath = path.join(agentDir, "progressive_tool_disclosure.py");
+const observabilityPath = path.join(agentDir, "nemoclaw_observability.py");
 const patcherPath = path.join(agentDir, "patch-managed-deepagents-code.py");
 const harnessPath = path.join(
   repoRoot,
@@ -88,6 +89,16 @@ class ModelConfig:
 `,
   "agent.py": `from __future__ import annotations
 
+class FakeGraph:
+    def __init__(self, main, subagents):
+        self.main = main
+        self.subagents = subagents
+        self.bound_config = {}
+
+    def with_config(self, config):
+        self.bound_config = {**self.bound_config, **config}
+        return self
+
 def create_deep_agent(*args, **kwargs):
     del args
     main = list(kwargs.get("middleware") or ())
@@ -95,7 +106,7 @@ def create_deep_agent(*args, **kwargs):
         list(subagent.get("middleware") or ())
         for subagent in kwargs.get("subagents") or ()
     ]
-    return main, subagents
+    return FakeGraph(main, subagents)
 
 def _resolve_ptc_option(*args, **kwargs): return None
 def load_async_subagents(config_path=None): return []
@@ -105,10 +116,13 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     kwargs.pop("mcp_server_info", None)
     kwargs.pop("rubric_model", None)
     kwargs.pop("async_subagents", None)
-    return create_deep_agent(
-        middleware=[],
-        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
-        **kwargs,
+    return (
+        create_deep_agent(
+            middleware=[],
+            subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+            **kwargs,
+        ),
+        "fixture-backend",
     )
 `,
   "update_check.py": `from __future__ import annotations
@@ -218,6 +232,7 @@ interface PatchFixture {
   mainPath: string;
   agentPath: string;
   modulePath: string;
+  observabilityModulePath: string;
   helperPath: string;
   sourcePaths: string[];
 }
@@ -244,6 +259,7 @@ function makePatchFixture(version = "0.1.30"): PatchFixture {
   const mainPath = path.join(packageDir, "main.py");
   const agentPath = path.join(packageDir, "agent.py");
   const modulePath = path.join(packageDir, "progressive_tool_disclosure.py");
+  const observabilityModulePath = path.join(packageDir, "nemoclaw_observability.py");
   const helperPath = path.join(packageDir, "_nemoclaw_managed.py");
   return {
     root,
@@ -252,6 +268,7 @@ function makePatchFixture(version = "0.1.30"): PatchFixture {
     mainPath,
     agentPath,
     modulePath,
+    observabilityModulePath,
     helperPath,
     sourcePaths,
   };
@@ -274,12 +291,27 @@ import importlib.util
 import json
 import os
 import sys
+import types
 
 spec = importlib.util.spec_from_file_location("disclosure_harness", ${JSON.stringify(harnessPath)})
 harness = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(harness)
 harness._install_stubs()
 sys.path.insert(0, ${JSON.stringify(fixture.root)})
+
+observability = types.ModuleType("deepagents_code.nemoclaw_observability")
+
+class RelayMiddleware:
+    pass
+
+class MetadataOnlyCallback:
+    pass
+
+observability.initialize_observability = lambda: os.environ.get("NEMOCLAW_OBSERVABILITY") == "1"
+observability.new_relay_middleware = RelayMiddleware
+observability.new_metadata_only_callback_handler = MetadataOnlyCallback
+sys.modules["deepagents_code.nemoclaw_observability"] = observability
+
 agent = importlib.import_module("deepagents_code.agent")
 middleware = importlib.import_module("deepagents_code.progressive_tool_disclosure")
 
@@ -293,7 +325,9 @@ class NamedTool:
         self.name = name
 
 def counts(result):
-    main, subagents = result
+    graph, backend = result
+    assert backend == "fixture-backend"
+    main, subagents = graph.main, graph.subagents
     middleware_type = middleware.ProgressiveToolDisclosureMiddleware
     instances = [item for item in main if isinstance(item, middleware_type)]
     instances.extend(
@@ -301,12 +335,42 @@ def counts(result):
     )
     return len(instances), len({id(item) for item in instances})
 
+def observability_counts(result):
+    graph, backend = result
+    assert backend == "fixture-backend"
+    instances = [item for item in graph.main if isinstance(item, RelayMiddleware)]
+    instances.extend(
+        item
+        for stack in graph.subagents
+        for item in stack
+        if isinstance(item, RelayMiddleware)
+    )
+    callbacks = graph.bound_config.get("callbacks", [])
+    return {
+        "instances": len(instances),
+        "distinct": len({id(item) for item in instances}),
+        "callbacks": len(callbacks),
+        "metadata_only_callback": all(
+            isinstance(callback, MetadataOnlyCallback) for callback in callbacks
+        ),
+    }
+
 os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
 no_mcp = counts(agent.create_cli_agent(None, "assistant"))
 empty_mcp = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(())]))
 active = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
 os.environ["NEMOCLAW_TOOL_DISCLOSURE"] = "direct"
 direct = counts(agent.create_cli_agent(None, "assistant", mcp_server_info=[Info(("mcp_echo",))]))
+
+os.environ["NEMOCLAW_OBSERVABILITY"] = "true"
+observability_noncanonical = observability_counts(
+    agent.create_cli_agent(None, "assistant")
+)
+os.environ["NEMOCLAW_OBSERVABILITY"] = "1"
+observability_active = observability_counts(
+    agent.create_cli_agent(None, "assistant")
+)
+os.environ.pop("NEMOCLAW_OBSERVABILITY", None)
 
 original_factory = agent._nemoclaw_original_create_cli_agent
 reached_original = []
@@ -374,6 +438,8 @@ print(json.dumps({
     "direct_collisions": direct_collisions,
     "reached_original": reached_original,
     "direct": direct,
+    "observability_noncanonical": observability_noncanonical,
+    "observability_active": observability_active,
     "invalid": invalid,
 }))
 `;
@@ -469,7 +535,12 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     const first = runPatcher(fixture);
     expect(first.status, first.stderr).toBe(0);
 
-    const managedPaths = [...fixture.sourcePaths, fixture.modulePath, fixture.helperPath];
+    const managedPaths = [
+      ...fixture.sourcePaths,
+      fixture.modulePath,
+      fixture.observabilityModulePath,
+      fixture.helperPath,
+    ];
     const firstBytes = snapshot(managedPaths);
     const second = runPatcher(fixture);
     expect(second.status, second.stderr).toBe(0);
@@ -489,6 +560,9 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
       firstBytes[fixture.agentPath].match(/ProgressiveToolDisclosureMiddleware\(\)/g),
     ).toHaveLength(2);
     expect(firstBytes[fixture.modulePath]).toBe(fs.readFileSync(middlewarePath, "utf8"));
+    expect(firstBytes[fixture.observabilityModulePath]).toBe(
+      fs.readFileSync(observabilityPath, "utf8"),
+    );
 
     const wiring = runWiring(fixture);
     expect(wiring).toMatchObject({
@@ -498,6 +572,18 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
       direct: [0, 0],
       reached_original: [],
       invalid: "NEMOCLAW_TOOL_DISCLOSURE must be 'progressive' or 'direct'",
+    });
+    expect(wiring.observability_noncanonical).toEqual({
+      instances: 0,
+      distinct: 0,
+      callbacks: 0,
+      metadata_only_callback: true,
+    });
+    expect(wiring.observability_active).toEqual({
+      instances: 3,
+      distinct: 3,
+      callbacks: 1,
+      metadata_only_callback: true,
     });
     expect(wiring.progressive_collisions).toEqual({
       regular_regular: expect.stringContaining("multiple registered implementations"),
@@ -592,6 +678,24 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
   });
 
+  it("rejects a partial package install with the observability module missing", () => {
+    const fixture = makePatchFixture();
+    const first = runPatcher(fixture);
+    expect(first.status, first.stderr).toBe(0);
+    fs.rmSync(fixture.observabilityModulePath);
+    const before = snapshot([...fixture.sourcePaths, fixture.modulePath, fixture.helperPath]);
+
+    const result = runPatcher(fixture);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      "Managed package patch is partial: observability module is missing",
+    );
+    expect(snapshot([...fixture.sourcePaths, fixture.modulePath, fixture.helperPath])).toEqual(
+      before,
+    );
+    expect(fs.existsSync(fixture.observabilityModulePath)).toBe(false);
+  });
+
   it("refuses to overwrite a conflicting installed middleware module", () => {
     const fixture = makePatchFixture();
     fs.writeFileSync(fixture.modulePath, "# unexpected module\n", "utf8");
@@ -602,5 +706,17 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(result.stderr).toContain("Refusing to overwrite unexpected middleware");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.readFileSync(fixture.modulePath, "utf8")).toBe("# unexpected module\n");
+  });
+
+  it("refuses to overwrite a conflicting installed observability module", () => {
+    const fixture = makePatchFixture();
+    fs.writeFileSync(fixture.observabilityModulePath, "# unexpected module\n", "utf8");
+    const before = snapshot(fixture.sourcePaths);
+    const result = runPatcher(fixture);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Refusing to overwrite unexpected observability module");
+    expect(snapshot(fixture.sourcePaths)).toEqual(before);
+    expect(fs.readFileSync(fixture.observabilityModulePath, "utf8")).toBe("# unexpected module\n");
   });
 });

@@ -55,7 +55,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: false, toolDisclosure: "progressive" },
+      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -97,6 +97,23 @@ describe("handleSandboxState", () => {
     expect(result.webSearchConfig).toBeNull();
   });
 
+  it("carries durable observability intent in the sandbox create intent", async () => {
+    const session = createSession({ observabilityEnabled: true });
+    const { deps, calls } = createDeps({
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
+        return mutator(session) ?? session;
+      }),
+    });
+
+    await handleSandboxState(baseOptions(deps, session));
+
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      recreate: false,
+      toolDisclosure: "progressive",
+      observabilityEnabled: true,
+    });
+  });
+
   it("removes the conflicting Hermes nous-web gateway when Tavily is selected", async () => {
     const { deps, calls } = createDeps();
 
@@ -122,7 +139,7 @@ describe("handleSandboxState", () => {
       null,
       ["nous-audio"],
       null,
-      { recreate: false, toolDisclosure: "progressive" },
+      { recreate: false, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.hermesToolGateways).toEqual(["nous-audio"]);
     expect(calls.note).toHaveBeenCalledWith(
@@ -213,7 +230,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
   });
 
@@ -412,7 +429,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.webSearchConfigChanged).toBe(true);
   });
@@ -526,7 +543,7 @@ describe("handleSandboxState", () => {
       null,
       [],
       null,
-      { recreate: true, toolDisclosure: "progressive" },
+      { recreate: true, toolDisclosure: "progressive", observabilityEnabled: false },
     );
     expect(result.webSearchConfig).toBeNull();
   });

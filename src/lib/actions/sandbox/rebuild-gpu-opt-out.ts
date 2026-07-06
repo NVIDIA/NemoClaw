@@ -12,6 +12,7 @@ import type {
   PreparedImageRebuildHandoff,
 } from "../../onboard/prepared-dcode-rebuild";
 import type { RebuildRouteHandoff } from "../../onboard/rebuild-route-handoff";
+import { isDcodeAgent } from "../../onboard/observability-policy-presets";
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 import type { SandboxBaseImageResolutionMetadata } from "../../sandbox-base-image";
 import { type ToolDisclosure, toolDisclosureOrDefault } from "../../tool-disclosure";
@@ -25,6 +26,7 @@ export type RebuildGpuOptOutEntry = {
   gatewayName?: string | null;
   gatewayPort?: number | null;
   toolDisclosure?: ToolDisclosure;
+  observabilityEnabled?: boolean;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -96,6 +98,7 @@ export type RebuildRecreateOnboardOpts = {
   preparedImageRebuild?: PreparedImageRebuildHandoff;
   autoYes: boolean;
   toolDisclosure: ToolDisclosure;
+  observabilityEnabled: boolean;
   baseImageResolutionHint: SandboxBaseImageResolutionMetadata | null;
   noGpu?: true;
 };
@@ -109,6 +112,11 @@ export function buildRebuildRecreateOnboardOpts(args: {
   baseImageResolutionHint?: SandboxBaseImageResolutionMetadata | null;
   usageNoticeAccepted: true;
 }): RebuildRecreateOnboardOpts {
+  if (args.sb?.observabilityEnabled === true && !isDcodeAgent(args.rebuildAgent)) {
+    throw new Error(
+      "Recorded observability state is valid only for agent 'langchain-deepagents-code'.",
+    );
+  }
   const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
   const targetGatewayName = resolveSandboxGatewayName(args.sb);
   const targetGatewayPort = resolveGatewayPortFromName(targetGatewayName);
@@ -148,6 +156,7 @@ export function buildRebuildRecreateOnboardOpts(args: {
     ...(args.preparedDcodeRebuild ? { preparedDcodeRebuild: args.preparedDcodeRebuild } : {}),
     autoYes: args.autoYes,
     toolDisclosure: toolDisclosureOrDefault(args.sb?.toolDisclosure),
+    observabilityEnabled: args.sb?.observabilityEnabled === true,
     baseImageResolutionHint: args.baseImageResolutionHint ?? null,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };
