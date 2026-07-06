@@ -500,7 +500,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const resumePrompt = `Repeat this exact token: ${issue5254Marker}.`;
     await expectNoNewHermesSessions(
       beforeResumeSessions,
-      ["--resume", seedSessionId, "-z", resumePrompt],
+      ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
     );

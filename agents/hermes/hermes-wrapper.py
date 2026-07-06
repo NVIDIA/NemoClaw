@@ -54,10 +54,11 @@
 # api_secret, access_token, auth_token, client_secret, secret_key, secret,
 # token, password, bearer, authorization, credential — including
 # hyphen/underscore/camelCase variants) in Python-dict, JSON, YAML key:value,
-# env-style key=value, and YAML block-scalar shapes; plus, as defence in
-# depth, every free-form `sk-`-prefixed token of length >= 8. Non-`sk-`
-# token families in free prose are not redacted — that is the upstream
-# Hermes CLI's responsibility.
+# env-style key=value, and YAML block-scalar shapes (`|`, `|-`, `|+`, `|2`,
+# `|2-`, `|2+`, `|-2`, and folded `>` equivalents); plus, as defence in depth,
+# every free-form `sk-`-prefixed token of length >= 8. Non-`sk-` token families
+# in free prose are not redacted — that is the upstream Hermes CLI's
+# responsibility.
 #
 # The same gateway runtime-env guard also runs in the nemoclaw-start
 # entrypoint (`agents/hermes/start.sh:validate_hermes_runtime_env_secret_boundary`)
@@ -74,6 +75,7 @@
 import os
 import subprocess
 import sys
+import tempfile
 
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
@@ -153,42 +155,45 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     # EOF when Hermes finishes writing. The masker itself buffers in
     # memory and only writes on success, so a mid-stream crash never
     # produces a partial secret on either stream. Each masker's own stderr
-    # is captured to a pipe so we can filter it before forwarding — a
+    # is captured to a temporary file so we can filter it before forwarding — a
     # raw `stderr=sys.stderr.fileno()` would leak Python tracebacks on an
-    # unhandled exception.
+    # unhandled exception, while a pipe could deadlock if a masker writes a
+    # large diagnostic before the parent drains it.
     masker_argv = [python3, "-I", guard_path, "mask-config-output"]
-    masker_stdout = subprocess.Popen(
-        masker_argv,
-        stdin=subprocess.PIPE,
-        stdout=sys.stdout.fileno(),
-        stderr=subprocess.PIPE,
-    )
-    masker_stderr = subprocess.Popen(
-        masker_argv,
-        stdin=subprocess.PIPE,
-        stdout=sys.stderr.fileno(),
-        stderr=subprocess.PIPE,
-    )
-    try:
-        proc = subprocess.Popen(
-            [real_hermes, *argv],
-            stdout=masker_stdout.stdin,
-            stderr=masker_stderr.stdin,
+    with (
+        tempfile.TemporaryFile() as stdout_masker_stderr_file,
+        tempfile.TemporaryFile() as stderr_masker_stderr_file,
+    ):
+        masker_stdout = subprocess.Popen(
+            masker_argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stdout.fileno(),
+            stderr=stdout_masker_stderr_file,
         )
-    finally:
-        if masker_stdout.stdin is not None:
-            masker_stdout.stdin.close()
-        if masker_stderr.stdin is not None:
-            masker_stderr.stdin.close()
-    proc.wait()
-    # Read each masker's captured stderr before wait() returns so the
-    # pipe drains and the masker is not blocked writing into a full buffer.
-    # communicate() cannot be used here because the stdin pipe was already
-    # closed for ownership transfer.
-    stdout_masker_stderr = masker_stdout.stderr.read() if masker_stdout.stderr else b""
-    stderr_masker_stderr = masker_stderr.stderr.read() if masker_stderr.stderr else b""
-    masker_stdout.wait()
-    masker_stderr.wait()
+        masker_stderr = subprocess.Popen(
+            masker_argv,
+            stdin=subprocess.PIPE,
+            stdout=sys.stderr.fileno(),
+            stderr=stderr_masker_stderr_file,
+        )
+        try:
+            proc = subprocess.Popen(
+                [real_hermes, *argv],
+                stdout=masker_stdout.stdin,
+                stderr=masker_stderr.stdin,
+            )
+        finally:
+            if masker_stdout.stdin is not None:
+                masker_stdout.stdin.close()
+            if masker_stderr.stdin is not None:
+                masker_stderr.stdin.close()
+        proc.wait()
+        masker_stdout.wait()
+        masker_stderr.wait()
+        stdout_masker_stderr_file.seek(0)
+        stderr_masker_stderr_file.seek(0)
+        stdout_masker_stderr = stdout_masker_stderr_file.read()
+        stderr_masker_stderr = stderr_masker_stderr_file.read()
     if masker_stdout.returncode != 0:
         _forward_sanitised_masker_stderr(
             stdout_masker_stderr,
@@ -262,12 +267,13 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
 
     NemoClaw owns this installed wrapper, not the prebuilt Hermes Agent binary
     inside the sandbox base image, so the wrapper is the smallest compatibility
-    boundary available here. Delete this translation once Hermes top-level
-    `--resume/-c` plus `-z/--oneshot` natively appends the new user/assistant
-    turn to the selected session without creating a fresh session id. Until
-    then, wrapper argv tests cover the routed form and the fail-closed cases;
-    live sandbox validation should verify the persisted `sessions list/export`
-    behavior when a matching Hermes runtime is available.
+    boundary available here. NemoClaw #5254 is the local removal tracker; avoid
+    adding unofficial upstream repository links here per the repo's no external
+    project links rule. Delete this translation once the pinned Hermes runtime
+    natively appends top-level `--resume/-c` plus `-z/--oneshot` turns to the
+    selected session without creating a fresh session id. Until then, wrapper
+    argv tests cover the routed form and the fail-closed cases; live sandbox
+    validation verifies the persisted `sessions list/export` behavior.
 
     Preserve approval-related user intent instead of inferring it here:
     `--yolo` and `--accept-hooks` are forwarded only when the original argv

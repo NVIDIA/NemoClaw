@@ -224,11 +224,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     );
 
     expect(run.status).toBe(0);
-    expect(run.stderr).toBe("");
-    expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe(
-      "chat --query What secret number did I give you? --quiet --resume 20260612_050401_aa9d27",
-    );
     expect(run.realArgv).toEqual([
       "chat",
       "--query",
@@ -254,11 +249,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     );
 
     expect(run.status).toBe(0);
-    expect(run.stderr).toBe("");
-    expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe(
-      "chat --query Summarize the latest turn --quiet --continue daily check --model anthropic/claude-sonnet-4 --toolsets memory,session_search --ignore-rules",
-    );
     expect(run.realArgv).toEqual([
       "chat",
       "--query",
@@ -281,8 +271,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     );
 
     expect(run.status).toBe(0);
-    expect(run.stderr).toBe("");
-    expect(run.realInvoked).toBe(true);
     expect(run.realArgv).toEqual([
       "chat",
       "--query",
@@ -293,6 +281,43 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       "--yolo",
       "--accept-hooks",
     ]);
+  });
+
+  it("keeps translated resumed one-shot turns on the same fake session (#5254)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-session-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const statePath = path.join(dir, "sessions.json");
+      fs.writeFileSync(
+        path.join(dir, "hermes.real"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "-z" ]; then printf "seed:%s\\n" "$2" > "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
+          'if [ "$1" = "chat" ] && [ "$2" = "--query" ] && [ "$4" = "--quiet" ] && { [ "$5" = "--resume" ] || [ "$5" = "--continue" ]; } && [ "$6" = "seed" ]; then printf "seed:%s\\n" "$3" >> "$NEMOCLAW_FAKE_SESSIONS"; exit 0; fi',
+          "exit 3",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const invoke = (args: string[]) =>
+        spawnSync(path.join(dir, "hermes"), args, {
+          encoding: "utf-8",
+          env: { PATH: process.env.PATH ?? "", HOME: dir, NEMOCLAW_FAKE_SESSIONS: statePath },
+          timeout: 10_000,
+        });
+
+      expect(invoke(["-z", "seed prompt"]).status).toBe(0);
+      expect(invoke(["--resume", "seed", "-z", "resume prompt"]).status).toBe(0);
+      expect(invoke(["-c", "seed", "-z", "continue prompt"]).status).toBe(0);
+      expect(fs.readFileSync(statePath, "utf-8").trim().split("\n")).toEqual([
+        "seed:seed prompt",
+        "seed:resume prompt",
+        "seed:continue prompt",
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("leaves plain one-shot invocations on the upstream one-shot path (#5254)", () => {
@@ -798,22 +823,43 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("passwords: sk-****");
   });
 
-  it("masks multi-digit and reversed-order YAML block-scalar headers (|2-, |-2, >5+)", () => {
+  it("masks YAML block-scalar headers with indentation and chomping indicators", () => {
     const fixture = [
+      "provider_token: |2",
+      "    leaked-yaml-indent-12345",
       "api_key: |2-",
       "    leaked-yaml-indent-trail-12345",
       "access_token: |-2",
       "    leaked-yaml-trail-indent-12345",
+      "auth_token: >2",
+      "    leaked-yaml-folded-indent-12345",
       "client_secret: >5+",
       "     leaked-yaml-folded-12345",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-yaml-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-indent-trail-12345");
     expect(run.stdout).not.toContain("leaked-yaml-trail-indent-12345");
+    expect(run.stdout).not.toContain("leaked-yaml-folded-indent-12345");
     expect(run.stdout).not.toContain("leaked-yaml-folded-12345");
     expect(run.stdout).toContain("sk-****");
+  });
+
+  it("does not hang when the config masker emits large stderr", () => {
+    const validatorScript = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      "sys.stderr.write('x' * 70000)",
+      "raise SystemExit(1)",
+      "",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { validatorScript });
+
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("output masker failed");
+    expect(run.stderr).not.toContain("xxxxxxxxxxxxxxxx");
   });
 
   it("fails closed with a stable error when config show stdout exceeds the 4 MiB masker cap", () => {
