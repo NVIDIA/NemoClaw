@@ -109,7 +109,11 @@ For project-specific Python dependencies, create a separate virtual environment 
 ## State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
-NemoClaw snapshot and rebuild flows preserve the app state directory, skills, and generated config when those files exist.
+NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
+During managed re-onboarding, NemoClaw restores only these `config.toml` preferences from backup: boolean `ui.show_scrollbar`, boolean `ui.show_url_open_toast`, boolean `threads.relative_time`, and `threads.sort_order` when it is `updated_at` or `created_at`.
+Freshly generated model routing, update settings, provider metadata, and all other configuration remain authoritative.
+NemoClaw drops all other backup settings, including `ui.theme`, behavior-bearing keys, unknown keys, and security-sensitive keys.
+It recreates the sandbox when its live `dcode identity` output is unreadable or does not match the selected provider and model, then records the selection only after the restored runtime passes the same check.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not back up `.deepagents/.env` or the user-owned `.deepagents/.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there.

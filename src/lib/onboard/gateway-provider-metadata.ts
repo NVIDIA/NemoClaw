@@ -20,6 +20,29 @@ export type GatewayProviderMetadata = {
   configKeys: string[];
 };
 
+export type GatewayProviderBinding = {
+  name: string;
+  type: string;
+  credentialKey: string;
+  configKey: string;
+};
+
+/** Match the complete non-secret provider identity used for route decisions. */
+export function matchesGatewayProviderBinding(
+  metadata: GatewayProviderMetadata | null,
+  expected: GatewayProviderBinding,
+): boolean {
+  return Boolean(
+    metadata &&
+      metadata.name === expected.name &&
+      metadata.type === expected.type &&
+      metadata.credentialKeys.length === 1 &&
+      metadata.credentialKeys[0] === expected.credentialKey &&
+      metadata.configKeys.length === 1 &&
+      metadata.configKeys[0] === expected.configKey,
+  );
+}
+
 type GatewayProviderCommandResult = {
   status: number | null;
   stdout?: string | Buffer | null;
