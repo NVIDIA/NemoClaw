@@ -2589,7 +2589,7 @@ def initial_cli_request_is_allowlisted(request_id):
             if scope not in policy_allowed_scopes or scope in scopes:
                 return False
             scopes.add(scope)
-        if 'operator.pairing' not in scopes:
+        if scopes != {'operator.pairing'}:
             return False
         return approval_request_decision(request)['allowed'] is True
     except (OSError, ValueError, RuntimeError) as err:
@@ -2662,7 +2662,7 @@ def pairing_required_request_id(out, err):
     candidates.extend(
         next(group for group in match.groups() if group is not None)
         for match in re.finditer(
-            r'\brequestId\b["\']?\s*[:=]\s*(?:"([A-Za-z0-9._:-]{1,128})"|\'([A-Za-z0-9._:-]{1,128})\'|([A-Za-z0-9._:-]{1,128})(?=$|[,}\]\)]))',
+            r'\brequestId\b["\']?\s*[:=]\s*(?:"([A-Za-z0-9._:-]{1,128})"(?=$|[,}\]\)])|\'([A-Za-z0-9._:-]{1,128})\'(?=$|[,}\]\)])|([A-Za-z0-9._:-]{1,128})(?=$|[,}\]\)]))',
             message,
         )
     )

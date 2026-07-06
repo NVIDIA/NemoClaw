@@ -80,7 +80,7 @@ describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
           clientMode: "cli",
           role: "operator",
           roles: ["operator"],
-          scopes: ["operator.pairing", "operator.write"],
+          scopes: ["operator.pairing"],
           remoteIp: "10.200.0.2",
           ts: 100,
         },
@@ -92,14 +92,21 @@ describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   if [ -s ${JSON.stringify(pairedFile)} ]; then
-    node -e 'const fs=require("fs"); const paired=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(JSON.stringify({pending:[], paired:Object.values(paired)})+"\\n")' ${JSON.stringify(pairedFile)}
+    cat <<'JSON'
+{"pending":[],"paired":[{"deviceId":${JSON.stringify(deviceId)},"publicKey":${JSON.stringify(publicKey)},"clientId":"cli","clientMode":"cli","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"]}]}
+JSON
     exit 0
   fi
   printf '%s\\n' '{"ok":false,"error":{"reason":"pairing required: device is not approved yet (requestId: request-1)"}}'
   exit 1
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
-  node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({url:process.env.OPENCLAW_GATEWAY_URL||null, port:process.env.OPENCLAW_GATEWAY_PORT||null, token:process.env.OPENCLAW_GATEWAY_TOKEN||null, args:process.argv.slice(3)})); fs.writeFileSync(process.argv[2], JSON.stringify({${JSON.stringify(deviceId)}:{deviceId:${JSON.stringify(deviceId)},publicKey:${JSON.stringify(publicKey)},clientId:"cli",clientMode:"cli",scopes:["operator.pairing"],approvedScopes:["operator.pairing"]}}));' ${JSON.stringify(approveLog)} ${JSON.stringify(pairedFile)} "$@"
+  cat > ${JSON.stringify(approveLog)} <<'JSON'
+{"url":null,"port":null,"token":null,"args":["devices","approve","request-1","--json"]}
+JSON
+  cat > ${JSON.stringify(pairedFile)} <<'JSON'
+{${JSON.stringify(deviceId)}:{"deviceId":${JSON.stringify(deviceId)},"publicKey":${JSON.stringify(publicKey)},"clientId":"cli","clientMode":"cli","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"]}}
+JSON
   exit 0
 fi
 if [ "\${1:-}" = "agent" ]; then
@@ -179,6 +186,7 @@ exit 2
     ["malformed scopes", { scopes: "operator.pairing" }],
     ["empty scopes", { scopes: [] }],
     ["duplicate scopes", { scopes: ["operator.pairing", "operator.pairing"] }],
+    ["extra allowed scope", { scopes: ["operator.pairing", "operator.write"] }],
     ["disallowed scope", { scopes: ["operator.pairing", "admin.write"] }],
     ["missing pairing scope", { scopes: ["operator.write"] }],
   ])(
@@ -281,6 +289,10 @@ exit 2
     [
       "whitespace request id with pending prefix",
       "pairing required: device is not approved yet requestId: request 1",
+    ],
+    [
+      "quoted request id with trailing text",
+      'pairing required: device is not approved yet requestId: "request" 1',
     ],
   ])(
     "rejects %s from gated-list errors before initial CLI approve (#6113)",
