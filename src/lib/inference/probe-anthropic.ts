@@ -38,6 +38,7 @@ export function probeAnthropicEndpoint(
   endpointUrl: string,
   model: string,
   apiKey: string,
+  resolveArgs: readonly string[] = [],
 ): AnthropicProbeResult {
   let authConfig: ReturnType<typeof createXApiKeyAuthConfig> | undefined;
   try {
@@ -45,6 +46,8 @@ export function probeAnthropicEndpoint(
     const result = runCurlProbe(
       [
         "-sS",
+        // Pin the connection to the preflight-validated IP (rebinding-safe).
+        ...resolveArgs,
         ...getCurlTimingArgs(),
         ...authConfig.args,
         "-H",

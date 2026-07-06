@@ -9,6 +9,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
       endpointUrl: string,
       model: string,
       apiKey: string | null | undefined,
+      resolveArgs?: readonly string[],
     ): any;
     probeOpenAiLikeEndpoint(
       endpointUrl: string,
@@ -20,6 +21,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
 
 import {
   assertEndpointResolvesPublic,
+  buildCurlResolveArgs,
   type EndpointDnsLookupFn,
 } from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
@@ -114,22 +116,29 @@ export function createInferenceSelectionValidationHelpers(
   // endpoint host and fails closed before any host-side probe curl when it (or
   // a resolved address) is private/reserved, so a public-looking name that
   // resolves to loopback/link-local/RFC1918 cannot reach internal services
-  // during privileged onboarding. Returns a fail-closed EndpointValidationResult
-  // to short-circuit the caller, or null when the endpoint is safe to probe.
-  // See PR #6293 PRA-4.
-  async function preflightCustomEndpointOrFail(
+  // during privileged onboarding. On success it returns the `--resolve` curl
+  // args that pin the connection to the validated IP, so the probe curls cannot
+  // re-resolve (rebind) the hostname. Returns `{ blocked }` (fail-closed) to
+  // short-circuit, or `{ blocked: null, resolveArgs }` when it is safe to probe.
+  //
+  // Gated on an injected resolver rather than an ambient VITEST flag: production
+  // wires the real dns/promises resolver at the composition root (onboard.ts);
+  // tests inject a fake resolver to exercise it, or omit it to skip (no real
+  // DNS). See PR #6293 PRA-3/PRA-4.
+  async function preflightCustomEndpoint(
     label: string,
     endpointUrl: string,
     credentialEnv: string | null,
     helpUrl: string | null,
-  ): Promise<EndpointValidationResult | null> {
-    // Under the unit-test runner the default resolver would hit real DNS (and
-    // fixture hostnames do not resolve); skip unless a resolver is injected,
-    // mirroring applyCompatibleEndpointContextWindow's VITEST fetch guard. In
-    // production (VITEST unset) the real dns/promises resolver always runs.
-    if (!deps.resolveEndpointHost && process.env.VITEST === "true") return null;
+  ): Promise<{ blocked: EndpointValidationResult | null; resolveArgs: string[] }> {
+    if (!deps.resolveEndpointHost) return { blocked: null, resolveArgs: [] };
     const preflight = await assertEndpointResolvesPublic(endpointUrl, deps.resolveEndpointHost);
-    if (preflight.ok) return null;
+    if (preflight.ok) {
+      return {
+        blocked: null,
+        resolveArgs: buildCurlResolveArgs(endpointUrl, preflight.pinnedAddress),
+      };
+    }
     const syntheticProbe = {
       ok: false as const,
       message: preflight.reason,
@@ -157,7 +166,7 @@ export function createInferenceSelectionValidationHelpers(
       console.log("  Please choose a provider/model again.");
       console.log("");
     }
-    return { ok: false, retry };
+    return { blocked: { ok: false, retry }, resolveArgs: [] };
   }
 
   async function validateOpenAiLikeSelection(
@@ -241,7 +250,12 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
+    const { blocked, resolveArgs } = await preflightCustomEndpoint(
+      label,
+      endpointUrl,
+      credentialEnv,
+      helpUrl,
+    );
     if (blocked) return blocked;
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
@@ -251,6 +265,9 @@ export function createInferenceSelectionValidationHelpers(
       skipResponsesProbe:
         reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
       probeStreaming: !reasoningEnabled,
+      // Pin curl to the preflight-validated IP (rebinding-safe); only present
+      // when the preflight actually resolved a public name.
+      ...(resolveArgs.length > 0 ? { resolveArgs } : {}),
     });
     if (probe.ok) {
       if (probe.note) {
@@ -286,10 +303,20 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
+    const { blocked, resolveArgs } = await preflightCustomEndpoint(
+      label,
+      endpointUrl,
+      credentialEnv,
+      helpUrl,
+    );
     if (blocked) return blocked;
     const apiKey = resolveCredential(credentialEnv);
-    const probe = runAnthropicProbe(endpointUrl, model, apiKey);
+    // Pass the pinned --resolve args only when the preflight resolved a public
+    // name, so the unpinned call shape (and its assertions) is unchanged.
+    const probe =
+      resolveArgs.length > 0
+        ? runAnthropicProbe(endpointUrl, model, apiKey, resolveArgs)
+        : runAnthropicProbe(endpointUrl, model, apiKey);
     if (probe.ok) {
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
       return { ok: true, api: probe.api };

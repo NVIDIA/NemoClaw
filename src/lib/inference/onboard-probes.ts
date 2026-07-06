@@ -290,6 +290,8 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
     const result = runCurlProbe(
       [
         "-sS",
+        // Pin the connection to the preflight-validated IP (rebinding-safe).
+        ...(options.resolveArgs ?? []),
         ...getValidationProbeCurlArgs(),
         "-H",
         "Content-Type: application/json",
@@ -349,6 +351,8 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
     const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
     const args = [
       "-sS",
+      // Pin the connection to the preflight-validated IP (rebinding-safe).
+      ...(options.resolveArgs ?? []),
       ...timingArgs,
       "-H",
       "Content-Type: application/json",
@@ -524,13 +528,16 @@ export function getChatCompletionsProbeCurlArgs(opts: {
   model: string;
   url: string;
   isWsl?: boolean;
+  resolveArgs?: readonly string[];
 }) {
-  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride } = opts;
+  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride, resolveArgs } = opts;
   const platformOptions = typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
   const credSlice = credentialArgs ?? authHeader ?? [];
   return [
     "-sS",
+    // Pin the connection to the preflight-validated IP (rebinding-safe).
+    ...(resolveArgs ?? []),
     ...timingArgs,
     "-H",
     "Content-Type: application/json",
@@ -547,12 +554,14 @@ function runChatCompletionsProbe({
   url,
   isWsl: isWslOverride,
   trustedConfigFiles,
+  resolveArgs,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
     credentialArgs,
     model,
     url,
     isWsl: isWslOverride,
+    resolveArgs,
   });
   const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args) };
   if (trustedConfigFiles && trustedConfigFiles.length > 0) {
@@ -581,6 +590,8 @@ function runDoubledTimeoutChatCompletionsRetry({
   const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
   const buildRetryArgs = () => [
     "-sS",
+    // Pin the connection to the preflight-validated IP (rebinding-safe).
+    ...(options.resolveArgs ?? []),
     ...doubledArgs,
     "-H",
     "Content-Type: application/json",
@@ -594,6 +605,7 @@ function runDoubledTimeoutChatCompletionsRetry({
       ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
           authMode: options.authMode,
           timingArgs: doubledArgs,
+          resolveArgs: options.resolveArgs,
         })
       : (() => {
           const retryArgs = buildRetryArgs();
@@ -686,6 +698,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
+  // Pinned --resolve args from the upstream DNS SSRF preflight (validateCustom*),
+  // applied to every host-side curl below so curl connects to the validated IP
+  // rather than re-resolving the hostname (rebinding-safe). Empty when unpinned.
+  const resolveArgs = options.resolveArgs ?? [];
   let authConfig;
   try {
     authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
@@ -695,7 +711,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             name: "Responses API with tool calling",
             api: "openai-responses",
             execute: () =>
-              probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+              probeResponsesToolCalling(endpointUrl, model, apiKey, {
+                authMode: options.authMode,
+                resolveArgs,
+              }),
           }
         : {
             name: "Responses API",
@@ -704,6 +723,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               runCurlProbe(
                 [
                   "-sS",
+                  ...resolveArgs,
                   ...getValidationProbeCurlArgs(),
                   "-H",
                   "Content-Type: application/json",
@@ -726,6 +746,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         options.requireChatCompletionsToolCalling === true
           ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
               authMode: options.authMode,
+              resolveArgs,
             })
           : runChatCompletionsProbe({
               credentialArgs: authConfig.args,
@@ -733,6 +754,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               url: `${baseUrl}/chat/completions`,
               isWsl: options.isWsl,
               trustedConfigFiles: authConfig.trustedConfigFiles,
+              resolveArgs,
             }),
     };
 
@@ -765,6 +787,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           const streamResult = runStreamingEventProbe(
             [
               "-sS",
+              ...resolveArgs,
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",

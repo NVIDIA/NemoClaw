@@ -5,7 +5,11 @@ import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
 import { isLoopbackHostname, isPrivateHostname } from "../private-networks";
-import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
+import {
+  assertEndpointResolvesPublic,
+  buildCurlResolveArgs,
+  type EndpointDnsLookupFn,
+} from "./endpoint-ssrf-preflight";
 import {
   hasExplicitContextWindow,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -102,7 +106,11 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * separately, not via a raw private-LAN URL. This fetcher therefore only ever
  * sees an already-validated, routable endpoint URL.
  */
-export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: string): unknown | null {
+export function fetchCompatibleEndpointModels(
+  endpointUrl: string,
+  apiKey: string,
+  extraCurlArgs: readonly string[] = [],
+): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
   const authConfig = createOpenAiLikeAuthConfig(apiKey || "");
   try {
@@ -113,6 +121,9 @@ export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: strin
         "10",
         "--max-time",
         "15",
+        // Pins the connection to the preflight-validated IP (rebinding-safe);
+        // empty in tests / when there is nothing to pin.
+        ...extraCurlArgs,
         ...authConfig.args,
         `${baseUrl}/models`,
       ],
@@ -265,6 +276,7 @@ export async function applyCompatibleEndpointContextWindow(
   // without a resolver (unit tests), so it never issues real DNS there; runs in
   // production (no injected fetcher) and whenever a resolver is injected.
   // See PR #6293 PRA-3 (GPT-5.5).
+  let resolveArgs: string[] = [];
   if (options.resolveHost || !fetchModels) {
     const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost);
     if (!preflight.ok) {
@@ -275,13 +287,18 @@ export async function applyCompatibleEndpointContextWindow(
       clearPreviousAuto();
       return;
     }
+    resolveArgs = buildCurlResolveArgs(endpointUrl, preflight.pinnedAddress);
   }
 
   const resolveCredential = options.resolveCredential ?? getCredential;
   const apiKey =
     options.apiKey ?? (options.credentialEnv ? resolveCredential(options.credentialEnv) : "") ?? "";
 
-  const models = (fetchModels ?? fetchCompatibleEndpointModels)(endpointUrl, apiKey);
+  // The default fetcher curls the endpoint, so pass the pinned --resolve args so
+  // it connects to the validated IP; an injected fetcher (tests) does not curl.
+  const models = fetchModels
+    ? fetchModels(endpointUrl, apiKey)
+    : fetchCompatibleEndpointModels(endpointUrl, apiKey, resolveArgs);
   if (models === null || models === undefined) {
     logger.warn(
       "  ⚠ Could not read the endpoint's /v1/models max_model_len; using the default context " +

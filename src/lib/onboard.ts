@@ -1036,6 +1036,12 @@ const {
   isNonInteractive,
   agentProductName,
   promptValidationRecovery,
+  // Real DNS resolver for the custom-endpoint SSRF preflight (PR #6293 PRA-3).
+  // Wired here at the composition root so the security boundary does not depend
+  // on an ambient env flag. Routed through the repo net/dns-lookup module (not
+  // node:dns directly) so tests can stub it — builtin exports are non-writable.
+  resolveEndpointHost: (hostname, options) =>
+    require("./net/dns-lookup").resolveHostAddresses(hostname, options),
 });
 const { validateSelectedRemoteModel } = createRemoteModelValidator({
   OPENAI_ENDPOINT_URL,

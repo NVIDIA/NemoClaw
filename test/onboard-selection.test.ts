@@ -319,7 +319,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 # Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
@@ -368,7 +368,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -3290,7 +3290,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q 'api.openai.com'; then
@@ -3713,7 +3713,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
@@ -4135,7 +4135,10 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["3", "https://proxy.example.com/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
+// Public IP literal endpoint: the custom-endpoint SSRF preflight passes it
+// without DNS (no resolver needed), keeping this auth-retry test focused on the
+// re-enter-key UX. Preflight DNS behavior is unit-tested separately (#6293).
+const answers = ["3", "https://8.8.8.8/v1/chat/completions?token=secret#frag", "custom-model", "retry", "proxy-good", "custom-model"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -4181,7 +4184,7 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "compatible-endpoint");
     assert.equal(payload.result.model, "custom-model");
-    assert.equal(payload.result.endpointUrl, "https://proxy.example.com/v1");
+    assert.equal(payload.result.endpointUrl, "https://8.8.8.8/v1");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.key, "proxy-good");
     assert.ok(
@@ -4229,7 +4232,10 @@ const { setupNim } = require(${onboardPath});
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
+// Public IP literal endpoint: the custom-endpoint SSRF preflight passes it
+// without DNS (no resolver needed), keeping this auth-retry test focused on the
+// re-enter-key UX. Preflight DNS behavior is unit-tested separately (#6293).
+const answers = ["5", "https://8.8.8.8/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -4275,7 +4281,7 @@ const { setupNim } = require(${onboardPath});
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
     assert.equal(payload.result.model, "claude-proxy");
-    assert.equal(payload.result.endpointUrl, "https://proxy.example.com");
+    assert.equal(payload.result.endpointUrl, "https://8.8.8.8");
     assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
     assert.equal(payload.key, "anthropic-proxy-good");
     assert.ok(
@@ -4327,7 +4333,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then
@@ -4431,7 +4437,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; --resolve) shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then
