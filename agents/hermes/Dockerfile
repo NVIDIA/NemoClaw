@@ -181,7 +181,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # chain tampering of the build context (an attacker rewriting the file has to
 # also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=03e0afbe00e352d0dfcf14b99ea1821f9fd29f87dad49ce19add2ec96d1941cc
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=901c5c17a0c12eacb5958a7558f84f4da83a8a10a4bd80b560671e04718e1bd2
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -203,6 +203,7 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+RUN /usr/bin/python3 -I -c 'import ast, pathlib, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"_VALUE_FLAGS", "_BOOLEAN_FLAGS"}}; expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]); help_text = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True); missing = sorted(flag for flag in expected if flag not in help_text); sys.exit("ERROR: Hermes wrapper flag allowlist drifted from pinned hermes --help: " + ", ".join(missing) if missing else 0)'
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \

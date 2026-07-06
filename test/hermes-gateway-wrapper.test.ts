@@ -47,6 +47,7 @@ type WrapperRun = {
   stderr: string;
   realInvoked: boolean;
   realArgs: string;
+  realArgv: string[];
 };
 
 type StubBehaviour = {
@@ -105,7 +106,7 @@ function runWrapper(
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
-      `printf '%s' "$*" > ${JSON.stringify(marker)}`,
+      `node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify(process.argv.slice(2)))' ${JSON.stringify(marker)} "$@"`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
       stubStderr
         ? `cat <<'__NEMOCLAW_STUB_ERR_EOF__' >&2\n${stubStderr}\n__NEMOCLAW_STUB_ERR_EOF__`
@@ -140,12 +141,14 @@ function runWrapper(
     });
 
     const realInvoked = fs.existsSync(marker);
+    const realArgv = realInvoked ? JSON.parse(fs.readFileSync(marker, "utf-8")) : [];
     return {
       status: result.status,
       stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
       realInvoked,
-      realArgs: realInvoked ? fs.readFileSync(marker, "utf-8") : "",
+      realArgs: realArgv.join(" "),
+      realArgv,
     };
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -238,8 +241,16 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe(
-      "chat --query What secret number did I give you? --quiet --yolo --accept-hooks --resume 20260612_050401_aa9d27",
+      "chat --query What secret number did I give you? --quiet --resume 20260612_050401_aa9d27",
     );
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "What secret number did I give you?",
+      "--quiet",
+      "--resume",
+      "20260612_050401_aa9d27",
+    ]);
   });
 
   it("routes continued one-shot invocations through chat query while preserving model/tool flags (#5254)", () => {
@@ -260,8 +271,42 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe(
-      "chat --query Summarize the latest turn --quiet --yolo --accept-hooks --continue daily check --model anthropic/claude-sonnet-4 --toolsets memory,session_search --ignore-rules",
+      "chat --query Summarize the latest turn --quiet --continue daily check --model anthropic/claude-sonnet-4 --toolsets memory,session_search --ignore-rules",
     );
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Summarize the latest turn",
+      "--quiet",
+      "--continue",
+      "daily check",
+      "--model",
+      "anthropic/claude-sonnet-4",
+      "--toolsets",
+      "memory,session_search",
+      "--ignore-rules",
+    ]);
+  });
+
+  it("preserves explicit approval flags without adding them to ordinary resumed one-shot invocations (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "-z", "Repeat it", "--yolo", "--accept-hooks"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgv).toEqual([
+      "chat",
+      "--query",
+      "Repeat it",
+      "--quiet",
+      "--resume",
+      "20260612_050401_aa9d27",
+      "--yolo",
+      "--accept-hooks",
+    ]);
   });
 
   it("leaves plain one-shot invocations on the upstream one-shot path (#5254)", () => {
@@ -279,9 +324,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.status).toBe(0);
     expect(run.stderr).toBe("");
     expect(run.realInvoked).toBe(true);
-    expect(run.realArgs).toBe(
-      "chat --query Repeat it --quiet --yolo --accept-hooks --resume 20260612_050401_aa9d27",
-    );
+    expect(run.realArgs).toBe("chat --query Repeat it --quiet --resume 20260612_050401_aa9d27");
   });
 
   it("passes positional subcommands through instead of translating nested one-shot flags (#5254)", () => {
@@ -460,7 +503,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       expect(exported).toContain(resumePrompt);
       expect(exported).toContain(continuePrompt);
     },
-    5 * 60_000,
+    Number(process.env.NEMOCLAW_HERMES_SESSION_PERSISTENCE_TIMEOUT_MS ?? 120_000) * 6,
   );
 
   it("passes --version through (build assertion path) without invoking the guard", () => {

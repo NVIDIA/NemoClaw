@@ -183,6 +183,16 @@ function stripAnsi(value: string): string {
   return value.replace(/\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g, "");
 }
 
+function hermesSessionIds(output: string): Set<string> {
+  return new Set(output.match(/\b[0-9]{8}_[0-9]{6}_[a-zA-Z0-9]+\b/g) ?? []);
+}
+
+function onlyNewHermesSessionId(before: Set<string>, after: Set<string>): string {
+  const created = [...after].filter((id) => !before.has(id));
+  expect(created).toHaveLength(1);
+  return created[0];
+}
+
 function forwardListHasRunningPort(output: string, sandboxName: string, port: string): boolean {
   return output
     .split("\n")
@@ -448,6 +458,68 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
     expect(configProbe.stdout).toContain("OK");
+
+    // Regression coverage for #5254 against the real sandbox-installed Hermes
+    // runtime: top-level resumed/continued one-shot invocations must append to
+    // the selected session instead of creating a new follow-up session.
+    const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 180_000) => {
+      const result = await sandbox.exec(SANDBOX_NAME, ["hermes", ...args], {
+        artifactName,
+        env: commandEnv(),
+        redactionValues,
+        timeoutMs,
+      });
+      expect(result.exitCode, resultText(result)).toBe(0);
+      return resultText(result);
+    };
+    const listHermesSessions = async (artifactName: string) =>
+      hermesSessionIds(await runHermesCli(["sessions", "list"], artifactName, 60_000));
+
+    const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
+    const beforeSeedSessions = await listHermesSessions("phase-4-issue-5254-sessions-before-seed");
+    const seedPrompt = `Remember this exact token: ${issue5254Marker}. Reply with acknowledged.`;
+    await runHermesCli(["-z", seedPrompt], "phase-4-issue-5254-seed-oneshot");
+    const seedSessionId = onlyNewHermesSessionId(
+      beforeSeedSessions,
+      await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
+    );
+
+    const beforeResumeSessions = await listHermesSessions(
+      "phase-4-issue-5254-sessions-before-resume",
+    );
+    const resumePrompt = `Repeat this exact token: ${issue5254Marker}.`;
+    await runHermesCli(
+      ["--resume", seedSessionId, "-z", resumePrompt],
+      "phase-4-issue-5254-resume-oneshot",
+    );
+    expect(
+      [...(await listHermesSessions("phase-4-issue-5254-sessions-after-resume"))].filter(
+        (id) => !beforeResumeSessions.has(id),
+      ),
+    ).toEqual([]);
+
+    const beforeContinueSessions = await listHermesSessions(
+      "phase-4-issue-5254-sessions-before-continue",
+    );
+    const continuePrompt = `Confirm this exact token again: ${issue5254Marker}.`;
+    await runHermesCli(
+      ["-c", seedSessionId, "-z", continuePrompt],
+      "phase-4-issue-5254-continue-oneshot",
+    );
+    expect(
+      [...(await listHermesSessions("phase-4-issue-5254-sessions-after-continue"))].filter(
+        (id) => !beforeContinueSessions.has(id),
+      ),
+    ).toEqual([]);
+
+    const exportedSession = await runHermesCli(
+      ["sessions", "export", "--session-id", seedSessionId],
+      "phase-4-issue-5254-export-session",
+      60_000,
+    );
+    expect(exportedSession).toContain(seedPrompt);
+    expect(exportedSession).toContain(resumePrompt);
+    expect(exportedSession).toContain(continuePrompt);
 
     if (hermesDashboardE2eEnabled()) {
       const entry = registryEntry(SANDBOX_NAME);

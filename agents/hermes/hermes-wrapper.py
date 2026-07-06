@@ -269,10 +269,10 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     live sandbox validation should verify the persisted `sessions list/export`
     behavior when a matching Hermes runtime is available.
 
-    Top-level one-shot is already non-interactive: Hermes' one-shot runner sets
-    `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1`. The translated chat query
-    therefore includes `--yolo --accept-hooks` to preserve that approval and
-    hook policy rather than to broaden user intent.
+    Preserve approval-related user intent instead of inferring it here:
+    `--yolo` and `--accept-hooks` are forwarded only when the original argv
+    included those flags. The underlying Hermes one-shot policy can change
+    across releases, so this compatibility layer avoids broadening approvals.
     """
     oneshot_prompt: str | None = None
     resume_args: list[str] = []
@@ -368,7 +368,7 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     if not oneshot_prompt or not (saw_resume or saw_continue):
         return None
 
-    translated = ["chat", "--query", oneshot_prompt, "--quiet", "--yolo", "--accept-hooks"]
+    translated = ["chat", "--query", oneshot_prompt, "--quiet"]
     translated.extend(resume_args)
     translated.extend(passthrough)
     return translated
