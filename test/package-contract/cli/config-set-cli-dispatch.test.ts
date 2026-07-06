@@ -36,24 +36,21 @@ describe("config set CLI dispatch", () => {
     const priorRunner = require.cache[runnerPath];
     const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
 
+    const expectedConfigSetDispatchArgs = [
+      "test-sandbox",
+      "--key",
+      "inference.endpoints",
+      "--value",
+      "HTTP://93.184.216.34/v1",
+      "--config-accept-new-path",
+    ];
     const commandDispatchDeferred = deferred<void>();
     const validateName = vi.fn();
     const configSet = vi.fn();
     const runOclifArgv = vi.fn(async () => {
       throw new Error("config set should dispatch by command id");
     });
-    const runOclifCommandById = vi.fn(async (commandId: string, args: string[]) => {
-      expect(commandId).toBe("sandbox:config:set");
-      expect(args).toEqual([
-        "test-sandbox",
-        "--key",
-        "inference.endpoints",
-        "--value",
-        "HTTP://93.184.216.34/v1",
-        "--config-accept-new-path",
-      ]);
-      return commandDispatchDeferred.promise;
-    });
+    const runOclifCommandById = vi.fn(async () => commandDispatchDeferred.promise);
 
     process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
 
@@ -139,6 +136,15 @@ describe("config set CLI dispatch", () => {
       });
       expect(runOclifArgv).not.toHaveBeenCalled();
       expect(runOclifCommandById).toHaveBeenCalledTimes(1);
+      expect(runOclifCommandById).toHaveBeenCalledWith(
+        "sandbox:config:set",
+        expectedConfigSetDispatchArgs,
+        expect.objectContaining({
+          error: expect.any(Function),
+          exit: expect.any(Function),
+          rootDir: process.cwd(),
+        }),
+      );
       expect(configSet).not.toHaveBeenCalled();
       expect(settled).toBe(false);
 

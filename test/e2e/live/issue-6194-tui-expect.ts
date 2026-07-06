@@ -9,9 +9,13 @@ export function buildIssue6194TuiExpectScript(): string {
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
 log_file -a $capture
-	spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui --session ${ISSUE6194_TUI_SESSION}}
+proc mark {name} {
+  puts "ISSUE6194_MARK $name"
+  send_log "ISSUE6194_MARK $name\\n"
+}
+spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui --session ${ISSUE6194_TUI_SESSION}}
 expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_initial" }
+  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_initial }
   timeout {
     send "\\003"
     exit 10
@@ -20,7 +24,7 @@ expect {
 }
 send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHAT, OK. Put only that joined token on its own line. Do not use tools.\\r"
 expect {
-  -nocase -re {NEMOCLAW6194_CHAT_OK} { puts "ISSUE6194_MARK chat_reply" }
+  -nocase -re {NEMOCLAW6194_CHAT_OK} { mark chat_reply }
   timeout {
     send "\\003"
     exit 20
@@ -28,7 +32,7 @@ expect {
   eof { exit 21 }
 }
 expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_chat" }
+  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_chat }
   timeout {
     send "\\003"
     exit 22
@@ -37,7 +41,7 @@ expect {
 }
 send -- "/nemoclaw status\\r"
 expect {
-  -nocase -re "Sandbox:[^\\r\\n]*$sandbox" { puts "ISSUE6194_MARK slash_status_output" }
+  -nocase -re "Sandbox:[^\\r\\n]*$sandbox" { mark slash_status_output }
   timeout {
     send "\\003"
     exit 30
@@ -45,7 +49,7 @@ expect {
   eof { exit 31 }
 }
 expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_status" }
+  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_status }
   timeout {
     send "\\003"
     exit 32
@@ -58,55 +62,47 @@ expect {
     send "\\003"
     exit 50
   }
-  -nocase -re {(Network Rules|pending|approve)} { puts "ISSUE6194_MARK network_approval_text" }
+  -nocase -re "(Sandbox:[^\\r\\n]*$sandbox[^\\r\\n]*(Network Rules|pending|approve)|(Network Rules|pending|approve)[^\\r\\n]*Sandbox:[^\\r\\n]*$sandbox)" { mark network_approval_prompt }
   timeout {
     send "\\003"
     exit 51
   }
   eof { exit 52 }
 }
-expect {
-  -nocase -re "(Sandbox:[^\\r\\n]*$sandbox[^\\r\\n]*(pending|approve)|(pending|approve)[^\\r\\n]*Sandbox:[^\\r\\n]*$sandbox)" { puts "ISSUE6194_MARK network_approval_prompt" }
-  timeout {
-    send "\\003"
-    exit 53
-  }
-  eof { exit 54 }
-}
 send -- "a"
 after 500
 send -- "y\\r"
 expect {
-  -nocase -re {(approved|allowed|accepted|approval[^\\r\\n]*(processed|granted)|request[^\\r\\n]*(approved|allowed))} { puts "ISSUE6194_MARK network_approval_processed" }
+  -nocase -re {(approved|allowed|accepted|approval[^\\r\\n]*(processed|granted)|request[^\\r\\n]*(approved|allowed))} { mark network_approval_processed }
   -nocase -re {(blocked|denied|rejected)} {
     send "\\003"
-    exit 55
+    exit 53
   }
+  timeout {
+    send "\\003"
+    exit 54
+  }
+  eof { exit 55 }
+}
+expect {
+  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_network_approval }
   timeout {
     send "\\003"
     exit 56
   }
   eof { exit 57 }
 }
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_network_approval" }
-  timeout {
-    send "\\003"
-    exit 58
-  }
-  eof { exit 59 }
-}
 send "\\003"
 expect {
   eof {
-    puts "ISSUE6194_MARK clean_exit"
+    mark clean_exit
     exit 0
   }
   timeout {
     send "\\003"
     expect {
       eof {
-        puts "ISSUE6194_MARK clean_exit"
+        mark clean_exit
         exit 0
       }
       timeout { exit 40 }

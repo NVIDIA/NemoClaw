@@ -591,71 +591,83 @@ test(
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
 
-    const captureFile = artifacts.pathFor("issue6194-openclaw-tui-capture.log");
+    const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-tui-"));
+    const captureFile = join(captureDir, "openclaw-tui-capture.log");
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
     writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
-    const tui = await host.command("expect", [expectScript], {
-      artifactName: "issue6194-openclaw-tui-post-idle",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
-        NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
-        NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
-      },
-      redactionValues: [apiKey],
-      timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
-    });
-    const rawCapture = readFileSync(captureFile, "utf8");
-    const redactedCapture = secrets.redact(rawCapture, [apiKey]);
-    writeFileSync(captureFile, redactedCapture, "utf8");
-    const plainCapture = stripTerminalControl(redactedCapture);
-    const combined = `${resultText(tui)}\n${plainCapture}`;
-    await artifacts.writeText("issue6194-openclaw-tui-capture.plain.log", plainCapture);
-    await artifacts.writeJson("issue6194-target-result.json", {
-      id: "issue-6194-tui-post-connected-idle",
-      expectExitCode: tui.exitCode,
-      connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
-      chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
-      connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
-      slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
-      connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
-      networkApprovalPrompt: combined.includes("ISSUE6194_MARK network_approval_prompt"),
-      networkApprovalProcessed: combined.includes("ISSUE6194_MARK network_approval_processed"),
-      connectedIdleAfterNetworkApproval: combined.includes(
-        "ISSUE6194_MARK connected_idle_after_network_approval",
-      ),
-      cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
-    });
+    try {
+      const tui = await host.command("expect", [expectScript], {
+        artifactName: "issue6194-openclaw-tui-post-idle",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
+          NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
+          NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
+        },
+        redactionValues: [apiKey],
+        timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
+      });
+      const rawCapture = readFileSync(captureFile, "utf8");
+      const redactedCapture = secrets.redact(rawCapture, [apiKey]);
+      const plainCapture = stripTerminalControl(redactedCapture);
+      expect(plainCapture.length, "TUI expect capture must not be empty").toBeGreaterThan(0);
+      expect(plainCapture, "TUI expect capture must include expect-script markers").toContain(
+        "ISSUE6194_MARK",
+      );
 
-    expect(tui.exitCode, combined).toBe(0);
-    expect(combined, "TUI must reach connected idle before post-idle input").toContain(
-      "ISSUE6194_MARK connected_idle_initial",
-    );
-    expect(combined, "post-idle chat must return a visible reply before timeout").toContain(
-      "ISSUE6194_MARK chat_reply",
-    );
-    expect(combined, "TUI must return to connected idle after the post-idle chat reply").toContain(
-      "ISSUE6194_MARK connected_idle_after_chat",
-    );
-    expect(combined, "post-idle slash command must render status output before timeout").toContain(
-      "ISSUE6194_MARK slash_status_output",
-    );
-    expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
-      "ISSUE6194_MARK connected_idle_after_status",
-    );
-    expect(
-      combined,
-      "post-idle network request must present the sandbox approval prompt",
-    ).toContain("ISSUE6194_MARK network_approval_prompt");
-    expect(combined, "post-idle network approval input must be processed").toContain(
-      "ISSUE6194_MARK network_approval_processed",
-    );
-    expect(combined, "TUI must return to connected idle after network approval input").toContain(
-      "ISSUE6194_MARK connected_idle_after_network_approval",
-    );
-    expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
-      "ISSUE6194_MARK clean_exit",
-    );
+      const combined = `${resultText(tui)}\n${plainCapture}`;
+      await artifacts.writeText("issue6194-openclaw-tui-capture.log", redactedCapture);
+      await artifacts.writeText("issue6194-openclaw-tui-capture.plain.log", plainCapture);
+      await artifacts.writeJson("issue6194-target-result.json", {
+        id: "issue-6194-tui-post-connected-idle",
+        expectExitCode: tui.exitCode,
+        connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
+        chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
+        connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
+        slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
+        connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
+        networkApprovalPrompt: combined.includes("ISSUE6194_MARK network_approval_prompt"),
+        networkApprovalProcessed: combined.includes("ISSUE6194_MARK network_approval_processed"),
+        connectedIdleAfterNetworkApproval: combined.includes(
+          "ISSUE6194_MARK connected_idle_after_network_approval",
+        ),
+        cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
+      });
+
+      expect(tui.exitCode, combined).toBe(0);
+      expect(combined, "TUI must reach connected idle before post-idle input").toContain(
+        "ISSUE6194_MARK connected_idle_initial",
+      );
+      expect(combined, "post-idle chat must return a visible reply before timeout").toContain(
+        "ISSUE6194_MARK chat_reply",
+      );
+      expect(
+        combined,
+        "TUI must return to connected idle after the post-idle chat reply",
+      ).toContain("ISSUE6194_MARK connected_idle_after_chat");
+      expect(
+        combined,
+        "post-idle slash command must render status output before timeout",
+      ).toContain("ISSUE6194_MARK slash_status_output");
+      expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
+        "ISSUE6194_MARK connected_idle_after_status",
+      );
+      expect(
+        combined,
+        "post-idle network request must present the sandbox approval prompt",
+      ).toContain("ISSUE6194_MARK network_approval_prompt");
+      expect(combined, "post-idle network approval input must be processed").toContain(
+        "ISSUE6194_MARK network_approval_processed",
+      );
+      expect(combined, "TUI must return to connected idle after network approval input").toContain(
+        "ISSUE6194_MARK connected_idle_after_network_approval",
+      );
+      expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
+        "ISSUE6194_MARK clean_exit",
+      );
+    } finally {
+      rmSync(captureDir, { recursive: true, force: true });
+    }
   },
   // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
   // warmup, the 120-second wait-for-replies window, and retry.
