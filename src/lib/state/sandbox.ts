@@ -35,6 +35,10 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
+  buildDcodeConfigMergeRestoreCommand,
+  shouldMergeManagedDcodeConfigStateFile,
+} from "./dcode-config-restore-input.js";
+import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
@@ -140,6 +144,11 @@ export interface RestoreResult {
   failedDirs: string[];
   restoredFiles: string[];
   failedFiles: string[];
+}
+
+export interface RestoreOptions {
+  /** Enable the mixed-ownership config merge only for a known stock managed DCode target. */
+  mergeManagedDcodeConfig?: boolean;
 }
 
 export interface TarValidationResult {
@@ -899,20 +908,25 @@ function restoreStateFile(
   spec: StateFileSpec,
   backupPath: string,
   mergeOpenClawConfig = false,
+  mergeDcodeConfig = false,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
+  const command = mergeDcodeConfig
+    ? buildDcodeConfigMergeRestoreCommand(dir)
+    : buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-  const input = buildStateFileRestoreInput(
-    configFile,
-    sandboxName,
-    dir,
-    spec,
-    backupPath,
-    mergeOpenClawConfig,
-  );
+  const input = mergeDcodeConfig
+    ? readFileSync(localPath)
+    : buildStateFileRestoreInput(
+        configFile,
+        sandboxName,
+        dir,
+        spec,
+        backupPath,
+        mergeOpenClawConfig,
+      );
   if (input === null) return false;
 
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
@@ -1337,7 +1351,11 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
 /**
  * Restore state directories into a sandbox from a prior backup.
  */
-export function restoreSandboxState(sandboxName: string, backupPath: string): RestoreResult {
+export function restoreSandboxState(
+  sandboxName: string,
+  backupPath: string,
+  options: RestoreOptions = {},
+): RestoreResult {
   _log(`restoreSandboxState: sandbox=${sandboxName}, backupPath=${backupPath}`);
   const manifest = readManifest(backupPath);
   if (!manifest) {
@@ -1528,6 +1546,12 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
           spec,
           backupPath,
           shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
+          shouldMergeManagedDcodeConfigStateFile(
+            options.mergeManagedDcodeConfig === true,
+            manifest.agentType,
+            dir,
+            spec,
+          ),
         )
       ) {
         restoredFiles.push(spec.path);

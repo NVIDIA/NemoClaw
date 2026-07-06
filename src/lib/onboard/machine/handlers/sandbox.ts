@@ -14,6 +14,7 @@ import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { toolDisclosureOrDefault } from "../../../tool-disclosure";
+import { usesManagedDcodeIdentity } from "../../dcode-selection-drift";
 import { withSandboxPhaseTrace } from "../../tracing";
 import type { SandboxCreateIntent } from "../../types";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
@@ -84,6 +85,12 @@ export interface SandboxStateOptions<
       right: MessagingChannelConfig | null,
     ): boolean;
     getSandboxReuseState(sandboxName: string | null): string;
+    getDcodeSelectionDrift(
+      sandboxName: string,
+      provider: string,
+      model: string,
+      preferredInferenceApi: string | null,
+    ): { changed: boolean; unknown: boolean };
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
     getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
@@ -374,15 +381,40 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
-      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
-      state.session,
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
+    const sandboxReuseState = this.deps.getSandboxReuseState(state.sandboxName);
+    const managedDcodeResume = Boolean(
+      this.options.resume &&
+        state.session?.steps?.sandbox?.status === "complete" &&
+        state.sandboxName &&
+        usesManagedDcodeIdentity(
+          (this.options.agent as { name?: string } | null)?.name,
+          this.options.fromDockerfile,
+        ),
     );
+    if (managedDcodeResume && sandboxReuseState === "ready" && !registryEntry) {
+      this.deps.error(
+        `  Sandbox '${state.sandboxName}' is live but missing its NemoClaw registry record; refusing unverified DCode reuse.`,
+      );
+      return this.deps.exitProcess(1);
+    }
+    const dcodeSelectionDrift =
+      managedDcodeResume && state.sandboxName && sandboxReuseState === "ready" && registryEntry
+        ? this.deps.getDcodeSelectionDrift(
+            state.sandboxName,
+            this.options.provider,
+            this.options.model,
+            this.options.preferredInferenceApi,
+          )
+        : null;
     return decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
-      sandboxReuseState: this.deps.getSandboxReuseState(state.sandboxName),
+      sandboxReuseState,
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)
@@ -396,6 +428,9 @@ class SandboxStateFlow<
         effectiveToolGateways,
       ),
       ...toolDisclosureSignals,
+      inferenceSelectionChanged: Boolean(
+        dcodeSelectionDrift?.changed || dcodeSelectionDrift?.unknown,
+      ),
     });
   }
 
@@ -449,6 +484,16 @@ class SandboxStateFlow<
     }
     if (existing?.hermesAuthMethod === undefined && this.options.hermesAuthMethod) {
       fidelity.hermesAuthMethod = this.options.hermesAuthMethod;
+    }
+    if (
+      usesManagedDcodeIdentity(
+        (this.options.agent as { name?: string } | null)?.name,
+        this.options.fromDockerfile,
+      ) &&
+      (existing?.provider !== this.options.provider || existing?.model !== this.options.model)
+    ) {
+      fidelity.provider = this.options.provider;
+      fidelity.model = this.options.model;
     }
     if (Object.keys(fidelity).length > 0) {
       this.deps.updateSandboxRegistry(state.sandboxName, fidelity);

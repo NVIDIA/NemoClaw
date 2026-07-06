@@ -46,7 +46,9 @@ state_dirs:
   - agent/skills
 
 # ── Top-level durable state files ───────────────────────────────
-# config.toml is non-secret NemoClaw-generated provider/model configuration.
+# config.toml mixes durable DCode preferences with NemoClaw-managed model
+# routing. Managed re-onboard restore preserves user-owned tables while keeping
+# the freshly generated models/update tables and provider metadata authoritative.
 # .env and user-authored .deepagents/.mcp.json content are intentionally omitted
 # because they may contain service credentials. NemoClaw writes only direct-HTTP
 # bridge endpoint config and OpenShell placeholders to its separate

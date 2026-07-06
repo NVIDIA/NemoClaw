@@ -16,6 +16,7 @@ export interface SandboxResumeSignals {
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
+  readonly inferenceSelectionChanged: boolean;
 }
 
 export function resolveToolDisclosureResumeSignals(
@@ -60,7 +61,6 @@ export interface SandboxResumeDeps {
 
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
-    !signals.resumeAgentChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
@@ -69,6 +69,24 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
   );
+}
+
+function selectionResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.inferenceSelectionChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Live DCode model/provider selection is stale or unreadable; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.resumeAgentChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
 }
 
 function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
@@ -94,14 +112,9 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  const selectionDecision = selectionResumeDecision(signals);
+  if (selectionDecision) return selectionDecision;
   if (canReuseSandbox(signals)) return { kind: "reuse" };
-  if (signals.resumeAgentChanged) {
-    return {
-      kind: "recreate",
-      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
-      removeRegistryEntry: false,
-    };
-  }
   if (signals.webSearchConfigChanged) {
     return {
       kind: "recreate",
