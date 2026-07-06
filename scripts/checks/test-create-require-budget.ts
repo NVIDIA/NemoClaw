@@ -31,8 +31,6 @@ export const CLI_CREATE_REQUIRE_FILES = [
   "src/lib/actions/sandbox/rebuild-prepared-recovery.test.ts",
   "src/lib/actions/sandbox/rebuild-resume-config.test.ts",
   "src/lib/actions/sandbox/rebuild-resume-reasoning.test.ts",
-  "src/lib/actions/sandbox/rebuild-resume-snapshot.test.ts",
-  "src/lib/actions/sandbox/rebuild-shields-finally.test.ts",
   "src/lib/actions/sandbox/sandbox-gateway-routing.test.ts",
   "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
   "src/lib/adapters/openshell/gateway-drift.test.ts",
