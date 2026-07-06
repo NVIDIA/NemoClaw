@@ -2654,6 +2654,8 @@ def pairing_required_request_id(out, err):
     if not is_pairing_required_list_failure(out, err):
         return None
     message = f'{out}\n{err}'
+    if len(re.findall(r'\brequestId\b', message)) != 1:
+        return None
     candidates = []
     for text in (out, err):
         candidates.extend(_structured_request_ids(text))
