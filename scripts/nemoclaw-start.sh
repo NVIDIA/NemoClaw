@@ -2538,6 +2538,8 @@ def _identity_public_key(identity):
     der = base64.b64decode(body)
     if len(der) < 32:
         return ''
+    # OpenClaw device identities currently use Ed25519 SubjectPublicKeyInfo;
+    # the raw 32-byte public key is the BIT STRING payload at the end.
     return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
 
 
@@ -2588,6 +2590,25 @@ def _same_initial_cli_requests(pending, device_id, public_key):
 
 
 def seed_initial_cli_pairing_from_state():
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 initial CLI bootstrap):
+    # Invalid state handled: the gateway records a local first-run `cli`
+    # pending request, then rejects `openclaw devices list --json` with
+    # "pairing required", so the watcher cannot observe the request through
+    # OpenClaw's normal approval API.
+    #
+    # Source boundary: this function only reads/writes the local OpenClaw
+    # state directory for the same persisted device identity. It refuses
+    # mismatched keys, non-cli clients, non-operator roles, duplicate or
+    # non-bounded scopes, and any existing paired record for that device.
+    #
+    # Source-fix constraint: the gateway/list API should eventually expose a
+    # bounded way for the local bootstrapper to see and approve first-run
+    # requests without already being paired. That change is upstream of this
+    # startup script and would not help already-packaged NemoClaw sandboxes.
+    #
+    # Removal condition: delete this fallback once OpenClaw exposes a
+    # non-paired local bootstrap path for initial CLI pairing and NemoClaw no
+    # longer needs to support gateway builds that gate `devices list`.
     state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
     pending_path = os.path.join(state_dir, 'devices', 'pending.json')
     paired_path = os.path.join(state_dir, 'devices', 'paired.json')
@@ -2631,21 +2652,16 @@ def seed_initial_cli_pairing_from_state():
         device = {
             'deviceId': device_id,
             'publicKey': public_key,
-            'displayName': request.get('displayName'),
-            'platform': request.get('platform'),
-            'deviceFamily': request.get('deviceFamily'),
             'clientId': 'cli',
             'clientMode': 'cli',
             'role': 'operator',
             'roles': ['operator'],
             'scopes': INITIAL_PAIRING_SCOPES,
             'approvedScopes': INITIAL_PAIRING_SCOPES,
-            'remoteIp': request.get('remoteIp'),
             'tokens': {'operator': operator_token},
             'createdAtMs': now,
             'approvedAtMs': now,
         }
-        device = {key: value for key, value in device.items() if value is not None}
         for key, _ in same_device:
             pending.pop(key, None)
         paired[device_id] = device
@@ -2659,8 +2675,13 @@ def seed_initial_cli_pairing_from_state():
         _write_json_atomic(auth_path, auth)
         return request_id
     except Exception as err:
-        print(f'[auto-pair] initial CLI pairing seed skipped: {str(err)[:240]}')
+        print(f'[auto-pair] initial CLI pairing seed skipped: {type(err).__name__}: {str(err)[:220]}')
         return None
+
+
+def is_pairing_required_list_failure(out, err):
+    message = f'{out}\n{err}'.lower()
+    return 'pairing required' in message and 'device is not approved yet' in message
 
 # Workaround boundary (NemoClaw#4462): list calls stay gateway-pinned so the
 # watcher inspects live state. Approval calls drop the gateway env triplet so
@@ -2717,13 +2738,14 @@ def sleep_for_next_poll(default_seconds, productive=True):
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        seeded_request = seed_initial_cli_pairing_from_state()
-        if seeded_request:
-            APPROVED += 1
-            print(f'[auto-pair] seeded initial CLI pairing request={seeded_request}')
-            FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
-            sleep_for_next_poll(FAST_REENTRY_INTERVAL)
-            continue
+        if is_pairing_required_list_failure(out, err):
+            seeded_request = seed_initial_cli_pairing_from_state()
+            if seeded_request:
+                APPROVED += 1
+                print(f'[auto-pair] seeded initial CLI pairing request={seeded_request}')
+                FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
+                sleep_for_next_poll(FAST_REENTRY_INTERVAL)
+                continue
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     try:

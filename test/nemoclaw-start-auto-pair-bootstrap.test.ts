@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -13,8 +12,8 @@ const APPROVAL_POLICY_DIR = path.join(import.meta.dirname, "..", "scripts", "lib
 
 function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
-  if (match) return match[1];
-  throw new Error(`Expected heredoc marker ${marker} in scripts/nemoclaw-start.sh`);
+  expect(match).not.toBeNull();
+  return match![1];
 }
 
 function trustedApprovalPolicyFile(tmpDir: string): string {
@@ -139,6 +138,75 @@ exit 2
       });
       expect(auth.tokens.operator.token).toBe(paired[deviceId].tokens.operator.token);
       expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toEqual({});
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it("does not seed when device list fails for a non-pairing error", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-nonpairing-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateDir = path.join(tmpDir, "state");
+    const devicesDir = path.join(stateDir, "devices");
+    const identityDir = path.join(stateDir, "identity");
+    const pairedFile = path.join(devicesDir, "paired.json");
+    const authFile = path.join(identityDir, "device-auth.json");
+    fs.mkdirSync(devicesDir, { recursive: true });
+    fs.mkdirSync(identityDir, { recursive: true });
+    const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
+    const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+    fs.writeFileSync(
+      path.join(identityDir, "device.json"),
+      JSON.stringify({
+        version: 1,
+        deviceId,
+        publicKeyPem:
+          "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
+      }),
+    );
+    fs.writeFileSync(
+      path.join(devicesDir, "pending.json"),
+      JSON.stringify({
+        "request-1": {
+          requestId: "request-1",
+          deviceId,
+          publicKey,
+          clientId: "cli",
+          clientMode: "cli",
+          role: "operator",
+          roles: ["operator"],
+          scopes: ["operator.pairing"],
+          ts: 100,
+        },
+      }),
+    );
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' '{"ok":false,"error":{"reason":"gateway unavailable"}}'
+exit 1
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_STATE_DIR: stateDir,
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "2",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 30_000,
+      });
+
+      expect(run.status).toBe(0);
+      expect(run.stdout).not.toContain("seeded initial CLI pairing");
+      expect(fs.existsSync(pairedFile)).toBe(false);
+      expect(fs.existsSync(authFile)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
