@@ -63,6 +63,36 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     }
   });
 
+  it("keeps runtime routing without ambiently inheriting the gateway token (#6291)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-token-"));
+    const runtimeEnv = path.join(root, "runtime-env.sh");
+    fs.writeFileSync(
+      runtimeEnv,
+      [
+        'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
+        'export OPENCLAW_GATEWAY_PORT="18789"',
+        'export OPENCLAW_GATEWAY_TOKEN="gateway-token-sentinel"',
+        "",
+      ].join("\n"),
+    );
+    const script = [
+      "set -euo pipefail",
+      "normalize_mutable_config_perms() { :; }",
+      oneShotFunction,
+      `_RUNTIME_SHELL_ENV_FILE=${JSON.stringify(runtimeEnv)}`,
+      `run_oneshot_command bash -c 'printf "state=%s port=%s token=[%s]\\n" "$OPENCLAW_STATE_DIR" "$OPENCLAW_GATEWAY_PORT" "${"${OPENCLAW_GATEWAY_TOKEN:-}"}"'`,
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("state=/sandbox/.openclaw port=18789 token=[]");
+      expect(result.stdout).not.toContain("gateway-token-sentinel");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not reinterpret a command-leading exec option (#4504)", () => {
     const script = [
       "set -euo pipefail",

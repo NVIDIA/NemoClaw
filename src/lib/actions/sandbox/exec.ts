@@ -9,6 +9,9 @@ import type {
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+
+export { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -84,52 +87,6 @@ export function buildOpenshellExecArgs(
   }
   argv.push("--", ...command);
   return argv;
-}
-
-const SANDBOX_RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
-
-// Runtime env variables that must never leak into arbitrary caller argv.
-//
-// Source-of-truth for this guard (#6291 / PRA-2):
-//   - Invalid state: the root-generated runtime env file also exports
-//     OPENCLAW_GATEWAY_TOKEN. Sourcing it before `exec -- "$@"` would expose
-//     the gateway credential to every general command run through this wrapper
-//     (sandbox `exec`, agent JSON passthrough, one-shot commands), where any
-//     child (`env`, diagnostics, captured artifacts) could read and print it.
-//   - Source boundary: the runtime env file is a single shared trusted file;
-//     splitting it per-consumer lives in scripts/nemoclaw-start.sh, not here.
-//     This wrapper therefore strips the credential after sourcing rather than
-//     depending on a separate nonsecret file.
-//   - Owned exception: the gateway admin RPC path builds its own shell
-//     (buildGatewayAdminRpcShell) that sources the same file and legitimately
-//     needs the token; it does not use this wrapper, so no reinjection is
-//     required here.
-//   - Regression coverage: the "unsets OPENCLAW_GATEWAY_TOKEN" cases in
-//     exec.multiline-guard.test.ts and passthrough-json.test.ts.
-//   - Removal condition: if nemoclaw-start.sh emits the gateway token into a
-//     separate owner-only env file that arbitrary commands never source, this
-//     unset becomes redundant and can be removed.
-const SANDBOX_RUNTIME_ENV_SENSITIVE_VARS = ["OPENCLAW_GATEWAY_TOKEN"];
-const SANDBOX_RUNTIME_ENV_UNSET_SENSITIVE = `builtin unset ${SANDBOX_RUNTIME_ENV_SENSITIVE_VARS.join(" ")}`;
-const SANDBOX_RUNTIME_ENV_EXEC_SCRIPT = `if [ -r "${SANDBOX_RUNTIME_ENV_FILE}" ]; then builtin source "${SANDBOX_RUNTIME_ENV_FILE}" || exit $?; fi; ${SANDBOX_RUNTIME_ENV_UNSET_SENSITIVE}; builtin exec -- "$@"`;
-
-/**
- * Source NemoClaw's trusted runtime env without flattening the caller's argv.
- * The gateway credential is stripped after sourcing so it never reaches
- * arbitrary caller argv; owned helpers that need it source the file directly.
- * @internal Only NemoClaw-owned exec paths may source the root-generated file.
- */
-export function wrapExecCommandWithRuntimeEnv(command: readonly string[]): string[] {
-  return [
-    "/bin/bash",
-    "--noprofile",
-    "--norc",
-    "-p",
-    "-c",
-    SANDBOX_RUNTIME_ENV_EXEC_SCRIPT,
-    "nemoclaw-runtime-env",
-    ...command,
-  ];
 }
 
 export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {

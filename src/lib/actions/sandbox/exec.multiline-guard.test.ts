@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The default exec runner shells out via spawn with stdio: "inherit"; the
@@ -58,74 +55,6 @@ describe("findMultilineExecArg", () => {
 
   it("reports the earliest offending argument when several are multi-line", () => {
     expect(findMultilineExecArg(["a", "b\nc", "d\ne"])).toBe(1);
-  });
-});
-
-describe("wrapExecCommandWithRuntimeEnv", () => {
-  it("sources the trusted runtime env and preserves each original argv element (#4504)", () => {
-    const command = ["openclaw", "agent", "-m", "hello world", "quote'and\"double"];
-    const wrapped = wrapExecCommandWithRuntimeEnv(command);
-
-    expect(wrapped).toEqual([
-      "/bin/bash",
-      "--noprofile",
-      "--norc",
-      "-p",
-      "-c",
-      'if [ -r "/tmp/nemoclaw-proxy-env.sh" ]; then builtin source "/tmp/nemoclaw-proxy-env.sh" || exit $?; fi; builtin unset OPENCLAW_GATEWAY_TOKEN; builtin exec -- "$@"',
-      "nemoclaw-runtime-env",
-      ...command,
-    ]);
-    expect(wrapped[5]).not.toMatch(/[\r\n]/);
-  });
-
-  it("strips OPENCLAW_GATEWAY_TOKEN before exec so arbitrary argv cannot read it (#6291)", () => {
-    // The runtime env file legitimately exports the gateway token; the wrapper
-    // must not leak it into the executed command's environment.
-    const wrapped = wrapExecCommandWithRuntimeEnv([
-      "/bin/sh",
-      "-c",
-      'printf "TOKEN=[%s]" "${OPENCLAW_GATEWAY_TOKEN:-}"',
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), {
-      encoding: "utf-8",
-      env: { ...process.env, OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token" },
-    });
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toBe("TOKEN=[]");
-    expect(result.stdout).not.toContain("super-secret-gateway-token");
-  });
-
-  it("ignores ambient BASH_ENV before sourcing the trusted runtime env (#4504)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
-    const bashEnv = path.join(root, "bash-env.sh");
-    fs.writeFileSync(bashEnv, 'printf "BASH_ENV_RAN"\n');
-    const wrapped = wrapExecCommandWithRuntimeEnv(["/usr/bin/printf", "%s", "COMMAND_RAN"]);
-
-    try {
-      const result = spawnSync(wrapped[0], wrapped.slice(1), {
-        encoding: "utf-8",
-        env: { ...process.env, BASH_ENV: bashEnv },
-      });
-      expect(result.status, result.stderr).toBe(0);
-      expect(result.stdout).toBe("COMMAND_RAN");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("does not reinterpret a command-leading exec option (#4504)", () => {
-    const wrapped = wrapExecCommandWithRuntimeEnv([
-      "-a",
-      "spoofed-argv-zero",
-      "/usr/bin/printf",
-      "SHOULD_NOT_RUN",
-    ]);
-    const result = spawnSync(wrapped[0], wrapped.slice(1), { encoding: "utf-8" });
-
-    expect(result.status).toBe(127);
-    expect(result.stdout).not.toContain("SHOULD_NOT_RUN");
   });
 });
 

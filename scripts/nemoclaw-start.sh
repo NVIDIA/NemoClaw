@@ -651,6 +651,11 @@ run_oneshot_command() {
     if [ -r "$_nemoclaw_runtime_env_file" ]; then
       builtin source "$_nemoclaw_runtime_env_file" || exit $?
     fi
+    # The shared, sandbox-readable file also exports the gateway token.
+    # Remove it from the child's ambient environment so ordinary one-shot argv
+    # uses local device auth and does not print it accidentally. This is not a
+    # secrecy boundary against a command that deliberately reads the file.
+    builtin unset OPENCLAW_GATEWAY_TOKEN
     builtin exec -- "$@"
   ) <&0 &
   _nemoclaw_oneshot_child_pid=$!
