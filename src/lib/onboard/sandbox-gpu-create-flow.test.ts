@@ -293,6 +293,30 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     );
   });
 
+  it("fully redacts command diagnostics when cleanup cannot be proven safe", async () => {
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const deps = createDeps();
+    vi.mocked(deps.runOpenshell).mockImplementation((args) =>
+      args[1] === "delete"
+        ? { status: 0 }
+        : { status: 1, stderr: "NVIDIA_API_KEY=super-secret-cleanup-value" },
+    );
+    vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit:1");
+    });
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).rejects.toThrow("process.exit:1");
+
+    const diagnostic = vi.mocked(console.error).mock.calls.flat().join("\n");
+    expect(diagnostic).toContain("Cleanup could not be proven safe");
+    expect(diagnostic).toContain("NVIDIA_API_KEY=<REDACTED>");
+    expect(diagnostic).not.toContain("super-secret-cleanup-value");
+  });
+
   it("reuses the built image when native CDI injection fails after the build", async () => {
     const input = createInput();
     input.prebuild = {

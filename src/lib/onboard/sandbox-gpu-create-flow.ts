@@ -3,6 +3,7 @@
 
 import { extractBuiltImageRef, printSandboxCreateRecoveryHints } from "../build-context";
 import { type StreamSandboxCreateResult, streamSandboxCreate } from "../sandbox/create-stream";
+import { redactFull } from "../security/redact";
 import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
@@ -342,7 +343,9 @@ export async function runSandboxGpuCreateFlow(
         `  Compatibility retry could not be prepared: ${gpuCreateOutcome.preparationRefused}`,
       );
     if (gpuCreateOutcome.cleanupRefused)
-      console.error(`  Cleanup could not be proven safe: ${gpuCreateOutcome.cleanupRefused}`);
+      console.error(
+        `  Cleanup could not be proven safe: ${redactFull(gpuCreateOutcome.cleanupRefused)}`,
+      );
     console.error(`  Manual cleanup: openshell sandbox delete "${input.sandboxName}"`);
     process.exit(1);
   }
