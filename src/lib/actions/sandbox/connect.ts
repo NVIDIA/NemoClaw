@@ -445,6 +445,7 @@ export function repairSandboxInferenceRouteWithDeps(
   if (deps.isRepairDisabled?.()) {
     return { healthy: true, repairAttempted: false, detail: "route repair disabled" };
   }
+  deps.assertRouteCompatible?.(sandboxName, sb);
   const initialProbe = deps.probe(sandboxName);
   if (initialProbe.healthy) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
@@ -452,8 +453,6 @@ export function repairSandboxInferenceRouteWithDeps(
   if (!initialProbe.broken) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
-  deps.assertRouteCompatible?.(sandboxName, sb);
-
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
     if (deps.shouldApplyVmDnsMonkeypatch(sb)) {
       if (!quiet) {

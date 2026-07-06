@@ -144,7 +144,7 @@ describe("sandbox connect route repair unit flow", () => {
     }
   });
 
-  it("stops after a broken probe but before any repair mutation when routes conflict (#6315)", () => {
+  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", () => {
     const conflict = new Error("shared gateway route conflict");
     const assertRouteCompatible = vi.fn(() => {
       throw conflict;
@@ -159,6 +159,7 @@ describe("sandbox connect route repair unit flow", () => {
       "vm-box",
       expect.objectContaining({ name: "demo" }),
     );
+    expect(deps.probe).not.toHaveBeenCalled();
     expect(calls.monkeypatches).toEqual([]);
     expect(calls.reapplications).toEqual([]);
     expect(calls.legacyRepairs).toEqual([]);

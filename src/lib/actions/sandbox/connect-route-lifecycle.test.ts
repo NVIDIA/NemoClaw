@@ -158,6 +158,44 @@ describe("connectSandbox route lifecycle", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("exits before an endpoint probe when an aligned route conflicts with a stopped sandbox (#6315)", async () => {
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    } as const;
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      registryEntry: alpha,
+      registryEntries: [
+        alpha,
+        {
+          name: "stopped-peer",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          provider: "anthropic-prod",
+          model: "claude-sonnet-4-20250514",
+        },
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+      JSON.stringify(call[0]).includes("inference.local/v1/models"),
+    );
+    expect(routeProbeCalls).toHaveLength(0);
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("wires the forced VM DNS monkeypatch into connect route repair", async () => {
     vi.stubEnv("NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH", "1");
     try {
