@@ -2377,9 +2377,13 @@ start_auto_pair() {
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
+import base64
+import hashlib
 import os
+import secrets
 import stat
 import subprocess
+import tempfile
 import time
 
 print('[auto-pair] watcher started', flush=True)
@@ -2490,6 +2494,173 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # The approval_request_decision helper is shared with connect-time approvals.
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+INITIAL_PAIRING_SCOPES = ['operator.pairing']
+INITIAL_PAIRING_ALLOWED_SCOPES = {'operator.pairing', 'operator.read', 'operator.write'}
+
+
+def _read_json(path, default):
+    try:
+        with open(path, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else default
+    except FileNotFoundError:
+        return default
+    except Exception:
+        raise
+
+
+def _write_json_atomic(path, payload, mode=0o600):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix='.nemoclaw.', dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write('\n')
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchmod(handle.fileno(), mode)
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+def _identity_public_key(identity):
+    raw = str(identity.get('publicKey', '') or '').strip()
+    if raw:
+        return raw
+    pem = str(identity.get('publicKeyPem', '') or '')
+    body = ''.join(line.strip() for line in pem.splitlines() if '---' not in line)
+    if not body:
+        return ''
+    der = base64.b64decode(body)
+    if len(der) < 32:
+        return ''
+    return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+
+
+def _same_initial_cli_requests(pending, device_id, public_key):
+    requests = []
+    for key, value in pending.items():
+        if not isinstance(value, dict):
+            continue
+        if str(value.get('deviceId', '')).strip() != device_id:
+            continue
+        if str(value.get('publicKey', '')).strip() != public_key:
+            raise RuntimeError('pending CLI pairing public key does not match persisted identity')
+        if str(value.get('clientId', '')).strip() != 'cli':
+            raise RuntimeError('pending CLI pairing clientId is not allowlisted')
+        if str(value.get('clientMode', '')).strip() != 'cli':
+            raise RuntimeError('pending CLI pairing clientMode is not allowlisted')
+        roles = set()
+        role = value.get('role')
+        if role is not None:
+            if not isinstance(role, str) or not role.strip():
+                raise RuntimeError('pending CLI pairing role is malformed')
+            roles.add(role.strip())
+        raw_roles = value.get('roles')
+        if raw_roles is not None:
+            if not isinstance(raw_roles, list):
+                raise RuntimeError('pending CLI pairing roles are malformed')
+            for item in raw_roles:
+                if not isinstance(item, str) or not item.strip():
+                    raise RuntimeError('pending CLI pairing roles are malformed')
+                roles.add(item.strip())
+        if roles != {'operator'}:
+            raise RuntimeError('pending CLI pairing role is not operator-only')
+        raw_scopes = value.get('scopes')
+        if not isinstance(raw_scopes, list) or not raw_scopes:
+            raise RuntimeError('pending CLI pairing scopes are malformed')
+        scopes = set()
+        for item in raw_scopes:
+            if not isinstance(item, str) or not item.strip():
+                raise RuntimeError('pending CLI pairing scopes are malformed')
+            scope = item.strip()
+            if scope not in INITIAL_PAIRING_ALLOWED_SCOPES or scope in scopes:
+                raise RuntimeError('pending CLI pairing scopes are not bounded')
+            scopes.add(scope)
+        if 'operator.pairing' not in scopes:
+            raise RuntimeError('pending CLI pairing does not request operator.pairing')
+        requests.append((key, value))
+    return requests
+
+
+def seed_initial_cli_pairing_from_state():
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    pending_path = os.path.join(state_dir, 'devices', 'pending.json')
+    paired_path = os.path.join(state_dir, 'devices', 'paired.json')
+    identity_path = os.path.join(state_dir, 'identity', 'device.json')
+    auth_path = os.path.join(state_dir, 'identity', 'device-auth.json')
+    try:
+        pending = _read_json(pending_path, {})
+        if not pending:
+            return None
+        paired = _read_json(paired_path, {})
+        identity = _read_json(identity_path, {})
+        device_id = str(identity.get('deviceId', '') or '').strip()
+        public_key = _identity_public_key(identity)
+        if not device_id or not public_key:
+            return None
+        public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
+        if len(public_key_raw) != 32 or hashlib.sha256(public_key_raw).hexdigest() != device_id:
+            raise RuntimeError('persisted CLI identity does not match its device id')
+        if device_id in paired or any(
+            isinstance(item, dict) and str(item.get('deviceId', '')).strip() == device_id
+            for item in paired.values()
+        ):
+            return None
+        same_device = _same_initial_cli_requests(pending, device_id, public_key)
+        if not same_device:
+            return None
+        _, request = max(same_device, key=lambda pair: pair[1].get('ts') or 0)
+        request_id = str(request.get('requestId', '') or '').strip()
+        if not request_id:
+            return None
+        token = secrets.token_urlsafe(32)
+        if token == os.environ.get('OPENCLAW_GATEWAY_TOKEN'):
+            raise RuntimeError('temporary device token generation collided with gateway token')
+        now = int(time.time() * 1000)
+        operator_token = {
+            'token': token,
+            'role': 'operator',
+            'scopes': INITIAL_PAIRING_SCOPES,
+            'createdAtMs': now,
+        }
+        device = {
+            'deviceId': device_id,
+            'publicKey': public_key,
+            'displayName': request.get('displayName'),
+            'platform': request.get('platform'),
+            'deviceFamily': request.get('deviceFamily'),
+            'clientId': 'cli',
+            'clientMode': 'cli',
+            'role': 'operator',
+            'roles': ['operator'],
+            'scopes': INITIAL_PAIRING_SCOPES,
+            'approvedScopes': INITIAL_PAIRING_SCOPES,
+            'remoteIp': request.get('remoteIp'),
+            'tokens': {'operator': operator_token},
+            'createdAtMs': now,
+            'approvedAtMs': now,
+        }
+        device = {key: value for key, value in device.items() if value is not None}
+        for key, _ in same_device:
+            pending.pop(key, None)
+        paired[device_id] = device
+        auth = {
+            'version': 1,
+            'deviceId': device_id,
+            'tokens': {'operator': operator_token},
+        }
+        _write_json_atomic(pending_path, pending)
+        _write_json_atomic(paired_path, paired)
+        _write_json_atomic(auth_path, auth)
+        return request_id
+    except Exception as err:
+        print(f'[auto-pair] initial CLI pairing seed skipped: {str(err)[:240]}')
+        return None
 
 # Workaround boundary (NemoClaw#4462): list calls stay gateway-pinned so the
 # watcher inspects live state. Approval calls drop the gateway env triplet so
@@ -2546,6 +2717,13 @@ def sleep_for_next_poll(default_seconds, productive=True):
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
+        seeded_request = seed_initial_cli_pairing_from_state()
+        if seeded_request:
+            APPROVED += 1
+            print(f'[auto-pair] seeded initial CLI pairing request={seeded_request}')
+            FAST_REENTRY_REMAINING = max(FAST_REENTRY_REMAINING, FAST_REENTRY_POLLS)
+            sleep_for_next_poll(FAST_REENTRY_INTERVAL)
+            continue
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     try:
