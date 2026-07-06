@@ -86,4 +86,86 @@ describe("inference selection validation", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("refuses a custom OpenAI-like endpoint that resolves to a private address before probing (#6293)", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "10.0.0.8", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          "https://public-name.example/v1",
+          "model-a",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: false, retry: "selection" });
+      expect(probeOpenAiLikeEndpoint).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("exits non-interactively when a custom Anthropic endpoint resolves to link-local metadata, without probing (#6293)", async () => {
+    const originalExitCode = process.exitCode;
+    const probeAnthropicEndpoint = vi.fn();
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => true,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "169.254.169.254", family: 4 }],
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic",
+          "https://metadata-name.example/v1",
+          "model-a",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).rejects.toThrow("Non-interactive endpoint validation failed.");
+      expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      process.exitCode = originalExitCode;
+      exit.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it("probes a custom endpoint that resolves to a public address (#6293)", async () => {
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true, api: "openai-completions" }));
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
+    });
+
+    await expect(
+      helpers.validateCustomOpenAiLikeSelection(
+        "Custom endpoint",
+        "https://vllm.public.test/v1",
+        "model-a",
+        "COMPATIBLE_API_KEY",
+      ),
+    ).resolves.toEqual({ ok: true, api: "openai-completions" });
+    expect(probeOpenAiLikeEndpoint).toHaveBeenCalled();
+  });
 });

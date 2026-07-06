@@ -78,4 +78,11 @@ describe("patchStagedDockerfile :: Hermes NEMOCLAW_CONTEXT_WINDOW (#6177)", () =
     patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
   });
+
+  it("ignores an over-ceiling context window instead of baking an implausible value (#6293)", () => {
+    const dockerfilePath = stageHermesDockerfile();
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "9999999999");
+    patchHermes(dockerfilePath);
+    expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
+  });
 });

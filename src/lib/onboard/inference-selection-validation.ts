@@ -18,6 +18,10 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
     ): any;
   };
 
+import {
+  assertEndpointResolvesPublic,
+  type EndpointDnsLookupFn,
+} from "../inference/endpoint-ssrf-preflight";
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
@@ -33,6 +37,8 @@ export interface InferenceSelectionValidationDeps {
   getCredential?: typeof getCredential;
   probeAnthropicEndpoint?: typeof probeAnthropicEndpoint;
   probeOpenAiLikeEndpoint?: typeof probeOpenAiLikeEndpoint;
+  /** Injectable DNS resolver for the custom-endpoint SSRF preflight (tests). */
+  resolveEndpointHost?: EndpointDnsLookupFn;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -102,6 +108,56 @@ export function createInferenceSelectionValidationHelpers(
     console.error(`  ${label} endpoint validation failed.`);
     if (probe) console.error(`  Validation probe summary: ${summarizeProbeForDisplay(probe)}.`);
     console.error("  Validation details were omitted to avoid exposing credentials.");
+  }
+
+  // DNS-backed SSRF preflight for user-supplied custom endpoints. Resolves the
+  // endpoint host and fails closed before any host-side probe curl when it (or
+  // a resolved address) is private/reserved, so a public-looking name that
+  // resolves to loopback/link-local/RFC1918 cannot reach internal services
+  // during privileged onboarding. Returns a fail-closed EndpointValidationResult
+  // to short-circuit the caller, or null when the endpoint is safe to probe.
+  // See PR #6293 PRA-4.
+  async function preflightCustomEndpointOrFail(
+    label: string,
+    endpointUrl: string,
+    credentialEnv: string | null,
+    helpUrl: string | null,
+  ): Promise<EndpointValidationResult | null> {
+    // Under the unit-test runner the default resolver would hit real DNS (and
+    // fixture hostnames do not resolve); skip unless a resolver is injected,
+    // mirroring applyCompatibleEndpointContextWindow's VITEST fetch guard. In
+    // production (VITEST unset) the real dns/promises resolver always runs.
+    if (!deps.resolveEndpointHost && process.env.VITEST === "true") return null;
+    const preflight = await assertEndpointResolvesPublic(endpointUrl, deps.resolveEndpointHost);
+    if (preflight.ok) return null;
+    const syntheticProbe = {
+      ok: false as const,
+      message: preflight.reason,
+      failures: [
+        {
+          name: "SSRF preflight",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: preflight.reason ?? "endpoint resolves to a private/internal address",
+          body: "",
+        },
+      ],
+    };
+    printValidationFailure(label, syntheticProbe);
+    if (deps.isNonInteractive()) {
+      exitNonInteractiveValidationFailure();
+    }
+    const retry = await deps.promptValidationRecovery(
+      label,
+      getProbeRecovery(syntheticProbe),
+      credentialEnv,
+      helpUrl,
+    );
+    if (retry === "selection") {
+      console.log("  Please choose a provider/model again.");
+      console.log("");
+    }
+    return { ok: false, retry };
   }
 
   async function validateOpenAiLikeSelection(
@@ -185,6 +241,8 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
+    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
+    if (blocked) return blocked;
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
@@ -228,6 +286,8 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
+    const blocked = await preflightCustomEndpointOrFail(label, endpointUrl, credentialEnv, helpUrl);
+    if (blocked) return blocked;
     const apiKey = resolveCredential(credentialEnv);
     const probe = runAnthropicProbe(endpointUrl, model, apiKey);
     if (probe.ok) {
