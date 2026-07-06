@@ -150,6 +150,7 @@ function createPhases(
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
+      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       getSandboxRegistryEntry: () => null,

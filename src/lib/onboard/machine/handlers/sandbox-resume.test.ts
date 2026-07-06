@@ -22,6 +22,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     hermesToolGatewayConfigChanged: false,
     toolDisclosureMigrationNeeded: false,
     toolDisclosureChanged: false,
+    inferenceSelectionChanged: false,
     ...overrides,
   };
 }
@@ -39,6 +40,7 @@ describe("decideSandboxResume", () => {
     ["Hermes tool gateway", { hermesToolGatewayConfigChanged: true }, true],
     ["tool disclosure migration", { toolDisclosureMigrationNeeded: true }, false],
     ["tool disclosure", { toolDisclosureChanged: true }, false],
+    ["live DCode inference selection", { inferenceSelectionChanged: true }, false],
   ] as const)("recreates for %s drift", (_label, overrides, removeRegistryEntry) => {
     expect(decideSandboxResume(resumeSignals(overrides))).toMatchObject({
       kind: "recreate",

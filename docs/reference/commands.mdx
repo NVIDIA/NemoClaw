@@ -414,7 +414,8 @@ Existing live sandboxes are not deleted by this cancel rollback path.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.
-In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
+In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs.
+For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable; other agent paths continue to reuse by default when their stored selection cannot be read.
 Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
 
 Before deleting an existing sandbox during recreation, NemoClaw backs up the workspace state declared by the selected agent profile and restores it into the new sandbox once it is live.
