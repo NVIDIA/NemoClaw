@@ -11,11 +11,10 @@
 
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { OLLAMA_PORT } from "../core/ports";
-
-const { runCapture } = require("../runner");
+import { runCapture } from "../runner";
 
 export type OllamaRuntimeRunCaptureFn = (
-  cmd: string | string[],
+  cmd: readonly string[],
   opts?: { ignoreError?: boolean },
 ) => string;
 
