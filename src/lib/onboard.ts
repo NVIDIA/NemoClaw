@@ -245,7 +245,7 @@ const onboardProviders = require("./onboard/providers");
 const inferenceProviders: typeof import("./onboard/inference-providers") = require("./onboard/inference-providers");
 const setupInferenceFactory: typeof import("./onboard/setup-inference") =
   require("./onboard/setup-inference");
-const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
+const resumeProviderShim = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
@@ -4509,7 +4509,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           toSessionUpdates: (updates) =>
             toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
           skippedStepMessage,
-          ensureResumeProviderReady,
+          ...resumeProviderShim,
           recordStateSkipped,
           recordRepairEvent,
           hydrateCredentialEnv,

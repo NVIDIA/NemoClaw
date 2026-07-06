@@ -13,6 +13,7 @@ import {
   apiKeyShape,
   chatContent,
   cleanupHermesSwitch,
+  compatibleAnthropicMetadataArgs,
   ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
@@ -31,7 +32,9 @@ import {
   mockAnthropicSwitchEnabled,
   parseHermesModelBlock,
   parseInferenceRoute,
+  RUNTIME_SWITCH_API,
   registryState,
+  runHermesCliPongWithRetry,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
   SANDBOX_NAME,
@@ -54,17 +57,37 @@ function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
 }
 
+async function expectCompatibleAnthropicOpenAiProvider(
+  host: Parameters<typeof ensureCompatibleAnthropicSwitchProvider>[0],
+): Promise<void> {
+  const provider = await host.command(
+    "openshell",
+    ["provider", "get", "-g", "nemoclaw", "compatible-anthropic-endpoint"],
+    {
+      artifactName: "compatible-anthropic-openai-provider-metadata",
+      env: env(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(provider.exitCode, resultText(provider)).toBe(0);
+  expect(resultText(provider)).toMatch(/^\s*Type:\s*openai\s*$/imu);
+  expect(resultText(provider)).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
+  expect(resultText(provider)).toContain("OPENAI_BASE_URL");
+}
+
 test.skipIf(!shouldRunLiveE2E())(
   "Hermes inference set updates route/config and preserves live runtime",
   { timeout: TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets }) => {
     await artifacts.writeJson("target.json", {
       id: "hermes-inference-switch",
-      boundary: "install.sh + Hermes sandbox + inference set + in-sandbox health/chat probes",
+      boundary:
+        "install.sh + Hermes sandbox + inference set + in-sandbox health/chat + hermes -z probes",
       sandboxName: SANDBOX_NAME,
       switchProvider: SWITCH_PROVIDER,
       switchModel: SWITCH_MODEL,
       switchApi: SWITCH_API,
+      runtimeSwitchApi: RUNTIME_SWITCH_API,
     });
 
     cleanup.add("destroy Hermes inference switch sandbox", () =>
@@ -132,20 +155,12 @@ test.skipIf(!shouldRunLiveE2E())(
       : null;
     publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
     const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
+    switchEndpointUrl && (await expectCompatibleAnthropicOpenAiProvider(host));
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
-    const compatibleMetadataArgs = switchEndpointUrl
-      ? [
-          "--endpoint-url",
-          switchEndpointUrl,
-          "--credential-env",
-          "COMPATIBLE_ANTHROPIC_API_KEY",
-          "--inference-api",
-          SWITCH_API,
-        ]
-      : [];
+    const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
     const switched = await runHermesInferenceSetWithRetry(
       host,
       redactionValues,
@@ -232,7 +247,7 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : SWITCH_API,
+      publicSwitch ? null : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     expect(canonicalEndpoint(state.session.endpointUrl)).toBe(
@@ -241,7 +256,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(state.session.credentialEnv).toBe(
       publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv,
     );
-    expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
+    expect(state.session.preferredInferenceApi).toBe(RUNTIME_SWITCH_API);
     expect(state.session.nimContainer).toBeNull();
 
     const inferenceLocalPayload = JSON.stringify({
@@ -289,5 +304,17 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/PONG/i);
     expect(inferenceResponseModel(chat.stdout)).toBe(SWITCH_MODEL);
+
+    const hermesCli = await runHermesCliPongWithRetry({
+      run: (attempt) =>
+        sandbox.exec(SANDBOX_NAME, ["hermes", "-z", "Reply with exactly one word: PONG"], {
+          artifactName: `hermes-cli-z-after-switch-${attempt}`,
+          env: env(),
+          redactionValues,
+          timeoutMs: 150_000,
+        }),
+    });
+    expect(hermesCli.exitCode, resultText(hermesCli)).toBe(0);
+    expect(hermesCli.stdout).toMatch(/\bPONG\b/iu);
   },
 );

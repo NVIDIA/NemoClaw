@@ -348,6 +348,16 @@ If your local server implements the Anthropic Messages API (`/v1/messages`), cho
 $$nemoclaw onboard
 ```
 
+<AgentOnly variant="hermes">
+For `compatible-anthropic-endpoint`, Hermes uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1`.
+During onboarding, NemoClaw verifies that the endpoint also serves `/v1/chat/completions`, then registers that surface with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+The route retains `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+This avoids duplicate Anthropic SSE `message_start` events.
+If the endpoint only serves Anthropic Messages, onboarding stops with guidance instead of creating a Hermes sandbox with an unroutable or broken streaming path.
+OpenClaw custom Anthropic routes and first-party Anthropic routes remain on the native Anthropic Messages frontend.
+AWS Bedrock routes retain their existing OpenAI-compatible adapter behavior.
+</AgentOnly>
+
 For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
 
 ```bash
