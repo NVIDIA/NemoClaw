@@ -44,7 +44,7 @@ def _nemoclaw_test_sleep(seconds): _nemoclaw_test_clock.__setitem__(0, _nemoclaw
 describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("seeds an initial CLI pairing request when device list is itself gated", () => {
+  it("approves an initial CLI pairing request when device list is itself gated (#6113)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-bootstrap-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
@@ -53,6 +53,7 @@ describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
     const pendingFile = path.join(devicesDir, "pending.json");
     const pairedFile = path.join(devicesDir, "paired.json");
     const authFile = path.join(identityDir, "device-auth.json");
+    const approveLog = path.join(tmpDir, "approve-env.json");
     fs.mkdirSync(devicesDir, { recursive: true });
     fs.mkdirSync(identityDir, { recursive: true });
     const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
@@ -96,6 +97,10 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   printf '%s\\n' '{"ok":false,"error":{"reason":"pairing required: device is not approved yet (requestId: request-1)"}}'
   exit 1
 fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({url:process.env.OPENCLAW_GATEWAY_URL||null, port:process.env.OPENCLAW_GATEWAY_PORT||null, token:process.env.OPENCLAW_GATEWAY_TOKEN||null, args:process.argv.slice(3)})); fs.writeFileSync(process.argv[2], JSON.stringify({${JSON.stringify(deviceId)}:{deviceId:${JSON.stringify(deviceId)},publicKey:${JSON.stringify(publicKey)},clientId:"cli",clientMode:"cli",scopes:["operator.pairing"],approvedScopes:["operator.pairing"]}}));' ${JSON.stringify(approveLog)} ${JSON.stringify(pairedFile)} "$@"
+  exit 0
+fi
 echo "unexpected: $*" >&2
 exit 2
 `,
@@ -117,9 +122,14 @@ exit 2
       });
 
       expect(run.status).toBe(0);
-      expect(run.stdout).toContain("[auto-pair] seeded initial CLI pairing request=request-1");
+      expect(run.stdout).toContain("[auto-pair] approved initial CLI pairing request=request-1");
+      expect(JSON.parse(fs.readFileSync(approveLog, "utf-8"))).toEqual({
+        url: null,
+        port: null,
+        token: null,
+        args: ["devices", "approve", "request-1", "--json"],
+      });
       const paired = JSON.parse(fs.readFileSync(pairedFile, "utf-8"));
-      const auth = JSON.parse(fs.readFileSync(authFile, "utf-8"));
       expect(Object.keys(paired)).toEqual([deviceId]);
       expect(paired[deviceId]).toMatchObject({
         deviceId,
@@ -129,15 +139,8 @@ exit 2
         scopes: ["operator.pairing"],
         approvedScopes: ["operator.pairing"],
       });
-      expect(paired[deviceId].tokens.operator.token).toBeTruthy();
-      expect(paired[deviceId].tokens.operator.token).not.toBe("gateway-token");
-      expect(auth).toMatchObject({
-        version: 1,
-        deviceId,
-        tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
-      });
-      expect(auth.tokens.operator.token).toBe(paired[deviceId].tokens.operator.token);
-      expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toEqual({});
+      expect(fs.existsSync(authFile)).toBe(false);
+      expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toHaveProperty("request-1");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -204,7 +207,7 @@ exit 1
       });
 
       expect(run.status).toBe(0);
-      expect(run.stdout).not.toContain("seeded initial CLI pairing");
+      expect(run.stdout).not.toContain("approved initial CLI pairing");
       expect(fs.existsSync(pairedFile)).toBe(false);
       expect(fs.existsSync(authFile)).toBe(false);
     } finally {
