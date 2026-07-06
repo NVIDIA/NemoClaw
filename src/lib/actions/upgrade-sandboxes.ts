@@ -151,11 +151,13 @@ function isPreparedRecoveryCandidate(
 // the second read is dropped rather than rebuilt from a possibly stale backup.
 async function confirmAbsentRecoveryCandidates(
   absentCandidates: registry.SandboxEntry[],
+  selectedGatewayName: string,
 ): Promise<registry.SandboxEntry[]> {
   if (absentCandidates.length === 0) return absentCandidates;
   const confirmation = await captureSandboxListWithGatewayPreflightOrExit({
     action: "confirming sandboxes absent from the selected gateway",
     command: `${CLI_NAME} upgrade-sandboxes`,
+    gatewayName: selectedGatewayName,
   });
   const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
   return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
@@ -175,9 +177,11 @@ export async function upgradeSandboxes(
   }
 
   // Query live sandboxes so we can tell the user which are running
+  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
   const liveResult = await captureSandboxListWithGatewayPreflightOrExit({
     action: "checking sandbox upgrade state",
     command: `${CLI_NAME} upgrade-sandboxes`,
+    gatewayName: selectedGatewayName,
   });
   const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
@@ -213,7 +217,6 @@ export async function upgradeSandboxes(
   // bridge with onboard's matching consumer once prepared-backup installer recovery
   // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
-  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
   let recoveryCandidates: registry.SandboxEntry[] = [];
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
@@ -225,7 +228,10 @@ export async function upgradeSandboxes(
     const absentCandidates = gatewayEligible.filter(
       (sandbox) => !nonReadyLiveNames.has(sandbox.name),
     );
-    const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(absentCandidates);
+    const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
+      absentCandidates,
+      selectedGatewayName,
+    );
     recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
   }
   const backupRecoveryAssessments = recoveryCandidates.map(prepareBackupRecovery);

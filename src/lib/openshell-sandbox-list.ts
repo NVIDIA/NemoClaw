@@ -15,6 +15,7 @@ type SandboxListResult = ReturnType<typeof captureOpenshell>;
 export type SandboxListPreflightContext = {
   action: string;
   command: string;
+  gatewayName?: string;
 };
 
 export type SandboxListRecoveryResult = {
@@ -75,7 +76,9 @@ export async function captureSandboxListWithGatewayPreflightOrExit(
     process.exit(1);
   }
 
-  const recovery = await captureSandboxListWithGatewayRecovery();
+  const recovery = await captureSandboxListWithGatewayRecovery({
+    gatewayName: context.gatewayName,
+  });
   const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result);
   if (resultIssue) {
     printOpenShellStateRpcIssue(resultIssue, context);
