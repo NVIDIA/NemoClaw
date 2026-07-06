@@ -5,17 +5,19 @@
 // entrypoints. Exercises the actual shell blocks extracted from
 // scripts/nemoclaw-start.sh and agents/hermes/start.sh, not a re-implementation.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { runShellLines, sliceBlock } from "./helpers/corporate-ca-support";
 
 const OPENCLAW_START = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
 const HERMES_START = join(import.meta.dirname, "../agents/hermes/start.sh");
 
 const OPENSHELL_PEM = "-----BEGIN CERTIFICATE-----\nOPENSHELL-ROOT\n-----END CERTIFICATE-----\n";
 const CORPORATE_PEM = "-----BEGIN CERTIFICATE-----\nCORPORATE-ROOT\n-----END CERTIFICATE-----\n";
+const MERGE_START = "# Corporate proxy CA merge (NemoClaw#6210).";
 
 const tmpRoots: string[] = [];
 
@@ -31,32 +33,10 @@ afterEach(() => {
   }
 });
 
-function sliceBlock(scriptPath: string, startMarker: string, endMarker: string): string {
-  const src = readFileSync(scriptPath, "utf-8");
-  const start = src.indexOf(startMarker);
-  const end = src.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Failed to extract block [${startMarker} .. ${endMarker}] from ${scriptPath}`);
-  }
-  return src.slice(start, end);
-}
-
-function mergeBlock(scriptPath: string, corpCa: string, merged: string): string {
-  return sliceBlock(
-    scriptPath,
-    "# Corporate proxy CA merge (NemoClaw#6210).",
-    "# Git TLS CA bundle fix (NemoClaw#2270).",
-  )
+function mergeBlock(scriptPath: string, endMarker: string, corpCa: string, merged: string): string {
+  return sliceBlock(scriptPath, MERGE_START, endMarker)
     .replaceAll("/usr/local/share/nemoclaw/corporate-ca.pem", corpCa)
     .replaceAll("/tmp/nemoclaw-ca-bundle.pem", merged);
-}
-
-function runShell(dir: string, lines: string[]): string {
-  const script = join(dir, "run.sh");
-  writeFileSync(script, ["#!/usr/bin/env bash", "set -euo pipefail", ...lines].join("\n"), {
-    mode: 0o700,
-  });
-  return execFileSync("bash", [script], { encoding: "utf-8" });
 }
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
@@ -68,9 +48,9 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     writeFileSync(openshell, OPENSHELL_PEM);
     writeFileSync(corp, CORPORATE_PEM);
 
-    const out = runShell(dir, [
+    const out = runShellLines(dir, [
       `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
-      mergeBlock(OPENCLAW_START, corp, merged),
+      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
       'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
       'printf "CURL_CA_BUNDLE=%s\\n" "${CURL_CA_BUNDLE:-}"',
       'printf "REQUESTS_CA_BUNDLE=%s\\n" "${REQUESTS_CA_BUNDLE:-}"',
@@ -101,9 +81,9 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     const merged = join(dir, "merged-ca.pem");
     writeFileSync(openshell, OPENSHELL_PEM);
 
-    const out = runShell(dir, [
+    const out = runShellLines(dir, [
       `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
-      mergeBlock(OPENCLAW_START, absentCorp, merged),
+      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", absentCorp, merged),
       'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
       'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
     ]);
@@ -121,17 +101,16 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     writeFileSync(openshell, OPENSHELL_PEM);
     writeFileSync(corp, CORPORATE_PEM);
 
-    // Hermes extracts up to the OpenShell derivation comment; splice that in so
+    // Hermes' block ends at the OpenShell derivation comment; splice that in so
     // the CURL/REQUESTS/GIT vars derive from the merged SSL_CERT_FILE too.
-    const hermesMerge = sliceBlock(
+    const hermesMerge = mergeBlock(
       HERMES_START,
-      "# Corporate proxy CA merge (NemoClaw#6210).",
       "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.",
-    )
-      .replaceAll("/usr/local/share/nemoclaw/corporate-ca.pem", corp)
-      .replaceAll("/tmp/nemoclaw-ca-bundle.pem", merged);
+      corp,
+      merged,
+    );
 
-    const out = runShell(dir, [
+    const out = runShellLines(dir, [
       `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
       hermesMerge,
       'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
@@ -160,9 +139,9 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     // fresh shell, and assert on the resulting environment — not the text.
     function connectSessionEnv(preEnv: string[]): Record<string, string> {
       const envFile = join(dir, "connect-env.sh");
-      const emitted = runShell(dir, [...preEnv, `{ ${block}\n} > ${JSON.stringify(envFile)}`]);
+      const emitted = runShellLines(dir, [...preEnv, `{ ${block}\n} > ${JSON.stringify(envFile)}`]);
       expect(emitted).toBe("");
-      const sourced = runShell(dir, [
+      const sourced = runShellLines(dir, [
         `source ${JSON.stringify(envFile)}`,
         'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
         'printf "CURL_CA_BUNDLE=%s\\n" "${CURL_CA_BUNDLE:-}"',
