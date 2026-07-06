@@ -14,7 +14,6 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from typing import NoReturn
 
 SECRET = "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL"
 _RELAY_OBSERVED_ERRORS: list[dict[str, Any]] = []
@@ -196,7 +195,7 @@ class _RelayWrappedError(RuntimeError):
     pass
 
 
-def _raise_relay_wrapped(error: Exception) -> NoReturn:
+def _relay_wrapped_error(error: Exception) -> _RelayWrappedError:
     _RELAY_OBSERVED_ERRORS.append(
         {
             "type": type(error).__name__,
@@ -205,7 +204,7 @@ def _raise_relay_wrapped(error: Exception) -> NoReturn:
             "cause_is_none": error.__cause__ is None,
         }
     )
-    raise _RelayWrappedError("relay wrapped callback failure") from error
+    return _RelayWrappedError("relay wrapped callback failure")
 
 
 async def _tool_execute(*, name: str, args: Any, func: Any, **_kwargs: Any) -> Any:
@@ -214,7 +213,7 @@ async def _tool_execute(*, name: str, args: Any, func: Any, **_kwargs: Any) -> A
         result = func(args)
         return await result if inspect.isawaitable(result) else result
     except Exception as error:
-        _raise_relay_wrapped(error)
+        raise _relay_wrapped_error(error) from error
 
 
 def _run_sync(awaitable: Any) -> Any:
@@ -239,7 +238,7 @@ class _NemoRelayMiddleware:
         try:
             return await func(request)
         except Exception as error:
-            _raise_relay_wrapped(error)
+            raise _relay_wrapped_error(error) from error
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
         async def call(inner_request: Any) -> Any:

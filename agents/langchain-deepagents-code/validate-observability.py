@@ -118,8 +118,8 @@ class _CollectorHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("content-length", "0")
         self.end_headers()
 
-    def log_message(self, _format: str, *args: Any) -> None:
-        del args
+    def log_message(self, _format: str, *_args: Any) -> None:
+        pass
 
 
 def _load_observability_module() -> ModuleType:

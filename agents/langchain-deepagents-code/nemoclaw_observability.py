@@ -255,18 +255,15 @@ def new_metadata_only_callback_manager() -> Any:
 
         def add_handler(self, _handler: Any, inherit: bool = True) -> None:
             """Reject handler additions performed while runnable configs merge."""
-            del inherit
 
         def remove_handler(self, _handler: Any) -> None:
             """Keep the managed handler installed for the graph lifetime."""
 
         def set_handler(self, _handler: Any, inherit: bool = True) -> None:
             """Reject attempts to replace the managed handler."""
-            del inherit
 
         def set_handlers(self, _handlers: list[Any], inherit: bool = True) -> None:
             """Reject attempts to replace the managed handler set."""
-            del inherit
 
     return MetadataOnlyCallbackManager(handlers=[new_metadata_only_callback_handler()])
 
