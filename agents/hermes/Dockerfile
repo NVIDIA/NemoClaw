@@ -11,6 +11,8 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:d6ce792eb302a7
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
+ARG HERMES_SEMVER=0.17.0
+
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
 RUN set -eu; \
@@ -202,7 +204,7 @@ PY
 # chain tampering of the build context (an attacker rewriting the file has to
 # also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
-ARG NEMOCLAW_HERMES_WRAPPER_SHA256=fced7ed33ac2d61d3c0852a9884ef352a9b92ec645dbed52732c04785e20c760
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=78b5e8eb6d4073329adbf4eb9d27d2ef7d9a7844c3a09644bebf342a15345823
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
 # hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
@@ -224,6 +226,12 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+RUN if [ "$HERMES_SEMVER" != "0.17.0" ] \
+        && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
+          || grep -q 'patch-session-list-preview' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
+        echo "ERROR: HERMES_SEMVER=${HERMES_SEMVER} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
+        exit 1; \
+    fi
 # This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the
 # help probe checks the pinned Hermes binary, not the wrapper installed below.
 RUN /usr/bin/python3 -I -c 'import ast, pathlib, subprocess, sys; source = pathlib.Path("/usr/local/lib/nemoclaw/hermes-wrapper.py").read_text(); tree = ast.parse(source); constants = {node.targets[0].id: ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in {"_VALUE_FLAGS", "_BOOLEAN_FLAGS"}}; missing_constants = sorted({"_VALUE_FLAGS", "_BOOLEAN_FLAGS"} - set(constants)); missing_constants and sys.exit("ERROR: Hermes wrapper flag constants not found in AST: " + ", ".join(missing_constants)); not constants["_VALUE_FLAGS"] and sys.exit("ERROR: Hermes wrapper _VALUE_FLAGS is empty"); not constants["_BOOLEAN_FLAGS"] and sys.exit("ERROR: Hermes wrapper _BOOLEAN_FLAGS is empty"); top_expected = set(constants["_VALUE_FLAGS"]) | set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"-z", "--oneshot", "-c", "--continue"}; top_help = subprocess.check_output(["/usr/local/bin/hermes", "--help"], text=True, timeout=30); top_missing = sorted(flag for flag in top_expected if flag not in top_help); top_missing and sys.exit("ERROR: Hermes wrapper flag allowlist drifted from pinned hermes --help: " + ", ".join(top_missing)); chat_expected = set(constants["_VALUE_FLAGS"].values()) | set(constants["_BOOLEAN_FLAGS"]) | {"--query", "--quiet", "--resume", "-r", "--continue", "-c"}; chat_help = subprocess.check_output(["/usr/local/bin/hermes", "chat", "--help"], text=True, timeout=30); chat_missing = sorted(flag for flag in chat_expected if flag not in chat_help); chat_missing and sys.exit("ERROR: Hermes wrapper forwarded flags drifted from pinned hermes chat --help: " + ", ".join(chat_missing))'

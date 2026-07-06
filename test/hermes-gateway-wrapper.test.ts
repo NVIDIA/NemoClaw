@@ -50,18 +50,8 @@ type WrapperRun = {
   realArgv: string[];
 };
 
-type StubBehaviour = {
-  stdout?: string;
-  stderr?: string;
-  exitCode?: number;
-};
+type StubBehaviour = { stdout?: string; stderr?: string; exitCode?: number };
 
-// Run the wrapper against a temp install: a copy of the wrapper alongside the
-// real validator and a `hermes.real` stub. The wrapper's dev fallback resolves
-// both from its own directory because the /usr/local install paths are absent.
-// The stub records the args it was exec'd with so we can prove pass-through vs.
-// refusal. `env` fully replaces the process env so CI-injected secret-shaped
-// vars (e.g. GITHUB_TOKEN) cannot perturb the validator.
 function runWrapper(
   args: string[],
   env: Record<string, string>,
@@ -69,6 +59,7 @@ function runWrapper(
     shadowPython?: boolean;
     shadowHelpers?: Record<string, string>;
     stub?: StubBehaviour;
+    stubMode?: number;
     validatorScript?: string;
   } = {},
 ): WrapperRun {
@@ -96,7 +87,7 @@ function runWrapper(
       `exit ${stubExit}`,
       "",
     ].join("\n");
-    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: opts.stubMode ?? 0o755 });
 
     // Plant malicious helpers earlier on PATH; the wrapper must ignore them.
     const planted: Record<string, string> = {
@@ -655,6 +646,14 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
 
     expect(run.status).toBe(7);
     expect(run.stdout).toContain("api_key: sk-****");
+  });
+
+  it("fails closed without a traceback when config show cannot exec Hermes", () => {
+    const run = runWrapper(["config", "show"], {}, { stubMode: 0o644 });
+    expect(run.status).toBe(126);
+    expect(run.stderr).toContain("[SECURITY] Refusing hermes config show: failed to exec Hermes");
+    expect(run.stderr).not.toContain("Traceback");
+    expect(run.realInvoked).toBe(false);
   });
 
   it("leaves non-`config show` output untouched even when api_key shapes appear", () => {

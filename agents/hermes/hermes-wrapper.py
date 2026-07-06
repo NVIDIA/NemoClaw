@@ -195,7 +195,24 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
                 stdout=masker_stdout.stdin,
                 stderr=masker_stderr.stdin,
             )
-        finally:
+        except OSError as exc:
+            if masker_stdout.stdin is not None:
+                masker_stdout.stdin.close()
+            if masker_stderr.stdin is not None:
+                masker_stderr.stdin.close()
+            for masker in (masker_stdout, masker_stderr):
+                try:
+                    masker.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    masker.terminate()
+                    masker.wait(timeout=5)
+            print(
+                "[SECURITY] Refusing hermes config show: failed to exec Hermes "
+                f"({exc.__class__.__name__})",
+                file=sys.stderr,
+            )
+            return 126
+        else:
             if masker_stdout.stdin is not None:
                 masker_stdout.stdin.close()
             if masker_stderr.stdin is not None:

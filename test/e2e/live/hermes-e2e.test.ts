@@ -519,6 +519,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const exportScript = [
       `rm -f ${shellQuote(exportPath)}`,
       `hermes sessions export --session-id ${shellQuote(seedSessionId)} ${shellQuote(exportPath)}`,
+      `python3 -c ${shellQuote("import json,sys\nraw=open(sys.argv[1],encoding='utf-8').read()\ntry:\n    docs=[json.loads(raw)]\nexcept Exception:\n    docs=[json.loads(line) for line in raw.splitlines() if line.strip()]\nmsgs=[]\ndef walk(v):\n    if isinstance(v,dict) and isinstance(v.get('messages'),list):\n        [walk(item) for item in v['messages']]\n    elif isinstance(v,dict) and isinstance(v.get('role'),str) and 'content' in v:\n        content=v['content'] if isinstance(v['content'],str) else json.dumps(v['content'],sort_keys=True)\n        msgs.append((v['role'],content))\n    elif isinstance(v,dict):\n        [walk(item) for item in v.values()]\n    elif isinstance(v,list):\n        [walk(item) for item in v]\n[walk(doc) for doc in docs]\ndef pos(prompt):\n    return next((i for i,(role,content) in enumerate(msgs) if role=='user' and prompt in content),-1)\ns,r,c=[pos(prompt) for prompt in sys.argv[2:5]]\nassert 0 <= s < r < c, msgs\nassert any(role=='assistant' for role,_ in msgs[r+1:c]), msgs\nassert any(role=='assistant' for role,_ in msgs[c+1:]), msgs")} ${shellQuote(exportPath)} ${shellQuote(seedPrompt)} ${shellQuote(resumePrompt)} ${shellQuote(continuePrompt)}`,
       `cat ${shellQuote(exportPath)}`,
     ].join(" && ");
     const exportResult = await sandbox.execShell(
