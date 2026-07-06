@@ -25,6 +25,7 @@ export type ConnectHarness = {
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
+  ensureLiveSandboxSpy: MockInstance;
   errorSpy: MockInstance;
   logSpy: MockInstance;
   preflightVllmSpy: MockInstance;
@@ -106,7 +107,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const preflightVllmSpy = vi
     .spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit")
     .mockImplementation(() => undefined);
-  vi.spyOn(gatewayState, "ensureLiveSandboxOrExit").mockResolvedValue({
+  const ensureLiveSandboxSpy = vi.spyOn(gatewayState, "ensureLiveSandboxOrExit").mockResolvedValue({
     state: "present",
     output: "Name: alpha\nPhase: Ready\n",
   });
@@ -201,6 +202,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
+    ensureLiveSandboxSpy,
     errorSpy,
     logSpy,
     preflightVllmSpy,

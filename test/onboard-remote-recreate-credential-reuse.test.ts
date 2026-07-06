@@ -172,8 +172,8 @@ const { setupNim, setupInference } = require(${onboardPath});
           });
         assert.deepEqual(
           curlUrls,
-          ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:8000/v1/models"],
-          `only exact loopback discovery probes may run without a local credential: ${curlLog}`,
+          [],
+          `remote recovery must not run unrelated local endpoint probes: ${curlLog}`,
         );
         const openshellLog = fs.readFileSync(openshellLogPath, "utf8");
         assert.match(openshellLog, /provider get -g nemoclaw compatible-endpoint/);

@@ -49,6 +49,22 @@ export type GatewayRouteCompatibilityResult =
       conflicts: GatewayRouteConflict[];
     };
 
+export interface GatewayRouteDiscoveryConstraints {
+  requiredModel: string | null;
+  requiredEndpointUrl: string | null;
+  requiredInferenceApi: string | null;
+}
+
+export type GatewayRouteDiscoveryResult =
+  | ({ ok: true } & GatewayRouteDiscoveryConstraints)
+  | { ok: false; result: Exclude<GatewayRouteCompatibilityResult, { ok: true }> };
+
+export type CurrentGatewayRouteDiscoveryPreflight = (
+  request: Omit<CurrentGatewayRouteCompatibilityRequest, "route"> & {
+    route: Omit<GatewayInferenceRoute, "model"> & { model: string | null };
+  },
+) => GatewayRouteDiscoveryResult;
+
 const CUSTOM_ROUTE_PROVIDERS = new Set(["compatible-endpoint", "compatible-anthropic-endpoint"]);
 
 const SUPPORTED_INFERENCE_APIS = new Set([
@@ -94,6 +110,92 @@ function customRouteConflict(
   if (requestedEndpoint !== recordedEndpoint) return "custom-endpoint";
   if (requestedApi !== recordedApi) return "custom-api";
   return null;
+}
+
+/**
+ * Constrain read-only route discovery from durable same-gateway registry peers.
+ * Missing model/API fields are allowed only when the gateway has no configured
+ * peer, or when every peer supplies one identical value that discovery must
+ * subsequently verify with the exact compatibility guard.
+ */
+export function preflightGatewayRouteDiscovery(
+  request: Parameters<CurrentGatewayRouteDiscoveryPreflight>[0] & {
+    sandboxes: readonly SandboxEntry[];
+  },
+): GatewayRouteDiscoveryResult {
+  const provider = nonEmptyString(request.route.provider);
+  if (!provider) throw new Error("Requested gateway inference route requires a provider");
+  const peers: SandboxEntry[] = [];
+  const invalidBindings: GatewayRouteConflict[] = [];
+  for (const sandbox of request.sandboxes) {
+    if (sandbox.name === request.sandboxName) continue;
+    let recordedGatewayName: string;
+    try {
+      recordedGatewayName = resolveSandboxGatewayName(sandbox);
+    } catch {
+      invalidBindings.push({ sandboxName: sandbox.name, reason: "invalid-gateway-binding" });
+      continue;
+    }
+    if (recordedGatewayName === request.gatewayName && configuredRoute(sandbox)) {
+      peers.push(sandbox);
+    }
+  }
+  const requestedModel = nonEmptyString(request.route.model);
+  if (invalidBindings.length > 0) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        gatewayName: request.gatewayName,
+        sandboxName: request.sandboxName,
+        route: { provider, model: requestedModel ?? "model discovery pending" },
+        conflicts: invalidBindings,
+      },
+    };
+  }
+  if (peers.length === 0) {
+    return {
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    };
+  }
+  const reference = peers[0];
+  const recorded = configuredRoute(reference);
+  if (!recorded) throw new Error("Gateway route discovery peer is not configured");
+  if (provider !== recorded.provider || (requestedModel && requestedModel !== recorded.model)) {
+    return {
+      ok: false,
+      result: {
+        ok: false,
+        gatewayName: request.gatewayName,
+        sandboxName: request.sandboxName,
+        route: { provider, model: requestedModel ?? recorded.model },
+        conflicts: peers.map((sandbox) => ({
+          sandboxName: sandbox.name,
+          reason: "provider-model" as const,
+        })),
+      },
+    };
+  }
+  const custom = CUSTOM_ROUTE_PROVIDERS.has(provider);
+  const candidate: GatewayInferenceRoute = {
+    ...request.route,
+    provider,
+    model: requestedModel ?? recorded.model,
+    endpointUrl: nonEmptyString(request.route.endpointUrl) ?? reference.endpointUrl,
+    preferredInferenceApi:
+      nonEmptyString(request.route.preferredInferenceApi) ?? reference.preferredInferenceApi,
+  };
+  const compatibility = checkGatewayRouteCompatibility({ ...request, route: candidate });
+  if (!compatibility.ok) return { ok: false, result: compatibility };
+  return {
+    ok: true,
+    requiredModel: recorded.model,
+    requiredEndpointUrl: custom ? (nonEmptyString(reference.endpointUrl) ?? null) : null,
+    requiredInferenceApi: custom ? normalizedInferenceApi(reference.preferredInferenceApi) : null,
+  };
 }
 
 /**

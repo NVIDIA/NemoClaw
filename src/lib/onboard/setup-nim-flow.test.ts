@@ -123,6 +123,8 @@ function makeDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
     handleVllmSelection: async () => unexpected("vLLM selection"),
     handleRoutedSelection: async () => unexpected("routed selection"),
     coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
+    resolveAgentInferenceApi: (_agentName, _provider, preferredInferenceApi) =>
+      preferredInferenceApi,
     clearCompatibleEndpointReasoning: () => null,
     maybePromptForInferenceInputCapability: vi.fn(async () => {}),
   };
@@ -219,6 +221,172 @@ describe("createSetupNim", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
     expect(handleRemoteProviderSelection).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ model: "final-model", provider: "nvidia-prod" });
+  });
+
+  it("suppresses unrelated local endpoint probes for an explicit remote selection (#6315)", async () => {
+    const detectInferenceProviderHostState = vi.fn(() => makeHostState());
+    const canProbeRoute = vi.fn(() => true);
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = "gpt-test";
+        state.provider = "openai-api";
+        state.endpointUrl = "https://api.openai.com/v1";
+        state.credentialEnv = "OPENAI_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "openai",
+        detectInferenceProviderHostState,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    await setupNim(null, null, null, true, null, "nemoclaw", undefined, canProbeRoute);
+
+    expect(detectInferenceProviderHostState).toHaveBeenCalledWith({
+      gpu: null,
+      experimental: false,
+      probeOllama: false,
+      probeVllm: false,
+    });
+    expect(canProbeRoute).not.toHaveBeenCalled();
+  });
+
+  it("checks shared-gateway compatibility before interactive local discovery probes (#6315)", async () => {
+    const events: string[] = [];
+    const canProbeRoute = vi.fn((provider: string) => {
+      events.push(`preflight:${provider}`);
+      return false;
+    });
+    const detectInferenceProviderHostState = vi.fn((input) => {
+      events.push(`detect:${String(input.probeOllama)}:${String(input.probeVllm)}`);
+      return makeHostState();
+    });
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.model = "nvidia/test";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({ detectInferenceProviderHostState, handleRemoteProviderSelection }),
+    );
+
+    await setupNim(null, null, null, true, null, "nemoclaw", undefined, canProbeRoute);
+
+    expect(events).toEqual([
+      "preflight:ollama-local",
+      "preflight:vllm-local",
+      "detect:false:false",
+    ]);
+  });
+
+  it("rejects a known local route before host detection when its model conflicts (#6315)", async () => {
+    const detectInferenceProviderHostState = vi.fn(() => makeHostState());
+    const routeGuard = vi.fn(() => {
+      throw new Error("route conflict");
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "ollama",
+        getNonInteractiveModel: () => "conflict/model",
+        detectInferenceProviderHostState,
+      }),
+    );
+
+    await expect(setupNim(null, null, null, true, null, "nemoclaw", routeGuard)).rejects.toThrow(
+      "route conflict",
+    );
+    expect(routeGuard).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "ollama-local", model: "conflict/model" }),
+    );
+    expect(detectInferenceProviderHostState).not.toHaveBeenCalled();
+  });
+
+  it("applies same-gateway discovery constraints before a provider probe (#6315)", async () => {
+    const providerProbe = vi.fn();
+    const routeGuard = vi.fn(
+      (route: { model: string | null; preferredInferenceApi?: string | null }) => ({
+        requiredModel: route.model ? null : "shared/model",
+        requiredEndpointUrl: "https://shared.example.test/v1",
+        requiredInferenceApi: route.preferredInferenceApi ? null : "openai-responses",
+      }),
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "compatible-endpoint";
+        state.model = null;
+        state.endpointUrl = "https://shared.example.test/v1";
+        state.credentialEnv = "COMPATIBLE_API_KEY";
+        state.preferredInferenceApi = null;
+        state.assertRouteCompatible?.();
+        expect(state.model).toBe("shared/model");
+        expect(state.preferredInferenceApi).toBe("openai-responses");
+        providerProbe();
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "custom",
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, null, true, null, "nemoclaw", routeGuard);
+
+    expect(providerProbe).toHaveBeenCalledOnce();
+    expect(routeGuard).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "shared/model",
+        preferredInferenceApi: "openai-responses",
+      }),
+    );
+    expect(result.model).toBe("shared/model");
+  });
+
+  it("guards custom Anthropic routes with the final Hermes API identity (#6315)", async () => {
+    const agent = { name: "hermes" } as AgentDefinition;
+    const routeGuard = vi.fn((route) => {
+      expect(route.preferredInferenceApi).toBe("openai-completions");
+      return { requiredModel: null, requiredEndpointUrl: null, requiredInferenceApi: null };
+    });
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (_args, state) => {
+        state.provider = "compatible-anthropic-endpoint";
+        state.model = "anthropic/model";
+        state.endpointUrl = "https://anthropic.example.test";
+        state.credentialEnv = "ANTHROPIC_COMPATIBLE_API_KEY";
+        state.preferredInferenceApi = "anthropic-messages";
+        state.assertRouteCompatible?.();
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "anthropicCompatible",
+        resolveAgentInferenceApi: (agentName, provider, preferredInferenceApi) =>
+          agentName === "hermes" && provider === "compatible-anthropic-endpoint"
+            ? "openai-completions"
+            : preferredInferenceApi,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, agent, true, null, "nemoclaw", routeGuard);
+
+    expect(routeGuard).toHaveBeenCalled();
+    expect(result.preferredInferenceApi).toBe("openai-completions");
   });
 
   it("recovers a recorded provider and model without prompting in non-interactive mode (#6245)", async () => {
@@ -342,9 +510,24 @@ describe("createSetupNim", () => {
   it("continues from a successful managed vLLM install into provider selection (#6245)", async () => {
     const profile = { name: "DGX Spark" } as VllmProfile;
     const prompt = vi.fn(async () => unexpected("provider prompt"));
-    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: true }));
+    const detectInferenceProviderHostState = vi.fn(() =>
+      makeHostState({
+        vllmProfile: profile,
+        hasVllmImage: true,
+        vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+      }),
+    );
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async (_profile, options) => {
+      options.beforeInstall?.("vllm-model");
+      return { ok: true };
+    });
+    const routeGuard = vi.fn(() => ({
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    }));
     const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
-      state.model = "vllm-model";
+      expect(state.model).toBe("vllm-model");
       state.provider = "vllm";
       state.endpointUrl = "http://127.0.0.1:8000/v1";
       state.credentialEnv = null;
@@ -356,25 +539,34 @@ describe("createSetupNim", () => {
         isNonInteractive: () => true,
         getNonInteractiveProvider: () => "install-vllm",
         prompt,
-        detectInferenceProviderHostState: () =>
-          makeHostState({
-            vllmProfile: profile,
-            hasVllmImage: true,
-            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
-          }),
+        detectInferenceProviderHostState,
         installVllm,
         handleVllmSelection,
       }),
     );
 
-    const result = await setupNim(null);
+    const result = await setupNim(null, null, null, true, null, "nemoclaw", routeGuard);
 
     expect(installVllm).toHaveBeenCalledWith(profile, {
       hasImage: true,
       nonInteractive: true,
       promptFn: prompt,
+      beforeInstall: expect.any(Function),
     });
     expect(prompt).not.toHaveBeenCalled();
+    expect(detectInferenceProviderHostState).toHaveBeenCalledWith({
+      gpu: null,
+      experimental: false,
+      probeOllama: false,
+      probeVllm: false,
+    });
+    expect(routeGuard).toHaveBeenCalledWith({
+      provider: "vllm-local",
+      model: "vllm-model",
+      endpointUrl: null,
+      preferredInferenceApi: "openai-completions",
+      credentialEnv: null,
+    });
     expect(handleVllmSelection).toHaveBeenCalledOnce();
     expect(result).toMatchObject({
       model: "vllm-model",

@@ -2,12 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { coerceAgentInferenceApi, resolveAgentInferenceApi } from "../../../inference/config";
-import type { CurrentGatewayRouteCompatibilityCheck } from "../../../inference/gateway-route-compatibility";
+import type {
+  CurrentGatewayRouteCompatibilityCheck,
+  CurrentGatewayRouteDiscoveryPreflight,
+  GatewayRouteDiscoveryConstraints,
+} from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
-import { assertProviderInferenceRouteCompatible } from "./provider-inference-route-containment";
+import {
+  assertProviderInferenceRouteCompatible,
+  guardProviderInferenceRouteSelection,
+  type ProviderInferenceProbeRoute,
+} from "./provider-inference-route-containment";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -72,6 +80,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   };
   deps: {
     checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
+    preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
@@ -79,6 +88,10 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       agent: Agent,
       allowRecordedProviderRecovery?: boolean,
       gatewayName?: string,
+      assertRouteCompatible?: (
+        route: ProviderInferenceProbeRoute,
+      ) => GatewayRouteDiscoveryConstraints,
+      canProbeRoute?: (provider: string) => boolean,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -397,7 +410,27 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () => deps.setupNim(gpu, sandboxName, agent, !fresh, gatewayName),
+        () =>
+          deps.setupNim(
+            gpu,
+            sandboxName,
+            agent,
+            !fresh,
+            gatewayName,
+            (route) => guardProviderInferenceRouteSelection(deps, gatewayName, sandboxName, route),
+            (provider) =>
+              deps.preflightGatewayRouteDiscovery({
+                gatewayName,
+                sandboxName,
+                route: {
+                  provider,
+                  model: null,
+                  endpointUrl: null,
+                  preferredInferenceApi: null,
+                  credentialEnv: null,
+                },
+              }).ok,
+          ),
       );
       model = selection.model;
       provider = selection.provider;

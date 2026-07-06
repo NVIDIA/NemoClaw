@@ -3,7 +3,10 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { CurrentGatewayRouteCompatibilityCheck } from "../../../inference/gateway-route-compatibility";
+import type {
+  CurrentGatewayRouteCompatibilityCheck,
+  CurrentGatewayRouteDiscoveryPreflight,
+} from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import {
   handleProviderInferenceState,
@@ -30,7 +33,26 @@ function createDeps() {
     checkGatewayRouteCompatibility: vi.fn<CurrentGatewayRouteCompatibilityCheck>(() => ({
       ok: true,
     })),
-    setupNim: vi.fn(async () => ({ ...fallbackSelection })),
+    preflightGatewayRouteDiscovery: vi.fn<CurrentGatewayRouteDiscoveryPreflight>(() => ({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    })),
+    selectionProbe: vi.fn(),
+    setupNim: vi.fn<Options["deps"]["setupNim"]>(
+      async (_gpu, _sandbox, _agent, _recover, _gateway, guard) => {
+        guard?.({
+          provider: fallbackSelection.provider,
+          model: fallbackSelection.model,
+          endpointUrl: fallbackSelection.endpointUrl,
+          credentialEnv: fallbackSelection.credentialEnv,
+          preferredInferenceApi: fallbackSelection.preferredInferenceApi,
+        });
+        calls.selectionProbe();
+        return { ...fallbackSelection };
+      },
+    ),
     setupInference: vi.fn(async () => ({ ok: true as const })),
     recordStepComplete: vi.fn(async () => createSession()),
     surfaceReady: vi.fn(() => true),
@@ -50,6 +72,7 @@ function createDeps() {
   };
   const deps: Options["deps"] = {
     checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+    preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
     normalizeHermesAuthMethod: () => null,
     setupNim: calls.setupNim,
     setupInference: calls.setupInference,
@@ -139,6 +162,16 @@ function rejectRoute(
     route: { provider, model },
     conflicts: [{ sandboxName: "existing-sandbox", reason: "provider-model" }],
   });
+  calls.preflightGatewayRouteDiscovery.mockReturnValue({
+    ok: false,
+    result: {
+      ok: false,
+      gatewayName: "nemoclaw-9090",
+      sandboxName: "target-sandbox",
+      route: { provider, model },
+      conflicts: [{ sandboxName: "existing-sandbox", reason: "provider-model" }],
+    },
+  });
 }
 
 describe("provider route containment", () => {
@@ -152,7 +185,7 @@ describe("provider route containment", () => {
     ).rejects.toThrow("exit 1");
 
     expect(calls.setupNim).toHaveBeenCalledOnce();
-    expect(calls.checkGatewayRouteCompatibility).toHaveBeenCalledWith({
+    expect(calls.preflightGatewayRouteDiscovery).toHaveBeenCalledWith({
       gatewayName: "nemoclaw-9090",
       sandboxName: null,
       route: {
@@ -160,8 +193,11 @@ describe("provider route containment", () => {
         model: "nvidia/test",
         endpointUrl: "https://integrate.api.nvidia.com/v1",
         preferredInferenceApi: "openai-responses",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       },
     });
+    expect(calls.checkGatewayRouteCompatibility).not.toHaveBeenCalled();
+    expect(calls.selectionProbe).not.toHaveBeenCalled();
     expect(calls.recordStepComplete).not.toHaveBeenCalled();
     expect(calls.surfaceReady).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();

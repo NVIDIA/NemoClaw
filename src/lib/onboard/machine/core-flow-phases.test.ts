@@ -85,6 +85,12 @@ function createPhases(
     },
     providerDeps: {
       checkGatewayRouteCompatibility: () => ({ ok: true }),
+      preflightGatewayRouteDiscovery: () => ({
+        ok: true,
+        requiredModel: null,
+        requiredEndpointUrl: null,
+        requiredInferenceApi: null,
+      }),
       normalizeHermesAuthMethod: (value) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
@@ -273,6 +279,8 @@ describe("core onboard flow phases", () => {
       { name: "openclaw" },
       false,
       "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
     );
   });
 

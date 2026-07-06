@@ -4,7 +4,9 @@
 import { parseGatewayInference } from "../inference/config";
 import {
   type CurrentGatewayRouteCompatibilityCheck,
+  type CurrentGatewayRouteDiscoveryPreflight,
   checkGatewayRouteCompatibility as checkGatewayRouteCompatibilityForRegistry,
+  preflightGatewayRouteDiscovery as preflightGatewayRouteDiscoveryForRegistry,
 } from "../inference/gateway-route-compatibility";
 import { listSandboxes } from "../state/registry";
 
@@ -37,5 +39,16 @@ export function createInferenceRouteHelpers(
       sandboxes: listSandboxesFn().sandboxes,
     });
 
-  return { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility };
+  const preflightGatewayRouteDiscovery: CurrentGatewayRouteDiscoveryPreflight = (request) =>
+    preflightGatewayRouteDiscoveryForRegistry({
+      ...request,
+      sandboxes: listSandboxesFn().sandboxes,
+    });
+
+  return {
+    verifyInferenceRoute,
+    isInferenceRouteReady,
+    checkGatewayRouteCompatibility,
+    preflightGatewayRouteDiscovery,
+  };
 }

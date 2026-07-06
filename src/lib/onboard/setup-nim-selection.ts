@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { GatewayRouteDiscoveryConstraints } from "../inference/gateway-route-compatibility";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -21,6 +22,8 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
   nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
+  /** Attempt-wide shared-gateway guard, invoked after identity selection and before probes. */
+  assertRouteCompatible?: () => GatewayRouteDiscoveryConstraints;
 };
 
 export type CloudFallbackConfig = {

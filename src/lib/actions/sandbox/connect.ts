@@ -886,6 +886,17 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
+  try {
+    assertNoOpenShellGatewayEndpointOverride();
+    const registered = registry.getSandbox(sandboxName);
+    if (registered && registry.getSandboxEntryInference(registered).kind === "configured") {
+      const gatewayName = resolveSandboxGatewayName(registered);
+      assertSandboxGatewayRouteCompatible(sandboxName, registered, gatewayName);
+    }
+  } catch (error) {
+    console.error(`  Error: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   // probe-only / recover never install or serve a model, so skip the
   // express-vLLM model preflight for them (it only steers the install path
   // and would otherwise hard-exit a recovery on a stale NEMOCLAW_VLLM_MODEL).

@@ -17,6 +17,7 @@ type ProbeMode =
   | "endpoint-override"
   | "resume-initial"
   | "resume-core-gateway"
+  | "resume-incomplete-core-gateway"
   | "authoritative-core-gateway"
   | "ahead-core";
 
@@ -195,7 +196,7 @@ function machine(state, revision = 1) {
   return { version: 1, state, stateEnteredAt: null, revision };
 }
 
-function seedResumeSession(state) {
+function seedResumeSession(state, sandboxComplete = true) {
   const session = onboardSession.createSession({
     mode: "non-interactive",
     sandboxName: "fsm-sandbox",
@@ -204,9 +205,10 @@ function seedResumeSession(state) {
     machine: machine(state),
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
   });
-  for (const step of ["preflight", "gateway", "provider_selection", "sandbox"]) {
+  for (const step of ["preflight", "gateway", "provider_selection"]) {
     session.steps[step].status = "complete";
   }
+  if (sandboxComplete) session.steps.sandbox.status = "complete";
   onboardSession.saveSession(session);
 }
 
@@ -235,7 +237,7 @@ function baseContext(context, overrides = {}) {
 }
 
 preflightHandlers.handlePreflightState = async (options) => {
-  if (scenario.mode === "resume-core-gateway" || scenario.mode === "authoritative-core-gateway") {
+  if (scenario.mode.includes("core-gateway")) {
     return {
       gpu: null,
       sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
@@ -257,7 +259,7 @@ preflightHandlers.handlePreflightState = async (options) => {
 };
 
 gatewayHandlers.handleGatewayState = async (options) => {
-  if (scenario.mode !== "resume-core-gateway" && scenario.mode !== "authoritative-core-gateway") {
+  if (!scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected gateway compatibility handler");
   }
   called.push("gateway:" + options.gatewayName + ":" + process.env.OPENSHELL_GATEWAY);
@@ -269,7 +271,7 @@ gatewayHandlers.handleGatewayState = async (options) => {
 };
 
 providerHandlers.handleProviderInferenceState = async (options) => {
-  if (!["ahead-core", "resume-core-gateway", "authoritative-core-gateway"].includes(scenario.mode)) {
+  if (scenario.mode !== "ahead-core" && !scenario.mode.includes("core-gateway")) {
     throw new Error("unexpected provider compatibility handler");
   }
   called.push(
@@ -319,10 +321,10 @@ flowSlices.runFinalOnboardFlowSequence = async ({ context }) => {
 if (scenario.mode === "resume-initial") {
   seedResumeSession("preflight");
 }
-if (scenario.mode === "resume-core-gateway" || scenario.mode === "authoritative-core-gateway") {
-  seedResumeSession("inference");
+if (scenario.mode.includes("core-gateway")) {
+  seedResumeSession("inference", scenario.mode !== "resume-incomplete-core-gateway");
 }
-if (scenario.mode === "resume-core-gateway") {
+if (scenario.mode === "resume-core-gateway" || scenario.mode === "resume-incomplete-core-gateway") {
   registry.registerSandbox({
     name: "fsm-sandbox",
     provider: "openai-api",
@@ -442,6 +444,13 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("routes ordinary resume through the sandbox's recorded gateway", () => {
     assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
+      "provider-compat:nemoclaw-9090",
+    ]);
+  });
+
+  it("routes an incomplete registered resume through its requested sandbox gateway", () => {
+    assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-incomplete-core-gateway" }), [
       "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);

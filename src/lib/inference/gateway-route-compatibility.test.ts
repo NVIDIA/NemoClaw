@@ -7,6 +7,7 @@ import {
   checkGatewayRouteCompatibility,
   formatGatewayRouteConflict,
   type GatewayInferenceRoute,
+  preflightGatewayRouteDiscovery,
 } from "./gateway-route-compatibility";
 
 const route = (
@@ -20,6 +21,14 @@ const route = (
   preferredInferenceApi: null,
   credentialEnv: null,
   ...overrides,
+});
+
+const discoveryRoute = (
+  provider: string,
+  overrides: Partial<GatewayInferenceRoute> = {},
+): Omit<GatewayInferenceRoute, "model"> & { model: string | null } => ({
+  ...route(provider, "discovery-pending", overrides),
+  model: null,
 });
 
 const sandbox = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntry => ({
@@ -40,7 +49,76 @@ function check(requested: GatewayInferenceRoute, sandboxes: SandboxEntry[]) {
   });
 }
 
+function discover(
+  requested: Omit<GatewayInferenceRoute, "model"> & { model: string | null },
+  sandboxes: SandboxEntry[],
+) {
+  return preflightGatewayRouteDiscovery({
+    gatewayName: "nemoclaw",
+    sandboxName: "target",
+    route: requested,
+    sandboxes,
+  });
+}
+
 describe("shared gateway inference route compatibility", () => {
+  it("allows unconstrained discovery when no configured same-gateway peer exists (#6315)", () => {
+    expect(
+      discover(discoveryRoute("nvidia-prod"), [
+        sandbox("other", { gatewayName: "nemoclaw-9090", gatewayPort: 9090 }),
+      ]),
+    ).toEqual({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+  });
+
+  it("constrains discovery to the durable same-gateway model (#6315)", () => {
+    expect(discover(discoveryRoute("nvidia-prod"), [sandbox("stopped-peer")])).toEqual({
+      ok: true,
+      requiredModel: "nvidia/model-a",
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
+    });
+  });
+
+  it("constrains custom discovery to the durable endpoint and API family (#6315)", () => {
+    expect(
+      discover(discoveryRoute("compatible-endpoint"), [
+        sandbox("custom-peer", {
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          endpointUrl: "https://example.test/v1",
+          preferredInferenceApi: "openai-completions",
+        }),
+      ]),
+    ).toEqual({
+      ok: true,
+      requiredModel: "custom/model",
+      requiredEndpointUrl: "https://example.test/v1",
+      requiredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("blocks conflicting or unprovable discovery before a provider probe (#6315)", () => {
+    expect(discover(discoveryRoute("anthropic-prod"), [sandbox("stopped-peer")])).toMatchObject({
+      ok: false,
+      result: { conflicts: [{ sandboxName: "stopped-peer", reason: "provider-model" }] },
+    });
+    expect(
+      discover(discoveryRoute("nvidia-prod"), [
+        sandbox("unknown-gateway", { gatewayName: "not-a-nemoclaw-gateway", gatewayPort: null }),
+      ]),
+    ).toMatchObject({
+      ok: false,
+      result: {
+        conflicts: [{ sandboxName: "unknown-gateway", reason: "invalid-gateway-binding" }],
+      },
+    });
+  });
+
   it("allows identical routes and ignores the target sandbox itself (#6315)", () => {
     expect(
       check(route("nvidia-prod", "nvidia/model-a"), [

@@ -7,7 +7,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { CurrentGatewayRouteCompatibilityCheck } from "../../../inference/gateway-route-compatibility";
+import type {
+  CurrentGatewayRouteCompatibilityCheck,
+  CurrentGatewayRouteDiscoveryPreflight,
+} from "../../../inference/gateway-route-compatibility";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { patchStagedDockerfile } from "../../dockerfile-patch";
 import { clearCompatibleEndpointReasoning } from "../../reasoning-mode";
@@ -39,6 +42,12 @@ function createDeps(
   const calls = {
     checkGatewayRouteCompatibility: vi.fn<CurrentGatewayRouteCompatibilityCheck>(() => ({
       ok: true,
+    })),
+    preflightGatewayRouteDiscovery: vi.fn<CurrentGatewayRouteDiscoveryPreflight>(() => ({
+      ok: true,
+      requiredModel: null,
+      requiredEndpointUrl: null,
+      requiredInferenceApi: null,
     })),
     setupNim: vi.fn(async () => ({ ...baseSelection })),
     setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -87,6 +96,7 @@ function createDeps(
     calls,
     deps: {
       checkGatewayRouteCompatibility: calls.checkGatewayRouteCompatibility,
+      preflightGatewayRouteDiscovery: calls.preflightGatewayRouteDiscovery,
       normalizeHermesAuthMethod: (value: string | null | undefined) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,
@@ -173,7 +183,15 @@ describe("handleProviderInferenceState", () => {
     const result = await handleProviderInferenceState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
-    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true, "nemoclaw");
+    expect(calls.setupNim).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      null,
+      null,
+      true,
+      "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
+    );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
@@ -443,6 +461,8 @@ describe("handleProviderInferenceState", () => {
       null,
       false,
       "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
     );
   });
 
@@ -466,6 +486,8 @@ describe("handleProviderInferenceState", () => {
       null,
       false,
       "nemoclaw",
+      expect.any(Function),
+      expect.any(Function),
     );
     expect(calls.setupInference).toHaveBeenCalled();
   });

@@ -1197,19 +1197,7 @@ const { onboard } = require(${onboardPath});
   });
   it("recovers the Ollama auth proxy on WSL when the sandbox needs proxy fronting", async () => {
     const proxyCalls: string[] = [];
-    let harness: ReturnType<typeof createDirectSetupInferenceHarness>;
-    const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
-      runOpenshell: (args, options) => harness.runOpenshell(args, options),
-      isNonInteractive: () => false,
-      promptValidationRecovery: async () => "selection",
-      classifyApplyFailure: () => ({}) as never,
-      compactText: (value) => value.trim(),
-      redact: (value) => value,
-      localInferenceTimeoutSecs: 120,
-      error: vi.fn(),
-      exitProcess: () => assert.fail("unexpected exit"),
-    });
-    harness = createDirectSetupInferenceHarness({
+    const harness = createDirectSetupInferenceHarness({
       runOpenshell: (args) =>
         args.slice(0, 2).join(" ") === "provider get"
           ? { status: 1, stdout: "", stderr: "" }
@@ -1230,7 +1218,7 @@ const { onboard } = require(${onboardPath});
         persistAndProbeOllamaProxy: async (token: string) => {
           proxyCalls.push(`persist:${token}`);
         },
-        applyLocalInferenceRoute,
+        applyLocalInferenceRoute: undefined,
       },
     });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
