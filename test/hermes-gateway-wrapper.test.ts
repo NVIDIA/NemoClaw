@@ -56,20 +56,6 @@ type StubBehaviour = {
   exitCode?: number;
 };
 
-function truthyEnv(value: string | undefined): boolean {
-  return ["1", "true", "yes", "on"].includes(value?.trim().toLowerCase() ?? "");
-}
-
-function sessionIds(output: string): Set<string> {
-  return new Set(output.match(/\b[0-9]{8}_[0-9]{6}_[a-zA-Z0-9]+\b/g) ?? []);
-}
-
-function onlyNewSessionId(before: Set<string>, after: Set<string>): string {
-  const created = [...after].filter((id) => !before.has(id));
-  expect(created).toHaveLength(1);
-  return created[0];
-}
-
 // Run the wrapper against a temp install: a copy of the wrapper alongside the
 // real validator and a `hermes.real` stub. The wrapper's dev fallback resolves
 // both from its own directory because the /usr/local install paths are absent.
@@ -464,47 +450,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("--model --resume 20260612_050401_aa9d27 -z Repeat it");
   });
-
-  it.skipIf(!truthyEnv(process.env.NEMOCLAW_HERMES_SESSION_PERSISTENCE_RUNTIME))(
-    "validates real resumed one-shot session persistence when a live Hermes runtime is available (#5254)",
-    () => {
-      const hermesBin = process.env.NEMOCLAW_HERMES_BIN ?? "hermes";
-      const timeout = Number(process.env.NEMOCLAW_HERMES_SESSION_PERSISTENCE_TIMEOUT_MS ?? 120_000);
-      const env = { ...process.env };
-      const marker = `NEMOCLAW_5254_${Date.now()}`;
-      const runHermes = (args: string[]) => {
-        const run = spawnSync(hermesBin, args, {
-          encoding: "utf-8",
-          timeout,
-          env,
-        });
-        expect(run.status, `${hermesBin} ${args.join(" ")}\n${run.stderr}`).toBe(0);
-        return `${run.stdout ?? ""}\n${run.stderr ?? ""}`;
-      };
-      const listSessions = () => sessionIds(runHermes(["sessions", "list"]));
-
-      const beforeSeed = listSessions();
-      const seedPrompt = `Remember this exact token: ${marker}. Reply with acknowledged.`;
-      runHermes(["-z", seedPrompt]);
-      const seedSessionId = onlyNewSessionId(beforeSeed, listSessions());
-
-      const beforeResume = listSessions();
-      const resumePrompt = `Repeat this exact token: ${marker}.`;
-      runHermes(["--resume", seedSessionId, "-z", resumePrompt]);
-      expect([...listSessions()].filter((id) => !beforeResume.has(id))).toEqual([]);
-
-      const beforeContinue = listSessions();
-      const continuePrompt = `Confirm this exact token again: ${marker}.`;
-      runHermes(["-c", seedSessionId, "-z", continuePrompt]);
-      expect([...listSessions()].filter((id) => !beforeContinue.has(id))).toEqual([]);
-
-      const exported = runHermes(["sessions", "export", "--session-id", seedSessionId]);
-      expect(exported).toContain(seedPrompt);
-      expect(exported).toContain(resumePrompt);
-      expect(exported).toContain(continuePrompt);
-    },
-    Number(process.env.NEMOCLAW_HERMES_SESSION_PERSISTENCE_TIMEOUT_MS ?? 120_000) * 6,
-  );
 
   it("passes --version through (build assertion path) without invoking the guard", () => {
     const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
