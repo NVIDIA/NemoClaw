@@ -30,6 +30,8 @@ import {
 import type { AgentDefinition } from "./defs";
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+// Matches the official Hermes base repository for both Dockerfile manifest-list
+// pins and Docker-normalized platform manifest digests.
 const HERMES_OFFICIAL_BASE_DIGEST_REF =
   /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/;
 

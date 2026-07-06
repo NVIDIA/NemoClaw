@@ -86,6 +86,9 @@ function getRepoDigest(
   try {
     repoDigests = JSON.parse(inspectOutput || "[]");
   } catch {
+    addTraceEvent("nemoclaw.sandbox_base_image.repodigest_parse_failed", {
+      digest_pinned: pinnedDigest !== null,
+    });
     return pinnedDigest;
   }
   const repoDigest = Array.isArray(repoDigests)
