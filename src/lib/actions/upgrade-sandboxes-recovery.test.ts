@@ -211,6 +211,40 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it("recovers a registered sandbox absent from the selected gateway when it resolves to the selected gateway", async () => {
+    const harness = createRecoveryHarness(["orphaned-box"], {
+      liveOutput: "other-box Ready",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+    });
+  });
+
+  it("does not recover an absent sandbox bound to a different gateway even when a validated backup exists", async () => {
+    const harness = createRecoveryHarness(["registered-elsewhere"], {
+      gatewayNames: { "registered-elsewhere": "gateway-b" },
+      liveOutput: "selected-box Ready",
+      staleNames: ["registered-elsewhere"],
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it("attempts both a live stale rebuild and a prepared non-Ready recovery", async () => {
     const harness = createRecoveryHarness(["stale-box", "recovery-box"], {
       liveOutput: "stale-box Ready\nrecovery-box Error",

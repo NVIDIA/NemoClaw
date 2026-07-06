@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../cli/branding";
 import { B, D, G, R, YW } from "../cli/terminal-style";
+import { GATEWAY_PORT } from "../core/ports";
 import { getVersion } from "../core/version";
 import { prompt as askPrompt } from "../credentials/store";
 import {
@@ -15,6 +16,7 @@ import {
   splitRebuildableSandboxes,
   type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
@@ -118,6 +120,29 @@ function isPreparedBackupRecovery(
   return "manifest" in candidate;
 }
 
+// Under installer restore intent, a registry sandbox the selected gateway does
+// not report Ready/Running is eligible for prepared-backup recovery when the
+// gateway observes it in a non-Ready phase, or when it is absent but resolves to
+// the selected gateway. Absence alone is insufficient: a sandbox bound to a
+// different recorded gateway may be Ready there, so recovering it would clobber a
+// healthy sandbox. resolveSandboxGatewayName throws on an invalid persisted
+// binding — treat that as ineligible so a corrupted registry row never drives a
+// recreate.
+function isPreparedRecoveryCandidate(
+  sandbox: registry.SandboxEntry,
+  liveNames: Set<string>,
+  nonReadyLiveNames: Set<string>,
+  selectedGatewayName: string,
+): boolean {
+  if (liveNames.has(sandbox.name)) return false;
+  if (nonReadyLiveNames.has(sandbox.name)) return true;
+  try {
+    return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
+  } catch {
+    return false;
+  }
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -137,9 +162,9 @@ export async function upgradeSandboxes(
     command: `${CLI_NAME} upgrade-sandboxes`,
   });
   const liveNames = parseReadySandboxNames(liveResult.output || "");
-  // Absence from the selected gateway is not evidence of failure: a registered
-  // sandbox may be Ready on another recorded gateway. Only an explicitly
-  // observed, known non-Ready phase is eligible for prepared-backup recovery.
+  // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
+  // the selected gateway is handled by isPreparedRecoveryCandidate, which recovers
+  // an absent sandbox only when it resolves to the selected gateway.
   const nonReadyLiveNames = new Set(
     parseLiveSandboxEntries(liveResult.output || "")
       .filter(
@@ -170,8 +195,13 @@ export async function upgradeSandboxes(
   // bridge with onboard's matching consumer once prepared-backup installer recovery
   // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
+  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
   const backupRecoveryAssessments = recoverPreparedBackups
-    ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)
+    ? sandboxes
+        .filter((sandbox) =>
+          isPreparedRecoveryCandidate(sandbox, liveNames, nonReadyLiveNames, selectedGatewayName),
+        )
+        .map(prepareBackupRecovery)
     : [];
   const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
   const rejectedRecoveries = backupRecoveryAssessments.filter(
