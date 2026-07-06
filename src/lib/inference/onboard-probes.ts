@@ -33,7 +33,7 @@ const {
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
-const { isPrivateHostname } = require("../private-networks");
+const { isPrivateHostname, isLoopbackHostname } = require("../private-networks");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -639,10 +639,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // The sandbox-internal alias is handled above, and host.docker.internal is
   // gated by the allowHostDockerInternal check at the top of this function —
   // both are trusted sandbox->host bridges, so exempt the already-permitted
-  // hijacked-docker-internal alias here. Everything else that resolves to a
-  // private/reserved address is attacker-reachable SSRF surface. Reuses the
-  // shared isPrivateHostname validator (defense-in-depth alongside DNS-pinning
-  // at the config-write boundary). See PR #6293 PRA-2.
+  // hijacked-docker-internal alias here. Loopback (127.0.0.0/8, ::1, localhost)
+  // is likewise exempt: this shared probe is the same one local inference uses
+  // to validate a locally-run Ollama/vLLM/NIM server on the probing host, and
+  // loopback only reaches that host — it is not a pivot to other internal
+  // infrastructure. Everything else that resolves to a private/reserved address
+  // (LAN ranges, link-local metadata) is attacker-reachable SSRF surface and is
+  // refused. Reuses the shared validators (defense-in-depth alongside
+  // DNS-pinning at the config-write boundary). See PR #6293 PRA-2.
   let probeHostname;
   try {
     probeHostname = new URL(String(endpointUrl)).hostname;
@@ -652,6 +656,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   if (
     probeHostname &&
     isPrivateHostname(probeHostname) &&
+    !isLoopbackHostname(probeHostname) &&
     !isHijackedDockerInternalUrl(endpointUrl)
   ) {
     return {

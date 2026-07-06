@@ -467,6 +467,54 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
+  describe("private-address SSRF guard (#6293)", () => {
+    it("rejects a non-loopback private LAN endpoint before issuing any probe (#6293)", () => {
+      const result = probeOpenAiLikeEndpoint(
+        "http://192.168.1.50:8000/v1",
+        "openai/model",
+        "dummy",
+        {
+          skipResponsesProbe: true,
+        },
+      );
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+    });
+
+    it("rejects the link-local cloud-metadata endpoint before any probe (#6293)", () => {
+      const result = probeOpenAiLikeEndpoint("http://169.254.169.254/v1", "openai/model", "dummy", {
+        skipResponsesProbe: true,
+      });
+      expect(result).toMatchObject({ ok: false });
+      expect(result.message).toMatch(/private\/internal address/i);
+    });
+
+    it("allows a loopback endpoint so local inference validation can proceed (#6293)", () => {
+      const body = `if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`;
+      withFakeCurlProbe(
+        { script: makeFakeCurlScript(body), dirPrefix: "nemoclaw-loopback-probe-" },
+        () => {
+          const result = probeOpenAiLikeEndpoint(
+            "http://127.0.0.1:11434/v1",
+            "openai/model",
+            "dummy",
+            {
+              skipResponsesProbe: true,
+            },
+          );
+          expect(result).toMatchObject({ ok: true });
+        },
+      );
+    });
+  });
+
   describe("retriable HTTP statuses (#2980, #3033)", () => {
     it("retries 429 (rate limit)", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
