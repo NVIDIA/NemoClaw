@@ -7,7 +7,7 @@ import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "./adapters/openshell/gateway-drift";
-import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
+import { captureOpenshell } from "./adapters/openshell/runtime";
 import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
 
 type SandboxListResult = ReturnType<typeof captureOpenshell>;
@@ -27,8 +27,11 @@ export type CaptureSandboxListWithGatewayRecoveryOptions = {
   gatewayName?: string;
 };
 
-export function isRecoverableSandboxListGatewayFailure(result: SandboxListResult): boolean {
-  if (result.status === 0 || detectOpenShellStateRpcResultIssue(result)) {
+export function isRecoverableSandboxListGatewayFailure(
+  result: SandboxListResult,
+  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
+): boolean {
+  if (result.status === 0 || detectOpenShellStateRpcResultIssue(result, options)) {
     return false;
   }
   const output = stripAnsi(String(result.output || ""));
@@ -40,20 +43,39 @@ export function isRecoverableSandboxListGatewayFailure(result: SandboxListResult
 export async function captureSandboxListWithGatewayRecovery(
   options: CaptureSandboxListWithGatewayRecoveryOptions = {},
 ): Promise<SandboxListRecoveryResult> {
-  if (options.gatewayName) {
-    runOpenshell(["gateway", "select", options.gatewayName], { ignoreError: true });
-  }
-  const initial = captureOpenshell(["sandbox", "list"]);
-  if (!isRecoverableSandboxListGatewayFailure(initial)) {
-    return { result: initial, recoveryAttempted: false, recoverySucceeded: false };
-  }
-
   const recoveryOptions: Parameters<typeof recoverNamedGatewayRuntime>[0] = {
     recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"],
   };
   if (options.gatewayName) {
     recoveryOptions.gatewayName = options.gatewayName;
   }
+
+  // An explicit target must be proven healthy and active before an unscoped
+  // `sandbox list` can be trusted. OpenShell otherwise leaves a failed select
+  // on the current sibling gateway, whose successful list would be unsafe
+  // evidence for destructive recovery decisions (#6114).
+  let targetRecoveryAttempted = false;
+  if (options.gatewayName) {
+    const targetRecovery = await recoverNamedGatewayRuntime(recoveryOptions);
+    targetRecoveryAttempted = targetRecovery.attempted === true;
+    if (!targetRecovery.recovered) {
+      return {
+        result: { status: 1, output: "" },
+        recoveryAttempted: targetRecovery.attempted === true,
+        recoverySucceeded: false,
+      };
+    }
+  }
+
+  const initial = captureOpenshell(["sandbox", "list"]);
+  if (!isRecoverableSandboxListGatewayFailure(initial, options)) {
+    return {
+      result: initial,
+      recoveryAttempted: targetRecoveryAttempted,
+      recoverySucceeded: targetRecoveryAttempted,
+    };
+  }
+
   const recovery = await recoverNamedGatewayRuntime(recoveryOptions);
   if (!recovery.recovered) {
     return { result: initial, recoveryAttempted: true, recoverySucceeded: false };
@@ -68,15 +90,16 @@ export async function captureSandboxListWithGatewayRecovery(
 
 export async function captureSandboxListWithGatewayPreflightOrExit(
   context: SandboxListPreflightContext,
+  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
 ): Promise<SandboxListResult> {
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
   if (preflightIssue) {
     printOpenShellStateRpcIssue(preflightIssue, context);
     process.exit(1);
   }
 
-  const recovery = await captureSandboxListWithGatewayRecovery();
-  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result);
+  const recovery = await captureSandboxListWithGatewayRecovery(options);
+  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result, options);
   if (resultIssue) {
     printOpenShellStateRpcIssue(resultIssue, context);
     process.exit(1);

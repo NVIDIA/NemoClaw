@@ -47,6 +47,7 @@ function createDeps(
         credentialEnv: credentialEnv ?? null,
       }),
     ),
+    surfaceReady: vi.fn(() => true),
     recordSkip: vi.fn(async () => createSession()),
     repairEvent: vi.fn(async () => createSession()),
     hydrate: vi.fn(),
@@ -81,6 +82,7 @@ function createDeps(
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
       ensureResumeProviderReady: calls.recoverProvider,
+      isResumeProviderSurfaceReady: calls.surfaceReady,
       recordStateSkipped: calls.recordSkip,
       recordRepairEvent: calls.repairEvent,
       hydrateCredentialEnv: calls.hydrate,
@@ -199,6 +201,125 @@ describe("handleProviderInferenceState", () => {
       },
       result.stateResult,
     ]);
+  });
+
+  it("uses the managed OpenAI frontend for fresh Hermes custom Anthropic routes (#6289)", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        endpointUrl: "https://inference-api.nvidia.com",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
+    expect(result.preferredInferenceApi).toBe("openai-completions");
+  });
+
+  it("repairs recovered Hermes custom Anthropic API metadata during rebuild (#6289)", async () => {
+    const session = createSession({
+      agent: "hermes",
+      sandboxName: "hermes-custom",
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({ preferredInferenceApi: "anthropic-messages" }),
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    expect(result.preferredInferenceApi).toBe("openai-completions");
+  });
+
+  it("repairs a stale live provider even when Hermes metadata already says OpenAI (#6289)", async () => {
+    const session = createSession({
+      agent: "hermes",
+      sandboxName: "hermes-custom",
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      isResumeProviderSurfaceReady: vi.fn(() => false),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.log).toHaveBeenCalledWith(
+      "  [resume] Refreshing the gateway provider to match the required inference surface.",
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
   });
 
   describe("compatible endpoint reasoning mode", () => {

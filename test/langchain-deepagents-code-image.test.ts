@@ -647,6 +647,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(tavilyOptInCheck).toMatch(expected);
     }
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",

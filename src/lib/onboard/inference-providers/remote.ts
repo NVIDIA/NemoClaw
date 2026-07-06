@@ -254,7 +254,7 @@ export async function setupRemoteProviderInference(
                 `The selected agent requires an OpenAI-compatible /v1/chat/completions surface, ` +
                   `but the endpoint did not answer it${surfaceProbe.message ? `: ${surfaceProbe.message}` : "."} ` +
                   `Use an endpoint that also serves /v1/chat/completions, or onboard an agent that ` +
-                  `supports the Anthropic Messages API (e.g. openclaw or hermes).`,
+                  `uses the native Anthropic Messages route (for example, OpenClaw).`,
               ),
             ),
           };

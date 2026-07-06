@@ -88,7 +88,7 @@ describe("docker-driver-gateway auth contract", () => {
         gatewayId,
         sandboxId,
         iat: now,
-        exp: now + ttlSecs,
+        exp: ttlSecs === 0 ? 0 : now + ttlSecs,
       });
 
       const payload = validateOpenShellStyleSandboxJwt({
@@ -104,7 +104,7 @@ describe("docker-driver-gateway auth contract", () => {
         iss: `openshell-gateway:${gatewayId}`,
         aud: `openshell-gateway:${gatewayId}`,
       });
-      expect(payload?.exp).toBe(now + ttlSecs);
+      expect(payload?.exp).toBe(ttlSecs === 0 ? 0 : now + ttlSecs);
       expect(() =>
         validateOpenShellStyleSandboxJwt({
           token,
@@ -142,8 +142,8 @@ describe("docker-driver-gateway auth contract", () => {
         kid,
         gatewayId,
         sandboxId,
-        iat: now - ttlSecs * 2,
-        exp: now - ttlSecs,
+        iat: now - 7200,
+        exp: now - 3600,
       });
       expect(() =>
         validateOpenShellStyleSandboxJwt({

@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createRebuildFlowHarness,
   makePreparedRecoveryManifest,
+  resetRebuildFlowTestEnvironment,
+  restoreRebuildFlowTestEnvironment,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
@@ -15,17 +17,11 @@ const restoreSandboxEnv = snapshotEnv([
 
 describe("prepared rebuild recovery", () => {
   beforeEach(() => {
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
-    // Set acceptance explicitly rather than inheriting it ambiently: the cli
-    // project runs fileParallelism:false in a single fork, so an earlier file
-    // (e.g. rebuild-usage-notice) that exercises the not-accepted path can
-    // leave this flag unset and make the rebuild preflight bail here. Snapshot
-    // + restore keeps the leak from flowing the other way. (#6210)
-    process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
+    resetRebuildFlowTestEnvironment();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    restoreRebuildFlowTestEnvironment();
     restoreSandboxEnv();
   });
 

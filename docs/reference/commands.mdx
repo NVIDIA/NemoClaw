@@ -414,7 +414,8 @@ Existing live sandboxes are not deleted by this cancel rollback path.
 
 If you run onboarding again with the same sandbox name and choose a different inference provider or model, NemoClaw detects the drift and recreates the sandbox so the running agent config matches your selection.
 In interactive mode, the wizard asks for confirmation before delete and recreate.
-In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
+In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs.
+For managed Deep Agents Code sandboxes, NemoClaw also recreates when the live `dcode identity` selection is unreadable; other agent paths continue to reuse by default when their stored selection cannot be read.
 Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
 
 Before deleting an existing sandbox during recreation, NemoClaw backs up the workspace state declared by the selected agent profile and restores it into the new sandbox once it is live.
@@ -985,7 +986,7 @@ Expected output:
 
 ```text
 ...
-    Agent:    OpenClaw v2026.5.27
+    Agent:    OpenClaw v<version>
 ...
 ```
 
@@ -1011,7 +1012,7 @@ Expected output:
 
 ```text
 ...
-    Agent:    Hermes v2026.5.16
+    Agent:    Hermes v<version>
 ...
 ```
 
@@ -1664,7 +1665,7 @@ Skill names must contain only alphanumeric characters, dots, hyphens, and unders
 <AgentOnly variant="openclaw">
 
 OpenClaw plugins are a different kind of extension.
-To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../manage-sandboxes/install-openclaw-plugins).
+To install an OpenClaw plugin, refer to [Install OpenClaw Plugins](../deployment/install-openclaw-plugins).
 For OpenClaw, the command uploads the skill to the OpenClaw state directory and mirrors it into `$HOME/.openclaw/skills/<name>` when the agent home directory differs from the state directory.
 That mirror makes skills listed by `openclaw skills list` available at session startup.
 If mirror creation fails, NemoClaw prints a warning so you can reinstall or inspect the home directory permissions.

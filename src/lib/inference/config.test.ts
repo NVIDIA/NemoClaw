@@ -21,9 +21,30 @@ import {
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
   planInferenceRouteReconcile,
+  resolveAgentInferenceApi,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+
+describe("resolveAgentInferenceApi", () => {
+  it("uses the managed OpenAI frontend for Hermes custom Anthropic routes (#6289)", () => {
+    expect(
+      resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("openai-completions");
+  });
+
+  it("preserves native Anthropic routing for OpenClaw custom endpoints (#6289)", () => {
+    expect(
+      resolveAgentInferenceApi("openclaw", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("anthropic-messages");
+  });
+
+  it("preserves native Anthropic routing for the first-party Hermes provider (#6289)", () => {
+    expect(resolveAgentInferenceApi("hermes", "anthropic-prod", "anthropic-messages")).toBe(
+      "anthropic-messages",
+    );
+  });
+});
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
@@ -405,7 +426,7 @@ describe("coerceAgentInferenceApi", () => {
     expect(coerceAgentInferenceApi(openclawAgent, "anthropic-messages")).toBe("anthropic-messages");
   });
 
-  it("does not touch custom-provider agents (Hermes) that speak Anthropic natively", () => {
+  it("leaves provider-specific Hermes routing to resolveAgentInferenceApi (#6289)", () => {
     const hermesAgent = { inference: { provider_type: "custom" } };
     expect(coerceAgentInferenceApi(hermesAgent, "anthropic-messages")).toBe("anthropic-messages");
   });
