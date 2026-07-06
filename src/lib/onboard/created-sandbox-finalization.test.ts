@@ -100,9 +100,8 @@ function makeRestoreFixture(): {
   const pythonResult = spawnSync("python3", ["-c", "import sys; print(sys.executable)"], {
     encoding: "utf8",
   });
-  if (pythonResult.status !== 0 || !pythonResult.stdout.trim()) {
-    throw new Error(`Python 3 is required for TOML restore tests: ${pythonResult.stderr}`);
-  }
+  expect(pythonResult.status, `Python 3 is required: ${pythonResult.stderr}`).toBe(0);
+  expect(pythonResult.stdout.trim(), "Python 3 executable path is required").not.toBe("");
   const hostPython = pythonResult.stdout.trim();
   const python = path.join(bin, "python3");
   executable(
