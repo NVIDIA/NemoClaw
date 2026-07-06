@@ -48,6 +48,7 @@ import {
   registerPublicNvidiaSwitchProvider,
   requirePublicNvidiaSwitchKey,
 } from "./public-nvidia-switch-provider.ts";
+import { stripAnsi } from "./json-envelope.ts";
 
 const TIMEOUT_MS = 45 * 60_000;
 const MOCK_BASELINE_API_KEY = "hermes-inference-switch-baseline-credential";
@@ -70,7 +71,10 @@ async function expectCompatibleAnthropicOpenAiProvider(
     },
   );
   expect(provider.exitCode, resultText(provider)).toBe(0);
-  expect(resultText(provider)).toMatch(/^\s*Type:\s*openai\s*$/imu);
+  // `openshell provider get` wraps field labels in ANSI escapes (e.g.
+  // `\e[2mType:\e[0m openai`), which breaks the anchored regex. Strip ANSI
+  // first — the provider is correctly registered as Type: openai.
+  expect(stripAnsi(resultText(provider))).toMatch(/^\s*Type:\s*openai\s*$/imu);
   expect(resultText(provider)).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
   expect(resultText(provider)).toContain("OPENAI_BASE_URL");
 }
