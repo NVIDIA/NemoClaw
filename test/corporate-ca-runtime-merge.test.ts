@@ -40,7 +40,7 @@ function mergeBlock(scriptPath: string, endMarker: string, corpCa: string, merge
 }
 
 describe("corporate proxy CA runtime merge (#6210)", () => {
-  it("appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env", () => {
+  it("appends the corporate CA to the OpenShell bundle for OpenClaw and repoints all CA env (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-openclaw-");
     const openshell = join(dir, "openshell-ca.pem");
     const corp = join(dir, "corporate-ca.pem");
@@ -74,7 +74,7 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(mergedContent).toContain("CORPORATE-ROOT");
   });
 
-  it("is a no-op for OpenClaw when no corporate CA was baked into the image", () => {
+  it("is a no-op for OpenClaw when no corporate CA was baked into the image (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-noop-");
     const openshell = join(dir, "openshell-ca.pem");
     const absentCorp = join(dir, "absent-corporate-ca.pem");
@@ -93,7 +93,7 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(existsSync(merged)).toBe(false);
   });
 
-  it("appends the corporate CA and repoints SSL_CERT_FILE / NODE_EXTRA_CA_CERTS for Hermes", () => {
+  it("appends the corporate CA and repoints all CA env for Hermes (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-hermes-");
     const openshell = join(dir, "openshell-ca.pem");
     const corp = join(dir, "corporate-ca.pem");
@@ -141,7 +141,7 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(mergedContent).toContain("CORPORATE-ROOT");
   });
 
-  it("bails without exporting when the merged bundle cannot be written", () => {
+  it("bails without exporting when the OpenClaw merged bundle cannot be written (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-merge-fail-");
     const openshell = join(dir, "openshell-ca.pem");
     const corp = join(dir, "corporate-ca.pem");
@@ -163,7 +163,32 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
     expect(existsSync(merged)).toBe(false);
   });
 
-  it("persists the merged CA env into OpenClaw connect sessions only after a merge", () => {
+  it("bails without exporting when the Hermes merged bundle cannot be written (#6210)", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-hermes-fail-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    const merged = join(dir, "no-such-dir", "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    const out = runShellLines(dir, [
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(
+        HERMES_START,
+        "# OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA.",
+        corp,
+        merged,
+      ),
+      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+    ]);
+
+    expect(out).toContain(`SSL_CERT_FILE=${openshell}`);
+    expect(out).toContain("MERGED=\n");
+    expect(existsSync(merged)).toBe(false);
+  });
+
+  it("persists the merged CA env into OpenClaw connect sessions only after a merge (#6210)", () => {
     const dir = tmpDir("nemoclaw-corp-connect-");
     const block = sliceBlock(
       OPENCLAW_START,
