@@ -351,7 +351,7 @@ $$nemoclaw onboard
 NemoClaw validates the endpoint by sending a non-streaming `/v1/messages` request, then a `stream: true` request to the same path.
 The streaming check requires a well-formed SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
 Endpoints and gateways whose non-streaming responses work but whose streaming layer is malformed fail validation during onboarding instead of failing later at runtime inside the sandbox.
-Refer to [Onboarding fails with "Anthropic Messages streaming on this endpoint emits duplicate message_start"](../reference/troubleshooting#onboarding-fails-with-anthropic-messages-streaming-on-this-endpoint-emits-duplicate-message_start) if the streaming check fails.
+Refer to [Onboarding fails with duplicate Anthropic message_start events](../reference/troubleshooting#onboarding-fails-with-duplicate-anthropic-message_start-events) if the streaming check fails.
 Set `NEMOCLAW_REASONING=true` to skip the streaming check when the endpoint serves a reasoning-only model.
 Agent runs still use the streaming path, so skipping the check moves any streaming defect to runtime.
 
