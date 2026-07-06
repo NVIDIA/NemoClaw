@@ -123,6 +123,20 @@ describe("resolveDockerGpuRoutePlan", () => {
     expect(resolveDockerGpuRoutePlan(config, options)).toBe(expected);
   });
 
+  it("covers every environment/control pair and every route-plan outcome (#6110)", () => {
+    const matrixByKey = new Map(
+      routingMatrix.map((row) => [`${row.name}:${row.control}`, row.expected]),
+    );
+    expect(routingMatrix).toHaveLength(environments.length * controls.length);
+    expect(new Set(routingMatrix.map(({ expected }) => expected))).toEqual(
+      new Set(["none", "native-only", "compatibility-only", "native-with-fallback"]),
+    );
+    expect(matrixByKey.get("Docker Desktop WSL:0")).toBe("compatibility-only");
+    expect(matrixByKey.get("Jetson/Tegra:0")).toBe("native-only");
+    expect(matrixByKey.get("ordinary Linux Docker:true")).toBe("compatibility-only");
+    expect(matrixByKey.get("non-Linux host:true")).toBe("native-only");
+  });
+
   it("preserves legacy nonzero compatibility routing with a visible warning", () => {
     const log = vi.fn();
     expect(

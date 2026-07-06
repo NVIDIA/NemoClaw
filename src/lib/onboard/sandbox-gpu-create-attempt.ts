@@ -64,7 +64,31 @@ export type NativeGpuFallbackCleanupDeps = {
   sleep?: (seconds: number) => void;
 };
 
-/** Keep build/upload/TLS/provider/policy failures on their existing paths. */
+/**
+ * Source-of-truth boundary for the localized native-GPU fallback (#6110).
+ *
+ * The invalid state is an ordinary-Linux native attempt whose OpenShell GPU
+ * create, GPU-backed readiness, or CUDA-usability proof fails for an explicitly
+ * GPU-specific reason. OpenShell owns native `sandbox create --gpu` injection
+ * and the resulting device initialization; NemoClaw only classifies that
+ * boundary and proves CUDA usability. Build, upload, TLS, provider, policy,
+ * dashboard, and inference failures remain on their existing error paths.
+ *
+ * NemoClaw cannot source-fix the native injector because supported deployments
+ * can combine different OpenShell and Docker versions that cannot be upgraded
+ * atomically. The classification, orchestration, and cleanup regressions live
+ * in `sandbox-gpu-create-failure-classification.test.ts`,
+ * `sandbox-gpu-fallback-orchestration.test.ts`, and
+ * `sandbox-gpu-cleanup-verification.test.ts`; the live fallback scenario proves
+ * the same boundary against OpenShell.
+ *
+ * Retire ordinary-Linux automatic fallback only when the minimum supported
+ * OpenShell is greater than 0.0.72 and that pinned minimum passes native GPU
+ * create, readiness, and CUDA proof across every supported ordinary-Linux
+ * environment. This is a version-bound acceptance gate, not a claim about an
+ * unverified future release. Docker Desktop WSL and Jetson/Tegra compatibility
+ * retirement remain separately gated by their native support.
+ */
 export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   const text = String(output ?? "");
   return (

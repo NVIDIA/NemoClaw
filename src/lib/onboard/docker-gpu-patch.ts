@@ -2,6 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture } from "../adapters/docker";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+
+export { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
+export { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
+export {
+  buildDockerGpuCloneRunArgs,
+  buildDockerGpuCloneRunOptions,
+  DOCKER_GPU_PATCH_NETWORK_ENV,
+  getDockerGpuPatchNetworkMode,
+  parseDockerInspectJson,
+} from "./docker-gpu-patch-clone";
+
 import {
   collectDockerGpuPatchDiagnostics,
   dockerGpuPatchCleanupCommands,
@@ -32,14 +44,7 @@ export {
   selectDockerGpuPatchMode,
 } from "./docker-gpu-patch-mode";
 export {
-  buildDockerGpuCloneRunArgs,
-  buildDockerGpuCloneRunOptions,
-  DOCKER_GPU_PATCH_NETWORK_ENV,
-  detectSandboxFallbackDns,
-  detectTegraDeviceGroupGids,
   getDockerGpuPatchFailureContext,
-  getDockerGpuPatchNetworkMode,
-  parseDockerInspectJson,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch-recreate";
 export {
@@ -61,8 +66,6 @@ export {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 };
-
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 
 type DockerRunResult = {
   status?: number | null;

@@ -19,8 +19,8 @@ import {
   collectDockerGpuPatchDiagnostics,
   findOpenShellDockerSandboxContainerIds,
 } from "./docker-gpu-patch";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;
 

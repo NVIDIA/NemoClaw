@@ -3,13 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
 import type { DockerContainerInspect } from "./docker-gpu-patch";
+import { buildDockerGpuCloneRunArgs } from "./docker-gpu-patch-clone";
 import { buildDockerGpuMode } from "./docker-gpu-patch-mode";
-import {
-  buildDockerGpuCloneRunArgs,
-  detectSandboxFallbackDns,
-  recreateOpenShellDockerSandboxWithGpu,
-} from "./docker-gpu-patch-recreate";
+import { recreateOpenShellDockerSandboxWithGpu } from "./docker-gpu-patch-recreate";
 
 function inspectFixture(): DockerContainerInspect {
   return {

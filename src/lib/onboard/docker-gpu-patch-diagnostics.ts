@@ -17,6 +17,7 @@ import type {
   DockerGpuPatchMode,
   DockerGpuPatchSandboxSnapshot,
 } from "./docker-gpu-patch";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
 import {
   findOpenShellDockerSandboxContainerIds,
@@ -24,8 +25,6 @@ import {
   OPENSHELL_MANAGED_BY_VALUE,
   OPENSHELL_SANDBOX_NAME_LABEL,
 } from "./openshell-docker-sandbox-containers";
-
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 
 function stringArray(value: string[] | string | null | undefined): string[] {
   if (Array.isArray(value)) return value.map((entry) => String(entry));

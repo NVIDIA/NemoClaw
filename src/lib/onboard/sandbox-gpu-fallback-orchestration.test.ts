@@ -5,11 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import {
-  cleanupNativeGpuAttemptForFallback,
   executeSandboxGpuCreatePlan,
-  isNativeGpuCreatePreBuildRejection,
-  isNativeGpuCreateRoutingFailure,
-  isNativeGpuReadinessRoutingFailure,
   type NativeGpuFallbackCleanupResult,
   type SandboxGpuCreateAttemptFailure,
   type SandboxGpuCreateFailureStage,
@@ -22,33 +18,6 @@ const SAFE_CLEANUP: NativeGpuFallbackCleanupResult = {
   sandboxPresent: false,
   containerIds: [],
 };
-
-describe("native GPU create failure classification", () => {
-  it("accepts an argument rejection without treating unrelated build failures as routing", () => {
-    const rejection = "error: unexpected argument '--gpu' found";
-    expect(isNativeGpuCreatePreBuildRejection(rejection)).toBe(true);
-    expect(isNativeGpuCreateRoutingFailure(rejection)).toBe(true);
-    expect(
-      isNativeGpuCreateRoutingFailure(
-        "Docker build failed while compiling a GPU Python package for --gpu support",
-      ),
-    ).toBe(false);
-    expect(isNativeGpuCreateRoutingFailure("x509: certificate signed by unknown authority")).toBe(
-      false,
-    );
-  });
-
-  it("requires GPU-specific evidence before treating readiness as a routing failure", () => {
-    expect(isNativeGpuReadinessRoutingFailure("alpha Failed: policy denied startup exec")).toBe(
-      false,
-    );
-    expect(
-      isNativeGpuReadinessRoutingFailure(
-        "alpha Error: NVIDIA GPU device initialization failed during sandbox startup",
-      ),
-    ).toBe(true);
-  });
-});
 
 function nativeFailure(stage: SandboxGpuCreateFailureStage): SandboxGpuCreateAttemptFailure {
   return {
@@ -286,116 +255,5 @@ describe("executeSandboxGpuCreatePlan", () => {
     ]);
     expect(firstRoutes).toEqual(["native", "compatibility"]);
     expect(secondRoutes).toEqual(["native", "compatibility"]);
-  });
-});
-
-describe("cleanupNativeGpuAttemptForFallback", () => {
-  function openshellWithList(
-    listResult: { status: number; stdout?: string; stderr?: string },
-    deleteResult: { status: number; stdout?: string; stderr?: string } = { status: 0 },
-  ) {
-    return vi.fn((args: string[]) => (args[1] === "delete" ? deleteResult : listResult));
-  }
-
-  it("requires two stable sandbox and labeled-container absence checks", () => {
-    const runOpenshell = openshellWithList({ status: 0, stdout: "" });
-    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
-
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      { runOpenshell, queryContainers, sleep: vi.fn() },
-      { maxAttempts: 3, stableAbsenceChecks: 2 },
-    );
-
-    expect(result).toEqual(SAFE_CLEANUP);
-    expect(runOpenshell).toHaveBeenNthCalledWith(
-      1,
-      ["sandbox", "delete", "alpha"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "list")).toHaveLength(2);
-    expect(queryContainers).toHaveBeenCalledTimes(2);
-  });
-
-  it("permits fallback after a nonzero delete only when two checks prove complete absence", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList(
-          { status: 0, stdout: "" },
-          { status: 1, stderr: "delete denied" },
-        ),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2, stableAbsenceChecks: 2 },
-    );
-
-    expect(result.safe).toBe(true);
-    expect(result.deleteStatus).toBe(1);
-    expect(result.reason).toBeNull();
-  });
-
-  it("refuses fallback when the OpenShell sandbox query fails", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList({ status: 1, stderr: "gateway unavailable" }),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.sandboxPresent).toBeNull();
-    expect(result.reason).toContain("gateway unavailable");
-  });
-
-  it("refuses fallback when the labeled-container query fails", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList({ status: 0, stdout: "" }),
-        queryContainers: () => ({ ok: false, ids: [], error: "docker daemon unavailable" }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.containerIds).toBeNull();
-    expect(result.reason).toContain("docker daemon unavailable");
-  });
-
-  it("refuses fallback while any labeled container remains", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList(
-          { status: 0, stdout: "" },
-          { status: 1, stderr: "sandbox was never created" },
-        ),
-        queryContainers: () => ({ ok: true, ids: ["container-a", "container-b"] }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.deleteStatus).toBe(1);
-    expect(result.containerIds).toEqual(["container-a", "container-b"]);
-    expect(result.reason).toContain("container-a, container-b");
-  });
-
-  it("treats an exact sandbox row with no parseable status as present", () => {
-    const result = cleanupNativeGpuAttemptForFallback(
-      "alpha",
-      {
-        runOpenshell: openshellWithList({ status: 0, stdout: "alpha" }),
-        queryContainers: () => ({ ok: true, ids: [] }),
-      },
-      { maxAttempts: 2 },
-    );
-
-    expect(result.safe).toBe(false);
-    expect(result.sandboxPresent).toBe(true);
-    expect(result.reason).toContain("still present");
   });
 });

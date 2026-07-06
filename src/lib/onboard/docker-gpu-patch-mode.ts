@@ -12,8 +12,7 @@ import type {
   DockerGpuPatchModeAttempt,
   DockerGpuPatchModeKind,
 } from "./docker-gpu-patch";
-
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 
 function resultText(result: {
   stdout?: string | Buffer | null;

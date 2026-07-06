@@ -24,9 +24,9 @@
  * recovers to Ready is the runtime evidence required.
  */
 
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { envInt } from "./env";
 
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // Default consecutive Error-phase polls required before fast-fail. With a
 // 2-second poll interval this is ~2 minutes of sustained Error, leaving

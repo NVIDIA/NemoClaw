@@ -23,15 +23,17 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
-import {
-  dockerRename as defaultDockerRename,
-  dockerRm as defaultDockerRm,
-  dockerStart as defaultDockerStart,
-  dockerStop as defaultDockerStop,
-} from "../adapters/docker";
 import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import {
+  resolveDockerGpuPatchRollbackDeps,
+  rollbackToBackupContainer,
+} from "./docker-gpu-patch-rollback";
 
-const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
+export {
+  restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,
+  rollbackToBackupContainer,
+} from "./docker-gpu-patch-rollback";
 
 type DockerRunResult = {
   status?: number | null;
@@ -39,69 +41,11 @@ type DockerRunResult = {
   stderr?: string | Buffer | null;
 };
 
-type DockerRunOptions = Record<string, unknown>;
-
-type DockerContainerFn = (containerName: string, opts?: DockerRunOptions) => DockerRunResult;
-type DockerRenameFn = (
-  oldContainerName: string,
-  newContainerName: string,
-  opts?: DockerRunOptions,
-) => DockerRunResult;
-
-type ResolvedRollbackDeps = {
-  dockerStop: DockerContainerFn;
-  dockerRm: DockerContainerFn;
-  dockerRename: DockerRenameFn;
-  dockerStart: DockerContainerFn;
-};
-
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
   // spawnSync reports `status: null` when the process times out or cannot be
   // spawned. Cleanup and rollback are safety gates, so only an explicit zero
   // exit status is success.
   return result?.status === 0;
-}
-
-function resolveRollbackDeps(deps: DockerGpuPatchDeps): ResolvedRollbackDeps {
-  return {
-    dockerStop: deps.dockerStop ?? defaultDockerStop,
-    dockerRm: deps.dockerRm ?? defaultDockerRm,
-    dockerRename: deps.dockerRename ?? defaultDockerRename,
-    dockerStart: deps.dockerStart ?? defaultDockerStart,
-  };
-}
-
-export function rollbackToBackupContainer(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: ResolvedRollbackDeps,
-): boolean {
-  const containerOpts = {
-    ignoreError: true,
-    suppressOutput: true,
-    timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-  };
-  deps.dockerStop(refs.newContainerId, containerOpts);
-  deps.dockerRm(refs.newContainerId, containerOpts);
-  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
-  if (!isZeroStatus(restored)) return false;
-  const started = deps.dockerStart(refs.originalName, containerOpts);
-  return isZeroStatus(started);
-}
-
-/**
- * Roll back a Docker GPU patch that failed *before* the supervisor wait — e.g.
- * the recreate `docker run` itself failed after the original sandbox was already
- * renamed to the backup. Restores the pre-patch sandbox so onboarding never
- * leaves an orphaned `*-nemoclaw-gpu-backup-*` container (which otherwise
- * collides on the next retry) (#5512). Accepts raw deps so the real
- * `docker start`/`docker rename` defaults are resolved even when the caller's
- * deps only carry the recreate subset.
- */
-export function rollbackDockerGpuPatchOnRecreateFailure(
-  refs: { newContainerId: string; backupContainerName: string; originalName: string },
-  deps: DockerGpuPatchDeps = {},
-): boolean {
-  return rollbackToBackupContainer(refs, resolveRollbackDeps(deps));
 }
 
 export type DockerGpuPatchFinalizeOptions = {
@@ -118,7 +62,7 @@ export function finalizeDockerGpuPatchBackup(
   options: DockerGpuPatchFinalizeOptions,
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchFinalizeOutcome {
-  const resolved = resolveRollbackDeps(deps);
+  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
   const containerOpts = {
     ignoreError: true,
     suppressOutput: true,
@@ -156,7 +100,7 @@ export function reconcileSupervisorReconnect(
   refs: { newContainerId: string; backupContainerName: string; originalName: string },
   deps: DockerGpuPatchDeps,
 ): SupervisorReconnectOutcome {
-  const resolved = resolveRollbackDeps(deps);
+  const resolved = resolveDockerGpuPatchRollbackDeps(deps);
   const containerOpts = {
     ignoreError: true,
     suppressOutput: true,
