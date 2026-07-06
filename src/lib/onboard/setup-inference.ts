@@ -10,6 +10,9 @@ import {
   assertNoOpenShellGatewayEndpointOverride,
   type OpenShellGatewayEndpointEnvironment,
 } from "../openshell-gateway-endpoint-guard";
+
+export { assertNoOpenShellGatewayEndpointOverride };
+
 import type { HermesAuthMethod } from "./hermes-auth";
 import type {
   CommonDeps,

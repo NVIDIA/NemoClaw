@@ -14,6 +14,7 @@ const probeTimeoutMs = 10_000;
 type SliceName = "initial" | "core" | "final";
 type ProbeMode =
   | "fresh"
+  | "endpoint-override"
   | "resume-initial"
   | "resume-core-gateway"
   | "authoritative-core-gateway"
@@ -352,7 +353,12 @@ const { onboard } = require(${onboardPath});
     });
     throw new Error("expected slice sentinel");
   } catch (error) {
-    if (error === sentinel || error?.message === sentinel.message) {
+    if (
+      error === sentinel ||
+      error?.message === sentinel.message ||
+      (scenario.mode === "endpoint-override" &&
+        error?.name === "OpenShellGatewayEndpointOverrideError")
+    ) {
       console.log(JSON.stringify({ called }));
       return;
     }
@@ -369,7 +375,12 @@ const { onboard } = require(${onboardPath});
     {
       cwd: repoRoot,
       encoding: "utf-8",
-      env: probeEnvironment(tmpDir),
+      env: {
+        ...probeEnvironment(tmpDir),
+        ...(scenario.mode === "endpoint-override"
+          ? { OPENSHELL_GATEWAY_ENDPOINT: "http://127.0.0.1:65535" }
+          : {}),
+      },
       timeout: probeTimeoutMs,
     },
   );
@@ -402,6 +413,10 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("enters the initial slice on fresh onboard runs", () => {
     assert.deepEqual(runSliceProbe({ slice: "initial" }), ["initial"]);
+  });
+
+  it("rejects an ambient gateway endpoint before entering the initial slice", () => {
+    assert.deepEqual(runSliceProbe({ slice: "initial", mode: "endpoint-override" }), []);
   });
 
   it("enters the core slice after the initial slice reaches provider selection", () => {

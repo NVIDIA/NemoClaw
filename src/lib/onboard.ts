@@ -4078,6 +4078,7 @@ async function preflightAuthoritativeRebuildTarget(
 // ── Main ─────────────────────────────────────────────────────────
 const onboard = onboardEntryOptions.withNonInteractiveEnvironment(runOnboard);
 async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
+  setupInferenceFactory.assertNoOpenShellGatewayEndpointOverride();
   const requestedToolDisclosure = toolDisclosureFlow.applyOnboardToolDisclosureRequest(
     opts.toolDisclosure,
   );
@@ -4151,7 +4152,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     console.error(`    rm -f "${lockResult.lockFile}"`);
     process.exit(1);
   }
-
   // Stage any pre-fix plaintext credentials.json into process.env so the
   // provider upserts later in this run can pick the values up. The file is
   // NOT removed here — the secure unlink runs only after onboarding
