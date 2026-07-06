@@ -678,36 +678,141 @@ PY_CLASSIFY_OPENCLAW_SEAL
 
 reclaim_collapsed_mutable_config() {
   local config_dir="$1"
-  local config_file="$config_dir/openclaw.json"
-  local hash_file="$config_dir/.config-hash"
 
   [ "$(id -u)" -eq 0 ] || return 0
 
-  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
-    printf '[SECURITY] Refusing mutable config reclaim — config directory or file path is a symlink\n' >&2
+  local sandbox_uid sandbox_gid
+  if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — sandbox identity lookup failed\n' >&2
     return 1
   fi
 
-  if ! find -P "$config_dir" \( -type d -o -type f \) -exec chown sandbox:sandbox {} +; then
-    printf '[SECURITY] Failed to reclaim ownership of %s\n' "$config_dir" >&2
+  if ! python3 -I - "$config_dir" "$sandbox_uid" "$sandbox_gid" <<'PY_RECLAIM_MUTABLE_CONFIG'; then
+import os
+import stat
+import sys
+
+
+class UnsafeTree(Exception):
+    """The collapsed config tree changed identity or violated its ownership contract."""
+
+
+FIXED_FILES = ("openclaw.json", ".config-hash")
+
+
+def inode_key(metadata):
+    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode)
+
+
+def directory_flags():
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        raise UnsafeTree()
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | nofollow
+
+
+def file_flags():
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    if not nofollow:
+        raise UnsafeTree()
+    return os.O_RDONLY | os.O_CLOEXEC | nofollow
+
+
+def open_pinned(parent_fd, name, flags, expected):
+    child_fd = os.open(name, flags, dir_fd=parent_fd)
+    opened = os.fstat(child_fd)
+    if inode_key(opened) != inode_key(expected):
+        os.close(child_fd)
+        raise UnsafeTree()
+    return child_fd, opened
+
+
+def verify_still_linked(parent_fd, name, opened):
+    current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if inode_key(current) != inode_key(opened):
+        raise UnsafeTree()
+
+
+def is_sealed(root_fd, root_metadata):
+    if stat.S_IMODE(root_metadata.st_mode) != 0o755:
+        return False
+    try:
+        file_meta = os.stat("openclaw.json", dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    return (
+        stat.S_ISREG(file_meta.st_mode)
+        and file_meta.st_uid == 0
+        and file_meta.st_gid == 0
+        and stat.S_IMODE(file_meta.st_mode) == 0o444
+    )
+
+
+def reclaim_dir(directory_fd, sandbox_uid, sandbox_gid, *, top_level):
+    with os.scandir(directory_fd) as entries:
+        names = sorted(entry.name for entry in entries)
+    for name in names:
+        before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISLNK(before.st_mode):
+            raise UnsafeTree()
+        if stat.S_ISDIR(before.st_mode):
+            child_fd, opened = open_pinned(directory_fd, name, directory_flags(), before)
+            try:
+                reclaim_dir(child_fd, sandbox_uid, sandbox_gid, top_level=False)
+                os.fchown(child_fd, sandbox_uid, sandbox_gid)
+                current_mode = stat.S_IMODE(os.fstat(child_fd).st_mode)
+                os.fchmod(child_fd, (current_mode | 0o2070) & ~0o007)
+                verify_still_linked(directory_fd, name, opened)
+            finally:
+                os.close(child_fd)
+            continue
+        if not stat.S_ISREG(before.st_mode):
+            continue
+        child_fd, opened = open_pinned(directory_fd, name, file_flags(), before)
+        try:
+            os.fchown(child_fd, sandbox_uid, sandbox_gid)
+            target_mode = (
+                0o660
+                if top_level and name in FIXED_FILES
+                else (stat.S_IMODE(opened.st_mode) | 0o060) & ~0o007
+            )
+            os.fchmod(child_fd, target_mode)
+            verify_still_linked(directory_fd, name, opened)
+        finally:
+            os.close(child_fd)
+
+
+def main():
+    config_dir, sandbox_uid, sandbox_gid = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+    root_fd = os.open(config_dir, directory_flags())
+    try:
+        root_metadata = os.fstat(root_fd)
+        if (
+            not stat.S_ISDIR(root_metadata.st_mode)
+            or root_metadata.st_uid != 0
+            or root_metadata.st_gid != 0
+        ):
+            raise UnsafeTree()
+        if is_sealed(root_fd, root_metadata):
+            return
+        reclaim_dir(root_fd, sandbox_uid, sandbox_gid, top_level=True)
+        os.fchown(root_fd, sandbox_uid, sandbox_gid)
+        os.fchmod(root_fd, 0o2770)
+        current = os.stat(config_dir, follow_symlinks=False)
+        if inode_key(current) != inode_key(os.fstat(root_fd)):
+            raise UnsafeTree()
+    finally:
+        os.close(root_fd)
+
+
+try:
+    main()
+except (OSError, UnsafeTree):
+    raise SystemExit(1)
+PY_RECLAIM_MUTABLE_CONFIG
+    printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
     return 1
   fi
-  if ! chmod 2770 "$config_dir"; then
-    printf '[SECURITY] Failed to restore permissions on %s\n' "$config_dir" >&2
-    return 1
-  fi
-  if ! find -P "$config_dir" -type d -exec chmod g+s {} +; then
-    printf '[SECURITY] Failed to restore setgid inheritance on %s\n' "$config_dir" >&2
-    return 1
-  fi
-  local f
-  for f in "$config_file" "$hash_file"; do
-    [ -e "$f" ] || continue
-    if ! chmod 660 "$f"; then
-      printf '[SECURITY] Failed to restore permissions on %s\n' "$f" >&2
-      return 1
-    fi
-  done
 }
 
 # Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config

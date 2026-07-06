@@ -396,27 +396,85 @@ describe("nemoclaw-start mutable config seal classification", () => {
   });
 });
 
+const nobodyUid = spawnSync("id", ["-u", "nobody"], { encoding: "utf-8" }).stdout.trim();
+const nobodyGid = spawnSync("id", ["-g", "nobody"], { encoding: "utf-8" }).stdout.trim();
+
 describe("nemoclaw-start mutable config reclaim", () => {
-  it("leaves the tree untouched when it cannot reclaim ownership without root", () => {
-    if (runningAsRoot) return;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-nonroot-"));
-    const configDir = path.join(root, ".openclaw");
-    fs.mkdirSync(configDir, 0o2770);
-    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
-    const beforeUid = fs.statSync(configDir).uid;
-    const script = [
-      "set -uo pipefail",
-      reclaimFunction,
-      "rc=0",
-      `reclaim_collapsed_mutable_config ${JSON.stringify(configDir)} || rc=$?`,
-      'printf "rc=%s\\n" "$rc"',
-    ].join("\n");
-    try {
-      const result = runBash(script);
-      expect(result.stdout).toContain("rc=0");
-      expect(fs.statSync(configDir).uid).toBe(beforeUid);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+  it.skipIf(runningAsRoot)(
+    "leaves the tree untouched when it cannot reclaim ownership without root",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-nonroot-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir, 0o2770);
+      fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+      const beforeUid = fs.statSync(configDir).uid;
+      const script = [
+        "set -uo pipefail",
+        reclaimFunction,
+        "rc=0",
+        `reclaim_collapsed_mutable_config ${JSON.stringify(configDir)} || rc=$?`,
+        'printf "rc=%s\\n" "$rc"',
+      ].join("\n");
+      try {
+        const result = runBash(script);
+        expect(result.stdout).toContain("rc=0");
+        expect(fs.statSync(configDir).uid).toBe(beforeUid);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(runningAsRoot)(
+    "reclaims a root-owned collapsed config to the sandbox contract and permits sandbox writes (#6300)",
+    () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-root-"));
+      const configDir = path.join(root, ".openclaw");
+      fs.mkdirSync(configDir);
+      fs.chmodSync(configDir, 0o2770);
+      const configFile = path.join(configDir, "openclaw.json");
+      const hashFile = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configFile, "{}\n");
+      fs.chmodSync(configFile, 0o660);
+      fs.writeFileSync(hashFile, "hash\n");
+      fs.chmodSync(hashFile, 0o660);
+
+      const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+        'local config_dir="/sandbox/.openclaw"',
+        `local config_dir=${JSON.stringify(configDir)}`,
+      );
+      const patchedReclaimFunction = reclaimFunction
+        .replace("id -u sandbox", `echo ${JSON.stringify(nobodyUid)}`)
+        .replace("id -g sandbox", `echo ${JSON.stringify(nobodyGid)}`);
+      const script = [
+        "set -euo pipefail",
+        classifyFunction,
+        patchedReclaimFunction,
+        normalizeFunction,
+        "normalize_mutable_config_perms",
+      ].join("\n");
+
+      try {
+        const result = runBash(script);
+        expect(result.status).toBe(0);
+        expect(mode(configDir)).toBe(0o2770);
+        expect(mode(configFile)).toBe(0o660);
+        expect(mode(hashFile)).toBe(0o660);
+        expect(fs.statSync(configDir).uid.toString()).toBe(nobodyUid);
+        expect(fs.statSync(configDir).gid.toString()).toBe(nobodyGid);
+
+        const writeCheck = spawnSync("setpriv", [
+          `--reuid=${nobodyUid}`,
+          `--regid=${nobodyGid}`,
+          "--clear-groups",
+          "--",
+          "touch",
+          path.join(configDir, "nemoclaw-write-check"),
+        ]);
+        expect(writeCheck.status).toBe(0);
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
