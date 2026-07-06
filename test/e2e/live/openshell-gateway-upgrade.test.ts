@@ -468,8 +468,9 @@ async function stampKnownManagedLegacyFixture(artifacts: ArtifactSink): Promise<
   };
   const survivor = registry.sandboxes?.[SURVIVOR_SANDBOX];
   expect(survivor, `old registry must contain ${SURVIVOR_SANDBOX}`).toBeTruthy();
-  expect(survivor?.fromDockerfile ?? null).toBeNull();
-  expect(survivor?.nemoclawVersion ?? null).toBeNull();
+  const knownManagedSurvivor = survivor as NonNullable<typeof survivor>;
+  expect(knownManagedSurvivor.fromDockerfile ?? null).toBeNull();
+  expect(knownManagedSurvivor.nemoclawVersion ?? null).toBeNull();
 
   // v0.0.36 predates the managed-image fingerprint. This live fixture has
   // positive provenance because it just built the sandbox through the real
@@ -477,8 +478,7 @@ async function stampKnownManagedLegacyFixture(artifacts: ArtifactSink): Promise<
   // to prove successful gateway recovery. Production still fails closed for
   // untouched legacy/custom rows, covered by upgrade-sandboxes-recovery.test.
   const fingerprint = OLD_NEMOCLAW_REF.replace(/^v/, "");
-  if (!survivor) throw new Error(`old registry is missing ${SURVIVOR_SANDBOX}`);
-  survivor.nemoclawVersion = fingerprint;
+  knownManagedSurvivor.nemoclawVersion = fingerprint;
   const temporaryRegistry = `${REGISTRY_FILE}.gateway-upgrade-${process.pid}.tmp`;
   fs.writeFileSync(temporaryRegistry, `${JSON.stringify(registry, null, 2)}\n`, {
     encoding: "utf8",
