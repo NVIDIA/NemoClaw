@@ -15,6 +15,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
 
     expect(ISSUE6194_TUI_TIMEOUT_SEC).toBe(240);
     expect(ISSUE6194_TUI_SESSION).toBe("test-session");
+    expect(script).toContain("log_file -noappend $capture");
     expect(script).toContain("spawn openshell sandbox exec --name $sandbox --tty");
     expect(script).toContain("openclaw tui --session test-session");
     expect(script).toContain('puts "ISSUE6194_MARK $name"');

@@ -8,7 +8,7 @@ export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
-log_file -a $capture
+log_file -noappend $capture
 proc mark {name} {
   puts "ISSUE6194_MARK $name"
   send_log "ISSUE6194_MARK $name\\n"
