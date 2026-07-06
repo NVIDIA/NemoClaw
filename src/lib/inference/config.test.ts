@@ -414,6 +414,12 @@ describe("coerceAgentInferenceApi", () => {
     expect(coerceAgentInferenceApi(null, "anthropic-messages")).toBe("anthropic-messages");
     expect(coerceAgentInferenceApi({}, "anthropic-messages")).toBe("anthropic-messages");
   });
+
+  it("does not coerce when agent has inference block but no provider_type", () => {
+    expect(coerceAgentInferenceApi({ inference: {} }, "anthropic-messages")).toBe(
+      "anthropic-messages",
+    );
+  });
 });
 
 describe("parseGatewayInference", () => {

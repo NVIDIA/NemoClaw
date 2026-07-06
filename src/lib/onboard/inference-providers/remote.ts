@@ -19,6 +19,93 @@ const { probeOpenAiLikeEndpoint } = require("../../inference/onboard-probes") as
   ) => { ok: boolean; message?: string };
 };
 
+type StaleProviderReplaceResult = { ok: boolean; status?: number | null; message?: string };
+
+/**
+ * Replace a provider that a prior Anthropic-Messages registration left behind
+ * so it can be re-registered as `type=openai` for the OpenAI-compatible route
+ * (`provider update` cannot change `--type`).
+ *
+ * Security containment: force-detach recovery may only touch the sandbox being
+ * onboarded. The authorized set is exactly the confirmed `sandboxName`; every
+ * attachment reported by the delete failure is revalidated against it before
+ * any detach, and the same set is threaded into `removeGatewayProvider` so its
+ * own re-parse also fails closed on an outside sandbox. With no confirmed
+ * sandbox (`sandboxName === null`) there is nothing to authorize against, so
+ * force-detach recovery is refused with an actionable error rather than run
+ * unconstrained. A provider still attached to other live sandboxes fails closed
+ * too — flipping its type would silently break their Anthropic routing.
+ */
+function replaceStaleAnthropicProviderForOpenAiSurface(args: {
+  provider: string;
+  sandboxName: string | null;
+  runOpenshell: RemoteProviderDeps["runOpenshell"];
+  readProviderMetadata: NonNullable<RemoteProviderDeps["readGatewayProviderMetadata"]>;
+  removeGatewayProvider: NonNullable<RemoteProviderDeps["deleteGatewayProvider"]>;
+  redact: RemoteProviderDeps["redact"];
+  compactText: RemoteProviderDeps["compactText"];
+}): StaleProviderReplaceResult {
+  const {
+    provider,
+    sandboxName,
+    runOpenshell,
+    readProviderMetadata,
+    removeGatewayProvider,
+    redact,
+    compactText,
+  } = args;
+  const live = readProviderMetadata(provider, runOpenshell);
+  if (!live || live.type === "openai") return { ok: true };
+  const attempt = runOpenshell(["provider", "delete", provider], {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (attempt.status === 0) return { ok: true };
+  const raw = `${attempt.stderr || ""}\n${attempt.stdout || ""}`;
+  const attached = parseAttachedSandboxes(raw);
+  const allowedSandboxes = sandboxName === null ? [] : [sandboxName];
+  const foreign = attached.filter((name) => !allowedSandboxes.includes(name));
+  if (sandboxName === null && attached.length > 0) {
+    return {
+      ok: false,
+      status: attempt.status ?? 1,
+      message:
+        `Provider '${provider}' is attached to sandbox(es) (${attached.join(", ")}) ` +
+        `but no target sandbox was confirmed, so it cannot be safely force-detached ` +
+        `and re-registered for the OpenAI-compatible route. Re-run onboarding with an ` +
+        `explicit sandbox, or remove those sandboxes first.`,
+    };
+  }
+  if (attached.length > 0 && foreign.length === 0) {
+    const recovery = removeGatewayProvider(provider, { runOpenshell, allowedSandboxes });
+    const detail = compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`));
+    return recovery.ok
+      ? { ok: true }
+      : {
+          ok: false,
+          status: recovery.status ?? 1,
+          message: `Failed to replace provider '${provider}' for the OpenAI-compatible route${detail ? `: ${detail}` : "."}`,
+        };
+  }
+  if (foreign.length > 0) {
+    return {
+      ok: false,
+      status: attempt.status ?? 1,
+      message:
+        `Provider '${provider}' is attached to other sandbox(es) (${foreign.join(", ")}) ` +
+        `and cannot be re-registered for the OpenAI-compatible route without breaking ` +
+        `their Anthropic Messages routing. Onboard this agent against a dedicated ` +
+        `endpoint or remove those sandboxes first.`,
+    };
+  }
+  const detail = compactText(redact(raw));
+  return {
+    ok: false,
+    status: attempt.status ?? 1,
+    message: `Failed to replace provider '${provider}' for the OpenAI-compatible route${detail ? `: ${detail}` : "."}`,
+  };
+}
+
 /**
  * Returns `{ done: true, result }` when the flow handled the request
  * (e.g. Bedrock short-circuit or a retry-to-selection); returns
@@ -174,53 +261,15 @@ export async function setupRemoteProviderInference(
         } else {
           // `provider update` cannot change --type, so a provider left behind
           // by an earlier Anthropic-Messages registration must be replaced.
-          // Containment: force-detach recovery may only touch the sandbox
-          // being onboarded — flipping a provider that other live sandboxes
-          // are attached to would silently break their Anthropic routing, so
-          // that case fails closed with an actionable message instead.
-          const live = readProviderMetadata(provider, runOpenshell);
-          let replaced: { ok: boolean; status?: number | null; message?: string } = { ok: true };
-          if (live && live.type !== "openai") {
-            const attempt = runOpenshell(["provider", "delete", provider], {
-              ignoreError: true,
-              suppressOutput: true,
-            });
-            if (attempt.status !== 0) {
-              const raw = `${attempt.stderr || ""}\n${attempt.stdout || ""}`;
-              const attached = parseAttachedSandboxes(raw);
-              const foreign = attached.filter((name) => name !== sandboxName);
-              if (attached.length > 0 && foreign.length === 0) {
-                const recovery = removeGatewayProvider(provider, { runOpenshell });
-                replaced = recovery.ok
-                  ? { ok: true }
-                  : {
-                      ok: false,
-                      status: recovery.status ?? 1,
-                      message:
-                        `Failed to replace provider '${provider}' for the OpenAI-compatible route` +
-                        `${compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`)) ? `: ${compactText(redact(`${recovery.stderr || ""} ${recovery.stdout || ""}`))}` : "."}`,
-                    };
-              } else if (foreign.length > 0) {
-                replaced = {
-                  ok: false,
-                  status: attempt.status ?? 1,
-                  message:
-                    `Provider '${provider}' is attached to other sandbox(es) (${foreign.join(", ")}) ` +
-                    `and cannot be re-registered for the OpenAI-compatible route without breaking ` +
-                    `their Anthropic Messages routing. Onboard this agent against a dedicated ` +
-                    `endpoint or remove those sandboxes first.`,
-                };
-              } else {
-                replaced = {
-                  ok: false,
-                  status: attempt.status ?? 1,
-                  message:
-                    `Failed to replace provider '${provider}' for the OpenAI-compatible route` +
-                    `${compactText(redact(raw)) ? `: ${compactText(redact(raw))}` : "."}`,
-                };
-              }
-            }
-          }
+          const replaced = replaceStaleAnthropicProviderForOpenAiSurface({
+            provider,
+            sandboxName,
+            runOpenshell,
+            readProviderMetadata,
+            removeGatewayProvider,
+            redact,
+            compactText,
+          });
           providerResult = replaced.ok
             ? upsertProvider(provider, "openai", resolvedCredentialEnv, openAiSurfaceBaseUrl, env)
             : {

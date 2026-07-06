@@ -115,7 +115,7 @@ export type RemoteProviderDeps = CommonDeps & {
   ) => { name: string; type: string; credentialKeys: string[]; configKeys: string[] } | null;
   deleteGatewayProvider?: (
     name: string,
-    deps: { runOpenshell: RunOpenshell },
+    deps: { runOpenshell: RunOpenshell; allowedSandboxes?: readonly string[] },
   ) => { ok: boolean; status?: number | null; stderr?: string; stdout?: string };
   bedrockRuntimeOnboard: {
     setupBedrockRuntimeInference(input: {

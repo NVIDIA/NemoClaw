@@ -282,6 +282,29 @@ export function getSandboxInferenceConfig(
  * type=anthropic, whose route accepts only the anthropic_messages protocol, so
  * openai_chat_completions traffic needs a gateway-side answer (translation,
  * type switch, or onboarding rejection) tracked on #6294.
+ *
+ * Source-of-truth review (PRA-2 acceptance):
+ *
+ *   - Invalid state worked around: an `openai_compatible` agent whose
+ *     Anthropic-Messages endpoint probe resolves `preferredInferenceApi` to
+ *     `anthropic-messages`, producing a baked base_url with the `/v1` suffix
+ *     stripped while the gateway provider is registered as type=anthropic —
+ *     the `/chat/completions` (no `/v1`) call is then denied 403.
+ *   - Source boundary: this coercion is a NemoClaw-side band-aid on the
+ *     sandbox-side wiring only. It does NOT change the gateway provider type
+ *     or protocol; it only re-selects the sandbox inference API so the baked
+ *     base_url keeps `/v1`.
+ *   - Real fix location: gateway-side (protocol translation, a type switch,
+ *     or an explicit onboarding rejection), tracked on #6294. This function
+ *     is not the fix — it keeps the sandbox usable until #6294 lands.
+ *   - Regression tests: `src/lib/inference/config.test.ts`
+ *     (describe "coerceAgentInferenceApi") pins the coerce / no-coerce matrix,
+ *     and `test/onboard-anthropic-compatible-openai-agent.test.ts` covers the
+ *     end-to-end onboarding path.
+ *   - Removal condition: delete this coercion (and revert callers to pass
+ *     `preferredInferenceApi` straight through) once #6294 gives the gateway
+ *     a first-class answer for openai_chat_completions on an Anthropic
+ *     endpoint, so the probe no longer needs sandbox-side correction.
  */
 export function coerceAgentInferenceApi(
   agent: unknown,
