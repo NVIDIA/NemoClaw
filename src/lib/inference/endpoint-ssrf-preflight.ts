@@ -16,15 +16,6 @@ export interface EndpointSsrfPreflightResult {
   ok: boolean;
   /** Human-readable reason, present only when `ok === false`. */
   reason?: string;
-  /**
-   * The validated resolved IP to pin into the subsequent curl via `--resolve`,
-   * set only when the endpoint host was a DNS name that resolved to a public
-   * address. Undefined for literal IPs and loopback (curl connects directly, no
-   * pin needed) and whenever `ok` is false. Pinning closes the check-then-use
-   * (DNS-rebinding) window: curl connects to this exact address instead of
-   * re-resolving the hostname, while the hostname is preserved for Host/TLS SNI.
-   */
-  pinnedAddress?: string;
 }
 
 /**
@@ -92,30 +83,5 @@ export async function assertEndpointResolvesPublic(
       };
     }
   }
-  // Pin the first validated address so the follow-up curl connects to it rather
-  // than re-resolving the name (rebinding-safe).
-  return { ok: true, pinnedAddress: addresses[0].address };
-}
-
-/**
- * Build the curl `--resolve <host>:<port>:<addr>` argument that pins the
- * connection to a preflight-validated IP while preserving the hostname for the
- * Host header and TLS SNI. Returns `[]` when there is nothing to pin (literal
- * IP / loopback / preflight did not resolve a name), or when the URL cannot be
- * parsed. Default ports: 443 for https, 80 otherwise.
- */
-export function buildCurlResolveArgs(
-  endpointUrl: string,
-  pinnedAddress: string | undefined,
-): string[] {
-  if (!pinnedAddress) return [];
-  let url: URL;
-  try {
-    url = new URL(String(endpointUrl));
-  } catch {
-    return [];
-  }
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  return ["--resolve", `${host}:${port}:${pinnedAddress}`];
+  return { ok: true };
 }

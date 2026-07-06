@@ -3,21 +3,16 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  assertEndpointResolvesPublic,
-  buildCurlResolveArgs,
-  type EndpointDnsLookupFn,
-} from "./endpoint-ssrf-preflight";
+import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 
 const resolverTo = (address: string): EndpointDnsLookupFn =>
   vi.fn(async () => [{ address, family: address.includes(":") ? 6 : 4 }]);
 
 describe("assertEndpointResolvesPublic (#6293)", () => {
-  it("allows a public hostname that resolves to a public address and pins that address", async () => {
+  it("allows a public hostname that resolves to a public address without ever needing a private check", async () => {
     const lookup = resolverTo("93.184.216.34");
     const result = await assertEndpointResolvesPublic("https://vllm.example/v1", lookup);
     expect(result.ok).toBe(true);
-    expect(result.pinnedAddress).toBe("93.184.216.34");
     expect(lookup).toHaveBeenCalledWith("vllm.example", { all: true });
   });
 
@@ -45,19 +40,17 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
     "http://127.0.0.1:8000/v1",
     "http://localhost:8000/v1",
     "http://[::1]:8000/v1",
-  ])("allows the explicit loopback endpoint %s without resolving or pinning (#6293)", async (endpointUrl) => {
+  ])("allows the explicit loopback endpoint %s without resolving (#6293)", async (endpointUrl) => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic(endpointUrl, lookup);
     expect(result.ok).toBe(true);
-    expect(result.pinnedAddress).toBeUndefined();
     expect(lookup).not.toHaveBeenCalled();
   });
 
-  it("allows a public IP literal without resolving or pinning (#6293)", async () => {
+  it("allows a public IP literal without resolving (#6293)", async () => {
     const lookup = vi.fn<EndpointDnsLookupFn>();
     const result = await assertEndpointResolvesPublic("https://93.184.216.34/v1", lookup);
     expect(result.ok).toBe(true);
-    expect(result.pinnedAddress).toBeUndefined();
     expect(lookup).not.toHaveBeenCalled();
   });
 
@@ -79,30 +72,5 @@ describe("assertEndpointResolvesPublic (#6293)", () => {
   it("refuses a malformed endpoint URL (#6293)", async () => {
     const result = await assertEndpointResolvesPublic("not a url", resolverTo("93.184.216.34"));
     expect(result.ok).toBe(false);
-  });
-});
-
-describe("buildCurlResolveArgs (#6293)", () => {
-  it("pins host:port:addr for an https endpoint (default 443)", () => {
-    expect(buildCurlResolveArgs("https://vllm.example/v1", "93.184.216.34")).toEqual([
-      "--resolve",
-      "vllm.example:443:93.184.216.34",
-    ]);
-  });
-
-  it("uses the explicit port and http default 80", () => {
-    expect(buildCurlResolveArgs("http://vllm.example:8000/v1", "93.184.216.34")).toEqual([
-      "--resolve",
-      "vllm.example:8000:93.184.216.34",
-    ]);
-    expect(buildCurlResolveArgs("http://vllm.example/v1", "93.184.216.34")).toEqual([
-      "--resolve",
-      "vllm.example:80:93.184.216.34",
-    ]);
-  });
-
-  it("returns [] when there is nothing to pin or the URL is malformed", () => {
-    expect(buildCurlResolveArgs("https://vllm.example/v1", undefined)).toEqual([]);
-    expect(buildCurlResolveArgs("not a url", "93.184.216.34")).toEqual([]);
   });
 });
