@@ -180,6 +180,41 @@ def new_metadata_only_callback_handler() -> Any:
     return MetadataOnlyGraphCallbackHandler()
 
 
+class _CaptureCallbackException:
+    def __init__(self, boundary: _RelayExceptionBoundary) -> None:
+        self._boundary = boundary
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(
+        self,
+        _error_type: type[BaseException] | None,
+        error: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> bool:
+        if error is None:
+            return False
+        self._boundary.capture(error)
+        return True
+
+
+class _SuppressRelayException:
+    def __init__(self, boundary: _RelayExceptionBoundary) -> None:
+        self._boundary = boundary
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(
+        self,
+        _error_type: type[BaseException] | None,
+        error: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> bool:
+        return error is not None and self._boundary.has_original
+
+
 class _RelayExceptionBoundary:
     """Hide callback exceptions from Relay, then restore them for the agent."""
 
@@ -193,6 +228,12 @@ class _RelayExceptionBoundary:
     def capture(self, error: BaseException) -> None:
         if self._original is None:
             self._original = (error, error.__traceback__)
+
+    def capture_callback_exception(self) -> _CaptureCallbackException:
+        return _CaptureCallbackException(self)
+
+    def suppress_relay_exception(self) -> _SuppressRelayException:
+        return _SuppressRelayException(self)
 
     @staticmethod
     def raise_redacted() -> NoReturn:
@@ -227,13 +268,12 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             async def redacted_call(*args: Any, **kwargs: Any) -> Any:
-                try:
+                with boundary.capture_callback_exception():
                     return await func(*args, **kwargs)
-                except BaseException as error:
-                    boundary.capture(error)
                 boundary.raise_redacted()
 
-            try:
+            result: Any = None
+            with boundary.suppress_relay_exception():
                 result = await super()._llm_execute(
                     model_name=model_name,
                     request=request,
@@ -241,9 +281,6 @@ def new_relay_middleware() -> Any:
                     response_codec=response_codec,
                     func=redacted_call,
                 )
-            except BaseException:
-                if not boundary.has_original:
-                    raise
             if boundary.has_original:
                 boundary.restore_original()
             return result
@@ -253,15 +290,14 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             def redacted_call(args: Any) -> Any:
-                try:
+                with boundary.capture_callback_exception():
                     return handler(
                         request.override(tool_call={**request.tool_call, "args": args})
                     )
-                except BaseException as error:
-                    boundary.capture(error)
                 boundary.raise_redacted()
 
-            try:
+            result: Any = None
+            with boundary.suppress_relay_exception():
                 result = run_sync(
                     nemo_relay.typed.tool_execute(
                         name=tool_name,
@@ -272,9 +308,6 @@ def new_relay_middleware() -> Any:
                         handle=parent,
                     )
                 )
-            except BaseException:
-                if not boundary.has_original:
-                    raise
             if boundary.has_original:
                 boundary.restore_original()
             return result
@@ -284,15 +317,14 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             async def redacted_call(args: Any) -> Any:
-                try:
+                with boundary.capture_callback_exception():
                     return await handler(
                         request.override(tool_call={**request.tool_call, "args": args})
                     )
-                except BaseException as error:
-                    boundary.capture(error)
                 boundary.raise_redacted()
 
-            try:
+            result: Any = None
+            with boundary.suppress_relay_exception():
                 result = await nemo_relay.typed.tool_execute(
                     name=tool_name,
                     args=tool_args,
@@ -301,9 +333,6 @@ def new_relay_middleware() -> Any:
                     result_codec=codec,
                     handle=parent,
                 )
-            except BaseException:
-                if not boundary.has_original:
-                    raise
             if boundary.has_original:
                 boundary.restore_original()
             return result

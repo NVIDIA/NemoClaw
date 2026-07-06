@@ -155,7 +155,7 @@ class _RelayWrappedError(RuntimeError):
     pass
 
 
-def _raise_relay_wrapped(error: BaseException) -> None:
+def _raise_relay_wrapped(error: Exception) -> None:
     _RELAY_OBSERVED_ERRORS.append(
         {
             "type": type(error).__name__,
@@ -171,7 +171,7 @@ async def _tool_execute(*, args: Any, func: Any, **_kwargs: Any) -> Any:
     try:
         result = func(args)
         return await result if inspect.isawaitable(result) else result
-    except BaseException as error:
+    except Exception as error:
         _raise_relay_wrapped(error)
 
 
@@ -195,7 +195,7 @@ class _NemoRelayMiddleware:
         del model_name, codec, response_codec
         try:
             return await func(request)
-        except BaseException as error:
+        except Exception as error:
             _raise_relay_wrapped(error)
 
     def wrap_model_call(self, request: Any, handler: Any) -> Any:
@@ -311,7 +311,7 @@ class _ToolCallRequest:
         return _ToolCallRequest(tool_call)
 
 
-def _preserved_exception(error: BaseException, caught: BaseException) -> dict[str, Any]:
+def _preserved_exception(error: Exception, caught: Exception) -> dict[str, Any]:
     return {
         "same_instance": caught is error,
         "type": type(caught).__name__,
@@ -330,7 +330,7 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
 
     try:
         middleware.wrap_model_call(object(), sync_model_handler)
-    except BaseException as caught:
+    except Exception as caught:
         preserved["sync_model"] = _preserved_exception(sync_model_error, caught)
 
     sync_tool_error = _SensitiveOperationError(f"sync-tool:{SECRET}")
@@ -343,7 +343,7 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
     )
     try:
         middleware.wrap_tool_call(tool_request, sync_tool_handler)
-    except BaseException as caught:
+    except Exception as caught:
         preserved["sync_tool"] = _preserved_exception(sync_tool_error, caught)
 
     async def exercise_async() -> None:
@@ -354,7 +354,7 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
 
         try:
             await middleware.awrap_model_call(object(), async_model_handler)
-        except BaseException as caught:
+        except Exception as caught:
             preserved["async_model"] = _preserved_exception(
                 async_model_error, caught
             )
@@ -366,12 +366,31 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
 
         try:
             await middleware.awrap_tool_call(tool_request, async_tool_handler)
-        except BaseException as caught:
+        except Exception as caught:
             preserved["async_tool"] = _preserved_exception(async_tool_error, caught)
 
     asyncio.run(exercise_async())
+
+    relay_errors_before_control_flow = len(_RELAY_OBSERVED_ERRORS)
+    keyboard_interrupt = KeyboardInterrupt("operator interrupt")
+
+    def interrupted_model_handler(_request: Any) -> Any:
+        raise keyboard_interrupt
+
+    try:
+        middleware.wrap_model_call(object(), interrupted_model_handler)
+    except KeyboardInterrupt as caught:
+        control_flow = {
+            "same_instance": caught is keyboard_interrupt,
+            "relay_observed": len(_RELAY_OBSERVED_ERRORS)
+            != relay_errors_before_control_flow,
+        }
+    else:
+        raise AssertionError("KeyboardInterrupt did not escape the observability boundary")
+
     return {
         "preserved": preserved,
+        "control_flow": control_flow,
         "relay_observed": list(_RELAY_OBSERVED_ERRORS),
         "secret_present_in_relay_errors": SECRET
         in json.dumps(_RELAY_OBSERVED_ERRORS, sort_keys=True),

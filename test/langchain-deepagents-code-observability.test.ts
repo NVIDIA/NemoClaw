@@ -81,6 +81,10 @@ describe("managed Deep Agents Code observability", () => {
     expect(result.middleware_distinct).toBe(true);
     expect(result.middleware_name).toBe("NemoClawObservabilityMiddleware");
     expect(result.error_boundary).toEqual({
+      control_flow: {
+        same_instance: true,
+        relay_observed: true,
+      },
       preserved: {
         sync_model: {
           same_instance: true,
@@ -103,7 +107,7 @@ describe("managed Deep Agents Code observability", () => {
           message: "async-tool:NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL",
         },
       },
-      relay_observed: Array.from({ length: 4 }, () => ({
+      relay_observed: Array.from({ length: 5 }, () => ({
         type: "RuntimeError",
         message: "NemoClaw managed operation failed (details redacted)",
         context_is_none: true,
