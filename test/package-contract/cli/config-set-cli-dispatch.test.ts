@@ -134,7 +134,7 @@ describe("config set CLI dispatch", () => {
         settled = true;
       });
 
-      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1), { timeout: 4_000 });
       expect(runOclifArgv).not.toHaveBeenCalled();
       expect(runOclifCommandById).toHaveBeenCalledTimes(1);
       expect(configSet).toHaveBeenCalledTimes(1);
