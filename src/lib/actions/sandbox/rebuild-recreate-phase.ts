@@ -27,6 +27,7 @@ import {
   printMcpRebuildRetryCommand,
   restoreMcpRegistryForRebuildRetry,
 } from "./rebuild-mcp-phase";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import type { RebuildRegistryRollback } from "./rebuild-registry-rollback";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, type RebuildShieldsWindow } from "./rebuild-shields";
@@ -163,9 +164,6 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
 
   // Intercept process.exit so a failed inner onboard can preserve the backup
   // and durable retry state instead of terminating the outer transaction.
-  const { onboard } = require("../../onboard") as {
-    onboard: (options: RebuildRecreateOnboardOpts) => Promise<void>;
-  };
   let onboardFailed = false;
   let onboardExitCode = 1;
   const savedExit = process.exit;
@@ -183,7 +181,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
   const restoreRebuildBaseImageOverride =
     pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
   try {
-    await onboard(recreateOptions);
+    await rebuildOnboardDependencies.onboard(recreateOptions);
     log("onboard() returned successfully");
   } catch (error) {
     onboardFailed = true;
