@@ -294,6 +294,54 @@ describe("created DCode sandbox finalization", () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
+  it("warns but verifies and registers after a partial workspace restore (#6311)", () => {
+    const restoreSandboxState = vi.fn(() => ({
+      success: false,
+      restoredDirs: ["workspace"],
+      failedDirs: ["skills"],
+      restoredFiles: [],
+      failedFiles: ["config.toml"],
+    }));
+    const getDcodeSelectionDrift = vi.fn(() => ({
+      changed: false,
+      providerChanged: false,
+      modelChanged: false,
+      existingProvider: "nvidia-prod",
+      existingModel: "openai:new-model",
+      unknown: false,
+    }));
+    const register = vi.fn();
+    const error = vi.fn();
+
+    finalizeCreatedSandbox(
+      {
+        sandboxName: "dcode",
+        restoreBackupPath: "/tmp/dcode-backup",
+        preUpgradeBackup: false,
+        validateManagedDcode: true,
+        provider: "nvidia-prod",
+        model: "new-model",
+        preferredInferenceApi: null,
+      },
+      {
+        restoreSandboxState,
+        getDcodeSelectionDrift,
+        register,
+        note: vi.fn(),
+        error,
+        exitProcess: (code): never => {
+          throw new Error(`exit ${code}`);
+        },
+      },
+    );
+
+    expect(error).toHaveBeenCalledWith(
+      "  Warning: partial restore. Manual recovery: /tmp/dcode-backup",
+    );
+    expect(getDcodeSelectionDrift).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
+  });
+
   it("keeps custom-image restores outside the managed config merge (#6311)", () => {
     const restoreSandboxState = vi.fn(() => ({
       success: true,
