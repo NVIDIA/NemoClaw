@@ -68,9 +68,8 @@
 # bypass: every path that launches the gateway now passes through the same
 # single-source-of-truth validator before the port is bound.
 #
-# Only the `gateway` and `config show` subcommands are intercepted; all
-# other hermes subcommands (dashboard, --version, ...) pass straight
-# through unchanged.
+# Only a small set of top-level commands are intercepted; all other hermes
+# subcommands (dashboard, --version, ...) pass straight through unchanged.
 
 import os
 import subprocess
@@ -216,6 +215,126 @@ def _run_gateway_guard(guard_path: str) -> int:
     return subprocess.call([python3, "-I", guard_path, "runtime-env"])
 
 
+_VALUE_FLAGS = {
+    "-m": "--model",
+    "--model": "--model",
+    "--provider": "--provider",
+    "-t": "--toolsets",
+    "--toolsets": "--toolsets",
+    "-s": "--skills",
+    "--skills": "--skills",
+    "-r": "--resume",
+    "--resume": "--resume",
+}
+_BOOLEAN_FLAGS = {
+    "--worktree",
+    "-w",
+    "--accept-hooks",
+    "--yolo",
+    "--pass-session-id",
+    "--ignore-user-config",
+    "--ignore-rules",
+}
+
+
+def _split_flag_value(arg: str) -> tuple[str, str] | None:
+    if not arg.startswith("--") or "=" not in arg:
+        return None
+    name, value = arg.split("=", 1)
+    return name, value
+
+
+def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
+    """Route resumed oneshot invocations through Hermes' native chat resume path.
+
+    Upstream Hermes handles top-level `-z/--oneshot` before the normal
+    `--resume`/`--continue` chat shortcut. In affected versions the resumed
+    session is available as context, but the one-shot turn is persisted under a
+    newly generated session id. The `chat --query --quiet --resume ...` path is
+    the native non-interactive route that appends to the selected session, so
+    translate only the composed top-level form and leave plain one-shot
+    invocations untouched.
+    """
+    oneshot_prompt: str | None = None
+    resume_args: list[str] = []
+    passthrough: list[str] = []
+    saw_resume = False
+    saw_continue = False
+
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+
+        if arg == "--":
+            return None
+
+        split = _split_flag_value(arg)
+        if split is not None:
+            name, value = split
+            if name == "--oneshot":
+                oneshot_prompt = value
+            elif name == "--continue":
+                saw_continue = True
+                resume_args.extend(["--continue", value])
+            elif name in _VALUE_FLAGS:
+                canonical = _VALUE_FLAGS[name]
+                if canonical == "--resume":
+                    saw_resume = True
+                    resume_args.extend([canonical, value])
+                else:
+                    passthrough.extend([canonical, value])
+            else:
+                return None
+            i += 1
+            continue
+
+        if arg in ("-z", "--oneshot"):
+            if i + 1 >= len(argv):
+                return None
+            oneshot_prompt = argv[i + 1]
+            i += 2
+            continue
+
+        if arg in _VALUE_FLAGS:
+            if i + 1 >= len(argv):
+                return None
+            canonical = _VALUE_FLAGS[arg]
+            value = argv[i + 1]
+            if canonical == "--resume":
+                saw_resume = True
+                resume_args.extend([canonical, value])
+            else:
+                passthrough.extend([canonical, value])
+            i += 2
+            continue
+
+        if arg in ("-c", "--continue"):
+            saw_continue = True
+            resume_args.append("--continue")
+            if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                resume_args.append(argv[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if arg in _BOOLEAN_FLAGS:
+            passthrough.append(arg)
+            i += 1
+            continue
+
+        # A positional command means this is not the top-level one-shot form.
+        return None
+
+    if not oneshot_prompt or not (saw_resume or saw_continue):
+        return None
+
+    translated = ["chat", "--query", oneshot_prompt, "--quiet", "--yolo", "--accept-hooks"]
+    translated.extend(resume_args)
+    translated.extend(passthrough)
+    return translated
+
+
 def main(argv: list[str]) -> int:
     real_hermes = _resolve_real_hermes()
     guard_path = _resolve_guard()
@@ -225,6 +344,9 @@ def main(argv: list[str]) -> int:
         rc = _run_gateway_guard(guard_path)
         if rc != 0:
             return rc
+    translated = _translate_resumed_oneshot(argv)
+    if translated is not None:
+        os.execv(real_hermes, [real_hermes, *translated])
     os.execv(real_hermes, [real_hermes, *argv])
     return 1
 

@@ -214,6 +214,51 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("dashboard");
   });
 
+  it("routes resumed one-shot invocations through chat query so Hermes appends to the target session (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "-z", "What secret number did I give you?"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(
+      "chat --query What secret number did I give you? --quiet --yolo --accept-hooks --resume 20260612_050401_aa9d27",
+    );
+  });
+
+  it("routes continued one-shot invocations through chat query while preserving model/tool flags (#5254)", () => {
+    const run = runWrapper(
+      [
+        "-c",
+        "daily check",
+        "--oneshot=Summarize the latest turn",
+        "--model",
+        "anthropic/claude-sonnet-4",
+        "--toolsets=memory,session_search",
+        "--ignore-rules",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(
+      "chat --query Summarize the latest turn --quiet --yolo --accept-hooks --continue daily check --model anthropic/claude-sonnet-4 --toolsets memory,session_search --ignore-rules",
+    );
+  });
+
+  it("leaves plain one-shot invocations on the upstream one-shot path (#5254)", () => {
+    const run = runWrapper(["-z", "Reply pong"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("-z Reply pong");
+  });
+
   it("passes --version through (build assertion path) without invoking the guard", () => {
     const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
 
