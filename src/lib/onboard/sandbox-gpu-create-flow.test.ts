@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   streamSandboxCreate: vi.fn(),
   waitForCreatedSandboxReadyWithTrace: vi.fn(),
   printReadinessFailure: vi.fn(),
+  enforceDockerGpuPatchPreserveNetwork: vi.fn(),
   verifyGpuSandboxAccessAfterReady: vi.fn(),
   createDockerGpuSandboxCreatePatch: vi.fn(),
   printSandboxCreateFailureDiagnostics: vi.fn(),
@@ -25,7 +26,7 @@ vi.mock("./sandbox-readiness-tracing", () => ({
 }));
 
 vi.mock("./docker-gpu-local-inference", () => ({
-  enforceDockerGpuPatchPreserveNetwork: vi.fn(),
+  enforceDockerGpuPatchPreserveNetwork: mocks.enforceDockerGpuPatchPreserveNetwork,
   verifyGpuSandboxAccessAfterReady: mocks.verifyGpuSandboxAccessAfterReady,
 }));
 
@@ -132,6 +133,7 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     mocks.verifyGpuSandboxAccessAfterReady.mockImplementation((_config, options) =>
       options.verifyDirectSandboxGpu(options.sandboxName),
     );
+    mocks.enforceDockerGpuPatchPreserveNetwork.mockResolvedValue(false);
     mocks.collectDockerGpuPatchDiagnostics.mockReturnValue(null);
     mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({ ok: true, ids: [] });
     mocks.queryOpenShellDockerSandboxImage.mockReturnValue({
@@ -259,6 +261,35 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
 
     expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
       expect.objectContaining({ stableReadyPolls: 1 }),
+    );
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).not.toHaveBeenCalled();
+  });
+
+  it("runs the local-provider bridge preflight only after selecting compatibility fallback", async () => {
+    const input = createInput();
+    input.provider = "ollama-local";
+    input.sandboxEnv = {
+      NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host",
+    };
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+
+    await expect(runSandboxGpuCreateFlow(input, createDeps())).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledOnce();
+    expect(mocks.enforceDockerGpuPatchPreserveNetwork).toHaveBeenCalledWith(
+      "ollama-local",
+      input.sandboxGpuConfig,
+      expect.objectContaining({
+        dockerDriverGateway: true,
+        selectedRoute: "compatibility",
+        gatewayPort: 8080,
+      }),
     );
   });
 

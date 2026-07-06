@@ -1826,6 +1826,13 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 The automatic route depends on the host environment. Identify the matching path before applying the recovery guidance.
 
+| Symptom | Route or stage | Recovery |
+| --- | --- | --- |
+| Native `--gpu` is rejected, GPU initialization fails during readiness, or the CUDA proof fails | Ordinary Linux native attempt | In automatic mode, wait for the one safe compatibility retry. Use `NEMOCLAW_DOCKER_GPU_PATCH=1` to select compatibility before creation, or `=0` to require native-only behavior. |
+| `Cleanup could not be proven safe` | Native-to-compatibility handoff | Run the printed sandbox deletion command, verify both the gateway row and labeled Docker containers are absent, then rerun onboarding. |
+| The patched container exits or the compatibility attempt fails | Compatibility recreation | Inspect the saved diagnostics, repair the NVIDIA Container Toolkit/CDI configuration, clean up the failed sandbox, and rerun onboarding. |
+| A recreated container inherits only a loopback DNS stub and no usable upstream | Compatibility DNS fallback | Repair the host's `systemd-resolved` upstream configuration, then rerun onboarding. |
+
 #### Ordinary native Linux: native with one safe fallback
 
 Automatic GPU onboarding first uses native OpenShell GPU injection.
@@ -1834,6 +1841,8 @@ Before that retry, NemoClaw warns that the legacy GPU compatibility envelope rec
 NemoClaw verifies cleanup with two stable checks (sandbox absent from gateway list and no labeled containers) before retrying through the compatibility path.
 Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry.
 These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables.
+The first observation is immediate, so the default bound performs at most four one-second sleeps plus the five gateway/container queries.
+The bounds are intentionally fixed: allowing environment input to weaken or extend the cleanup proof would make a security gate deployment-dependent. On a host that cannot prove absence within the bound, onboarding fails closed; select compatibility from the outset with `NEMOCLAW_DOCKER_GPU_PATCH=1` instead of weakening the handoff proof.
 If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
 Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=1`, or another legacy nonzero value, to use only the compatibility path for diagnostics or older host compatibility.

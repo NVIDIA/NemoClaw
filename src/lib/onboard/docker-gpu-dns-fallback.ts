@@ -44,13 +44,18 @@ function isUsableUpstreamResolver(ip: string): boolean {
  *   non-loopback resolver to recreated containers.
  *
  * This host-only probe runs during container creation; only the selected address is passed to
- * Docker via `--dns`, and the sandbox receives no runtime access to either host file.
+ * Docker via `--dns`, and the sandbox receives no runtime access to either host file. These files
+ * share the host trust boundary with the Docker daemon: an actor that can rewrite them can already
+ * control host and Docker DNS. A downstream CIDR allowlist would not restore that boundary and
+ * would reject legitimate private and link-local enterprise/cloud resolvers, so this probe accepts
+ * syntactically valid unicast upstreams and rejects loopback, unspecified, and multicast addresses.
  */
 export function detectSandboxFallbackDns(
   deps: { readFile?: (path: string) => string | null } = {},
 ): string | null {
   // `readFile` is a test seam, not a production path input. Production calls omit it, and this
-  // function invokes either implementation only with the two hardcoded host resolver paths below.
+  // function invokes either implementation only with the two hardcoded, host-trusted resolver
+  // paths below. The selected address is data for Docker's `--dns` argument, never a command.
   const readFile =
     deps.readFile ??
     ((path: string): string | null => {

@@ -83,6 +83,11 @@ export interface SandboxGpuCreateFlowResult {
  * - Regression tests: sandbox-gpu-create-attempt.test.ts covers strict failure
  *   classification, non-GPU exclusions, safe cleanup, and the one-retry limit;
  *   the live Hermes GPU workflow proves native success and fallback.
+ * - Existing error boundary: build, upload, TLS, provider, policy, generic
+ *   readiness, and refused-cleanup failures retain onboarding's established
+ *   `process.exit` paths. The caller registers process-exit cleanup for its
+ *   temporary policy/build context before entering this flow; only classified
+ *   native GPU failures return into the compatibility orchestration.
  * - Removal condition: remove automatic fallback only when the minimum
  *   supported OpenShell version provides reliable native GPU injection across
  *   ordinary Linux, Docker Desktop WSL, and Jetson/Tegra hosts.

@@ -154,6 +154,30 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(result.reason).toContain("gateway unavailable");
   });
 
+  it("exhausts the fixed poll bound when gateway absence cannot be proven", () => {
+    const runOpenshell = openshellWithList({ status: 1, stderr: "gateway unavailable" });
+    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
+    const sleep = vi.fn();
+
+    const result = cleanupNativeGpuAttemptForFallback("alpha", {
+      runOpenshell,
+      queryContainers,
+      sleep,
+    });
+
+    expect(result).toMatchObject({
+      safe: false,
+      sandboxPresent: null,
+      containerIds: [],
+      reason: "gateway unavailable",
+    });
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "list")).toHaveLength(
+      MAX_CLEANUP_ATTEMPTS,
+    );
+    expect(queryContainers).toHaveBeenCalledTimes(MAX_CLEANUP_ATTEMPTS);
+    expect(sleep).toHaveBeenCalledTimes(MAX_CLEANUP_ATTEMPTS - 1);
+  });
+
   it("refuses fallback when the labeled-container query fails", () => {
     const result = cleanupNativeGpuAttemptForFallback(
       "alpha",
