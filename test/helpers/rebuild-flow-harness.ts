@@ -231,7 +231,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const agentRuntime = requireDist("../../agent/runtime.js");
   const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
   const gatewayState = requireDist("./gateway-state.js");
-  const onboardMod = requireDist("../../onboard.js");
+  const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
   const sandboxState = requireDist("../../state/sandbox.js");
@@ -473,10 +473,14 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
-    await overrides.onboard?.(session);
-  });
-  vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
+  const onboardSpy = vi
+    .spyOn(rebuildOnboardDependencies, "onboard")
+    .mockImplementation(async () => {
+      await overrides.onboard?.(session);
+    });
+  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
+    undefined,
+  );
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {

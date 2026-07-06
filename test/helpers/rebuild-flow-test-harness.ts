@@ -40,7 +40,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const resolve = requireDist("../../adapters/openshell/resolve.js");
   const agentDefs = requireDist("../../agent/defs.js");
   const agentRuntime = requireDist("../../agent/runtime.js");
-  const onboardMod = requireDist("../../onboard.js");
+  const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
   const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
   const hermesProviderAuth = requireDist("../../hermes-provider-auth.js");
   const onboardSession = requireDist("../../state/onboard-session.js");
@@ -141,7 +141,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const defaultHydrateCredentialEnv =
     onboardCredentialEnv.hydrateCredentialEnv.bind(onboardCredentialEnv);
   const hydrateCredentialEnvSpy = vi
-    .spyOn(onboardMod, "hydrateCredentialEnv")
+    .spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv")
     .mockImplementation((...args: unknown[]) => {
       const credentialEnv = String(args[0] ?? "");
       return overrides.hydrateCredentialEnv
@@ -369,14 +369,16 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi
-    .spyOn(onboardMod, "onboard")
+    .spyOn(rebuildOnboardDependencies, "onboard")
     .mockImplementation(async (...args: unknown[]) => {
       const options = args[0] as RebuildRecreateOnboardOpts;
       await overrides.onboard?.(session, options);
     });
-  vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
+  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
+    undefined,
+  );
   const ensureValidatedBraveSearchCredentialSpy = vi
-    .spyOn(onboardMod, "ensureValidatedWebSearchCredential")
+    .spyOn(rebuildOnboardDependencies, "ensureValidatedWebSearchCredential")
     .mockImplementation(
       overrides.ensureValidatedWebSearchCredential ??
         overrides.ensureValidatedBraveSearchCredential ??
