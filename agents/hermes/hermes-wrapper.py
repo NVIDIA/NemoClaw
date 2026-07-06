@@ -226,6 +226,9 @@ _VALUE_FLAGS = {
     "-r": "--resume",
     "--resume": "--resume",
 }
+# Keep this allowlist aligned with the top-level flags accepted by the Hermes
+# Agent CLI used in the sandbox image. Unknown flags deliberately fail closed by
+# passing the original argv through to upstream Hermes.
 _BOOLEAN_FLAGS = {
     "--worktree",
     "-w",
@@ -254,12 +257,27 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
     the native non-interactive route that appends to the selected session, so
     translate only the composed top-level form and leave plain one-shot
     invocations untouched.
+
+    NemoClaw owns this installed wrapper, not the prebuilt Hermes Agent binary
+    inside the sandbox base image, so the wrapper is the smallest compatibility
+    boundary available here. Delete this translation once Hermes top-level
+    `--resume/-c` plus `-z/--oneshot` natively appends the new user/assistant
+    turn to the selected session without creating a fresh session id. Until
+    then, wrapper argv tests cover the routed form and the fail-closed cases;
+    live sandbox validation should verify the persisted `sessions list/export`
+    behavior when a matching Hermes runtime is available.
+
+    Top-level one-shot is already non-interactive: Hermes' one-shot runner sets
+    `HERMES_YOLO_MODE=1` and `HERMES_ACCEPT_HOOKS=1`. The translated chat query
+    therefore includes `--yolo --accept-hooks` to preserve that approval and
+    hook policy rather than to broaden user intent.
     """
     oneshot_prompt: str | None = None
     resume_args: list[str] = []
     passthrough: list[str] = []
     saw_resume = False
     saw_continue = False
+    saw_oneshot = False
 
     i = 0
     while i < len(argv):
@@ -272,13 +290,20 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
         if split is not None:
             name, value = split
             if name == "--oneshot":
+                if saw_oneshot:
+                    return None
+                saw_oneshot = True
                 oneshot_prompt = value
             elif name == "--continue":
+                if saw_resume or saw_continue:
+                    return None
                 saw_continue = True
                 resume_args.extend(["--continue", value])
             elif name in _VALUE_FLAGS:
                 canonical = _VALUE_FLAGS[name]
                 if canonical == "--resume":
+                    if saw_resume or saw_continue:
+                        return None
                     saw_resume = True
                     resume_args.extend([canonical, value])
                 else:
@@ -291,6 +316,9 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
         if arg in ("-z", "--oneshot"):
             if i + 1 >= len(argv):
                 return None
+            if saw_oneshot:
+                return None
+            saw_oneshot = True
             oneshot_prompt = argv[i + 1]
             i += 2
             continue
@@ -301,6 +329,8 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             canonical = _VALUE_FLAGS[arg]
             value = argv[i + 1]
             if canonical == "--resume":
+                if saw_resume or saw_continue:
+                    return None
                 saw_resume = True
                 resume_args.extend([canonical, value])
             else:
@@ -309,6 +339,8 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             continue
 
         if arg in ("-c", "--continue"):
+            if saw_resume or saw_continue:
+                return None
             saw_continue = True
             resume_args.append("--continue")
             if i + 1 < len(argv) and not argv[i + 1].startswith("-"):

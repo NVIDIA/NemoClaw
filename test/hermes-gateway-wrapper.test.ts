@@ -259,6 +259,89 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("-z Reply pong");
   });
 
+  it("routes equals-style resumed one-shot invocations through chat query (#5254)", () => {
+    const run = runWrapper(["--resume=20260612_050401_aa9d27", "--oneshot=Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(
+      "chat --query Repeat it --quiet --yolo --accept-hooks --resume 20260612_050401_aa9d27",
+    );
+  });
+
+  it("passes positional subcommands through instead of translating nested one-shot flags (#5254)", () => {
+    const run = runWrapper(["chat", "--resume", "20260612_050401_aa9d27", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("chat --resume 20260612_050401_aa9d27 -z Repeat it");
+  });
+
+  it("passes unknown flags through instead of translating a partial allowlist match (#5254)", () => {
+    const run = runWrapper(
+      ["--resume", "20260612_050401_aa9d27", "--unknown", "-z", "Repeat it"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume 20260612_050401_aa9d27 --unknown -z Repeat it");
+  });
+
+  it("passes argv with -- marker through instead of translating after argument termination (#5254)", () => {
+    const run = runWrapper(["--resume", "20260612_050401_aa9d27", "--", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume 20260612_050401_aa9d27 -- -z Repeat it");
+  });
+
+  it("passes multiple resume selectors through instead of translating ambiguous targets (#5254)", () => {
+    const run = runWrapper(
+      [
+        "--resume",
+        "20260612_050401_aa9d27",
+        "--resume",
+        "20260612_050446_924bd8",
+        "-z",
+        "Repeat it",
+      ],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe(
+      "--resume 20260612_050401_aa9d27 --resume 20260612_050446_924bd8 -z Repeat it",
+    );
+  });
+
+  it("passes multiple one-shot prompts through instead of dropping an earlier prompt (#5254)", () => {
+    const run = runWrapper(
+      ["-z", "First prompt", "-z", "Second prompt", "--resume", "20260612_050401_aa9d27"],
+      {},
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("-z First prompt -z Second prompt --resume 20260612_050401_aa9d27");
+  });
+
+  it("passes empty one-shot prompts through instead of translating an invalid query (#5254)", () => {
+    const run = runWrapper(["--oneshot=", "--resume", "20260612_050401_aa9d27"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--oneshot= --resume 20260612_050401_aa9d27");
+  });
+
   it("passes --version through (build assertion path) without invoking the guard", () => {
     const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
 
