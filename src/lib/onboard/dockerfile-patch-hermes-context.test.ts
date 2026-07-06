@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
@@ -43,19 +43,15 @@ function patchHermes(dockerfilePath: string): void {
   );
 }
 
-function withContextWindowEnv<T>(value: string | undefined, fn: () => T): T {
-  const prior = process.env.NEMOCLAW_CONTEXT_WINDOW;
-  if (value === undefined) delete process.env.NEMOCLAW_CONTEXT_WINDOW;
-  else process.env.NEMOCLAW_CONTEXT_WINDOW = value;
-  try {
-    return fn();
-  } finally {
-    if (prior === undefined) delete process.env.NEMOCLAW_CONTEXT_WINDOW;
-    else process.env.NEMOCLAW_CONTEXT_WINDOW = prior;
-  }
-}
+// Each test controls NEMOCLAW_CONTEXT_WINDOW by direct assignment; the hooks
+// always start and end from a cleared state (no branching), matching the
+// sibling dockerfile-patch test suites.
+beforeEach(() => {
+  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+});
 
 afterEach(() => {
+  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -68,19 +64,21 @@ describe("patchStagedDockerfile :: Hermes NEMOCLAW_CONTEXT_WINDOW (#6177)", () =
 
   it("bakes a probed/explicit context window into the staged Hermes Dockerfile", () => {
     const dockerfilePath = stageHermesDockerfile();
-    withContextWindowEnv("65536", () => patchHermes(dockerfilePath));
+    process.env.NEMOCLAW_CONTEXT_WINDOW = "65536";
+    patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=65536");
   });
 
   it("leaves the empty default when no context window is configured", () => {
     const dockerfilePath = stageHermesDockerfile();
-    withContextWindowEnv(undefined, () => patchHermes(dockerfilePath));
+    patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
   });
 
   it("ignores a malformed context window and preserves auto-detect", () => {
     const dockerfilePath = stageHermesDockerfile();
-    withContextWindowEnv("not-a-number", () => patchHermes(dockerfilePath));
+    process.env.NEMOCLAW_CONTEXT_WINDOW = "not-a-number";
+    patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
   });
 });

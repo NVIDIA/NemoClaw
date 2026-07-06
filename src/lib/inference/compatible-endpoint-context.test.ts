@@ -113,7 +113,7 @@ describe("compatible-endpoint context window", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
 
     // A later selection pass probes an endpoint that reports no max_model_len:
-    // the stale auto value must not survive as if the user had set it.
+    // the stale auto value must not survive (would look like a user override).
     apply({ fetchModels: () => ({ data: [{ id: "model-a" }] }) }, env);
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
   });
