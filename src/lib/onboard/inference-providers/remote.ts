@@ -19,15 +19,23 @@ function gatewayReachableCompatibleEndpointUrl(
   } catch {
     return endpointUrl;
   }
-  const hostname = parsed.hostname.toLowerCase();
-  const isLoopback =
-    hostname === "localhost" ||
-    hostname === "127.0.0.1" ||
-    hostname === "::1" ||
-    hostname === "[::1]";
-  if (parsed.protocol !== "http:" || !isLoopback || !parsed.port) return endpointUrl;
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const port = Number(parsed.port);
+  const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (
+    parsed.protocol !== "http:" ||
+    parsed.username ||
+    parsed.password ||
+    !isLoopback ||
+    !Number.isInteger(port) ||
+    port < 1024
+  ) {
+    return endpointUrl;
+  }
   parsed.hostname = "host.openshell.internal";
-  return parsed.toString().replace(/\/$/, parsed.pathname === "/" ? "/" : "");
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  parsed.pathname = pathname || "/";
+  return parsed.pathname === "/" ? parsed.origin : `${parsed.origin}${parsed.pathname}`;
 }
 
 /**
@@ -103,8 +111,8 @@ export async function setupRemoteProviderInference(
   while (true) {
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
+    const gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
     let providerResult;
-    let gatewayEndpointUrl: string | null | undefined = resolvedEndpointUrl;
     if (reuseGatewayCredentialWithoutLocalKey) {
       // This is only a last-moment existence probe. The primary authorization
       // of the provider's non-secret credential/config binding identity is
@@ -127,7 +135,6 @@ export async function setupRemoteProviderInference(
         resolvedCredentialEnv && credentialValue
           ? { [resolvedCredentialEnv]: credentialValue }
           : {};
-      gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
       providerResult = credentialValue
         ? upsertProvider(
             provider,
@@ -163,6 +170,9 @@ export async function setupRemoteProviderInference(
     }
     const argsv = ["inference", "set"];
     if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
+      // The host-side probe validates the user-provided loopback URL. When the
+      // provider route is rewritten to host.openshell.internal, OpenShell's
+      // host-side verifier cannot resolve that sandbox-only bridge name.
       argsv.push("--no-verify");
     }
     argsv.push("--provider", provider, "--model", model);

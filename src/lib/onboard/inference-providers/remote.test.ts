@@ -36,6 +36,16 @@ function makeDeps(overrides: Partial<RemoteProviderDeps> = {}): RemoteProviderDe
         modelMode: "input",
         defaultModel: "custom-model",
       },
+      openai: {
+        label: "OpenAI API",
+        providerName: "openai-api",
+        providerType: "openai",
+        credentialEnv: "OPENAI_API_KEY",
+        endpointUrl: "https://api.openai.com/v1",
+        helpUrl: null,
+        modelMode: "input",
+        defaultModel: "gpt-4.1",
+      },
     },
     hydrateCredentialEnv: vi.fn(() => "dummy-key"),
     promptValidationRecovery: vi.fn(async () => "selection" as const),
@@ -51,6 +61,8 @@ function makeDeps(overrides: Partial<RemoteProviderDeps> = {}): RemoteProviderDe
 }
 
 describe("setupRemoteProviderInference", () => {
+  const model = "Qwen/Qwen2.5-1.5B-Instruct";
+
   it("uses a sandbox-facing host alias for loopback compatible endpoints (#5744)", async () => {
     const deps = makeDeps();
 
@@ -58,7 +70,7 @@ describe("setupRemoteProviderInference", () => {
       setupRemoteProviderInference(
         {
           sandboxName: "dcode-vllm-local",
-          model: "Qwen/Qwen2.5-1.5B-Instruct",
+          model,
           provider: "compatible-endpoint",
           endpointUrl: "http://localhost:8000/v1",
           credentialEnv: "COMPATIBLE_API_KEY",
@@ -82,9 +94,99 @@ describe("setupRemoteProviderInference", () => {
         "--provider",
         "compatible-endpoint",
         "--model",
-        "Qwen/Qwen2.5-1.5B-Instruct",
+        model,
         "--timeout",
         "180",
+      ],
+      { ignoreError: true },
+    );
+  });
+
+  it("uses the gateway alias when reusing an existing loopback compatible provider (#5744)", async () => {
+    const deps = makeDeps();
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: "dcode-vllm-local",
+          model,
+          provider: "compatible-endpoint",
+          endpointUrl: "http://127.0.0.1:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          reuseGatewayCredentialWithoutLocalKey: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(deps.upsertProvider).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "get", "compatible-endpoint"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+      },
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--timeout",
+        "180",
+      ],
+      { ignoreError: true },
+    );
+  });
+
+  it.each([
+    ["HTTPS loopback", "compatible-endpoint", "https://localhost:8000/v1"],
+    ["non-loopback host", "compatible-endpoint", "http://10.0.0.1:8000/v1"],
+    ["missing explicit port", "compatible-endpoint", "http://localhost/v1"],
+    ["privileged port", "compatible-endpoint", "http://localhost:1023/v1"],
+    ["embedded URL credentials", "compatible-endpoint", "http://user:pass@localhost:8000/v1"],
+    ["malformed URL", "compatible-endpoint", "not a url"],
+    ["non-compatible provider", "openai-api", "http://localhost:8000/v1"],
+  ])("does not rewrite %s endpoints", async (_name, provider, endpointUrl) => {
+    const deps = makeDeps();
+    const credentialEnv =
+      provider === "compatible-endpoint" ? "COMPATIBLE_API_KEY" : "OPENAI_API_KEY";
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: "dcode-vllm-local",
+          model,
+          provider,
+          endpointUrl,
+          credentialEnv,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(deps.upsertProvider).toHaveBeenCalledWith(
+      provider,
+      "openai",
+      credentialEnv,
+      endpointUrl,
+      { [credentialEnv]: "dummy-key" },
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--provider",
+        provider,
+        "--model",
+        model,
+        ...(provider === "compatible-endpoint" ? ["--timeout", "180"] : []),
       ],
       { ignoreError: true },
     );
