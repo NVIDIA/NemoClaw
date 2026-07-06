@@ -1222,9 +1222,10 @@ liveTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
-        "the first three host-side openclaw agent turns after fresh onboard stay on the gateway path",
+        "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
+        "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
-        "operator.admin remains pending until a reviewed devices approve and cron retry",
+        "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run",
         "CLI scope upgrade is approved without operator.admin",
         "final openclaw agent turn stays on the gateway path and answers 42",
       ],
@@ -1398,13 +1399,16 @@ liveTest(
     // path — whichever tier they request is one of the two already proven here,
     // so no separate per-command evidence is required to close #5324.
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
+    // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
+    // subcommand (the pinned OpenClaw 2026.6.10 command catalog has none).
+    // Use the issue's documented `nemoclaw <name> exec -- openclaw ...` form
+    // for its cron reproduction while preserving #4504's exact command above.
     const cronTrigger = await host.command(
       process.execPath,
       [
         CLI_ENTRYPOINT,
-        "sandbox",
-        "exec",
         SANDBOX_NAME,
+        "exec",
         "--timeout",
         "60",
         "--",

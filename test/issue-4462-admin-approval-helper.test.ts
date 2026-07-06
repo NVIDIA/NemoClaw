@@ -81,6 +81,13 @@ describe("prepared connect-shell administrative approval", () => {
     expect(script).toContain("request_scopes.issubset(allowed_scopes)");
     expect(script).toContain("operator.admin was already granted before explicit approval");
     expect(script).toContain("openclaw cron add");
+    expect(script).toContain(
+      'openclaw cron run "$cron_id" --wait --wait-timeout 2m --poll-interval 1s',
+    );
+    expect(script).toContain("value.get('name') == want");
+    expect(script.indexOf('openclaw devices approve "$request_id"')).toBeLessThan(
+      script.indexOf('openclaw cron run "$cron_id"'),
+    );
     expect(script).toContain("def _load_agent_json_docs");
     expect(script).toContain('[ "$agent_reply" = "42" ]');
     expect(script).not.toContain("pending.json");
