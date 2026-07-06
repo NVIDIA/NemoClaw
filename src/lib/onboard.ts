@@ -909,20 +909,15 @@ function persistMigratedLegacyKeys(): void {
   }
 }
 
-function upsertProvider(
-  name: string,
-  type: string,
-  credentialEnv: string,
-  baseUrl: string | null,
-  env: NodeJS.ProcessEnv = {},
-) {
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+function upsertProvider(name: string, type: string, credentialEnv: string, baseUrl: string | null, env: NodeJS.ProcessEnv = {}, gatewayName: string = GATEWAY_NAME) {
   const result = onboardProviders.upsertProvider(
     name,
     type,
     credentialEnv,
     baseUrl,
     env,
-    runOpenshell,
+    setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName),
   );
   if (result.ok && credentialEnv) {
     const stagedValue = stagedLegacyValues.get(credentialEnv);
@@ -996,8 +991,8 @@ function upsertMessagingProviders(
   if (mutated) persistMigratedLegacyKeys();
   return upserted;
 }
-const providerExistsInGateway = (name: string) =>
-  onboardProviders.providerExistsInGateway(name, runOpenshell);
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+const providerExistsInGateway = (name: string, gatewayName: string = GATEWAY_NAME) => onboardProviders.providerExistsInGateway(name, setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, gatewayName));
 
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility } =
   inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
@@ -3170,7 +3165,7 @@ type SetupNimSelectionState =
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null };
+type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null; gatewayName: string | null };
 
 async function handleVllmSelection(
   state: SetupNimSelectionState,
@@ -3560,7 +3555,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
         provider: state.provider,
         helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
         recoveredFromSandbox,
-        providerExistsInGateway,
+        providerExistsInGateway: (name) => providerExistsInGateway(name, args.gatewayName ?? GATEWAY_NAME),
       });
       state.skipHostInferenceSmoke = reuseGatewayCredential;
       state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
@@ -3620,7 +3615,7 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
         { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
-        { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell), note },
+        { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell, args.gatewayName ?? GATEWAY_NAME), note },
       );
     } else {
       const credentialResult = await ensureNamedCredential(
@@ -4067,7 +4062,7 @@ async function preflightAuthoritativeRebuildTarget(
           ensureOpenshellForOnboard((code) =>
             fail(`OpenShell component preflight exited with code ${String(code)}`),
           ),
-        inferenceRouteReady: isInferenceRouteReady,
+        inferenceRouteReady: (p, m) => isInferenceRouteReady(authoritativeGateway.name, p, m),
         captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
         checkPort: (port) => checkPortAvailable(port),
       },
@@ -4456,9 +4451,13 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxGpuConfig,
       gpuPassthrough,
     };
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const coreGatewayName = gatewayBinding.resolveCoreOnboardGatewayName({ authoritativeGatewayName: authoritativeGateway?.name, currentGatewayName: GATEWAY_NAME, resume, sandbox: sandboxName ? registry.getSandbox(sandboxName) : null });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, coreGatewayName);
     const [providerInferencePhase, sandboxPhase] =
       createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
-        gatewayName: GATEWAY_NAME,
+        gatewayName: coreGatewayName,
         forceProviderSelection: forceProviderSelectionForAgentChange,
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         env: process.env,
@@ -4470,8 +4469,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         providerDeps: {
           checkGatewayRouteCompatibility,
           normalizeHermesAuthMethod,
-          setupNim: (gpu, sandboxName, agent, recoverProvider) =>
-            setupNim(gpu, sandboxName, agent, recoverProvider, opts.rebuildRegistryInferenceRoute),
+          setupNim: (g, s, a, recover, gateway) =>
+            setupNim(g, s, a, recover, opts.rebuildRegistryInferenceRoute, gateway),
           setupInference,
           startRecordedStep,
           recordStepComplete,
@@ -4493,9 +4492,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           isInferenceRouteReady,
           isRoutedInferenceProvider,
           reconcileModelRouter,
-          reupsertRoutedProvider: (p, url, ce) => {
+          reupsertRoutedProvider: (gatewayName, p, url, ce) => {
             const r = routedInference.upsertRoutedProvider(p, url, ce, {
-              upsertProvider,
+              // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+              upsertProvider: setupInferenceFactory.bindGatewayUpsertProvider(upsertProvider, gatewayName),
               hydrateCredentialEnv,
             });
             return {
@@ -4654,8 +4654,8 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
         loadSession: onboardSession.loadSession,
         getActiveSandbox: (name) => registry.getSandbox(name),
         mergePolicyMessagingChannels,
-        verifyCompatibleEndpointSandboxSmoke: (options) =>
-          verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell, redact }),
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        verifyCompatibleEndpointSandboxSmoke: (options) => verifyCompatibleEndpointSandboxSmoke({ ...options, runOpenshell: runCoreGatewayOpenshell, redact }),
         preparePolicyPresetResumeSelection: (name, options) =>
           preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,

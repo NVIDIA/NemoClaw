@@ -12,6 +12,7 @@ import { assertProviderInferenceRouteCompatible } from "./provider-inference-rou
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
 export interface ProviderInferenceSetupOptions {
+  gatewayName?: string;
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
@@ -77,6 +78,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       sandboxName: string | null,
       agent: Agent,
       allowRecordedProviderRecovery?: boolean,
+      gatewayName?: string,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -96,6 +98,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     ensureResumeProviderReady(
+      gatewayName: string,
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
@@ -128,10 +131,11 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     isNonInteractive(): boolean;
     getOpenshellBinary(): string;
     needsBedrockRuntimeAdapter(provider: string, endpointUrl: string | null): boolean;
-    isInferenceRouteReady(provider: string, model: string): boolean;
+    isInferenceRouteReady(gatewayName: string, provider: string, model: string): boolean;
     isRoutedInferenceProvider(provider: string): boolean;
     reconcileModelRouter(): Promise<void>;
     reupsertRoutedProvider(
+      gatewayName: string,
       provider: string,
       endpointUrl: string | null,
       credentialEnv: string | null,
@@ -296,7 +300,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         endpointUrl,
         preferredInferenceApi,
       });
-      const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
+      const recovery = await deps.ensureResumeProviderReady(gatewayName, provider, credentialEnv);
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       // Rebuild may be resuming a legacy session whose step marker was never
@@ -393,7 +397,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () => deps.setupNim(gpu, sandboxName, agent, !fresh),
+        () => deps.setupNim(gpu, sandboxName, agent, !fresh, gatewayName),
       );
       model = selection.model;
       provider = selection.provider;
@@ -466,7 +470,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       !forceProviderSelection &&
       !forceInferenceSetup &&
       effectiveResume &&
-      deps.isInferenceRouteReady(provider, model);
+      deps.isInferenceRouteReady(gatewayName, provider, model);
     if (resumeInference) {
       if (provider === constants.hermesProviderName) {
         let inferenceResult: ProviderInferenceRetry;
@@ -474,6 +478,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
           const confirmedSandboxName = sandboxName;
           const inferenceOptions = {
+            gatewayName,
             allowToolsIncompatible,
             ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
             ...(reuseGatewayCredentialWithoutLocalKey
@@ -536,7 +541,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         // #4564: re-upsert the gateway provider with the sandbox-facing
         // endpoint so a stale localhost base URL recorded by an earlier run is
         // repaired on resume instead of surviving and breaking inference.local.
-        const reupserted = deps.reupsertRoutedProvider(provider, endpointUrl, credentialEnv);
+        const reupserted = deps.reupsertRoutedProvider(
+          gatewayName,
+          provider,
+          endpointUrl,
+          credentialEnv,
+        );
         if (!reupserted.ok) {
           deps.error(
             `  ${reupserted.message ?? "Failed to update the routed inference provider."}`,
@@ -598,6 +608,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
 
       const inferenceOptions = {
+        gatewayName,
         allowToolsIncompatible,
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),

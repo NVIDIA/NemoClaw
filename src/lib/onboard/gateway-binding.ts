@@ -141,6 +141,18 @@ export function resolveSandboxGatewayName(
   throw new Error(`Invalid persisted sandbox gateway binding (${detail.join(", ")})`);
 }
 
+/** Resolve the core onboarding target without overriding an authoritative rebuild handoff. */
+export function resolveCoreOnboardGatewayName(options: {
+  authoritativeGatewayName?: string | null;
+  currentGatewayName: string;
+  resume: boolean;
+  sandbox: SandboxGatewayBinding | null | undefined;
+}): string {
+  if (options.authoritativeGatewayName) return options.authoritativeGatewayName;
+  if (!options.resume || !options.sandbox) return options.currentGatewayName;
+  return resolveSandboxGatewayName(options.sandbox);
+}
+
 /**
  * Resolve the Docker-driver gateway state directory leaf name for a gateway
  * port. The state dir holds the gateway pid file and runtime marker, so a

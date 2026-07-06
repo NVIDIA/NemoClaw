@@ -19,6 +19,7 @@ import {
   BASE_GATEWAY_NAME,
   BASE_GATEWAY_STATE_DIR_NAME,
   createDynamicGatewayRuntimeHelpers,
+  resolveCoreOnboardGatewayName,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
@@ -235,6 +236,61 @@ describe("resolveSandboxGatewayName", () => {
     expect(() => resolveSandboxGatewayName({ gatewayName: "nemoclaw-8080" })).toThrow(
       /Invalid persisted sandbox gateway binding/,
     );
+  });
+});
+
+describe("resolveCoreOnboardGatewayName", () => {
+  const currentGatewayName = "nemoclaw";
+
+  it("prefers the authoritative rebuild handoff when the registry row is gone", () => {
+    expect(
+      resolveCoreOnboardGatewayName({
+        authoritativeGatewayName: "nemoclaw-9090",
+        currentGatewayName,
+        resume: true,
+        sandbox: null,
+      }),
+    ).toBe("nemoclaw-9090");
+  });
+
+  it("uses the registered sandbox binding for an ordinary resume", () => {
+    expect(
+      resolveCoreOnboardGatewayName({
+        currentGatewayName,
+        resume: true,
+        sandbox: { gatewayName: "nemoclaw-9090", gatewayPort: 9090 },
+      }),
+    ).toBe("nemoclaw-9090");
+  });
+
+  it("keeps the requested gateway for fresh or pre-registration flows", () => {
+    expect(
+      resolveCoreOnboardGatewayName({
+        currentGatewayName: "nemoclaw-9191",
+        resume: false,
+        sandbox: { gatewayPort: 9090 },
+      }),
+    ).toBe("nemoclaw-9191");
+    expect(
+      resolveCoreOnboardGatewayName({
+        currentGatewayName: "nemoclaw-9191",
+        resume: true,
+        sandbox: null,
+      }),
+    ).toBe("nemoclaw-9191");
+  });
+
+  it("uses the default for legacy rows and rejects invalid persisted bindings", () => {
+    expect(resolveCoreOnboardGatewayName({ currentGatewayName, resume: true, sandbox: {} })).toBe(
+      BASE_GATEWAY_NAME,
+    );
+    expect(() =>
+      resolveCoreOnboardGatewayName({
+        currentGatewayName,
+        resume: true,
+        sandbox: { gatewayName: "../other" },
+      }),
+    ).toThrow(/Invalid persisted sandbox gateway binding/);
   });
 });
 

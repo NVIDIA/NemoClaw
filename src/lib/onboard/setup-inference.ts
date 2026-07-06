@@ -21,20 +21,13 @@ import type { ProviderInferenceSetupOptions } from "./machine/handlers/provider-
 
 type ProviderBranchDeps = Pick<
   CommonDeps,
-  | "upsertProvider"
-  | "verifyInferenceRoute"
-  | "verifyOnboardInferenceSmoke"
-  | "isNonInteractive"
-  | "exitProcess"
-  | "error"
-  | "log"
+  "verifyOnboardInferenceSmoke" | "isNonInteractive" | "exitProcess" | "error" | "log"
 > &
   Pick<
     HermesDeps,
     | "lookup"
     | "hermesProviderAuth"
     | "getHermesToolGatewayBroker"
-    | "providerExistsInGateway"
     | "normalizeHermesAuthMethod"
     | "resolveHermesNousApiKey"
     | "checkHermesProviderStoreReachable"
@@ -73,6 +66,16 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
+  upsertProvider: (
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+    env: NodeJS.ProcessEnv | undefined,
+    gatewayName: string,
+  ) => ReturnType<CommonDeps["upsertProvider"]>;
+  verifyInferenceRoute: (gatewayName: string, provider: string, model: string) => void;
+  providerExistsInGateway: (name: string, gatewayName: string) => boolean;
   run: typeof import("../runner").run;
   updateSandbox: CommonDeps["registry"]["updateSandbox"];
   localInferenceTimeoutSecs: number;
@@ -90,11 +93,59 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
   exitProcess: (code: number) => never;
 };
 
-function resolveLocalInferenceRouteApplier(deps: SetupInferenceDeps) {
+export function scopeGatewayOpenshellArgs(args: string[], gatewayName: string): string[] {
+  if (!gatewayName) throw new Error("OpenShell gateway name is required.");
+  if (args[0] === "gateway" && args[1] === "select") {
+    throw new Error("Gateway-scoped OpenShell operations must not change the selected gateway.");
+  }
+  const providerCommand = args[0] === "inference" || args[0] === "provider";
+  const sandboxCommand = args[0] === "sandbox" && typeof args[1] === "string";
+  const sandboxProviderCommand = sandboxCommand && args[1] === "provider";
+  if (!providerCommand && !sandboxCommand) return [...args];
+  const gatewayFlagIndex = sandboxProviderCommand ? 3 : 2;
+  const gatewayTargets = args.flatMap((value, index) => {
+    if (index < gatewayFlagIndex) return [];
+    if (value === "-g" || value === "--gateway") return [args[index + 1] ?? ""];
+    return value.startsWith("--gateway=") ? [value.slice("--gateway=".length)] : [];
+  });
+  if (gatewayTargets.length > 1) {
+    throw new Error("OpenShell command contains multiple gateway targets.");
+  }
+  const existingGatewayName = gatewayTargets[0];
+  if (existingGatewayName !== undefined) {
+    if (existingGatewayName !== gatewayName) {
+      throw new Error(
+        `OpenShell command targets gateway '${existingGatewayName}' instead of '${gatewayName}'.`,
+      );
+    }
+    return [...args];
+  }
+  return [...args.slice(0, gatewayFlagIndex), "-g", gatewayName, ...args.slice(gatewayFlagIndex)];
+}
+
+export function createGatewayScopedOpenshellRunner<Rest extends unknown[], Result>(
+  runOpenshell: (args: string[], ...rest: Rest) => Result,
+  gatewayName: string,
+): (args: string[], ...rest: Rest) => Result {
+  return (args, ...rest) => runOpenshell(scopeGatewayOpenshellArgs(args, gatewayName), ...rest);
+}
+
+export function bindGatewayUpsertProvider(
+  upsertProvider: SetupInferenceDeps["upsertProvider"],
+  gatewayName: string,
+): CommonDeps["upsertProvider"] {
+  return (name, type, credentialEnv, baseUrl, env) =>
+    upsertProvider(name, type, credentialEnv, baseUrl, env, gatewayName);
+}
+
+function resolveLocalInferenceRouteApplier(
+  deps: SetupInferenceDeps,
+  runOpenshell: SetupInferenceDeps["runOpenshell"],
+) {
   return (
     deps.applyLocalInferenceRoute ??
     createLocalInferenceRouteApplier({
-      runOpenshell: deps.runOpenshell,
+      runOpenshell,
       isNonInteractive: deps.isNonInteractive,
       promptValidationRecovery: deps.promptValidationRecovery,
       classifyApplyFailure: deps.classifyApplyFailure,
@@ -134,7 +185,7 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
-    const gatewayName = deps.getGatewayName();
+    const gatewayName = options.gatewayName ?? deps.getGatewayName();
     const compatibility = deps.checkGatewayRouteCompatibility({
       gatewayName,
       sandboxName,
@@ -150,12 +201,13 @@ export function createSetupInference(
       return deps.exitProcess(1);
     }
     deps.step(4, 8, "Setting up inference provider");
-    deps.runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
+    const runGatewayOpenshell = createGatewayScopedOpenshellRunner(deps.runOpenshell, gatewayName);
 
     const commonDeps = {
-      runOpenshell: deps.runOpenshell,
-      upsertProvider: deps.upsertProvider,
-      verifyInferenceRoute: deps.verifyInferenceRoute,
+      runOpenshell: runGatewayOpenshell,
+      upsertProvider: bindGatewayUpsertProvider(deps.upsertProvider, gatewayName),
+      verifyInferenceRoute: (selectedProvider: string, selectedModel: string) =>
+        deps.verifyInferenceRoute(gatewayName, selectedProvider, selectedModel),
       verifyOnboardInferenceSmoke: deps.verifyOnboardInferenceSmoke,
       isNonInteractive: deps.isNonInteractive,
       registry: { updateSandbox: deps.updateSandbox },
@@ -179,7 +231,8 @@ export function createSetupInference(
           ...commonDeps,
           hermesProviderAuth: deps.hermesProviderAuth,
           getHermesToolGatewayBroker: deps.getHermesToolGatewayBroker,
-          providerExistsInGateway: deps.providerExistsInGateway,
+          providerExistsInGateway: (name: string) =>
+            deps.providerExistsInGateway(name, gatewayName),
           normalizeHermesAuthMethod: deps.normalizeHermesAuthMethod,
           resolveHermesNousApiKey: deps.resolveHermesNousApiKey,
           checkHermesProviderStoreReachable: deps.checkHermesProviderStoreReachable,
@@ -229,7 +282,7 @@ export function createSetupInference(
           validateLocalProvider: deps.validateLocalProvider,
           getLocalProviderHealthCheck: deps.getLocalProviderHealthCheck,
           getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps),
+          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps, runGatewayOpenshell),
           run: deps.run,
           VLLM_LOCAL_CREDENTIAL_ENV: deps.vllmLocalCredentialEnv,
         },
@@ -242,7 +295,7 @@ export function createSetupInference(
           ...commonDeps,
           validateLocalProvider: deps.validateLocalProvider,
           getLocalProviderBaseUrl: deps.getLocalProviderBaseUrl,
-          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps),
+          applyLocalInferenceRoute: resolveLocalInferenceRouteApplier(deps, runGatewayOpenshell),
           getOllamaWarmupCommand: deps.getOllamaWarmupCommand,
           run: deps.run,
           shouldFrontOllamaWithProxy: deps.shouldFrontOllamaWithProxy,
@@ -272,7 +325,7 @@ export function createSetupInference(
       deps.exitProcess(1);
     }
 
-    deps.verifyInferenceRoute(provider, model);
+    commonDeps.verifyInferenceRoute(provider, model);
     if (options.skipHostInferenceSmoke === true)
       deps.log("  Reusing existing gateway credential; skipping host inference smoke.");
     else deps.verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });

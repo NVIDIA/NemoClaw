@@ -167,13 +167,14 @@ describe("createSetupNim", () => {
       }),
     );
 
-    const result = await setupNim(null);
+    const result = await setupNim(null, null, null, true, null, "nemoclaw-9090");
 
     expect(step).toHaveBeenCalledWith(3, 8, "Configuring inference provider");
     expect(log).toHaveBeenCalledWith("  Detected local inference option: Ollama");
     expect(prompt).toHaveBeenCalledOnce();
     expect(prompt).toHaveBeenCalledWith("  Choose [1]: ");
     expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(handleRemoteProviderSelection.mock.calls[0]?.[0].gatewayName).toBe("nemoclaw-9090");
     expect(maybePromptForInferenceInputCapability).toHaveBeenCalledWith(
       "nvidia/nemotron-3-super-120b-a12b",
     );

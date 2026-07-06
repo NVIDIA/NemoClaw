@@ -105,10 +105,16 @@ function createPhases(
       ),
       toSessionUpdates: (updates) => updates as SessionUpdates,
       skippedStepMessage: vi.fn(),
-      ensureResumeProviderReady: vi.fn(async () => ({
-        forceInferenceSetup: false,
-        credentialEnv: null,
-      })),
+      ensureResumeProviderReady: vi.fn(
+        async (
+          _gatewayName: string,
+          _provider: string | null | undefined,
+          _credentialEnv: string | null | undefined,
+        ) => ({
+          forceInferenceSetup: false,
+          credentialEnv: null,
+        }),
+      ),
       isResumeProviderSurfaceReady: vi.fn(() => true),
       recordStateSkipped: vi.fn(async () => createSession()),
       recordRepairEvent: vi.fn(async () => createSession()),
@@ -119,10 +125,13 @@ function createPhases(
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
       needsBedrockRuntimeAdapter: () => false,
-      isInferenceRouteReady: () => false,
+      isInferenceRouteReady: (_gatewayName, _provider, _model) => false,
       isRoutedInferenceProvider: () => false,
       reconcileModelRouter: vi.fn(async () => undefined),
-      reupsertRoutedProvider: () => ({ ok: true, endpointUrl: "https://example.test/v1" }),
+      reupsertRoutedProvider: (_gatewayName, _provider, _endpointUrl, _credentialEnv) => ({
+        ok: true,
+        endpointUrl: "https://example.test/v1",
+      }),
       registryUpdateSandbox: vi.fn(),
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       assessHost: () => ({ memoryGb: 64 }),
@@ -263,6 +272,7 @@ describe("core onboard flow phases", () => {
       "my-sandbox",
       { name: "openclaw" },
       false,
+      "nemoclaw",
     );
   });
 
@@ -270,11 +280,11 @@ describe("core onboard flow phases", () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
     const [providerPhase, sandboxPhase] = createPhases({
       providerDeps: {
-        ensureResumeProviderReady: vi.fn(async () => ({
+        ensureResumeProviderReady: vi.fn(async (_gatewayName, _provider, _credentialEnv) => ({
           forceInferenceSetup: false,
           credentialEnv: "HERMES_API_KEY",
         })),
-        isInferenceRouteReady: () => true,
+        isInferenceRouteReady: (_gatewayName, _provider, _model) => true,
         setupInference,
       },
     });
@@ -309,7 +319,7 @@ describe("core onboard flow phases", () => {
       "HERMES_API_KEY",
       "api_key",
       ["nous-web"],
-      { allowToolsIncompatible: false },
+      { gatewayName: "nemoclaw", allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
 

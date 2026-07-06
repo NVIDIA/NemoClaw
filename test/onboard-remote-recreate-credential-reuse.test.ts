@@ -45,7 +45,7 @@ Gateway inference:
   Version: 1
 EOF
 fi
-if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$3" = "compatible-endpoint" ]; then
+if [ "$1" = "provider" ] && [ "$2" = "get" ] && [ "$3" = "-g" ] && [ "$5" = "compatible-endpoint" ]; then
   cat <<'EOF'
 Provider:
 
@@ -176,9 +176,15 @@ const { setupNim, setupInference } = require(${onboardPath});
           `only exact loopback discovery probes may run without a local credential: ${curlLog}`,
         );
         const openshellLog = fs.readFileSync(openshellLogPath, "utf8");
-        assert.match(openshellLog, /provider get compatible-endpoint/);
-        assert.match(openshellLog, /inference set --no-verify --provider compatible-endpoint/);
-        assert.ok(!openshellLog.includes("provider update compatible-endpoint"), openshellLog);
+        assert.match(openshellLog, /provider get -g nemoclaw compatible-endpoint/);
+        assert.match(
+          openshellLog,
+          /inference set -g nemoclaw --no-verify --provider compatible-endpoint/,
+        );
+        assert.ok(
+          !openshellLog.includes("provider update -g nemoclaw compatible-endpoint"),
+          openshellLog,
+        );
         assert.ok(!openshellLog.includes("OPENAI_BASE_URL="), openshellLog);
         assert.ok(!openshellLog.includes("--credential"), openshellLog);
 
@@ -237,7 +243,7 @@ const { setupNim, setupInference } = require(${onboardPath});
         assert.match(unauthorizedOutput, /A host credential is required to configure provider/);
         const unauthorizedOpenshellLog = fs.readFileSync(openshellLogPath, "utf8");
         assert.ok(
-          !unauthorizedOpenshellLog.includes("provider update compatible-endpoint") &&
+          !unauthorizedOpenshellLog.includes("provider update") &&
             !unauthorizedOpenshellLog.includes("inference set"),
           `smoke suppression alone must not authorize gateway credential reuse: ${unauthorizedOpenshellLog}`,
         );
@@ -275,7 +281,7 @@ const { setupNim, setupInference } = require(${onboardPath});
         );
         const conflictingEndpointOpenshellLog = fs.readFileSync(openshellLogPath, "utf8");
         assert.ok(
-          !conflictingEndpointOpenshellLog.includes("provider update compatible-endpoint") &&
+          !conflictingEndpointOpenshellLog.includes("provider update") &&
             !conflictingEndpointOpenshellLog.includes("inference set"),
           `endpoint drift must fail before provider or route mutation: ${conflictingEndpointOpenshellLog}`,
         );

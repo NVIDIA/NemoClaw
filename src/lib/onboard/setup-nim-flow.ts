@@ -27,6 +27,7 @@ export interface SetupNimRemoteProviderConfigEntry {
 }
 
 export interface SetupNimRemoteSelectionArgs {
+  gatewayName: string | null;
   selected: ProviderMenuChoice;
   requestedModel: string | null;
   recoveredFromSandbox: boolean;
@@ -40,6 +41,7 @@ export type SetupNim = (
   agent?: AgentDefinition | null,
   recoverProvider?: boolean,
   rebuildRegistryInferenceRoute?: RebuildRouteHandoff | null,
+  gatewayName?: string | null,
 ) => Promise<ProviderSelectionResult>;
 
 export interface SetupNimFlowDeps {
@@ -163,6 +165,7 @@ export function createSetupNim(
     agent: AgentDefinition | null = null,
     recoverProvider = true,
     rebuildRegistryInferenceRoute: RebuildRouteHandoff | null = null,
+    gatewayName: string | null = null,
   ): Promise<ProviderSelectionResult> {
     deps.step(3, 8, "Configuring inference provider");
 
@@ -319,7 +322,14 @@ export function createSetupNim(
             nvidiaFeaturedModels,
           };
           const result = await deps.handleRemoteProviderSelection(
-            { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
+            {
+              selected,
+              requestedModel,
+              recoveredFromSandbox,
+              recoveredModel,
+              sandboxName,
+              gatewayName,
+            },
             state,
             recoveredRegistryRoute,
           );
