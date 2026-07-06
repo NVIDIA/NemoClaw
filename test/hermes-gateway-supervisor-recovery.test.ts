@@ -1156,6 +1156,8 @@ describe("Hermes supervised auxiliary recovery", () => {
       "listener:101:8642",
       "live:101",
       "listener:101:8642",
+      "live:101",
+      "listener:101:8642",
       "live:202",
       "service-listener:202:19119:sandbox",
       "stop:303",
@@ -1217,95 +1219,6 @@ describe("Hermes supervised auxiliary recovery", () => {
     ]);
   });
 
-  it("replaces a listener-owning API bridge that fails public HTTP health", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = runBashHarness([
-      'trace() { printf "%s\\n" "$*"; }',
-      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n"; }',
-      'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
-      'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
-      'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
-      'curl() { if [ "$PUBLIC_HEALTH" = "stale" ]; then printf "503"; else printf "200"; fi; }',
-      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
-      'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; PUBLIC_HEALTH=ready; return 0; }',
-      "hermes_dashboard_healthy() { trace dashboard-healthy; return 0; }",
-      "ensure_gateway_log_stream() { trace gateway-log; }",
-      extractShellFunction(source, "hermes_socat_bridge_healthy"),
-      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
-      extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
-      "PUBLIC_PORT=8642",
-      "INTERNAL_PORT=18642",
-      "DASHBOARD_PUBLIC_PORT=18789",
-      "DASHBOARD_INTERNAL_PORT=19119",
-      "PUBLIC_HEALTH=stale",
-      "SOCAT_PID=101",
-      "DASHBOARD_PID=202",
-      "DASHBOARD_SOCAT_PID=303",
-      "GATEWAY_PID=4242",
-      'if ensure_hermes_supervised_auxiliaries; then trace success; else trace "failure:$?"; fi',
-      'trace "final-api-bridge:$SOCAT_PID"',
-    ]);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "live:101",
-      "listener:101:8642",
-      "stop:101",
-      "start-forward:8642 18642 API SOCAT_PID 4242 current",
-      "live:111",
-      "listener:111:8642",
-      "live:111",
-      "listener:111:8642",
-      "dashboard-healthy",
-      "live:303",
-      "listener:303:18789",
-      "gateway-log",
-      "success",
-      "final-api-bridge:111",
-    ]);
-  });
-
-  it("fails closed when a replacement API bridge still cannot serve public health", () => {
-    const source = fs.readFileSync(START_SCRIPT, "utf-8");
-    const result = runBashHarness([
-      'trace() { printf "%s\\n" "$*"; }',
-      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n"; }',
-      'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
-      'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
-      'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
-      'curl() { printf "503"; }',
-      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
-      'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; return 0; }',
-      "hermes_dashboard_healthy() { trace unexpected-dashboard-health; return 0; }",
-      "ensure_gateway_log_stream() { trace unexpected-gateway-log; }",
-      extractShellFunction(source, "hermes_socat_bridge_healthy"),
-      extractShellFunction(source, "hermes_api_socat_bridge_healthy"),
-      extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
-      "PUBLIC_PORT=8642",
-      "INTERNAL_PORT=18642",
-      "DASHBOARD_PUBLIC_PORT=18789",
-      "DASHBOARD_INTERNAL_PORT=19119",
-      "SOCAT_PID=101",
-      "DASHBOARD_PID=202",
-      "DASHBOARD_SOCAT_PID=303",
-      "GATEWAY_PID=4242",
-      'if ensure_hermes_supervised_auxiliaries; then trace success; else trace "failure:$?"; fi',
-      'trace "final-api-bridge:$SOCAT_PID"',
-    ]);
-
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout.trim().split("\n")).toEqual([
-      "live:101",
-      "listener:101:8642",
-      "stop:101",
-      "start-forward:8642 18642 API SOCAT_PID 4242 current",
-      "live:111",
-      "listener:111:8642",
-      "failure:1",
-      "final-api-bridge:111",
-    ]);
-  });
-
   it("restarts a dashboard that owns its listener but fails HTTP health", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
@@ -1337,6 +1250,8 @@ describe("Hermes supervised auxiliary recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual([
+      "live:101",
+      "listener:101:8642",
       "live:101",
       "listener:101:8642",
       "live:101",

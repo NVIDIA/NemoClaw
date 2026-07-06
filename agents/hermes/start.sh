@@ -486,11 +486,26 @@ cleanup_orphan_socat_forwarders() {
     cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
     case "$cmdline" in
       *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
+        if [ "$pid" = "${SOCAT_PID:-}" ] \
+          && hermes_tracked_role_is_current \
+            api-socat "$pid" current "$PUBLIC_PORT"; then
+          # A managed gateway reload temporarily leaves no gateway process,
+          # but its exact tracked relay may still be safe to reuse. Preserve
+          # only the fully identity-proven parent; listener ownership and
+          # public readiness are re-proven before convergence, while every
+          # other matching socat is still removed below.
+          continue
+        fi
         echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
         kill "$pid" 2>/dev/null || true
         ;;
       *socat*"TCP-LISTEN:${dashboard_public_port}"*"TCP:127.0.0.1:${dashboard_internal_port}"*)
         if [ -z "$dashboard_public_port" ] || [ -z "$dashboard_internal_port" ]; then
+          continue
+        fi
+        if [ "$pid" = "${DASHBOARD_SOCAT_PID:-}" ] \
+          && hermes_tracked_role_is_current \
+            dashboard-socat "$pid" current "$dashboard_public_port"; then
           continue
         fi
         echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public_port}->${dashboard_internal_port} (pid ${pid})" >&2
@@ -2219,13 +2234,18 @@ ensure_hermes_supervised_auxiliaries() {
     dashboard_user=sandbox
   fi
 
-  if ! hermes_api_socat_bridge_healthy "${SOCAT_PID:-}" "$PUBLIC_PORT"; then
+  # Structural identity/listener loss requires exact relay replacement. A
+  # transient public HTTP miss does not: forked socat accepts each request on
+  # a fresh backend connection, so churning its proven listener can prolong
+  # the outage while the replacement gateway is still settling. Preserve the
+  # exact parent and let the supervised recovery loop retry readiness instead.
+  if ! hermes_socat_bridge_healthy api-socat "${SOCAT_PID:-}" "$PUBLIC_PORT"; then
     hermes_stop_tracked_role api-socat "${SOCAT_PID:-0}" current "$PUBLIC_PORT" || return 1
     SOCAT_PID=""
     start_socat_forwarder \
       "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID "$GATEWAY_PID" "$gateway_user" || return 1
-    hermes_api_socat_bridge_healthy "$SOCAT_PID" "$PUBLIC_PORT" || return 1
   fi
+  hermes_api_socat_bridge_healthy "$SOCAT_PID" "$PUBLIC_PORT" || return 1
   if ! hermes_dashboard_healthy "${DASHBOARD_PID:-}"; then
     # A live PID is not sufficient: it may be reused, alive without the exact
     # dashboard listener, or serving a wedged HTTP process. Stop both tracked
