@@ -104,7 +104,7 @@ describe("runInferenceSet Hermes routing", () => {
     });
   });
 
-  it("syncs Hermes compatible Anthropic switches to Anthropic Messages when changing provider families", async () => {
+  it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
     const config: ConfigObject = {
       model: {
         default: "openai/gpt-5.4-mini",
@@ -132,6 +132,17 @@ describe("runInferenceSet Hermes routing", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     });
+    deps.calls.captureOpenshell.mockImplementation((args: string[]) =>
+      args[0] === "provider" && args[1] === "get"
+        ? {
+            status: 0,
+            output:
+              "Name: compatible-anthropic-endpoint\nType: openai\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: OPENAI_BASE_URL",
+            stdout: "",
+            stderr: "",
+          }
+        : { status: 0, output: "", stdout: "", stderr: "" },
+    );
 
     const result = await runInferenceSet(
       {
@@ -146,9 +157,8 @@ describe("runInferenceSet Hermes routing", () => {
     expect(config.model).toEqual({
       default: "claude-sonnet-proxy",
       provider: "custom",
-      base_url: "https://inference.local",
+      base_url: "https://inference.local/v1",
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-      api_mode: "anthropic_messages",
     });
     // The upstream annotation must track the selected provider together with
     // the API-family field, so the two cannot drift apart on later switches.
@@ -163,18 +173,100 @@ describe("runInferenceSet Hermes routing", () => {
         model: "claude-sonnet-proxy",
         endpointUrl: "https://anthropic-compatible.example/v1",
         credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-        preferredInferenceApi: "anthropic-messages",
+        preferredInferenceApi: "openai-completions",
       }),
     ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
-      preferredInferenceApi: "anthropic-messages",
+      preferredInferenceApi: "openai-completions",
     });
     expect(result).toMatchObject({
-      providerKey: "anthropic",
-      primaryModelRef: "anthropic/claude-sonnet-proxy",
+      providerKey: "inference",
+      primaryModelRef: "inference/claude-sonnet-proxy",
     });
+  });
+
+  it("rejects inference set before mutating a legacy Anthropic provider (#6289)", async () => {
+    const config: ConfigObject = { model: {} };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.calls.captureOpenshell.mockReturnValue({
+      status: 0,
+      output:
+        "Name: compatible-anthropic-endpoint\nType: anthropic\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: ANTHROPIC_BASE_URL",
+      stdout: "",
+      stderr: "",
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("Run 'nemoclaw hermes rebuild'");
+
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
+  it("rejects an explicit Anthropic frontend request for Hermes custom endpoints (#6289)", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "openai/gpt-5.4-mini",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "nvidia/nvidia/nemotron-3-super-v3",
+          sandboxName: "hermes",
+          noVerify: true,
+          endpointUrl: "https://inference-api.nvidia.com",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("require the managed openai-completions frontend");
+
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for Hermes switches", async () => {
@@ -192,6 +284,7 @@ describe("runInferenceSet Hermes routing", () => {
         agent: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
       },
       defaultSandbox: "hermes",
       target: HERMES_TARGET,
@@ -200,6 +293,7 @@ describe("runInferenceSet Hermes routing", () => {
         sandboxName: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
         preferredInferenceApi: "openai-completions",
       }),
     });

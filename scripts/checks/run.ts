@@ -47,6 +47,11 @@ const CHECKS: readonly CheckCommand[] = [
     args: ["scripts/checks/no-test-dist-imports.ts"],
   },
   {
+    name: "test-create-require-budget",
+    command: TSX,
+    args: ["scripts/checks/test-create-require-budget.ts"],
+  },
+  {
     name: "vitest-project-overlap",
     command: TSX,
     args: ["scripts/checks/vitest-project-overlap.ts"],
