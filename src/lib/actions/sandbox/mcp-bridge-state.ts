@@ -74,12 +74,19 @@ export function setBridgeState(sandboxName: string, bridges: Record<string, McpB
   const mcpState = registry.getSandbox(sandboxName)?.mcp;
   const destroyPreparedAt = mcpState?.destroyPreparedAt;
   const destroyPendingAt = mcpState?.destroyPendingAt;
+  const committedServerNames = Object.values(bridges)
+    .filter((entry) => !entry.addState)
+    .map((entry) => entry.server);
+  const managedServerNames = [
+    ...new Set([...(mcpState?.managedServerNames ?? []), ...committedServerNames]),
+  ].sort();
   const hasDestroyState = !!destroyPreparedAt || !!destroyPendingAt;
   const updated = registry.updateSandbox(sandboxName, {
     mcp:
-      Object.keys(bridges).length > 0 || hasDestroyState
+      Object.keys(bridges).length > 0 || managedServerNames.length > 0 || hasDestroyState
         ? {
             bridges,
+            ...(managedServerNames.length > 0 ? { managedServerNames } : {}),
             ...(destroyPreparedAt ? { destroyPreparedAt } : {}),
             ...(destroyPendingAt ? { destroyPendingAt } : {}),
           }

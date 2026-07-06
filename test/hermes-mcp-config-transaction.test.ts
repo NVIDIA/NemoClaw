@@ -382,7 +382,7 @@ snapshot = types.SimpleNamespace(mode=0o600)
 module.os.geteuid = lambda: 1000
 module._assert_mutable_snapshot = lambda received: None
 module._managed_hash_paths = lambda privileged: []
-module._refresh_and_verify_hashes = lambda guard, privileged: None
+module._refresh_and_verify_hashes = lambda guard, privileged, transition="preserve": None
 module.reload_gateway = lambda: True
 
 def run(method_name, original):
@@ -395,6 +395,7 @@ def run(method_name, original):
     module._load_guard = lambda: types.SimpleNamespace(
         _read_text=read_text,
         _write_existing=write_existing,
+        inspect_mcp_integrity=lambda *_args: "current",
     )
     error = ""
     try:
@@ -561,9 +562,12 @@ def fixture(name):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.chmod(path, 0o600)
+    empty_mcp = hashlib.sha256(b"{}").hexdigest()
     hash_text = (
         hashlib.sha256(CONFIG_TEXT.encode()).hexdigest() + "  " + config_path + "\\n"
         + hashlib.sha256(ENV_TEXT.encode()).hexdigest() + "  " + env_path + "\\n"
+        + "# nemoclaw-hermes-mcp-state-v1 intended=" + empty_mcp
+        + " applied=" + empty_mcp + "\\n"
     )
     with open(hash_path, "w", encoding="utf-8") as handle:
         handle.write(hash_text)
@@ -874,6 +878,7 @@ sys.modules["gateway.status"] = status
 module.os.geteuid = lambda: 0
 module.pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=2000)
 module._is_trusted_gateway_process = lambda pid: True
+module._gateway_has_managed_parent = lambda pid: True
 module.os.stat = lambda path: types.SimpleNamespace(st_uid=1000)
 try:
     module._gateway_identity()
@@ -925,6 +930,7 @@ sys.modules["gateway.status"] = status
 module.GATEWAY_PID_PATH = sys.argv[3]
 module.os.stat = lambda path: types.SimpleNamespace(st_uid=expected_uid)
 module._is_trusted_gateway_process = lambda pid: pid == 4242
+module._gateway_has_managed_parent = lambda pid: True
 
 recognized = module._gateway_identity()
 runtime["lock_active"] = False
@@ -1045,6 +1051,7 @@ statuses[module.GATEWAY_INTERNAL_PORT] = 200
 statuses[module.GATEWAY_PUBLIC_PORT] = [503, 401, 401]
 identities = iter(((1, 10), (2, 20), (2, 20), (3, 30), (3, 30), (3, 30)))
 module._gateway_identity = lambda: next(identities)
+module._gateway_has_managed_parent = lambda pid: True
 signals = []
 module.os.kill = lambda pid, sent_signal: signals.append((pid, signal.Signals(sent_signal).name))
 module.time.monotonic = lambda: 0
@@ -1126,15 +1133,20 @@ module.pwd.getpwnam = lambda name: (_ for _ in ()).throw(
 )
 
 snapshot = types.SimpleNamespace(mode=0o600, uid=sandbox_uid, gid=sandbox_uid)
+config_state = {"text": "model: test\\n"}
 guard = types.SimpleNamespace(
-    _read_text=lambda path: ("model: test\\n", snapshot),
+    _read_text=lambda path: (config_state["text"], snapshot),
 )
 module._load_guard = lambda: guard
 def apply_transaction(action, payload):
     observed["helper_uid"] = module.os.geteuid()
     observed["action"] = action
+    parsed = module.yaml.safe_load(config_state["text"])
+    updated, _changed = module._mutate(parsed, action, payload)
+    config_state["text"] = module.yaml.safe_dump(updated, sort_keys=False)
     return True
 module.apply_transaction = apply_transaction
+module._refresh_and_verify_hashes = lambda guard, privileged, transition="preserve": None
 
 gateway = types.ModuleType("gateway")
 status = types.ModuleType("gateway.status")
@@ -1198,7 +1210,7 @@ print(json.dumps(observed, sort_keys=True))
     });
   });
 
-  it("repairs and verifies strict and compatibility hashes on an unchanged retry", () => {
+  it("verifies strict and compatibility MCP hash state on an unchanged retry", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-tx-"));
     const hermesDir = path.join(temp, ".hermes");
     const configPath = path.join(hermesDir, "config.yaml");
@@ -1239,6 +1251,12 @@ module.STRICT_HASH_PATH = sys.argv[4]
 module.os.geteuid = lambda: 0
 module._require_lifecycle_identity = lambda: None
 module._assert_mutable_snapshot = lambda snapshot: None
+guard = module._load_guard()
+hash_text, _config_snapshot, _env_snapshot = guard._hash_text(
+    module.CONFIG_PATH, os.path.join(module.HERMES_DIR, ".env")
+)
+guard._write_hash(sys.argv[4], hash_text)
+guard._write_hash(os.path.join(module.HERMES_DIR, ".config-hash"), hash_text)
 changed = module.apply_transaction("add", {
     "server": "fake",
     "url": "https://mcp.example.test/mcp",
@@ -1410,7 +1428,8 @@ print(json.dumps(module.probe(), sort_keys=True))
     const strictHash = path.join(temp, "strict-hash");
     const config = "model: test\n";
     const env = "HERMES_TEST=1\n";
-    const originalHash = `${crypto.createHash("sha256").update(config).digest("hex")}  ${configPath}\n${crypto.createHash("sha256").update(env).digest("hex")}  ${envPath}\n`;
+    const emptyMcp = crypto.createHash("sha256").update("{}").digest("hex");
+    const originalHash = `${crypto.createHash("sha256").update(config).digest("hex")}  ${configPath}\n${crypto.createHash("sha256").update(env).digest("hex")}  ${envPath}\n# nemoclaw-hermes-mcp-state-v1 intended=${emptyMcp} applied=${emptyMcp}\n`;
     fs.mkdirSync(hermesDir);
     fs.writeFileSync(configPath, config, { mode: 0o600 });
     fs.writeFileSync(envPath, env, { mode: 0o600 });

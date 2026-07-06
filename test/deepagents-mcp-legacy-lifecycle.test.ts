@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+
 function runLegacyLifecycle(body: string) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-legacy-"));
   const script = String.raw`
@@ -158,7 +160,7 @@ ${body}
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
   });
   fs.rmSync(home, { recursive: true, force: true });
   return result;
