@@ -1,7 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
+
+export function readOptionalIssue6194Capture(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const fileError = error as NodeJS.ErrnoException;
+    if (fileError.code !== "ENOENT") {
+      throw error;
+    }
+    return "";
+  }
+}
 
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
