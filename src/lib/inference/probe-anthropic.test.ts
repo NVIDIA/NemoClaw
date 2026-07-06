@@ -86,7 +86,13 @@ describe("probeAnthropicEndpoint", () => {
       stderr: "",
       message: "HTTP 200",
     });
-    const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe");
+    const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
+      ok: true,
+      missingEvents: [],
+      duplicateEvents: [],
+      sequenceErrors: [],
+      message: "",
+    });
 
     const result = probeAnthropicEndpoint(
       "https://api.anthropic.com",
@@ -112,7 +118,13 @@ describe("probeAnthropicEndpoint", () => {
       .spyOn(probe, "runAnthropicStreamingEventProbe")
       .mockImplementation((argv) => {
         streamingArgv = argv;
-        return { ok: true, missingEvents: [], duplicateEvents: [], message: "" };
+        return {
+          ok: true,
+          missingEvents: [],
+          duplicateEvents: [],
+          sequenceErrors: [],
+          message: "",
+        };
       });
 
     const result = probeAnthropicEndpoint(
@@ -146,6 +158,7 @@ describe("probeAnthropicEndpoint", () => {
       ok: false,
       missingEvents: [],
       duplicateEvents: ["message_start"],
+      sequenceErrors: [],
       message:
         "Anthropic Messages streaming on this endpoint emits duplicate message_start " +
         "(2 events for one request). Agent runs use the streaming path and would fail " +
@@ -177,7 +190,13 @@ describe("probeAnthropicEndpoint", () => {
       stderr: "",
       message: "HTTP 401",
     });
-    const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe");
+    const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
+      ok: true,
+      missingEvents: [],
+      duplicateEvents: [],
+      sequenceErrors: [],
+      message: "",
+    });
 
     const result = probeAnthropicEndpoint(
       "https://custom.endpoint.test",

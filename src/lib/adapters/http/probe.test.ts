@@ -848,6 +848,104 @@ describe("runAnthropicStreamingEventProbe", () => {
     expect(result.ok).toBe(true);
     expect(result.missingEvents).toEqual([]);
     expect(result.duplicateEvents).toEqual([]);
+    expect(result.sequenceErrors).toEqual([]);
+  });
+
+  it("fails when message_stop is emitted twice for one request", () => {
+    const duplicatedStop = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(duplicatedStop) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.duplicateEvents).toEqual(["message_stop"]);
+  });
+
+  it("fails when content deltas arrive before message_start", () => {
+    const startAfterDelta = [
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(startAfterDelta) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content_block_delta before message_start"]);
+    expect(result.message).toContain("out of order");
+  });
+
+  it("fails when content deltas continue after message_stop", () => {
+    const deltaAfterStop = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(deltaAfterStop) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content_block_delta after message_stop"]);
+  });
+
+  it("tolerates interleaved unknown events like ping in a well-formed stream", () => {
+    const withPing = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: ping",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: ping",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(withPing) },
+    );
+
+    expect(result.ok).toBe(true);
   });
 
   it("fails when message_start is emitted twice for one request (#6289)", () => {

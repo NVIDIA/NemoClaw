@@ -452,6 +452,8 @@ interface SseEventCaptureResult {
   detail: string;
   /** Occurrence count per SSE `event:` type parsed from the response body. */
   eventCounts: Map<string, number>;
+  /** SSE `event:` types in stream order, for sequence validation. */
+  eventSequence: string[];
 }
 
 /**
@@ -493,20 +495,22 @@ function captureSseEventCounts(
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
-      return { ok: false, curlStatus, detail, eventCounts: new Map() };
+      return { ok: false, curlStatus, detail, eventCounts: new Map(), eventSequence: [] };
     }
 
     // Parse SSE event types from the raw output.
     // Each event line looks like: "event: response.output_text.delta"
     const eventCounts = new Map<string, number>();
+    const eventSequence: string[] = [];
     for (const line of body.split("\n")) {
       const match = /^event:\s*(.+)$/i.exec(line.trim());
       if (match) {
         const eventType = match[1].trim();
         eventCounts.set(eventType, (eventCounts.get(eventType) ?? 0) + 1);
+        eventSequence.push(eventType);
       }
     }
-    return { ok: true, curlStatus: result.status ?? 0, detail: "", eventCounts };
+    return { ok: true, curlStatus: result.status ?? 0, detail: "", eventCounts, eventSequence };
   } finally {
     cleanupTempDir(bodyFile, tempPrefix);
   }
@@ -591,20 +595,45 @@ const REQUIRED_ANTHROPIC_STREAMING_EVENTS = [
  * observed emitting `message_start` twice with the same message id, which
  * corrupts streaming-client state machines: the agent run then ends with an
  * empty final response even though the non-streaming path works (#6289).
+ * `message_stop` is the single terminal event of the same contract.
  */
-const SINGLETON_ANTHROPIC_STREAMING_EVENTS = ["message_start"];
+const SINGLETON_ANTHROPIC_STREAMING_EVENTS = ["message_start", "message_stop"];
 
 export interface AnthropicStreamingProbeResult {
   ok: boolean;
   missingEvents: string[];
   duplicateEvents: string[];
+  /** Order violations, e.g. content deltas before message_start or after message_stop. */
+  sequenceErrors: string[];
   message: string;
+}
+
+/**
+ * Order rules for a well-formed Anthropic Messages stream: `message_start`
+ * opens the stream before any content delta, and `message_stop` terminates
+ * it after the last content delta. Only evaluated once all required events
+ * are present; interleaved unknown events (e.g. `ping`) are ignored.
+ */
+function anthropicSequenceErrors(eventSequence: string[]): string[] {
+  const errors: string[] = [];
+  const firstStart = eventSequence.indexOf("message_start");
+  const firstDelta = eventSequence.indexOf("content_block_delta");
+  const lastDelta = eventSequence.lastIndexOf("content_block_delta");
+  const lastStop = eventSequence.lastIndexOf("message_stop");
+  if (firstDelta < firstStart) {
+    errors.push("content_block_delta before message_start");
+  }
+  if (lastStop < lastDelta) {
+    errors.push("content_block_delta after message_stop");
+  }
+  return errors;
 }
 
 /**
  * Send a streaming request to an Anthropic-compatible `/v1/messages`
  * endpoint and verify the SSE event stream is well formed: the required
- * event sequence is present and no singleton event is duplicated.
+ * events are present, no singleton event is duplicated, and the events
+ * arrive in protocol order (message_start → content deltas → message_stop).
  *
  * This catches gateways whose non-streaming responses are valid but whose
  * streaming layer is broken — runtime agents only use the streaming path,
@@ -633,12 +662,14 @@ function runAnthropicStreamingEventProbeImpl(
         ok: false,
         missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
         duplicate_events_count: 0,
+        sequence_errors_count: 0,
         curl_status: capture.curlStatus,
       });
       return {
         ok: false,
         missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
         duplicateEvents: [],
+        sequenceErrors: [],
         message: `Streaming probe failed: ${compactText(capture.detail).slice(0, 200)}`,
       };
     }
@@ -649,7 +680,9 @@ function runAnthropicStreamingEventProbeImpl(
     const duplicates = SINGLETON_ANTHROPIC_STREAMING_EVENTS.filter(
       (e) => (capture.eventCounts.get(e) ?? 0) > 1,
     );
-    if (missing.length > 0 || duplicates.length > 0) {
+    const sequenceErrors =
+      missing.length === 0 ? anthropicSequenceErrors(capture.eventSequence) : [];
+    if (missing.length > 0 || duplicates.length > 0 || sequenceErrors.length > 0) {
       const problems: string[] = [];
       if (duplicates.length > 0) {
         const detail = duplicates
@@ -660,16 +693,21 @@ function runAnthropicStreamingEventProbeImpl(
       if (missing.length > 0) {
         problems.push(`is missing required events: ${missing.join(", ")}`);
       }
+      if (sequenceErrors.length > 0) {
+        problems.push(`emits events out of order (${sequenceErrors.join("; ")})`);
+      }
       emitCurlResultTraceEvent({
         ok: false,
         missing_events_count: missing.length,
         duplicate_events_count: duplicates.length,
+        sequence_errors_count: sequenceErrors.length,
         curl_status: capture.curlStatus,
       });
       return {
         ok: false,
         missingEvents: missing,
         duplicateEvents: duplicates,
+        sequenceErrors,
         message:
           `Anthropic Messages streaming on this endpoint ${problems.join(" and ")}. ` +
           "Agent runs use the streaming path and would fail with an empty final response.",
@@ -680,9 +718,10 @@ function runAnthropicStreamingEventProbeImpl(
       ok: true,
       missing_events_count: 0,
       duplicate_events_count: 0,
+      sequence_errors_count: 0,
       curl_status: capture.curlStatus,
     });
-    return { ok: true, missingEvents: [], duplicateEvents: [], message: "" };
+    return { ok: true, missingEvents: [], duplicateEvents: [], sequenceErrors: [], message: "" };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const curlStatus =
@@ -691,12 +730,14 @@ function runAnthropicStreamingEventProbeImpl(
       ok: false,
       missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
       duplicate_events_count: 0,
+      sequence_errors_count: 0,
       curl_status: curlStatus,
     });
     return {
       ok: false,
       missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
       duplicateEvents: [],
+      sequenceErrors: [],
       message: `Streaming probe error: ${detail}`,
     };
   }

@@ -72,7 +72,7 @@ printf '%s' "$status"
 describe("onboard Anthropic credential retry UX", {
   timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
 }, () => {
-  it("lets users re-enter an Anthropic API key after authorization failure", () => {
+  it("lets users re-enter an Anthropic API key after authorization failure (#6289)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -150,7 +150,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("lets users re-enter a custom Anthropic-compatible API key without re-entering the endpoint URL", () => {
+  it("lets users re-enter a custom Anthropic-compatible API key without re-entering the endpoint URL (#6289)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-auth-retry-"),
