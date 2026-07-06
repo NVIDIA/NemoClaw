@@ -21,6 +21,7 @@ import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sa
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  hasHermesCompatibleAnthropicInferenceRouteDrift,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -374,15 +375,22 @@ class SandboxStateFlow<
       state.webSearchConfig as unknown as SharedWebSearchConfig | null,
       this.options.hermesToolGateways,
     );
-    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(
-      state.sandboxName ? this.deps.getSandboxRegistryEntry(state.sandboxName) : null,
-      state.session,
-    );
+    const registryEntry = state.sandboxName
+      ? this.deps.getSandboxRegistryEntry(state.sandboxName)
+      : null;
+    const toolDisclosureSignals = resolveToolDisclosureResumeSignals(registryEntry, state.session);
     return decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState: this.deps.getSandboxReuseState(state.sandboxName),
+      inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: (this.options.agent as { name?: string } | null)?.name,
+        provider: this.options.provider,
+        model: this.options.model,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        registryEntry,
+      }),
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)

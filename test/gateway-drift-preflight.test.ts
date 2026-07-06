@@ -8,16 +8,11 @@ import path from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
 
+import { nodeOptionsWithoutSourceLoader } from "./helpers/source-loader-options";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const SOURCE_REQUIRE_OPTION = `--require=${path.join(
-  REPO_ROOT,
-  "test",
-  "helpers",
-  "onboard-script-mocks.cjs",
-)}`;
 const ARTIFACT_ROOT = process.env.E2E_ARTIFACT_DIR;
 const WORK_ROOT = (() => {
   const parent = ARTIFACT_ROOT ?? os.tmpdir();
@@ -226,14 +221,6 @@ function prepareCase(name: string): { binDir: string; caseDir: string; home: str
   writeRegistry(home);
   writeFakeOpenshell(binDir);
   return { binDir, caseDir, home };
-}
-
-function nodeOptionsWithoutSourceLoader(nodeOptions: string | undefined): string {
-  if (!nodeOptions || nodeOptions === SOURCE_REQUIRE_OPTION) return "";
-  const sourceLoaderSuffix = ` ${SOURCE_REQUIRE_OPTION}`;
-  return nodeOptions.endsWith(sourceLoaderSuffix)
-    ? nodeOptions.slice(0, -sourceLoaderSuffix.length)
-    : nodeOptions;
 }
 
 function runCli(caseDir: string, home: string, binDir: string, args: string[]): CommandResult {
