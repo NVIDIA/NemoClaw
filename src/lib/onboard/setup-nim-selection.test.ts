@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
+import { requireValue } from "../core/require-value";
 import {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
@@ -78,10 +79,7 @@ describe("createRemoteModelValidator", () => {
     const { validateSelectedRemoteModel } = createRemoteModelValidator({
       OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
       ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
-      requireValue: (value, message) => {
-        if (value === null || value === undefined) throw new Error(message);
-        return value;
-      },
+      requireValue,
       isBackToSelection: (_value): _value is never => false,
       validateCustomOpenAiLikeSelection: async () => ({ ok: false, retry: "selection" }),
       validateCustomAnthropicSelection: async (
