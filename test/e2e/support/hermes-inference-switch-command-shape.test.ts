@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
@@ -14,7 +15,6 @@ import {
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   compatibleAnthropicMetadataArgs,
-  hermesRuntimeSwitchApi,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
@@ -41,13 +41,15 @@ describe("Hermes inference switch command shape", () => {
   }
 
   it("uses the OpenAI frontend for an Anthropic upstream in Hermes (#6289)", () => {
-    expect(hermesRuntimeSwitchApi("compatible-anthropic-endpoint", "anthropic-messages")).toBe(
-      "openai-completions",
-    );
+    expect(
+      resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("openai-completions");
   });
 
   it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
-    expect(hermesRuntimeSwitchApi("nvidia-prod", "openai-completions")).toBe("openai-completions");
+    expect(resolveAgentInferenceApi("hermes", "nvidia-prod", "openai-completions")).toBe(
+      "openai-completions",
+    );
   });
 
   it("omits the conflicting Anthropic frontend flag from Hermes switch metadata (#6289)", () => {

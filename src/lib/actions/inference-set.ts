@@ -780,19 +780,16 @@ async function runInferenceSetWithoutHostLock(
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
-  const preferredInferenceApi = resolveAgentInferenceApi(
-    agentName,
-    provider,
+  const preferredInferenceApi =
     explicitPreferredInferenceApi ??
-      resolveRuntimeInferenceApi({
-        agentName,
-        config,
-        currentProvider: entry.provider,
-        provider,
-        sandboxName,
-        session,
-      }),
-  );
+    resolveRuntimeInferenceApi({
+      agentName,
+      config,
+      currentProvider: entry.provider,
+      provider,
+      sandboxName,
+      session,
+    });
   const effectiveRegistryMetadata: RegistryInferenceMetadata = {
     ...registryMetadata,
     preferredInferenceApi,

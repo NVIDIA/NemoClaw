@@ -57,6 +57,24 @@ function canonicalEndpoint(value: unknown): string | null {
   return typeof value === "string" ? new URL(value).toString() : null;
 }
 
+async function expectCompatibleAnthropicOpenAiProvider(
+  host: Parameters<typeof ensureCompatibleAnthropicSwitchProvider>[0],
+): Promise<void> {
+  const provider = await host.command(
+    "openshell",
+    ["provider", "get", "-g", "nemoclaw", "compatible-anthropic-endpoint"],
+    {
+      artifactName: "compatible-anthropic-openai-provider-metadata",
+      env: env(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(provider.exitCode, resultText(provider)).toBe(0);
+  expect(resultText(provider)).toMatch(/^\s*Type:\s*openai\s*$/imu);
+  expect(resultText(provider)).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
+  expect(resultText(provider)).toContain("OPENAI_BASE_URL");
+}
+
 test.skipIf(!shouldRunLiveE2E())(
   "Hermes inference set updates route/config and preserves live runtime",
   { timeout: TIMEOUT_MS },
@@ -137,21 +155,7 @@ test.skipIf(!shouldRunLiveE2E())(
       : null;
     publicProvider && expect(publicProvider.exitCode, resultText(publicProvider)).toBe(0);
     const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
-    if (switchEndpointUrl) {
-      const provider = await host.command(
-        "openshell",
-        ["provider", "get", "-g", "nemoclaw", "compatible-anthropic-endpoint"],
-        {
-          artifactName: "compatible-anthropic-openai-provider-metadata",
-          env: env(),
-          timeoutMs: 30_000,
-        },
-      );
-      expect(provider.exitCode, resultText(provider)).toBe(0);
-      expect(resultText(provider)).toMatch(/^\s*Type:\s*openai\s*$/imu);
-      expect(resultText(provider)).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
-      expect(resultText(provider)).toContain("OPENAI_BASE_URL");
-    }
+    switchEndpointUrl && (await expectCompatibleAnthropicOpenAiProvider(host));
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");

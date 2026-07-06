@@ -87,6 +87,24 @@ describe("decideSandboxResume", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["another agent", { agentName: "openclaw" }],
+    ["another provider", { provider: "anthropic-prod" }],
+    ["the native Anthropic frontend", { preferredInferenceApi: "anthropic-messages" }],
+    ["no selected model", { model: null }],
+  ])("does not report Hermes compatible-route drift for %s (#6289)", (_label, overrides) => {
+    expect(
+      hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        preferredInferenceApi: "openai-completions",
+        registryEntry: null,
+        ...overrides,
+      }),
+    ).toBe(false);
+  });
+
   it("distinguishes one-time tool-disclosure migration from user configuration drift", () => {
     expect(
       decideSandboxResume(resumeSignals({ toolDisclosureMigrationNeeded: true })),

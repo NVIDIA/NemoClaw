@@ -7,6 +7,7 @@ import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveAgentInferenceApi } from "../../../src/lib/inference/config.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
@@ -39,10 +40,8 @@ export const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
 export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
-export function hermesRuntimeSwitchApi(provider: string, requestedApi: string): string {
-  return provider === "compatible-anthropic-endpoint" ? "openai-completions" : requestedApi;
-}
-export const RUNTIME_SWITCH_API = hermesRuntimeSwitchApi(SWITCH_PROVIDER, SWITCH_API);
+export const RUNTIME_SWITCH_API =
+  resolveAgentInferenceApi("hermes", SWITCH_PROVIDER, SWITCH_API) ?? SWITCH_API;
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
