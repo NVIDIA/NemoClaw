@@ -1225,7 +1225,7 @@ liveTest(
         "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
         "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
         "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
-        "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run",
+        "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
         "CLI scope upgrade is approved without operator.admin",
         "final openclaw agent turn stays on the gateway path and answers 42",
       ],

@@ -157,9 +157,9 @@ export function adminApprovalConnectScript(
     'if ! openclaw cron add --name "$cron_name" --every 2h --agent main --session isolated --message "hello" >"$cron_output" 2>&1; then echo "ADMIN_CRON_RETRY_FAILED" >&2; exit 28; fi',
     // OpenClaw 2026.6.10 classifies cron.add and cron.run at the same
     // operator.admin gateway-method boundary (gateway/methods/core-descriptors.ts).
-    // The exact-request approval above therefore grants the scope both use;
-    // waiting for cron run here proves the separately named #5324 path through
-    // workload completion instead of stopping at the initial enqueue response.
+    // The exact-request approval above therefore grants the scope both use.
+    // The cron.run response is validated below after the final agent proof so
+    // its queued workload cannot race that gateway assertion.
     'cron_id="$(python3 - "$cron_output" "$cron_name" <<\'PY_CRON_ID\'',
     "import json, sys",
     "from pathlib import Path",
@@ -176,8 +176,6 @@ export function adminApprovalConnectScript(
     "PY_CRON_ID",
     ')"',
     '[ -n "$cron_id" ] || { echo "ADMIN_CRON_ID_MISSING" >&2; exit 28; }',
-    'echo "ISSUE_5324_STAGE=cron-run job=$cron_id"',
-    'if ! openclaw cron run "$cron_id" --wait --wait-timeout 2m --poll-interval 1s >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 28; fi',
     'if ! openclaw agent --agent main --json -m "What is 6 multiplied by 7? Reply with only the integer, no extra words." --session-id "$session_id" >"$agent_stdout" 2>"$agent_stderr"; then echo "CONNECT_AGENT_FAILED" >&2; exit 29; fi',
     'if grep -Eiq \'EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded\' "$agent_stdout" "$agent_stderr"; then echo "CONNECT_AGENT_FALLBACK_OR_PAIRING" >&2; exit 30; fi',
     'agent_parser="$(mktemp)"',
@@ -187,6 +185,22 @@ export function adminApprovalConnectScript(
     "PY_OPENCLAW_AGENT_JSON_HELPER",
     'if ! agent_reply="$(python3 "$agent_parser" <"$agent_stdout")"; then echo "CONNECT_AGENT_JSON_INVALID" >&2; exit 31; fi',
     '[ "$agent_reply" = "42" ] || { echo "CONNECT_AGENT_NOT_EXACT_42" >&2; exit 32; }',
+    'echo "ISSUE_5324_STAGE=cron-run job=$cron_id"',
+    'if ! openclaw cron run "$cron_id" >"$cron_run_output" 2>&1; then echo "ADMIN_CRON_RUN_FAILED" >&2; exit 33; fi',
+    'if ! python3 - "$cron_run_output" <<\'PY_CRON_RUN\'; then echo "ADMIN_CRON_RUN_RESULT_INVALID" >&2; exit 34; fi',
+    "import json, sys",
+    "from pathlib import Path",
+    "raw=Path(sys.argv[1]).read_text(encoding='utf-8')",
+    "decoder=json.JSONDecoder()",
+    "for index, char in enumerate(raw):",
+    "    if char != '{': continue",
+    "    try: value,_=decoder.raw_decode(raw[index:])",
+    "    except Exception: continue",
+    "    if not isinstance(value, dict) or value.get('ok') is not True: continue",
+    "    if value.get('ran') is True: raise SystemExit(0)",
+    "    if value.get('enqueued') is True and str(value.get('runId') or '').strip(): raise SystemExit(0)",
+    "raise SystemExit('cron run did not report a successful run or enqueue')",
+    "PY_CRON_RUN",
     'echo "ISSUE_5324_ADMIN_APPROVAL_OK request=$request_id"',
     "exit",
     "NEMOCLAW_ADMIN_APPROVAL",
