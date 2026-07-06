@@ -351,12 +351,60 @@ describe("sandbox base-image warm resolution", () => {
       pinnedRemoteRef: REF,
     });
 
-    expect(resolved).toMatchObject({ ref: REF, source: "pinned" });
+    expect(resolved).toMatchObject({
+      ref: REF,
+      source: "pinned",
+      pinnedRemoteRef: REF,
+      metadata: expect.objectContaining({
+        pinnedRemoteRef: REF,
+      }),
+    });
     expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
       ignoreError: true,
       suppressOutput: true,
     });
     expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
+  it("rejects a pinned resolution hint from a stale Dockerfile pin", () => {
+    const options = resolutionOptions();
+    const stalePin = `${IMAGE_NAME}@sha256:${"c".repeat(64)}`;
+    const metadata: SandboxBaseImageResolutionMetadata = {
+      schema: 1,
+      key: createSandboxBaseImageResolutionKey({ ...options, pinnedRemoteRef: REF }),
+      imageName: IMAGE_NAME,
+      ref: REF,
+      digest: DIGEST,
+      source: "pinned",
+      pinnedRemoteRef: stalePin,
+      imageId: IMAGE_ID,
+      os: "linux",
+      architecture: "amd64",
+      glibcVersion: null,
+      requireOpenshellSandboxAbi: false,
+      minGlibcVersion: OPENSHELL_SANDBOX_MIN_GLIBC,
+    };
+    dockerMocks.imageInspect.mockReturnValue({ status: 1 });
+    dockerMocks.pull.mockReturnValue({ status: 1 });
+
+    const resolved = resolveSandboxBaseImage({
+      ...options,
+      pinnedRemoteRef: REF,
+      resolutionHint: metadata,
+      env: {
+        ...options.env,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+      },
+    });
+
+    expect(resolved).toBeNull();
+    expect(traceMocks.add).toHaveBeenCalledWith("nemoclaw.sandbox_base_image.cache_stale", {
+      reason: "pinned_ref_mismatch",
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
   });
 
   it("prefers an explicitly trusted pin over an available source-SHA image", () => {

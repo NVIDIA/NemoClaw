@@ -100,6 +100,7 @@ function resolvePulledCandidate(
   imageRef: string,
   source: SandboxBaseImageResolution["source"],
   options: ResolveBaseImageOptions,
+  pinnedRemoteRef?: string,
 ): SandboxBaseImageResolution | null {
   const inspectResult = dockerImageInspect(imageRef, {
     ignoreError: true,
@@ -145,6 +146,7 @@ function resolvePulledCandidate(
     ref: repoDigest?.ref || imageRef,
     digest: repoDigest?.digest || null,
     source,
+    ...(pinnedRemoteRef ? { pinnedRemoteRef } : {}),
     glibcVersion,
   };
 }
@@ -269,6 +271,7 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
+        options.pinnedRemoteRef,
       );
       if (resolved) return finish(resolved);
     }
@@ -293,6 +296,7 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
+        options.pinnedRemoteRef,
       );
       if (resolved) return finish(resolved);
     }

@@ -96,10 +96,7 @@ function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
     (match) => match[1],
   );
   const pinnedRef = declarations.length === 1 ? declarations[0] : null;
-  if (
-    !pinnedRef ||
-    !/^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
-  ) {
+  if (!pinnedRef || !HERMES_OFFICIAL_BASE_DIGEST_REF.test(pinnedRef)) {
     throw new Error(
       "Hermes final Dockerfile must declare exactly one immutable official sandbox base image",
     );
@@ -107,6 +104,11 @@ function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
   return pinnedRef;
 }
 
+/**
+ * Accept only trusted resolver output here. Pinned platform digests are valid
+ * only when the resolver records the current Dockerfile-pinned ref as their
+ * provenance; string callers and explicit overrides stay exact-match only.
+ */
 function hermesFinalDockerfileAcceptsBase(
   agent: AgentDefinition,
   image: string | SandboxBaseImageResolution,
@@ -124,6 +126,7 @@ function hermesFinalDockerfileAcceptsBase(
   if (
     typeof image !== "string" &&
     image.source === "pinned" &&
+    image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent) &&
     HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef)
   ) {
     return true;
