@@ -445,11 +445,26 @@ export function runStreamingEventProbe(
   );
 }
 
-function runStreamingEventProbeImpl(
+interface SseEventCaptureResult {
+  ok: boolean;
+  curlStatus: number;
+  /** Transport/execution error detail when `ok` is false. */
+  detail: string;
+  /** Occurrence count per SSE `event:` type parsed from the response body. */
+  eventCounts: Map<string, number>;
+}
+
+/**
+ * Run a streaming curl probe and count the SSE `event:` types in the
+ * response body. Shared by the Responses API and Anthropic Messages
+ * streaming validators, which apply protocol-specific rules to the counts.
+ */
+function captureSseEventCounts(
   argv: string[],
-  opts: CurlProbeOptions = {},
-): StreamingProbeResult {
-  const bodyFile = secureTempFile("nemoclaw-streaming-probe", ".sse");
+  opts: CurlProbeOptions,
+  tempPrefix: string,
+): SseEventCaptureResult {
+  const bodyFile = secureTempFile(tempPrefix, ".sse");
   try {
     const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
@@ -478,34 +493,52 @@ function runStreamingEventProbeImpl(
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
-      emitCurlResultTraceEvent({
-        ok: false,
-        missing_events_count: REQUIRED_STREAMING_EVENTS.length,
-        curl_status: curlStatus,
-      });
-      return {
-        ok: false,
-        missingEvents: REQUIRED_STREAMING_EVENTS,
-        message: `Streaming probe failed: ${compactText(detail).slice(0, 200)}`,
-      };
+      return { ok: false, curlStatus, detail, eventCounts: new Map() };
     }
 
     // Parse SSE event types from the raw output.
     // Each event line looks like: "event: response.output_text.delta"
-    const eventTypes = new Set<string>();
+    const eventCounts = new Map<string, number>();
     for (const line of body.split("\n")) {
       const match = /^event:\s*(.+)$/i.exec(line.trim());
       if (match) {
-        eventTypes.add(match[1].trim());
+        const eventType = match[1].trim();
+        eventCounts.set(eventType, (eventCounts.get(eventType) ?? 0) + 1);
       }
     }
+    return { ok: true, curlStatus: result.status ?? 0, detail: "", eventCounts };
+  } finally {
+    cleanupTempDir(bodyFile, tempPrefix);
+  }
+}
 
-    const missing = REQUIRED_STREAMING_EVENTS.filter((e) => !eventTypes.has(e));
+function runStreamingEventProbeImpl(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): StreamingProbeResult {
+  try {
+    const capture = captureSseEventCounts(argv, opts, "nemoclaw-streaming-probe");
+    if (!capture.ok) {
+      emitCurlResultTraceEvent({
+        ok: false,
+        missing_events_count: REQUIRED_STREAMING_EVENTS.length,
+        curl_status: capture.curlStatus,
+      });
+      return {
+        ok: false,
+        missingEvents: REQUIRED_STREAMING_EVENTS,
+        message: `Streaming probe failed: ${compactText(capture.detail).slice(0, 200)}`,
+      };
+    }
+
+    const missing = REQUIRED_STREAMING_EVENTS.filter(
+      (e) => (capture.eventCounts.get(e) ?? 0) === 0,
+    );
     if (missing.length > 0) {
       emitCurlResultTraceEvent({
         ok: false,
         missing_events_count: missing.length,
-        curl_status: result.status ?? 0,
+        curl_status: capture.curlStatus,
       });
       return {
         ok: false,
@@ -519,7 +552,7 @@ function runStreamingEventProbeImpl(
     emitCurlResultTraceEvent({
       ok: true,
       missing_events_count: 0,
-      curl_status: result.status ?? 0,
+      curl_status: capture.curlStatus,
     });
     return { ok: true, missingEvents: [], message: "" };
   } catch (error) {
@@ -536,7 +569,135 @@ function runStreamingEventProbeImpl(
       missingEvents: REQUIRED_STREAMING_EVENTS,
       message: `Streaming probe error: ${detail}`,
     };
-  } finally {
-    cleanupTempDir(bodyFile, "nemoclaw-streaming-probe");
+  }
+}
+
+/**
+ * The Anthropic Messages streaming event sequence that agent runtimes
+ * (Hermes `api_mode=anthropic_messages`, OpenClaw Anthropic routes) require
+ * from a `/v1/messages` endpoint: one `message_start`, at least one
+ * `content_block_delta` carrying incremental content, and a terminal
+ * `message_stop`.
+ */
+const REQUIRED_ANTHROPIC_STREAMING_EVENTS = [
+  "message_start",
+  "content_block_delta",
+  "message_stop",
+];
+
+/**
+ * Anthropic Messages events that must appear exactly once per stream.
+ * Anthropic-compatible gateways with broken streaming layers have been
+ * observed emitting `message_start` twice with the same message id, which
+ * corrupts streaming-client state machines: the agent run then ends with an
+ * empty final response even though the non-streaming path works (#6289).
+ */
+const SINGLETON_ANTHROPIC_STREAMING_EVENTS = ["message_start"];
+
+export interface AnthropicStreamingProbeResult {
+  ok: boolean;
+  missingEvents: string[];
+  duplicateEvents: string[];
+  message: string;
+}
+
+/**
+ * Send a streaming request to an Anthropic-compatible `/v1/messages`
+ * endpoint and verify the SSE event stream is well formed: the required
+ * event sequence is present and no singleton event is duplicated.
+ *
+ * This catches gateways whose non-streaming responses are valid but whose
+ * streaming layer is broken — runtime agents only use the streaming path,
+ * so without this probe the defect first surfaces as a cryptic
+ * "no final response was produced" failure inside the sandbox.
+ */
+export function runAnthropicStreamingEventProbe(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): AnthropicStreamingProbeResult {
+  return withTraceSpan(
+    "nemoclaw.inference.curl_anthropic_streaming_probe",
+    getCurlProbeTraceAttributes(argv, opts),
+    () => runAnthropicStreamingEventProbeImpl(argv, opts),
+  );
+}
+
+function runAnthropicStreamingEventProbeImpl(
+  argv: string[],
+  opts: CurlProbeOptions = {},
+): AnthropicStreamingProbeResult {
+  try {
+    const capture = captureSseEventCounts(argv, opts, "nemoclaw-anthropic-streaming-probe");
+    if (!capture.ok) {
+      emitCurlResultTraceEvent({
+        ok: false,
+        missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
+        duplicate_events_count: 0,
+        curl_status: capture.curlStatus,
+      });
+      return {
+        ok: false,
+        missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
+        duplicateEvents: [],
+        message: `Streaming probe failed: ${compactText(capture.detail).slice(0, 200)}`,
+      };
+    }
+
+    const missing = REQUIRED_ANTHROPIC_STREAMING_EVENTS.filter(
+      (e) => (capture.eventCounts.get(e) ?? 0) === 0,
+    );
+    const duplicates = SINGLETON_ANTHROPIC_STREAMING_EVENTS.filter(
+      (e) => (capture.eventCounts.get(e) ?? 0) > 1,
+    );
+    if (missing.length > 0 || duplicates.length > 0) {
+      const problems: string[] = [];
+      if (duplicates.length > 0) {
+        const detail = duplicates
+          .map((e) => `${e} (${capture.eventCounts.get(e)} events for one request)`)
+          .join(", ");
+        problems.push(`emits duplicate ${detail}`);
+      }
+      if (missing.length > 0) {
+        problems.push(`is missing required events: ${missing.join(", ")}`);
+      }
+      emitCurlResultTraceEvent({
+        ok: false,
+        missing_events_count: missing.length,
+        duplicate_events_count: duplicates.length,
+        curl_status: capture.curlStatus,
+      });
+      return {
+        ok: false,
+        missingEvents: missing,
+        duplicateEvents: duplicates,
+        message:
+          `Anthropic Messages streaming on this endpoint ${problems.join(" and ")}. ` +
+          "Agent runs use the streaming path and would fail with an empty final response.",
+      };
+    }
+
+    emitCurlResultTraceEvent({
+      ok: true,
+      missing_events_count: 0,
+      duplicate_events_count: 0,
+      curl_status: capture.curlStatus,
+    });
+    return { ok: true, missingEvents: [], duplicateEvents: [], message: "" };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const curlStatus =
+      typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1;
+    emitCurlResultTraceEvent({
+      ok: false,
+      missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
+      duplicate_events_count: 0,
+      curl_status: curlStatus,
+    });
+    return {
+      ok: false,
+      missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
+      duplicateEvents: [],
+      message: `Streaming probe error: ${detail}`,
+    };
   }
 }

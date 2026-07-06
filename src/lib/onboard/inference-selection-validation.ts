@@ -9,6 +9,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
       endpointUrl: string,
       model: string,
       apiKey: string | null | undefined,
+      options?: { probeStreaming?: boolean },
     ): any;
     probeOpenAiLikeEndpoint(
       endpointUrl: string,
@@ -229,7 +230,16 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
-    const probe = runAnthropicProbe(endpointUrl, model, apiKey);
+    const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
+    // Streaming validation catches Anthropic-compatible gateways whose
+    // non-streaming responses are valid but whose SSE streams are malformed
+    // (duplicate message_start, missing content deltas) — the agent runtime
+    // only uses the streaming path, so onboarding must exercise it (#6289).
+    // Reasoning-only compatible endpoints often reject streaming probes, so
+    // mirror the custom OpenAI-compatible path and skip streaming for them.
+    const probe = runAnthropicProbe(endpointUrl, model, apiKey, {
+      probeStreaming: !reasoningEnabled,
+    });
     if (probe.ok) {
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
       return { ok: true, api: probe.api };

@@ -86,4 +86,117 @@ describe("inference selection validation", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("requests streaming validation for custom Anthropic-compatible endpoints (#6289)", async () => {
+    const probeAnthropicEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "anthropic-messages",
+      label: "Anthropic Messages API",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "Hermes",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic endpoint",
+          "https://compatible.example",
+          "nvidia/nemotron-3-super-v3",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: true, api: "anthropic-messages" });
+      expect(probeAnthropicEndpoint).toHaveBeenCalledWith(
+        "https://compatible.example",
+        "nvidia/nemotron-3-super-v3",
+        "test-key",
+        { probeStreaming: true },
+      );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("skips Anthropic streaming validation in reasoning mode", async () => {
+    vi.stubEnv("NEMOCLAW_REASONING", "yes");
+    const probeAnthropicEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "anthropic-messages",
+      label: "Anthropic Messages API",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "Hermes",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+
+    try {
+      await helpers.validateCustomAnthropicSelection(
+        "Custom Anthropic endpoint",
+        "https://compatible.example",
+        "reasoning-model",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+      );
+      expect(probeAnthropicEndpoint).toHaveBeenCalledWith(
+        "https://compatible.example",
+        "reasoning-model",
+        "test-key",
+        { probeStreaming: false },
+      );
+    } finally {
+      log.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("routes a malformed-streaming probe failure through validation recovery (#6289)", async () => {
+    const probeAnthropicEndpoint = vi.fn(() => ({
+      ok: false,
+      message:
+        "Anthropic Messages API (streaming): Anthropic Messages streaming on this endpoint " +
+        "emits duplicate message_start (2 events for one request).",
+      failures: [
+        {
+          name: "Anthropic Messages API (streaming)",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: "duplicate message_start",
+        },
+      ],
+    }));
+    const promptValidationRecovery = vi.fn(async () => "model" as const);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "Hermes",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint,
+      promptValidationRecovery,
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic endpoint",
+          "https://compatible.example",
+          "nvidia/nemotron-3-super-v3",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: false, retry: "model" });
+      expect(promptValidationRecovery).toHaveBeenCalledOnce();
+      expect(error.mock.calls.map((args) => args.join(" ")).join("\n")).toContain(
+        "Custom Anthropic endpoint endpoint validation failed.",
+      );
+    } finally {
+      error.mockRestore();
+    }
+  });
 });

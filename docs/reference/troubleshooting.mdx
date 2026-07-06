@@ -1212,6 +1212,26 @@ Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
 It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 A fresh `$$nemoclaw onboard` is the reliable fix.
 
+### Onboarding fails with "Anthropic Messages streaming on this endpoint emits duplicate message_start"
+
+Validation for the **Other Anthropic-compatible endpoint** provider ends with an error like:
+
+```text
+Anthropic Messages API (streaming): Anthropic Messages streaming on this endpoint emits duplicate message_start (2 events for one request). Agent runs use the streaming path and would fail with an empty final response.
+```
+
+During onboarding, NemoClaw sends a `stream: true` request to `/v1/messages` and validates the SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+This error means the streaming layer on the endpoint or gateway is malformed even though its non-streaming responses are valid.
+A working non-streaming response does not imply that streaming works.
+Some inference gateways proxy plain requests correctly but corrupt the SSE stream, for example by emitting `message_start` twice for one request.
+Agent runs always use the streaming path, so without this check the defect would first surface inside the sandbox as a runtime failure, such as Hermes reporting that no final response was produced.
+
+Fix the streaming layer on the endpoint or gateway, or onboard with a different Anthropic-compatible endpoint.
+The official Anthropic provider does not run this check and is not affected.
+If a sandbox created by an older release fails at runtime with an empty final response on an Anthropic-compatible endpoint, re-run `$$nemoclaw onboard` so the streaming check can diagnose the endpoint.
+If the endpoint serves a reasoning-only model, set `NEMOCLAW_REASONING=true` to skip the streaming check.
+Streaming defects then surface at runtime instead of during onboarding.
+
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
 
 This is expected behavior.

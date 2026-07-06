@@ -10,6 +10,7 @@ import { restoreEnvBulk } from "../../../../test/helpers/env-test-helpers";
 import { flushTrace, resetTraceForTests, TRACE_FILE_ENV, type TraceArtifact } from "../../trace";
 import {
   getCurlTimingArgs,
+  runAnthropicStreamingEventProbe,
   runChatCompletionsStreamingProbe,
   runCurlProbe,
   runStreamingEventProbe,
@@ -798,5 +799,223 @@ describe("runStreamingEventProbe", () => {
         curl_status: 0,
       });
     });
+  });
+});
+
+describe("runAnthropicStreamingEventProbe", () => {
+  /** Helper to build a spawnSyncImpl that writes SSE content to the -o file. */
+  function mockStreaming(sseBody: string, exitCode = 0) {
+    return (_command: string, args: readonly string[]) => {
+      const oIdx = args.indexOf("-o");
+      if (oIdx !== -1) {
+        const outputPath = args[oIdx + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, sseBody);
+        }
+      }
+      return {
+        pid: 1,
+        output: [],
+        stdout: "",
+        stderr: "",
+        status: exitCode,
+        signal: null,
+      };
+    };
+  }
+
+  const healthyStream = [
+    "event: message_start",
+    'data: {"type":"message_start","message":{"id":"msg_1"}}',
+    "",
+    "event: content_block_start",
+    'data: {"type":"content_block_start","index":0}',
+    "",
+    "event: content_block_delta",
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+    "",
+    "event: content_block_stop",
+    'data: {"type":"content_block_stop","index":0}',
+    "",
+    "event: message_delta",
+    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+    "",
+    "event: message_stop",
+    'data: {"type":"message_stop"}',
+    "",
+  ].join("\n");
+
+  it("passes when the Anthropic Messages event sequence is well formed", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream) },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.missingEvents).toEqual([]);
+    expect(result.duplicateEvents).toEqual([]);
+  });
+
+  it("fails when message_start is emitted twice for one request (#6289)", () => {
+    const duplicatedStart = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_4963f1e3"}}',
+      "",
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_4963f1e3"}}',
+      "",
+      "event: content_block_delta",
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}',
+      "",
+      "event: message_stop",
+      'data: {"type":"message_stop"}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(duplicatedStart) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.duplicateEvents).toEqual(["message_start"]);
+    expect(result.missingEvents).toEqual([]);
+    expect(result.message).toContain("duplicate message_start (2 events for one request)");
+  });
+
+  it("fails when the stream carries no content deltas", () => {
+    const emptyStream = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_1"}}',
+      "",
+      "event: message_stop",
+      'data: {"type":"message_stop"}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(emptyStream) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.missingEvents).toEqual(["content_block_delta"]);
+    expect(result.message).toContain("missing required events: content_block_delta");
+  });
+
+  it("fails when the stream never terminates with message_stop", () => {
+    const unterminatedStream = [
+      "event: message_start",
+      'data: {"type":"message_start","message":{"id":"msg_1"}}',
+      "",
+      "event: content_block_delta",
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}',
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(unterminatedStream, 28) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.missingEvents).toEqual(["message_stop"]);
+  });
+
+  it("still passes if curl exits with 28 (timeout) but the full sequence was captured", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream, 28) },
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails on spawn error", () => {
+    const result = runAnthropicStreamingEventProbe(["-sS", "https://example.test/v1/messages"], {
+      spawnSyncImpl: () => {
+        const error = Object.assign(new Error("spawn ENOENT"), { code: "ENOENT" });
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: null,
+          signal: null,
+          error,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("Streaming probe failed");
+  });
+
+  it("records curl_result metadata including duplicate counts", () => {
+    withTraceFile((traceFile) => {
+      const duplicatedStart = [
+        "event: message_start",
+        "data: {}",
+        "",
+        "event: message_start",
+        "data: {}",
+        "",
+        "event: content_block_delta",
+        "data: {}",
+        "",
+        "event: message_stop",
+        "data: {}",
+        "",
+      ].join("\n");
+
+      const result = runAnthropicStreamingEventProbe(
+        ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+        { spawnSyncImpl: mockStreaming(duplicatedStart) },
+      );
+
+      expect(result.ok).toBe(false);
+      flushTrace();
+      const artifact = JSON.parse(fs.readFileSync(traceFile, "utf8")) as TraceArtifact;
+      const span = artifact.resource_spans[0].scope_spans[0].spans.find(
+        (entry) => entry.name === "nemoclaw.inference.curl_anthropic_streaming_probe",
+      );
+      expect(span?.events[0].attributes).toMatchObject({
+        ok: false,
+        missing_events_count: 0,
+        duplicate_events_count: 1,
+        curl_status: 0,
+      });
+    });
+  });
+
+  it("cleans up temp files after probe", () => {
+    let outputPath = "";
+    runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      {
+        spawnSyncImpl: (_command, args) => {
+          const oIdx = args.indexOf("-o");
+          if (oIdx !== -1) {
+            const nextArg = args[oIdx + 1];
+            if (typeof nextArg === "string") {
+              outputPath = nextArg;
+              fs.writeFileSync(outputPath, healthyStream);
+            }
+          }
+          return {
+            pid: 1,
+            output: [],
+            stdout: "",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    expect(outputPath).not.toBe("");
+    expect(fs.existsSync(outputPath)).toBe(false);
+    expect(fs.existsSync(path.dirname(outputPath))).toBe(false);
   });
 });

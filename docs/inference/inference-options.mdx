@@ -243,7 +243,7 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | NVIDIA Endpoints | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
 | Google Gemini | Validates through Gemini's OpenAI-compatible chat-completions path only; NemoClaw skips the `/v1/responses` probe because Gemini does not support the Responses API. |
 | Other OpenAI-compatible endpoint | Tries `/v1/responses` first with a tool-calling probe; falls back to `/v1/chat/completions`. Selected runtime API defaults to `/v1/chat/completions`; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
-| Anthropic-compatible | Tries `/v1/messages`. |
+| Anthropic-compatible | Tries `/v1/messages` with a non-streaming request, then repeats the request with `stream: true` and validates the SSE event sequence. Set `NEMOCLAW_REASONING=true` to skip the streaming check for reasoning-only endpoints. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Local NVIDIA NIM | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe (same as NVIDIA Endpoints). |
@@ -347,6 +347,13 @@ If your local server implements the Anthropic Messages API (`/v1/messages`), cho
 ```bash
 $$nemoclaw onboard
 ```
+
+NemoClaw validates the endpoint by sending a non-streaming `/v1/messages` request, then a `stream: true` request to the same path.
+The streaming check requires a well-formed SSE event sequence (exactly one `message_start`, at least one `content_block_delta`, and a `message_stop`).
+Endpoints and gateways whose non-streaming responses work but whose streaming layer is malformed fail validation during onboarding instead of failing later at runtime inside the sandbox.
+Refer to [Onboarding fails with "Anthropic Messages streaming on this endpoint emits duplicate message_start"](../reference/troubleshooting#onboarding-fails-with-anthropic-messages-streaming-on-this-endpoint-emits-duplicate-message_start) if the streaming check fails.
+Set `NEMOCLAW_REASONING=true` to skip the streaming check when the endpoint serves a reasoning-only model.
+Agent runs still use the streaming path, so skipping the check moves any streaming defect to runtime.
 
 For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
 
