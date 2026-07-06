@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createRebuildFlowHarness,
   makePreparedRecoveryManifest,
+  resetRebuildFlowTestEnvironment,
+  restoreRebuildFlowTestEnvironment,
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
@@ -12,11 +14,11 @@ const restoreSandboxEnv = snapshotEnv(["NEMOCLAW_SANDBOX_NAME"]);
 
 describe("prepared rebuild recovery", () => {
   beforeEach(() => {
-    delete process.env.NEMOCLAW_SANDBOX_NAME;
+    resetRebuildFlowTestEnvironment();
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    restoreRebuildFlowTestEnvironment();
     restoreSandboxEnv();
   });
 
