@@ -366,6 +366,55 @@ describe("sandbox base-image warm resolution", () => {
     expect(dockerMocks.build).not.toHaveBeenCalled();
   });
 
+  it("returns a Dockerfile-pinned platform digest from the resolver path", () => {
+    const platformDigest =
+      "sha256:c0c149ed03b3e8fcd3e395558b22e871cd27c9966ea6faf04c0d2b94d0a821b9";
+    const platformRef = `${IMAGE_NAME}@${platformDigest}`;
+    dockerMocks.imageInspect.mockImplementation((ref: string) => ({
+      status: ref === REF || ref === platformRef ? 0 : 1,
+    }));
+    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) => {
+      if (format === "{{json .RepoDigests}}") return JSON.stringify([platformRef]);
+      if (format === "{{json .}}" && ref === platformRef) {
+        return JSON.stringify({
+          Id: IMAGE_ID,
+          RepoDigests: [platformRef],
+          Os: "linux",
+          Architecture: "amd64",
+        });
+      }
+      return null;
+    });
+
+    const resolved = resolveSandboxBaseImage({
+      ...resolutionOptions(),
+      pinnedRemoteRef: REF,
+      preferPinnedRemoteRef: true,
+    });
+
+    expect(resolved).toEqual({
+      ref: platformRef,
+      digest: platformDigest,
+      source: "pinned",
+      pinnedRemoteRef: REF,
+      glibcVersion: null,
+      metadata: expect.objectContaining({
+        ref: platformRef,
+        digest: platformDigest,
+        source: "pinned",
+        pinnedRemoteRef: REF,
+      }),
+    });
+    expect(dockerMocks.imageInspect).toHaveBeenCalledWith(REF, {
+      ignoreError: true,
+      suppressOutput: true,
+    });
+    expect(dockerMocks.imageInspectFormat).toHaveBeenCalledWith("{{json .RepoDigests}}", REF, {
+      ignoreError: true,
+    });
+    expect(dockerMocks.build).not.toHaveBeenCalled();
+  });
+
   it("rejects a pinned resolution hint from a stale Dockerfile pin", () => {
     const options = resolutionOptions();
     const stalePin = `${IMAGE_NAME}@sha256:${"c".repeat(64)}`;
