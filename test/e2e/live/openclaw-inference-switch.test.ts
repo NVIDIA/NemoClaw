@@ -94,7 +94,7 @@ interface OpenClawConfig {
         baseUrl?: unknown;
         apiKey?: unknown;
         api?: unknown;
-        models?: Array<{ id?: unknown; name?: unknown }>;
+        models?: Array<{ id?: unknown; name?: unknown; maxTokens?: unknown }>;
       }
     >;
   };
@@ -562,6 +562,8 @@ async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promi
   expect(provider?.api).toBe(SWITCH_INFERENCE_API);
   expect(firstModel?.id).toBe(SWITCH_MODEL);
   expect(firstModel?.name).toBe(expectedPrimary);
+  expect(typeof firstModel?.maxTokens).toBe("number");
+  expect(firstModel?.maxTokens).toBeGreaterThan(0);
 
   const hashCheck = await sandboxShell(
     sandbox,

@@ -119,6 +119,12 @@ const SUPPORTED_PROVIDER_NAMES = [
   "vllm-local",
 ] as const;
 
+// Keep aligned with the NEMOCLAW_MAX_TOKENS fallback in
+// scripts/generate-openclaw-config.mts. OpenClaw 2026.6.10 rejects an
+// Anthropic Messages model without a positive maxTokens before making the
+// request, so a new provider namespace must never omit this runtime field.
+const DEFAULT_OPENCLAW_MAX_TOKENS = 4096;
+
 function defaultDeps(): InferenceSetDeps {
   return {
     getDefaultSandbox: registry.getDefault,
@@ -259,11 +265,47 @@ function updateAgentPrimary(config: ConfigObject, primaryModelRef: string): void
   model.primary = primaryModelRef;
 }
 
+function positiveOpenClawMaxTokens(value: ConfigValue | undefined): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+function readOpenClawPrimaryMaxTokens(config: ConfigObject): number | undefined {
+  const agents = config.agents;
+  if (!isConfigObject(agents)) return undefined;
+  const defaults = agents.defaults;
+  if (!isConfigObject(defaults)) return undefined;
+  const selectedModel = defaults.model;
+  if (!isConfigObject(selectedModel) || typeof selectedModel.primary !== "string") {
+    return undefined;
+  }
+
+  const primary = selectedModel.primary;
+  const separator = primary.indexOf("/");
+  if (separator <= 0 || separator === primary.length - 1) return undefined;
+  const providerKey = primary.slice(0, separator);
+  const modelId = primary.slice(separator + 1);
+  const models = config.models;
+  if (!isConfigObject(models)) return undefined;
+  const providers = models.providers;
+  if (!isConfigObject(providers) || !Object.hasOwn(providers, providerKey)) return undefined;
+  const provider = providers[providerKey];
+  if (!isConfigObject(provider) || !Array.isArray(provider.models)) return undefined;
+
+  for (const entry of provider.models) {
+    if (!isConfigObject(entry)) continue;
+    if (entry.name === primary || entry.id === modelId) {
+      return positiveOpenClawMaxTokens(entry.maxTokens);
+    }
+  }
+  return undefined;
+}
+
 function buildProviderConfig(
   existing: ConfigObject,
   model: string,
   route: SandboxInferenceConfig,
   contextWindow?: number,
+  inheritedMaxTokens?: number,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -275,6 +317,12 @@ function buildProviderConfig(
   // Omitted (undefined) → keep whatever the existing entry had.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
+  }
+  if (route.inferenceApi === "anthropic-messages") {
+    firstExistingModel.maxTokens =
+      positiveOpenClawMaxTokens(firstExistingModel.maxTokens) ??
+      inheritedMaxTokens ??
+      DEFAULT_OPENCLAW_MAX_TOKENS;
   }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
@@ -298,6 +346,7 @@ export function patchOpenClawInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const inheritedMaxTokens = readOpenClawPrimaryMaxTokens(config);
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -305,7 +354,13 @@ export function patchOpenClawInferenceConfig(
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
-  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route, contextWindow);
+  providers[route.providerKey] = buildProviderConfig(
+    existingProvider,
+    model,
+    route,
+    contextWindow,
+    inheritedMaxTokens,
+  );
 
   return { changed: before !== JSON.stringify(config), route };
 }

@@ -142,7 +142,13 @@ describe("runInferenceSet OpenClaw routing", () => {
           baseUrl: "https://inference.local",
           apiKey: "unused",
           api: "anthropic-messages",
-          models: [{ id: "claude-sonnet-proxy", name: "anthropic/claude-sonnet-proxy" }],
+          models: [
+            {
+              id: "claude-sonnet-proxy",
+              name: "anthropic/claude-sonnet-proxy",
+              maxTokens: 4096,
+            },
+          ],
         },
       },
     });
