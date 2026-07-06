@@ -43,6 +43,7 @@ import {
   SWITCH_PROVIDER,
   strictHashPerms,
 } from "./hermes-inference-switch-helpers.ts";
+import { stripAnsi } from "./json-envelope.ts";
 import {
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   registerPublicNvidiaSwitchProvider,
@@ -69,10 +70,12 @@ async function expectCompatibleAnthropicOpenAiProvider(
       timeoutMs: 30_000,
     },
   );
-  expect(provider.exitCode, resultText(provider)).toBe(0);
-  expect(resultText(provider)).toMatch(/^\s*Type:\s*openai\s*$/imu);
-  expect(resultText(provider)).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
-  expect(resultText(provider)).toContain("OPENAI_BASE_URL");
+  const output = resultText(provider);
+  expect(provider.exitCode, output).toBe(0);
+  const plain = stripAnsi(output);
+  expect(plain).toMatch(/^\s*Type:\s*openai\s*$/imu);
+  expect(plain).toContain("COMPATIBLE_ANTHROPIC_API_KEY");
+  expect(plain).toContain("OPENAI_BASE_URL");
 }
 
 test.skipIf(!shouldRunLiveE2E())(
