@@ -517,17 +517,14 @@ test.skipIf(!shouldRunLiveE2E())(
     );
 
     const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
+    const exportScript = [
+      `rm -f ${shellQuote(exportPath)}`,
+      `hermes sessions export --session-id ${shellQuote(seedSessionId)} ${shellQuote(exportPath)}`,
+      `cat ${shellQuote(exportPath)}`,
+    ].join(" && ");
     const exportResult = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript(
-        [
-          `rm -f ${shellQuote(exportPath)}`,
-          `hermes sessions export --session-id ${shellQuote(seedSessionId)} ${shellQuote(
-            exportPath,
-          )}`,
-          `cat ${shellQuote(exportPath)}`,
-        ].join(" && "),
-      ),
+      trustedSandboxShellScript(exportScript),
       {
         artifactName: "phase-4-issue-5254-export-session",
         env: commandEnv(),
