@@ -1232,7 +1232,6 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
-
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
