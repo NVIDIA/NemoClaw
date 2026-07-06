@@ -329,3 +329,94 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     }
   });
 });
+
+const classifyFunction = extractShellFunction("classify_openclaw_config_seal");
+const reclaimFunction = extractShellFunction("reclaim_collapsed_mutable_config");
+const runningAsRoot = process.getuid?.() === 0;
+
+function runClassify(configDir: string) {
+  const script = [
+    "set -uo pipefail",
+    classifyFunction,
+    "rc=0",
+    `classify_openclaw_config_seal ${JSON.stringify(configDir)} || rc=$?`,
+    'printf "rc=%s\\n" "$rc"',
+  ].join("\n");
+  return runBash(script);
+}
+
+describe("nemoclaw-start mutable config seal classification", () => {
+  it("never reports a group-writable mutable directory as a shields-up seal", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-mutable-"));
+    const configDir = path.join(root, ".openclaw");
+    fs.mkdirSync(configDir, 0o2770);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    try {
+      expect(runClassify(configDir).stdout).toContain("rc=1");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("treats the 0755 directory with a 0444 config as sealed only when it is root-owned", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-owner-"));
+    const configDir = path.join(root, ".openclaw");
+    fs.mkdirSync(configDir, 0o755);
+    const configFile = path.join(configDir, "openclaw.json");
+    fs.writeFileSync(configFile, "{}\n");
+    fs.chmodSync(configFile, 0o444);
+    try {
+      expect(runClassify(configDir).stdout).toContain(runningAsRoot ? "rc=0" : "rc=1");
+    } finally {
+      fs.chmodSync(configFile, 0o644);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a missing config directory as indeterminate", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-missing-"));
+    try {
+      expect(runClassify(path.join(root, ".openclaw")).stdout).toContain("rc=2");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a symlinked config directory as indeterminate", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seal-symlink-"));
+    const realDir = path.join(root, "real");
+    const linkDir = path.join(root, ".openclaw");
+    fs.mkdirSync(realDir, 0o2770);
+    fs.symlinkSync(realDir, linkDir);
+    try {
+      expect(runClassify(linkDir).stdout).toContain("rc=2");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("nemoclaw-start mutable config reclaim", () => {
+  it("leaves the tree untouched when it cannot reclaim ownership without root", () => {
+    if (runningAsRoot) return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-reclaim-nonroot-"));
+    const configDir = path.join(root, ".openclaw");
+    fs.mkdirSync(configDir, 0o2770);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    const beforeUid = fs.statSync(configDir).uid;
+    const script = [
+      "set -uo pipefail",
+      reclaimFunction,
+      "rc=0",
+      `reclaim_collapsed_mutable_config ${JSON.stringify(configDir)} || rc=$?`,
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+    try {
+      const result = runBash(script);
+      expect(result.stdout).toContain("rc=0");
+      expect(fs.statSync(configDir).uid).toBe(beforeUid);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

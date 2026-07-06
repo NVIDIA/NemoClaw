@@ -551,8 +551,16 @@ PY_CLASSIFY_MUTABLE_CONFIG
     return 1
   fi
   [ "$config_dir_uid" = "missing" ] && return 0
-  # Shields up: the root-owned config tree is intentionally locked.
-  [ "$config_dir_uid" = "0" ] && return 0
+  if [ "$config_dir_uid" = "0" ]; then
+    [ "$operation" = "normalize" ] || return 0
+    local seal_state
+    classify_openclaw_config_seal "$config_dir"
+    seal_state=$?
+    if [ "$seal_state" -eq 1 ]; then
+      reclaim_collapsed_mutable_config "$config_dir" || return 1
+    fi
+    return 0
+  fi
 
   local expected_config_dir_uid expected_config_dir_gid
   if [ "$(id -u)" -eq 0 ]; then
@@ -620,6 +628,86 @@ PY_CLASSIFY_MUTABLE_CONFIG
     printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
     return 1
   fi
+}
+
+classify_openclaw_config_seal() {
+  local config_dir="$1"
+  python3 -I - "$config_dir" "$config_dir/openclaw.json" <<'PY_CLASSIFY_OPENCLAW_SEAL'
+import os
+import stat
+import sys
+
+SEALED = 0
+UNSEALED = 1
+INDETERMINATE = 2
+
+try:
+    dir_path, file_path = sys.argv[1], sys.argv[2]
+    try:
+        dir_meta = os.lstat(dir_path)
+    except OSError:
+        raise SystemExit(INDETERMINATE)
+    if not stat.S_ISDIR(dir_meta.st_mode):
+        raise SystemExit(INDETERMINATE)
+    dir_sealed = (
+        dir_meta.st_uid == 0
+        and dir_meta.st_gid == 0
+        and stat.S_IMODE(dir_meta.st_mode) == 0o755
+    )
+    if not dir_sealed:
+        raise SystemExit(UNSEALED)
+    try:
+        file_meta = os.lstat(file_path)
+    except FileNotFoundError:
+        raise SystemExit(SEALED)
+    except OSError:
+        raise SystemExit(INDETERMINATE)
+    file_sealed = (
+        stat.S_ISREG(file_meta.st_mode)
+        and file_meta.st_uid == 0
+        and file_meta.st_gid == 0
+        and stat.S_IMODE(file_meta.st_mode) == 0o444
+    )
+    raise SystemExit(SEALED if file_sealed else UNSEALED)
+except SystemExit:
+    raise
+except Exception:
+    raise SystemExit(INDETERMINATE)
+PY_CLASSIFY_OPENCLAW_SEAL
+}
+
+reclaim_collapsed_mutable_config() {
+  local config_dir="$1"
+  local config_file="$config_dir/openclaw.json"
+  local hash_file="$config_dir/.config-hash"
+
+  [ "$(id -u)" -eq 0 ] || return 0
+
+  if [ -L "$config_dir" ] || [ -L "$config_file" ] || [ -L "$hash_file" ]; then
+    printf '[SECURITY] Refusing mutable config reclaim — config directory or file path is a symlink\n' >&2
+    return 1
+  fi
+
+  if ! find -P "$config_dir" \( -type d -o -type f \) -exec chown sandbox:sandbox {} +; then
+    printf '[SECURITY] Failed to reclaim ownership of %s\n' "$config_dir" >&2
+    return 1
+  fi
+  if ! chmod 2770 "$config_dir"; then
+    printf '[SECURITY] Failed to restore permissions on %s\n' "$config_dir" >&2
+    return 1
+  fi
+  if ! find -P "$config_dir" -type d -exec chmod g+s {} +; then
+    printf '[SECURITY] Failed to restore setgid inheritance on %s\n' "$config_dir" >&2
+    return 1
+  fi
+  local f
+  for f in "$config_file" "$hash_file"; do
+    [ -e "$f" ] || continue
+    if ! chmod 660 "$f"; then
+      printf '[SECURITY] Failed to restore permissions on %s\n' "$f" >&2
+      return 1
+    fi
+  done
 }
 
 # Invalid state (#4538, #6047): OpenClaw assumes a single-UID 700/600 config
