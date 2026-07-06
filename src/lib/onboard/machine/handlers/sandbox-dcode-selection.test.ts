@@ -74,6 +74,23 @@ describe("handleSandboxState live DCode selection", () => {
     expect(calls.removeSandbox).not.toHaveBeenCalled();
   });
 
+  it("preserves registry fidelity when GPU drift recreates managed DCode (#6311)", async () => {
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getDcodeSelectionDrift: () => ({ changed: false, unknown: false }),
+      hasSandboxGpuDrift: () => true,
+      getSandboxRegistryEntry: (name) => dcodeRegistryEntry(name),
+    });
+
+    await handleSandboxState(dcodeOptions(deps));
+
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox.mock.calls[0]?.at(-1)).toEqual({
+      recreate: true,
+      toolDisclosure: "progressive",
+    });
+  });
+
   it("reuses a ready sandbox only after the live selection is verified (#6311)", async () => {
     const getDcodeSelectionDrift = vi.fn(() => ({ changed: false, unknown: false }));
     const { deps, calls } = createDeps({

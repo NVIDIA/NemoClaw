@@ -4,6 +4,7 @@
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { usesManagedDcodeIdentity } from "../../dcode-selection-drift";
+import type { SandboxResumeDecision } from "./sandbox-resume";
 
 export interface Deps {
   getDcodeSelectionDrift(
@@ -35,6 +36,20 @@ interface ResumeState {
 
 function agentName<Agent>(agent: Agent): string | null | undefined {
   return (agent as { name?: string } | null | undefined)?.name;
+}
+
+export function preserveManagedDcodeRegistryEntry<Agent>(
+  options: SelectionOptions<Agent>,
+  decision: SandboxResumeDecision,
+): SandboxResumeDecision {
+  if (
+    decision.kind !== "recreate" ||
+    !decision.removeRegistryEntry ||
+    !usesManagedDcodeIdentity(agentName(options.agent), options.fromDockerfile)
+  ) {
+    return decision;
+  }
+  return { ...decision, removeRegistryEntry: false };
 }
 
 export function resolveSignals<Agent>(

@@ -385,7 +385,7 @@ class SandboxStateFlow<
       registryEntry,
       this.deps,
     );
-    return decideSandboxResume({
+    const decision = decideSandboxResume({
       resume: this.options.resume,
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
@@ -405,6 +405,7 @@ class SandboxStateFlow<
       ...toolDisclosureSignals,
       ...dcodeResumeSignals,
     });
+    return dcodeResume.preserveManagedDcodeRegistryEntry(this.options, decision);
   }
 
   private async reuseSandbox(
