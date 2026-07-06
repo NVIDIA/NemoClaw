@@ -248,7 +248,7 @@ describe("created DCode sandbox finalization", () => {
       expect(order).toEqual(["restore", "validate", "register"]);
       expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
       expect(registeredConfigs[0]).not.toContain("old-model");
-      expect(registeredConfigs[0]).toContain('[agents]\ndefault = "reviewer"');
+      expect(registeredConfigs[0]).not.toContain("[agents]");
       expect(registeredConfigs[0]).toContain('[ui]\ntheme = "dark"');
     } finally {
       process.env.PATH = fixture.oldPath;

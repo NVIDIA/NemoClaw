@@ -109,8 +109,9 @@ For project-specific Python dependencies, create a separate virtual environment 
 ## State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
-NemoClaw snapshot and rebuild flows preserve the app state directory, skills, and generated config when those files exist.
-During managed re-onboarding, NemoClaw merges restored `config.toml` user preference tables while keeping the freshly generated model routing, update settings, and provider metadata authoritative.
+NemoClaw snapshot and rebuild flows preserve the app state directory and skills when those paths exist.
+During managed re-onboarding, NemoClaw restores only explicitly allowlisted, validated `config.toml` preference keys while keeping the freshly generated model routing, update settings, and provider metadata authoritative.
+Tables and keys that are unknown or security-sensitive are not restored.
 It recreates the sandbox when its live `dcode identity` output is unreadable or does not match the selected provider and model, then records the selection only after the restored runtime passes the same check.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
 For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
