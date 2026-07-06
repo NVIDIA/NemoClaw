@@ -20,11 +20,6 @@ import {
   rollbackDockerGpuPatchOnRecreateFailure,
 } from "./docker-gpu-patch-finalize";
 import {
-  initialDockerGpuRoute,
-  resolveDockerGpuRoutePlan,
-  type SelectedDockerGpuRoute,
-} from "./docker-gpu-route";
-import {
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
   type DockerGpuSupervisorReconnectDeps,
@@ -32,6 +27,23 @@ import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-supervisor-reconnect";
+import {
+  findOpenShellDockerSandboxContainerIds,
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAME_LABEL,
+} from "./openshell-docker-sandbox-containers";
+
+export {
+  findOpenShellDockerSandboxContainerIds,
+  OPENSHELL_MANAGED_BY_LABEL,
+  OPENSHELL_MANAGED_BY_VALUE,
+  OPENSHELL_SANDBOX_NAME_LABEL,
+  type OpenShellDockerSandboxContainerQuery,
+  type OpenShellDockerSandboxImageQuery,
+  queryOpenShellDockerSandboxContainers,
+  queryOpenShellDockerSandboxImage,
+} from "./openshell-docker-sandbox-containers";
 
 export type { DockerGpuSupervisorReconnectDeps };
 export {
@@ -42,9 +54,6 @@ export {
   waitForOpenShellSupervisorReconnect,
 };
 
-export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
-export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
-export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
@@ -543,33 +552,6 @@ export function buildDockerGpuModeCandidates(
   return candidates;
 }
 
-export function shouldApplyDockerGpuPatch(
-  config: { sandboxGpuEnabled: boolean; hostGpuPlatform?: string | null },
-  options: {
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    dockerDriverGateway?: boolean;
-    dockerDesktopWsl?: boolean;
-    log?: (message: string) => void;
-  } = {},
-): boolean {
-  const platform = options.platform ?? process.platform;
-  const dockerDesktopWsl = options.dockerDesktopWsl === true;
-  const dockerDriverGateway =
-    options.dockerDriverGateway ?? (platform === "linux" || dockerDesktopWsl);
-  return (
-    initialDockerGpuRoute(
-      resolveDockerGpuRoutePlan(config, {
-        dockerDriverGateway,
-        dockerDesktopWsl,
-        env: options.env,
-        platform,
-        log: options.log,
-      }),
-    ) === "compatibility"
-  );
-}
-
 export function buildDockerGpuCloneRunOptions(
   inspect: DockerContainerInspect,
   env: Record<string, string | undefined> = process.env,
@@ -802,104 +784,6 @@ export function parseDockerInspectJson(output: string): DockerContainerInspect {
   return inspect as DockerContainerInspect;
 }
 
-export function findOpenShellDockerSandboxContainerIds(
-  sandboxName: string,
-  deps: DockerGpuPatchDeps = {},
-): string[] {
-  const d = depsWithDefaults(deps);
-  const output = d.dockerCapture(
-    [
-      "ps",
-      "-a",
-      "--filter",
-      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-      "--filter",
-      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-      "--format",
-      "{{.ID}}",
-    ],
-    { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-  );
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-export type OpenShellDockerSandboxContainerQuery =
-  | { ok: true; ids: string[] }
-  | { ok: false; ids: []; error: string };
-
-/**
- * Status-bearing variant used when an empty container list is a safety proof.
- * The older capture helper intentionally remains best-effort for diagnostics;
- * fallback cleanup must distinguish Docker failure from zero labeled matches.
- */
-export function queryOpenShellDockerSandboxContainers(
-  sandboxName: string,
-  deps: DockerGpuPatchDeps = {},
-): OpenShellDockerSandboxContainerQuery {
-  const d = depsWithDefaults(deps);
-  const result = d.dockerRun(
-    [
-      "ps",
-      "-a",
-      "--filter",
-      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
-      "--filter",
-      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
-      "--format",
-      "{{.ID}}",
-    ],
-    { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-  );
-  if (Number(result.status ?? 1) !== 0) {
-    return {
-      ok: false,
-      ids: [],
-      error: resultText(result) || "docker ps did not complete successfully",
-    };
-  }
-  const ids = String(result.stdout ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return { ok: true, ids };
-}
-
-export type OpenShellDockerSandboxImageQuery =
-  | { ok: true; imageRef: string; containerId: string }
-  | { ok: false; error: string };
-
-/** Resolve the one labeled native container's reusable image before deletion. */
-export function queryOpenShellDockerSandboxImage(
-  sandboxName: string,
-  deps: DockerGpuPatchDeps = {},
-): OpenShellDockerSandboxImageQuery {
-  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
-  if (!containers.ok) return { ok: false, error: containers.error };
-  if (containers.ids.length !== 1) {
-    return {
-      ok: false,
-      error: `expected one labeled sandbox container, found ${containers.ids.length}`,
-    };
-  }
-  const d = depsWithDefaults(deps);
-  const containerId = containers.ids[0];
-  const inspect = d.dockerRun(
-    ["inspect", "--type", "container", "--format", "{{.Config.Image}}", containerId],
-    { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-  );
-  const imageRef = String(inspect.stdout ?? "").trim();
-  if (Number(inspect.status ?? 1) !== 0 || !imageRef) {
-    return {
-      ok: false,
-      error: resultText(inspect) || "docker inspect did not return a reusable image reference",
-    };
-  }
-  return { ok: true, imageRef, containerId };
-}
-
 function inspectDockerContainer(
   containerId: string,
   deps: DockerGpuPatchDeps,
@@ -1040,7 +924,10 @@ function probeDockerGpuMode(
       error: isZeroStatus(result) ? null : resultText(result) || `docker create failed`,
     };
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
   } finally {
     d.dockerRm(probeName, {
       ignoreError: true,
@@ -1369,7 +1256,7 @@ export function printDockerGpuPatchFailureAndExit(
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
-    selectedRoute?: SelectedDockerGpuRoute;
+    additionalSummaryLines?: readonly string[];
   },
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
@@ -1383,7 +1270,14 @@ export function printDockerGpuPatchFailureAndExit(
   const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, context, selectedMode, selectedRoute: deps.selectedRoute, snapshot, classification },
+    {
+      error,
+      context,
+      selectedMode,
+      snapshot,
+      classification,
+      additionalSummaryLines: deps.additionalSummaryLines,
+    },
     inspectDeps,
   );
   console.error("");
@@ -1412,7 +1306,7 @@ export function printDockerGpuReadinessFailure(
   selectedMode: DockerGpuPatchMode | null,
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
-    selectedRoute?: SelectedDockerGpuRoute;
+    additionalSummaryLines?: readonly string[];
   },
 ): void {
   const context = deps.context ?? null;
@@ -1425,7 +1319,13 @@ export function printDockerGpuReadinessFailure(
   const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { selectedMode, selectedRoute: deps.selectedRoute, context, snapshot, classification },
+    {
+      selectedMode,
+      context,
+      snapshot,
+      classification,
+      additionalSummaryLines: deps.additionalSummaryLines,
+    },
     inspectDeps,
   );
   printDockerGpuPatchClassificationLines(classification);
@@ -1441,7 +1341,7 @@ export function printDockerGpuProofFailure(
   selectedMode: DockerGpuPatchMode | null,
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
-    selectedRoute?: SelectedDockerGpuRoute;
+    additionalSummaryLines?: readonly string[];
   },
 ): void {
   const context = deps.context ?? null;
@@ -1456,7 +1356,14 @@ export function printDockerGpuProofFailure(
   });
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, selectedMode, selectedRoute: deps.selectedRoute, context, snapshot, classification },
+    {
+      error,
+      selectedMode,
+      context,
+      snapshot,
+      classification,
+      additionalSummaryLines: deps.additionalSummaryLines,
+    },
     inspectDeps,
   );
   printDockerGpuPatchClassificationLines(classification);
@@ -1774,7 +1681,7 @@ export function collectDockerGpuPatchDiagnostics(
     selectedMode?: DockerGpuPatchMode | null;
     snapshot?: DockerGpuPatchSandboxSnapshot | null;
     classification?: DockerGpuPatchFailureClassification | null;
-    selectedRoute?: SelectedDockerGpuRoute;
+    additionalSummaryLines?: readonly string[];
     additionalSensitiveValues?: readonly string[];
     dockerTopOutput?: string | null;
   } = {},
@@ -1808,7 +1715,10 @@ export function collectDockerGpuPatchDiagnostics(
       : []),
     ...discoveredContainerIds,
   ]);
-  const inspectedTargets: Array<{ target: string; entries: DockerContainerInspect[] }> = [];
+  const inspectedTargets: Array<{
+    target: string;
+    entries: DockerContainerInspect[];
+  }> = [];
   for (const target of containerTargets) {
     try {
       const inspect = d.dockerCapture(["inspect", target], {
@@ -1840,14 +1750,13 @@ export function collectDockerGpuPatchDiagnostics(
         : "none",
   );
   const selectedMode = options.selectedMode || context?.selectedMode || null;
-  const selectedRoute = options.selectedRoute ?? (selectedMode ? "compatibility" : "none");
   const snapshot = options.snapshot ?? null;
   const classification = options.classification ?? null;
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${redactor.redactText(sandboxName)}`,
     `error=${errorText}`,
-    `selected_gpu_route=${selectedRoute}`,
+    ...(options.additionalSummaryLines ?? []).map(redactor.redactText),
     `selected_gpu_mode=${redactor.redactText(selectedMode?.label ?? "none")}`,
     `old_container_id=${redactor.redactText(context?.oldContainerId ?? "unknown")}`,
     `new_container_id=${redactor.redactText(context?.newContainerId ?? "unknown")}`,

@@ -22,10 +22,8 @@ import {
   formatDockerInspectNetworkSummary,
   getDockerGpuPatchNetworkMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
-  queryOpenShellDockerSandboxImage,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
-  shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 
@@ -77,96 +75,6 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("docker-gpu-patch", () => {
-  it("routes native CDI Linux directly unless the legacy patch is forced", () => {
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true },
-        { env: {}, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(false);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true },
-        {
-          env: { NEMOCLAW_DOCKER_GPU_PATCH: "auto" },
-          platform: "linux",
-          dockerDriverGateway: true,
-        },
-      ),
-    ).toBe(false);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true },
-        { env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" }, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(true);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true },
-        { env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(false);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true },
-        { env: {}, platform: "darwin", dockerDriverGateway: true },
-      ),
-    ).toBe(false);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: false },
-        { env: {}, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(false);
-  });
-
-  it("keeps Jetson on the compatibility patch by default while honoring its opt-out", () => {
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
-        { env: {}, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(true);
-    expect(
-      shouldApplyDockerGpuPatch(
-        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
-        { env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, platform: "linux", dockerDriverGateway: true },
-      ),
-    ).toBe(false);
-  });
-
-  it("resolves a reusable image only from one status-bearing labeled-container result", () => {
-    const dockerRun = vi.fn((args: readonly string[]) =>
-      args[0] === "ps"
-        ? { status: 0, stdout: "container-a\n", stderr: "" }
-        : { status: 0, stdout: "openshell/sandbox-from:123\n", stderr: "" },
-    );
-
-    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
-      ok: true,
-      imageRef: "openshell/sandbox-from:123",
-      containerId: "container-a",
-    });
-    expect(dockerRun).toHaveBeenLastCalledWith(
-      ["inspect", "--type", "container", "--format", "{{.Config.Image}}", "container-a"],
-      expect.objectContaining({ ignoreError: true }),
-    );
-  });
-
-  it("refuses an image reference when labeled-container state is ambiguous", () => {
-    const dockerRun = vi.fn(() => ({
-      status: 0,
-      stdout: "container-a\ncontainer-b\n",
-      stderr: "",
-    }));
-
-    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
-      ok: false,
-      error: "expected one labeled sandbox container, found 2",
-    });
-    expect(dockerRun).toHaveBeenCalledOnce();
-  });
-
   it("builds clone args that preserve OpenShell labels and runtime settings", () => {
     const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"));
 
@@ -430,24 +338,6 @@ describe("docker-gpu-patch", () => {
       "gpus",
       "nvidia-runtime",
     ]);
-  });
-
-  it("does not accept a GPU mode probe with no exit status", () => {
-    const dockerRun = vi.fn(() => ({ status: null, stderr: "timed out" }));
-
-    const selected = selectDockerGpuPatchMode(
-      { image: "openshell/sandbox:abc" },
-      {
-        dockerCapture: vi.fn(() => ""),
-        dockerRun,
-        dockerRm: vi.fn(() => ({ status: 0 })),
-        readDir: vi.fn(() => null),
-        readFile: vi.fn(() => null),
-      },
-    );
-
-    expect(selected.mode).toBeNull();
-    expect(selected.attempts).toHaveLength(2);
   });
 
   it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {

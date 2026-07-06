@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { REQUIRED_OPENSHELL_MCP_FEATURES } from "../../../src/lib/onboard/openshell-feature-gate";
+
 export const HERMES_GPU_FALLBACK_EVENTS = {
   rejectNativeCreate: "reject-native-create",
   delegateNativeCreate: "delegate-native-create-after-rejection",
@@ -56,6 +58,10 @@ function requireAbsoluteExecutable(filePath: string, label: string): void {
   fs.accessSync(filePath, fs.constants.X_OK);
 }
 
+function quoteShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
 /**
  * Create an E2E-only OpenShell CLI wrapper that models a native `--gpu`
  * rejection. The first matching create is rejected atomically; every later
@@ -85,8 +91,9 @@ export function createHermesGpuFallbackWrapper(
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     "",
-    ': "${E2E_HERMES_GPU_REAL_OPENSHELL:?}"',
-    ': "${E2E_HERMES_GPU_FALLBACK_STATE_DIR:?}"',
+    ...REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => `# capability: ${marker}`),
+    `REAL_OPENSHELL=${quoteShellLiteral(realOpenshellPath)}`,
+    `FALLBACK_STATE_DIR=${quoteShellLiteral(stateDir)}`,
     "",
     "is_sandbox_create=0",
     "has_gpu_flag=0",
@@ -102,26 +109,24 @@ export function createHermesGpuFallbackWrapper(
     "",
     'if [[ "$is_sandbox_create" == "1" ]]; then',
     '  if [[ "$has_gpu_flag" == "1" ]]; then',
-    '    if mkdir "$E2E_HERMES_GPU_FALLBACK_STATE_DIR/native-create-rejected" 2>/dev/null; then',
-    `      printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreate}' >>"$E2E_HERMES_GPU_FALLBACK_STATE_DIR/events.log"`,
+    '    if mkdir "$FALLBACK_STATE_DIR/native-create-rejected" 2>/dev/null; then',
+    `      printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
     `      printf '%s\\n' "error: unexpected argument '--gpu' found" >&2`,
     "      exit 2",
     "    fi",
-    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreate}' >>"$E2E_HERMES_GPU_FALLBACK_STATE_DIR/events.log"`,
+    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "  else",
-    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$E2E_HERMES_GPU_FALLBACK_STATE_DIR/events.log"`,
+    `    printf '%s\\n' '${HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate}' >>"$FALLBACK_STATE_DIR/events.log"`,
     "  fi",
     "fi",
     "",
-    'exec "$E2E_HERMES_GPU_REAL_OPENSHELL" "$@"',
+    'exec "$REAL_OPENSHELL" "$@"',
     "",
   ].join("\n");
   fs.writeFileSync(wrapperPath, wrapper, { encoding: "utf8", mode: 0o700 });
 
   return {
     componentEnv: {
-      E2E_HERMES_GPU_FALLBACK_STATE_DIR: stateDir,
-      E2E_HERMES_GPU_REAL_OPENSHELL: realOpenshellPath,
       NEMOCLAW_OPENSHELL_BIN: wrapperPath,
       NEMOCLAW_OPENSHELL_GATEWAY_BIN: gatewayPath,
       NEMOCLAW_OPENSHELL_SANDBOX_BIN: sandboxPath,

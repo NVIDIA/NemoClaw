@@ -51,13 +51,16 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => true);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: true, rolledBack: false }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: true,
+      rolledBack: false,
+    }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -74,7 +77,9 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     patch.maybeApplyDuringCreate();
     expect(recreatePatch).toHaveBeenCalledWith(
       expect.objectContaining({ waitForSupervisor: false }),
-      expect.objectContaining({ runCaptureOpenshell: deps.runCaptureOpenshell }),
+      expect.objectContaining({
+        runCaptureOpenshell: deps.runCaptureOpenshell,
+      }),
     );
     // Critical invariant: the patch helper must NOT remove the backup during
     // create (recreatePatch was called with waitForSupervisor: false; the
@@ -94,8 +99,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const onPatchFailureExit = vi.fn();
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
-      selectedRoute: "compatibility",
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -103,7 +107,10 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
         findContainerIds: vi.fn(() => ["existing-container"]),
         recreatePatch: vi.fn(() => result),
         waitForSupervisor: vi.fn(() => true),
-        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: false })),
+        finalizeBackup: vi.fn(() => ({
+          backupRemoved: false,
+          rolledBack: false,
+        })),
         onPatchFailureExit,
       },
     });
@@ -113,12 +120,16 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
 
     expect(onPatchFailureExit).toHaveBeenCalledOnce();
     expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
-      expect.objectContaining({ message: expect.stringContaining("backup container") }),
+      expect.objectContaining({
+        message: expect.stringContaining("backup container"),
+      }),
     );
     expect(onPatchFailureExit.mock.calls[0]?.[2]).toEqual(
       expect.objectContaining({
-        selectedRoute: "compatibility",
-        context: expect.objectContaining({ backupContainerName: result.backupContainerName }),
+        additionalSummaryLines: ["selected_gpu_route=compatibility"],
+        context: expect.objectContaining({
+          backupContainerName: result.backupContainerName,
+        }),
       }),
     );
   });
@@ -129,12 +140,15 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
     const capturePreRollbackDiagnostics = vi.fn(() => null);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: true }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: true,
+    }));
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -171,13 +185,16 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const result = deferredCreateResult();
     const recreatePatch = vi.fn(() => result);
     const waitForSupervisor = vi.fn(() => false);
-    const finalizeBackup = vi.fn(() => ({ backupRemoved: false, rolledBack: false }));
+    const finalizeBackup = vi.fn(() => ({
+      backupRemoved: false,
+      rolledBack: false,
+    }));
     const capturePreRollbackDiagnostics = vi.fn(() => null);
     const onPatchFailureExit = vi.fn();
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -210,7 +227,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const findContainerIds = vi.fn(() => []);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -243,7 +260,7 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     const findContainerIds = vi.fn(() => ["existing-container"]);
 
     const patch = createDockerGpuSandboxCreatePatch({
-      enabled: true,
+      route: "compatibility",
       sandboxName: "alpha",
       timeoutSecs: 60,
       deps,
@@ -282,10 +299,22 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
   it.each<RouteCase>([
     { label: "GPU disabled", gpuEnabled: false, expected: "none" },
     { label: "ordinary Linux default", expected: "native-with-fallback" },
-    { label: "ordinary Linux auto", control: "auto", expected: "native-with-fallback" },
+    {
+      label: "ordinary Linux auto",
+      control: "auto",
+      expected: "native-with-fallback",
+    },
     { label: "ordinary Linux opt-out", control: "0", expected: "native-only" },
-    { label: "ordinary Linux forced compatibility", control: "1", expected: "compatibility-only" },
-    { label: "ordinary Linux legacy nonzero", control: "2", expected: "compatibility-only" },
+    {
+      label: "ordinary Linux forced compatibility",
+      control: "1",
+      expected: "compatibility-only",
+    },
+    {
+      label: "ordinary Linux legacy nonzero",
+      control: "2",
+      expected: "compatibility-only",
+    },
     {
       label: "non-Docker driver",
       dockerDriverGateway: false,

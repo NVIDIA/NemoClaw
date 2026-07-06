@@ -38,7 +38,11 @@ function writeHash(
   envPath: string,
   env: string,
 ): void {
-  fs.writeFileSync(hashPath, `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n`);
+  const mcpDigest = digest("{}");
+  fs.writeFileSync(
+    hashPath,
+    `${digest(config)}  ${configPath}\n${digest(env)}  ${envPath}\n# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`,
+  );
 }
 
 function createFixture(): IntegrityFixture {
@@ -142,6 +146,21 @@ describe("Hermes managed startup integrity proof", () => {
     expect(proof.stderr).toContain(
       "Hermes compatibility hash does not match the current environment",
     );
+  });
+
+  it("rejects pending MCP state in the strict anchor", () => {
+    const fixture = createFixture();
+    fs.chmodSync(fixture.strictHashPath, 0o644);
+    const current = fs.readFileSync(fixture.strictHashPath, "utf-8");
+    fs.writeFileSync(
+      fixture.strictHashPath,
+      current.replace(/applied=[0-9a-f]{64}/u, `applied=${"b".repeat(64)}`),
+    );
+    fs.chmodSync(fixture.strictHashPath, 0o444);
+
+    const proof = runProof(fixture);
+    expect(proof.status).not.toBe(0);
+    expect(proof.stderr).toContain("Hermes strict hash contains pending MCP state");
   });
 
   it("rejects a noncanonical API key assignment even when it belongs to the strict base", () => {

@@ -107,9 +107,11 @@ async function cleanupHermes(
       timeoutMs: 30_000,
     },
   );
-  sandboxList.exitCode === 0
-    ? expect(outputContainsSandbox(sandboxList, SANDBOX_NAME)).toBe(false)
-    : expect(resultText(sandboxList)).toMatch(GATEWAY_ALREADY_ABSENT);
+  const sandboxAbsenceProven =
+    sandboxList.exitCode === 0
+      ? !outputContainsSandbox(sandboxList, SANDBOX_NAME)
+      : GATEWAY_ALREADY_ABSENT.test(resultText(sandboxList));
+  expect(sandboxAbsenceProven, resultText(sandboxList)).toBe(true);
 
   const runtimeCleanup = await host.command(
     "bash",

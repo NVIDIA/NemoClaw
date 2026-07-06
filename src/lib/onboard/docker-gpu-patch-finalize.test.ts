@@ -114,18 +114,29 @@ describe("finalizeDockerGpuPatchBackup", () => {
     expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
   });
 
-  it.each([
-    ["rename", { dockerRename: vi.fn(() => ({ status: null })) }],
-    ["start", { dockerStart: vi.fn(() => ({ status: null })) }],
-  ])("fails closed when rollback %s has no exit status", (_stage, override) => {
+  it("stops rollback before start when rename has no exit status", () => {
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: null })),
+        dockerStart,
+      },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when rollback start has no exit status", () => {
     const outcome = finalizeDockerGpuPatchBackup(
       { result: deferredCreateResult(), supervisorReady: false },
       {
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
         dockerRename: vi.fn(() => ({ status: 0 })),
-        dockerStart: vi.fn(() => ({ status: 0 })),
-        ...override,
+        dockerStart: vi.fn(() => ({ status: null })),
       },
     );
     expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });

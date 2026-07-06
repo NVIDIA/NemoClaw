@@ -105,6 +105,22 @@ describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
     ]);
   });
 
+  it("does not accept a GPU mode probe with no exit status", () => {
+    const selected = selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc" },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun: vi.fn(() => ({ status: null, stderr: "timed out" })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      },
+    );
+
+    expect(selected.mode).toBeNull();
+    expect(selected.attempts).toHaveLength(2);
+  });
+
   it("passes the CDI --device flag to docker run when recreating on a CDI host", () => {
     // Proves the selected CDI mode propagates into the actual recreate command
     // (`dockerRunDetached`), not just the selection result. This is the create

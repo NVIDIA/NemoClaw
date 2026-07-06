@@ -8,19 +8,17 @@ import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import { cliName } from "./branding";
 import * as dockerGpuLocalInference from "./docker-gpu-local-inference";
-import {
-  collectDockerGpuPatchDiagnostics,
-  type DockerGpuPatchDeps,
-  queryOpenShellDockerSandboxImage,
-} from "./docker-gpu-patch";
+import { collectDockerGpuPatchDiagnostics, type DockerGpuPatchDeps } from "./docker-gpu-patch";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
+import { renderCompatibilityFallbackCreateArgs } from "./docker-gpu-route";
+import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import {
   createDockerGpuSandboxCreatePatch,
   type DockerGpuSandboxCreatePatch,
 } from "./docker-gpu-sandbox-create";
+import { queryOpenShellDockerSandboxImage } from "./openshell-docker-sandbox-containers";
 import { printSandboxCreateFailureDiagnostics } from "./sandbox-create-failure";
 import { renderSandboxCreateCommand } from "./sandbox-create-launch";
-import { renderCompatibilityFallbackCreateArgs } from "./sandbox-create-plan";
 import * as sandboxGpuCreateAttempt from "./sandbox-gpu-create-attempt";
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import type { SandboxPrebuildResult } from "./sandbox-prebuild";
@@ -37,6 +35,7 @@ export interface SandboxGpuCreateFlowInput {
   sandboxGpuConfig: SandboxGpuConfig;
   gpuRoutePlan: import("./docker-gpu-route").DockerGpuRoutePlan;
   initialGpuRoute: SelectedDockerGpuRoute;
+  compatibilityPolicyPath: string | null;
   dockerDriverGateway: boolean;
   gatewayPort: number;
   sandboxReadyTimeoutSecs: number;
@@ -75,6 +74,7 @@ export async function runSandboxGpuCreateFlow(
   let firstCreateOutput = "";
   let compatibilityCommand: string | null = null;
   let selectedCreateImageRef: string | null = input.prebuild.imageRef;
+  let allowUnbuiltCompatibilitySource = false;
 
   const runGpuCreateAttempt = async (route: SelectedDockerGpuRoute) => {
     const compatibility = route === "compatibility";
@@ -84,8 +84,7 @@ export async function runSandboxGpuCreateFlow(
       );
     }
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({
-      enabled: compatibility,
-      selectedRoute: route,
+      route,
       sandboxName: input.sandboxName,
       gpuDevice: input.sandboxGpuConfig.sandboxGpuDevice,
       openshellSandboxCommand: input.sandboxStartupCommand,
@@ -96,7 +95,9 @@ export async function runSandboxGpuCreateFlow(
     const command = compatibilityCommand ?? input.createCommand;
     const createResult = await streamSandboxCreate(command, input.sandboxEnv, {
       readyCheck: () => {
-        const list = deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+        const list = deps.runCaptureOpenshell(["sandbox", "list"], {
+          ignoreError: true,
+        });
         if (isSandboxReady(list, input.sandboxName)) return true;
         dockerGpuCreatePatch.maybeApplyDuringCreate();
         return false;
@@ -176,7 +177,10 @@ export async function runSandboxGpuCreateFlow(
         backupPath: input.restoreBackupPath,
       });
       if (compatibility) dockerGpuCreatePatch.printReadinessFailureIfEnabled();
-      else deps.runOpenshell(["sandbox", "delete", input.sandboxName], { ignoreError: true });
+      else
+        deps.runOpenshell(["sandbox", "delete", input.sandboxName], {
+          ignoreError: true,
+        });
       console.error(`  Retry: ${cliName()} onboard`);
       process.exit(1);
     }
@@ -215,12 +219,22 @@ export async function runSandboxGpuCreateFlow(
         }
       } catch (error) {
         if (route === "native" && input.gpuRoutePlan === "native-with-fallback") {
-          return { ok: false, route, stage: "gpu-proof", error, fallbackEligible: true } as const;
+          return {
+            ok: false,
+            route,
+            stage: "gpu-proof",
+            error,
+            fallbackEligible: true,
+          } as const;
         }
         throw error;
       }
     }
-    return { ok: true, route, value: { createResult, dockerGpuCreatePatch } } as const;
+    return {
+      ok: true,
+      route,
+      value: { createResult, dockerGpuCreatePatch },
+    } as const;
   };
 
   const gpuCreateOutcome = await sandboxGpuCreateAttempt.executeSandboxGpuCreatePlan(
@@ -228,9 +242,13 @@ export async function runSandboxGpuCreateFlow(
     {
       runAttempt: runGpuCreateAttempt,
       captureNativeFailure: (failure) => {
+        const routeAdapter = adaptDockerGpuRouteForPatch(failure.route);
         const diagnostics = collectDockerGpuPatchDiagnostics(
           input.sandboxName,
-          { error: failure.error, selectedRoute: failure.route },
+          {
+            error: failure.error,
+            additionalSummaryLines: routeAdapter.additionalSummaryLines,
+          },
           { runCaptureOpenshell: deps.runCaptureOpenshell },
         );
         if (diagnostics) console.error(`  Native GPU diagnostics saved: ${diagnostics.dir}`);
@@ -257,11 +275,18 @@ export async function runSandboxGpuCreateFlow(
           extractBuiltImageRef(firstCreateOutput) ??
           (containerImage.ok ? containerImage.imageRef : null);
         selectedCreateImageRef = imageRef;
+        allowUnbuiltCompatibilitySource =
+          failure.stage === "create" &&
+          sandboxGpuCreateAttempt.isNativeGpuCreatePreBuildRejection(firstCreateOutput);
+      },
+      activateCompatibilityAttempt: () => {
+        if (!input.compatibilityPolicyPath) {
+          throw new Error("Compatibility retry policy was not materialized.");
+        }
         const compatibilityArgs = renderCompatibilityFallbackCreateArgs(input.prebuild.createArgs, {
-          imageRef,
-          allowUnbuiltSource:
-            failure.stage === "create" &&
-            sandboxGpuCreateAttempt.isNativeGpuCreatePreBuildRejection(firstCreateOutput),
+          imageRef: selectedCreateImageRef,
+          allowUnbuiltSource: allowUnbuiltCompatibilitySource,
+          compatibilityPolicyPath: input.compatibilityPolicyPath,
         });
         compatibilityCommand = renderSandboxCreateCommand(
           compatibilityArgs,

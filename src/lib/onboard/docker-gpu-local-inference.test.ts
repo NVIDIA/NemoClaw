@@ -66,16 +66,6 @@ describe("shouldUseDockerGpuPatchHostNetwork", () => {
         env: HOST_NETWORK_ENV,
       }),
     ).toBe(false);
-    // Environment controls describe the plan, but post-selection behavior
-    // follows the route that actually won.
-    expect(
-      shouldUseDockerGpuPatchHostNetwork(GPU_CONFIG, {
-        dockerDriverGateway: true,
-        selectedRoute: "native",
-        platform: "linux",
-        env: HOST_NETWORK_ENV,
-      }),
-    ).toBe(false);
   });
 });
 
@@ -88,12 +78,6 @@ describe("shouldSkipGpuBridgeProbe", () => {
         platform: "linux",
       }),
     ).toBe(true);
-    expect(
-      shouldSkipGpuBridgeProbe(true, "linux", "native", {
-        env: HOST_NETWORK_ENV,
-        platform: "linux",
-      }),
-    ).toBe(false);
     expect(
       shouldSkipGpuBridgeProbe(false, "linux", "compatibility", {
         env: HOST_NETWORK_ENV,
@@ -170,23 +154,6 @@ describe("enforceDockerGpuPatchPreserveNetwork", () => {
     ).toBe(false);
     expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
   });
-
-  it("does not rewrite networking when the actual selected route is native", async () => {
-    const env = { ...HOST_NETWORK_ENV };
-    const reverifyBridgeReachability = vi.fn();
-
-    expect(
-      await enforceDockerGpuPatchPreserveNetwork("ollama-local", GPU_CONFIG, {
-        dockerDriverGateway: true,
-        selectedRoute: "native",
-        platform: "linux",
-        env,
-        reverifyBridgeReachability,
-      }),
-    ).toBe(false);
-    expect(env.NEMOCLAW_DOCKER_GPU_PATCH_NETWORK).toBe("host");
-    expect(reverifyBridgeReachability).not.toHaveBeenCalled();
-  });
 });
 
 describe("getSandboxRuntimeInferenceEndpoint", () => {
@@ -202,15 +169,6 @@ describe("getSandboxRuntimeInferenceEndpoint", () => {
 });
 
 describe("verifyDockerGpuSandboxLocalInference", () => {
-  it("skips when the selected route is native even if compatibility is forced in the environment", () => {
-    const result = verifyDockerGpuSandboxLocalInference(
-      GPU_CONFIG,
-      "ollama-local",
-      gpuPatchOptions({ selectedRoute: "native", env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" } }),
-    );
-    expect(result).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
-  });
-
   it("skips for non-local providers", () => {
     const result = verifyDockerGpuSandboxLocalInference(GPU_CONFIG, "build", gpuPatchOptions());
     expect(result).toEqual({ status: "skipped", reason: "not-local-provider" });
@@ -389,29 +347,6 @@ describe("verifyGpuSandboxAfterReady", () => {
     expect(logError).not.toHaveBeenCalled();
   });
 
-  it("defers native proof diagnostics while automatic fallback owns recovery", () => {
-    const proofError = new Error("native CUDA proof failed");
-    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      expect(() =>
-        verifyGpuSandboxAfterReady(
-          GPU_CONFIG,
-          "ollama-local",
-          baseOptions({
-            selectedRoute: "native",
-            verifyDirectSandboxGpu: vi.fn(() => {
-              throw proofError;
-            }),
-            reportGpuProofFailure: false,
-          }),
-        ),
-      ).toThrow(proofError);
-      expect(consoleError).not.toHaveBeenCalled();
-    } finally {
-      consoleError.mockRestore();
-    }
-  });
-
   it("routes failure diagnostics through the provided error sink and exits", () => {
     const logError = vi.fn();
     const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
@@ -435,22 +370,6 @@ describe("verifyGpuSandboxAfterReady", () => {
     } finally {
       exitSpy.mockRestore();
     }
-  });
-
-  it("skips the inference gate when the actual selected route is native", () => {
-    const execInSandbox = vi.fn();
-    const verifyDirectSandboxGpu = vi.fn();
-    verifyGpuSandboxAfterReady(
-      GPU_CONFIG,
-      "ollama-local",
-      baseOptions({
-        selectedRoute: "native",
-        verifyDirectSandboxGpu,
-        deps: { execInSandbox, sleep: vi.fn() },
-      }),
-    );
-    expect(verifyDirectSandboxGpu).toHaveBeenCalledWith("alpha");
-    expect(execInSandbox).not.toHaveBeenCalled();
   });
 });
 

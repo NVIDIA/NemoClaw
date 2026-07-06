@@ -10,6 +10,7 @@ import {
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
+import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";
 
 const {
@@ -150,7 +151,11 @@ function defaultReverifyBridgeReachability(gatewayPort?: number): Promise<void> 
   });
 }
 
-export type SandboxExecResult = { status: number; stdout: string; stderr: string } | null;
+export type SandboxExecResult = {
+  status: number;
+  stdout: string;
+  stderr: string;
+} | null;
 
 export type DockerGpuSandboxInferenceVerifyDeps = {
   execInSandbox?: (sandboxName: string, script: string) => SandboxExecResult;
@@ -252,7 +257,10 @@ function probeSandboxRuntimeInference(
         // an exec failure, NOT a missing-curl soft-skip, so we never declare
         // success without actually exercising the runtime (#4509 review).
         const noise = (out || result.stderr || "").slice(0, 160);
-        last = { kind: "exec-failed", detail: `unexpected sandbox exec output: ${noise}` };
+        last = {
+          kind: "exec-failed",
+          detail: `unexpected sandbox exec output: ${noise}`,
+        };
       }
     }
     if (attempt < DOCKER_GPU_INFERENCE_PROBE_MAX_ATTEMPTS) {
@@ -425,7 +433,8 @@ export function verifyGpuSandboxAccessAfterReady(
     if (!options.verifyGpuOrExit && options.reportGpuProofFailure !== false) {
       printDockerGpuProofFailure(options.sandboxName, error, options.selectedMode(), {
         runCaptureOpenshell: options.runCaptureOpenshell,
-        selectedRoute: options.selectedRoute,
+        additionalSummaryLines: adaptDockerGpuRouteForPatch(options.selectedRoute)
+          .additionalSummaryLines,
       });
     }
     throw error;

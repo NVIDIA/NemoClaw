@@ -22,6 +22,21 @@ export type DockerGpuRouteOptions = {
   log?: (message: string) => void;
 };
 
+/**
+ * Legacy control boundary:
+ * - invalidState: an undocumented nonzero value requests the old compatibility patch.
+ * - sourceBoundary: operator and deployment automation set NEMOCLAW_DOCKER_GPU_PATCH.
+ * - whyNotSourceFix: existing automation cannot be migrated atomically with this release.
+ * - regressionTest: docker-gpu-route.test.ts covers legacy nonzero routing and its warning.
+ * - removalCondition: remove after a breaking release explicitly retires legacy nonzero values.
+ */
+function warnForLegacyNonzeroControl(control: string, log: (message: string) => void): void {
+  if (control === "" || control === "0" || control === "1" || control === "auto") return;
+  log(
+    `  Warning: unrecognized NEMOCLAW_DOCKER_GPU_PATCH value '${control}'; preserving legacy compatibility-only behavior. Use 0, 1, or auto.`,
+  );
+}
+
 /** Resolve the internal Docker-driver GPU strategy without exposing a new user contract. */
 export function resolveDockerGpuRoutePlan(
   config: DockerGpuRouteConfig,
@@ -40,10 +55,11 @@ export function resolveDockerGpuRoutePlan(
   const control = String(env.NEMOCLAW_DOCKER_GPU_PATCH ?? "")
     .trim()
     .toLowerCase();
+  const log = options.log ?? ((message: string) => console.warn(message));
+  warnForLegacyNonzeroControl(control, log);
 
   if (dockerDesktopWsl) {
     if (control === "0") {
-      const log = options.log ?? ((message: string) => console.warn(message));
       log(
         "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the compatibility path.",
       );
@@ -79,4 +95,59 @@ export function canFallbackToDockerGpuCompatibility(plan: DockerGpuRoutePlan): b
 
 export function isDockerGpuCompatibilityRoute(route: SelectedDockerGpuRoute): boolean {
   return route === "compatibility";
+}
+
+/** Render one already-materialized create plan for the selected GPU route. */
+export function renderSandboxCreateArgsForGpuRoute(
+  createArgs: readonly string[],
+  route: SelectedDockerGpuRoute,
+  options: { compatibilityPolicyPath?: string | null } = {},
+): string[] {
+  if (route !== "compatibility") return [...createArgs];
+  const rendered: string[] = [];
+  for (let index = 0; index < createArgs.length; index += 1) {
+    const arg = createArgs[index];
+    if (arg === "--gpu") continue;
+    if (arg === "--gpu-device") {
+      index += 1;
+      continue;
+    }
+    rendered.push(arg);
+  }
+  const policyIndex = rendered.indexOf("--policy");
+  if (policyIndex >= 0 && rendered[policyIndex + 1]) {
+    if (!options.compatibilityPolicyPath) {
+      throw new Error("Compatibility GPU route requires its route-specific sandbox policy.");
+    }
+    rendered[policyIndex + 1] = options.compatibilityPolicyPath;
+  }
+  return rendered;
+}
+
+function replaceSandboxCreateImage(createArgs: readonly string[], imageRef: string): string[] {
+  const rendered = [...createArgs];
+  const fromIndex = rendered.indexOf("--from");
+  if (fromIndex < 0 || !rendered[fromIndex + 1]) {
+    throw new Error("Cannot reuse sandbox image; create arguments do not contain --from.");
+  }
+  rendered[fromIndex + 1] = imageRef;
+  return rendered;
+}
+
+export function renderCompatibilityFallbackCreateArgs(
+  createArgs: readonly string[],
+  options: {
+    imageRef?: string | null;
+    allowUnbuiltSource?: boolean;
+    compatibilityPolicyPath: string;
+  },
+): string[] {
+  const compatibilityArgs = renderSandboxCreateArgsForGpuRoute(createArgs, "compatibility", {
+    compatibilityPolicyPath: options.compatibilityPolicyPath,
+  });
+  if (options.imageRef) return replaceSandboxCreateImage(compatibilityArgs, options.imageRef);
+  if (options.allowUnbuiltSource) return compatibilityArgs;
+  throw new Error(
+    "Native GPU fallback cannot reuse the completed sandbox image; refusing to rebuild it.",
+  );
 }

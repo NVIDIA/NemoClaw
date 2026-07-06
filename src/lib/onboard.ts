@@ -2797,13 +2797,16 @@ async function createSandboxWithBaseImageResolution(
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
+  const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } =
+    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
+      dockerDriverGateway,
+    });
   const {
     activeMessagingChannels,
     initialSandboxPolicy,
     createArgs,
     messagingProviders,
-    gpuRoutePlan,
-    sandboxGpuLogMessage,
+    compatibilityPolicyPath,
   } = sandboxCreatePlan.prepareSandboxCreatePlan({
     basePolicyPath,
     buildCtx,
@@ -2817,7 +2820,8 @@ async function createSandboxWithBaseImageResolution(
     extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
-    dockerDriverGateway,
+    gpuRoutePlan,
+    sandboxGpuLogMessage,
     appendResourceFlags: (args) =>
       appendResourceFlagsForProfile(args, resourceProfile, getOpenshellBinary(), {
         isNonInteractive,
@@ -2878,7 +2882,9 @@ async function createSandboxWithBaseImageResolution(
     await sandboxCreateLaunch.prepareSandboxCreateLaunchWithPrebuild({
       agent,
       chatUiUrl,
-      createArgs: sandboxCreatePlan.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute),
+      createArgs: dockerGpuRoute.renderSandboxCreateArgsForGpuRoute(createArgs, initialGpuRoute, {
+        compatibilityPolicyPath,
+      }),
       sandboxName,
       env: process.env,
       extraPlaceholderKeys,
@@ -2903,6 +2909,7 @@ async function createSandboxWithBaseImageResolution(
       sandboxGpuConfig: effectiveSandboxGpuConfig,
       gpuRoutePlan,
       initialGpuRoute,
+      compatibilityPolicyPath,
       dockerDriverGateway,
       gatewayPort: GATEWAY_PORT,
       sandboxReadyTimeoutSecs,

@@ -5,15 +5,15 @@ import { hasSandboxListEntry } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
 import { classifySandboxCreateFailure } from "../validation";
 import {
-  type OpenShellDockerSandboxContainerQuery,
-  queryOpenShellDockerSandboxContainers,
-} from "./docker-gpu-patch";
-import {
   canFallbackToDockerGpuCompatibility,
   type DockerGpuRoutePlan,
   initialDockerGpuRoute,
   type SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
+import {
+  type OpenShellDockerSandboxContainerQuery,
+  queryOpenShellDockerSandboxContainers,
+} from "./openshell-docker-sandbox-containers";
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
@@ -165,6 +165,7 @@ export type SandboxGpuCreatePlanDeps<T> = {
   captureNativeFailure?(failure: SandboxGpuCreateAttemptFailure): void;
   cleanupNativeFailure(): NativeGpuFallbackCleanupResult | Promise<NativeGpuFallbackCleanupResult>;
   prepareCompatibilityAttempt?(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
+  activateCompatibilityAttempt?(failure: SandboxGpuCreateAttemptFailure): void | Promise<void>;
   traceEvent?(name: string, attributes?: Record<string, unknown>): void;
 };
 
@@ -207,6 +208,14 @@ export async function executeSandboxGpuCreatePlan<T>(
     return {
       ...first,
       cleanupRefused: cleanup.reason ?? "native GPU cleanup could not be proven safe",
+    };
+  }
+  try {
+    await deps.activateCompatibilityAttempt?.(first);
+  } catch (error) {
+    return {
+      ...first,
+      preparationRefused: error instanceof Error ? error.message : String(error),
     };
   }
 
