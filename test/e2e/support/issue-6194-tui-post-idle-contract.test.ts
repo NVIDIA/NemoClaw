@@ -25,6 +25,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain("https://api.atlassian.com/oauth/token/accessible-resources");
     expect(script).toContain("ISSUE6194_MARK network_approval_text");
     expect(script).toContain("ISSUE6194_MARK network_approval_prompt");
+    expect(script).toContain("ISSUE6194_MARK network_approval_processed");
     expect(script).toContain("ISSUE6194_MARK connected_idle_after_network_approval");
     expect(script).toContain("ISSUE6194_MARK clean_exit");
     expect(script).not.toContain("NEMOCLAW_ISSUE_6194_TUI_TIMEOUT_SEC");
@@ -39,6 +40,7 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "connected_idle_after_status",
       "network_approval_text",
       "network_approval_prompt",
+      "network_approval_processed",
       "connected_idle_after_network_approval",
       "clean_exit",
     ].map((marker) => script.indexOf(marker));

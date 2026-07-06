@@ -621,6 +621,7 @@ test(
       slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
       connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
       networkApprovalPrompt: combined.includes("ISSUE6194_MARK network_approval_prompt"),
+      networkApprovalProcessed: combined.includes("ISSUE6194_MARK network_approval_processed"),
       connectedIdleAfterNetworkApproval: combined.includes(
         "ISSUE6194_MARK connected_idle_after_network_approval",
       ),
@@ -647,6 +648,9 @@ test(
       combined,
       "post-idle network request must present the sandbox approval prompt",
     ).toContain("ISSUE6194_MARK network_approval_prompt");
+    expect(combined, "post-idle network approval input must be processed").toContain(
+      "ISSUE6194_MARK network_approval_processed",
+    );
     expect(combined, "TUI must return to connected idle after network approval input").toContain(
       "ISSUE6194_MARK connected_idle_after_network_approval",
     );

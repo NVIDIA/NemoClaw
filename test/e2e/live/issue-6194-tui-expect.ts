@@ -67,31 +67,47 @@ expect {
 }
 send -- "Use an available tool to call https://api.atlassian.com/oauth/token/accessible-resources now. Do not describe it.\\r"
 expect {
-  -nocase -re {(Network Rules|pending|approve|blocked)} { puts "ISSUE6194_MARK network_approval_text" }
-  timeout {
+  -nocase -re {(blocked|denied|rejected)} {
     send "\\003"
     exit 50
   }
-  eof { exit 51 }
-}
-expect {
-  -nocase -re "Sandbox:[^\\r\\n]*$sandbox" { puts "ISSUE6194_MARK network_approval_prompt" }
+  -nocase -re {(Network Rules|pending|approve)} { puts "ISSUE6194_MARK network_approval_text" }
   timeout {
     send "\\003"
-    exit 52
+    exit 51
   }
-  eof { exit 53 }
+  eof { exit 52 }
+}
+expect {
+  -nocase -re "(Sandbox:[^\\r\\n]*$sandbox[^\\r\\n]*(pending|approve)|(pending|approve)[^\\r\\n]*Sandbox:[^\\r\\n]*$sandbox)" { puts "ISSUE6194_MARK network_approval_prompt" }
+  timeout {
+    send "\\003"
+    exit 53
+  }
+  eof { exit 54 }
 }
 send -- "a"
 after 500
 send -- "y\\r"
 expect {
+  -nocase -re {(approved|allowed|accepted|approval[^\\r\\n]*(processed|granted)|request[^\\r\\n]*(approved|allowed))} { puts "ISSUE6194_MARK network_approval_processed" }
+  -nocase -re {(blocked|denied|rejected)} {
+    send "\\003"
+    exit 55
+  }
+  timeout {
+    send "\\003"
+    exit 56
+  }
+  eof { exit 57 }
+}
+expect {
   -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_network_approval" }
   timeout {
     send "\\003"
-    exit 54
+    exit 58
   }
-  eof { exit 55 }
+  eof { exit 59 }
 }
 send "\\003"
 expect {
