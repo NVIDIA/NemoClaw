@@ -18,6 +18,7 @@ import {
   normalizeToolDisclosure,
   type ToolDisclosure,
 } from "../tool-disclosure";
+import { encodeCorporateCaArg, resolveCorporateCaFromEnv } from "./corporate-ca";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -322,5 +323,17 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encoded}`,
     );
   }
+  // Corporate proxy CA import (#6210). When the host exposes an operator
+  // corporate CA bundle, bake its base64 so the entrypoint can append it to
+  // the OpenShell trust bundle at runtime (never replacing it). The replace is
+  // a silent no-op on custom/legacy Dockerfiles that predate this ARG.
+  const corporateCa = resolveCorporateCaFromEnv(process.env);
+  if (corporateCa) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m,
+      `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
+    );
+  }
+
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
 }

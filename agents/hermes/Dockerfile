@@ -233,6 +233,12 @@ ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
+# Base64-encoded host corporate-proxy CA bundle (#6210). Empty by default. When
+# onboard detects an operator-supplied corporate CA on the host it bakes it
+# here; the RUN below decodes it to a root-owned file that the entrypoint
+# appends to the OpenShell trust bundle at runtime. The CA is a public
+# certificate, not a secret, so baking it into an image layer is acceptable.
+ARG NEMOCLAW_CORPORATE_CA_B64=
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -261,6 +267,20 @@ RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-b
 WORKDIR /opt/hermes
 # hadolint ignore=DL3059
 RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase agent-install
+
+# Decode the host corporate-proxy CA (#6210) to a root-owned, read-only file
+# when onboard baked one in. No-op when NEMOCLAW_CORPORATE_CA_B64 is empty. The
+# ARG is expanded by the shell (not interpolated into source), and its value is
+# base64 sanitized host-side, so this is not an injection vector. Must run as
+# root, before the USER sandbox drop below.
+# hadolint ignore=DL3059,DL4006
+RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
+      mkdir -p /usr/local/share/nemoclaw \
+      && printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 -d > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
+      && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
+      && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \
+    fi
 
 WORKDIR /sandbox
 USER sandbox

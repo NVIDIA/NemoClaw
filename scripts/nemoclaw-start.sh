@@ -2713,6 +2713,44 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# Corporate proxy CA merge (NemoClaw#6210).
+# OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
+# separate corporate MITM proxy sits in front of the host and re-signs external
+# TLS with a different root, that root is absent from the OpenShell bundle, so
+# external endpoints (e.g. api.telegram.org) fail verification even when policy
+# allows the connection. If onboard baked an operator-supplied corporate CA
+# into the image, append it to the OpenShell bundle — never replace it (the
+# #1828 OpenShell CA behavior stays intact) — and repoint the CA env vars at
+# the merged bundle so curl/python/git/node all trust both roots.
+_NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
+merge_corporate_proxy_ca() {
+  [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
+  _base_bundle=""
+  if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+    _base_bundle="$SSL_CERT_FILE"
+  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    _base_bundle="/etc/ssl/certs/ca-certificates.crt"
+  fi
+  _merged="/tmp/nemoclaw-ca-bundle.pem"
+  # Remove any stale (0444) bundle first so a re-invocation can rewrite it.
+  rm -f "$_merged" 2>/dev/null || true
+  : >"$_merged" 2>/dev/null || return 0
+  if [ -n "$_base_bundle" ]; then
+    cat "$_base_bundle" >>"$_merged" 2>/dev/null || true
+    printf '\n' >>"$_merged" 2>/dev/null || true
+  fi
+  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_merged" 2>/dev/null || true
+  chmod 0444 "$_merged" 2>/dev/null || true
+  export SSL_CERT_FILE="$_merged"
+  export CURL_CA_BUNDLE="$_merged"
+  export REQUESTS_CA_BUNDLE="$_merged"
+  export GIT_SSL_CAINFO="$_merged"
+  export NODE_EXTRA_CA_CERTS="$_merged"
+  export _NEMOCLAW_CORPORATE_CA_MERGED=1
+  echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
+}
+merge_corporate_proxy_ca
+
 # Git TLS CA bundle fix (NemoClaw#2270).
 # OpenShell's L7 proxy does MITM TLS termination and re-signs with its own CA.
 # OpenShell injects SSL_CERT_FILE and CURL_CA_BUNDLE pointing at the CA bundle,
@@ -3276,6 +3314,17 @@ GUARDENVEOF
     # Git TLS CA bundle for connect sessions (NemoClaw#2270)
     if [ -n "${GIT_SSL_CAINFO:-}" ]; then
       printf 'export GIT_SSL_CAINFO=%q\n' "$GIT_SSL_CAINFO"
+    fi
+    # Corporate proxy CA for connect sessions (NemoClaw#6210). Only when a
+    # corporate CA was merged at entrypoint startup; keeps the no-corporate-CA
+    # path byte-for-byte identical so #1828 behavior is untouched.
+    if [ "${_NEMOCLAW_CORPORATE_CA_MERGED:-}" = "1" ]; then
+      for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE NODE_EXTRA_CA_CERTS; do
+        _ca_env_value="${!_ca_env_name:-}"
+        if [ -n "$_ca_env_value" ]; then
+          printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
+        fi
+      done
     fi
     # Nemotron inference fix for connect sessions. (NemoClaw#1193, #2051)
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT\""

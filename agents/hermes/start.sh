@@ -1403,6 +1403,41 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+# Corporate proxy CA merge (NemoClaw#6210).
+# OpenShell injects SSL_CERT_FILE for its own L7 proxy CA at runtime. When a
+# separate corporate MITM proxy sits in front of the host and re-signs external
+# TLS with a different root, that root is absent from the OpenShell bundle, so
+# external endpoints (e.g. api.telegram.org) fail verification even when policy
+# allows the connection. If onboard baked an operator-supplied corporate CA
+# into the image, append it to the OpenShell bundle — never replace it (the
+# #1828 OpenShell CA behavior stays intact) — and repoint SSL_CERT_FILE at the
+# merged bundle before the CURL/REQUESTS/GIT derivation below picks it up.
+_NEMOCLAW_CORPORATE_CA_FILE="/usr/local/share/nemoclaw/corporate-ca.pem"
+merge_corporate_proxy_ca() {
+  [ -s "$_NEMOCLAW_CORPORATE_CA_FILE" ] || return 0
+  _base_bundle=""
+  if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
+    _base_bundle="$SSL_CERT_FILE"
+  elif [ -f /etc/ssl/certs/ca-certificates.crt ]; then
+    _base_bundle="/etc/ssl/certs/ca-certificates.crt"
+  fi
+  _merged="/tmp/nemoclaw-ca-bundle.pem"
+  # Remove any stale (0444) bundle first so a re-invocation can rewrite it.
+  rm -f "$_merged" 2>/dev/null || true
+  : >"$_merged" 2>/dev/null || return 0
+  if [ -n "$_base_bundle" ]; then
+    cat "$_base_bundle" >>"$_merged" 2>/dev/null || true
+    printf '\n' >>"$_merged" 2>/dev/null || true
+  fi
+  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_merged" 2>/dev/null || true
+  chmod 0444 "$_merged" 2>/dev/null || true
+  export SSL_CERT_FILE="$_merged"
+  export NODE_EXTRA_CA_CERTS="$_merged"
+  export _NEMOCLAW_CORPORATE_CA_MERGED=1
+  echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2
+}
+merge_corporate_proxy_ca
+
 # OpenShell injects SSL_CERT_FILE/CURL_CA_BUNDLE for its L7 proxy CA. Persist
 # them into connect-session shells so Python Slack probes and Hermes tools trust
 # the same proxy CA that the entrypoint received at startup.
@@ -1444,7 +1479,7 @@ if [ -f /opt/hermes/ui-tui/dist/entry.js ]; then
   export HERMES_TUI_DIR="/opt/hermes/ui-tui"
 fi
 TUIENVEOF
-    for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
+    for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO NODE_EXTRA_CA_CERTS; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
         printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
