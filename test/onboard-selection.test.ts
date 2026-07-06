@@ -630,14 +630,14 @@ const agent = ${JSON.stringify(scenario.agent || null)}
 }
 
 describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
-  it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
+  it("does not label NVIDIA Endpoints as recommended in the provider list (#6245)", () => {
     const buildOption = buildProviderMenu().options.find((option) => option.key === "build");
 
     assert.equal(buildOption?.label, "NVIDIA Endpoints");
     assert.doesNotMatch(buildOption?.label || "", /recommended/i);
   });
 
-  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list", async () => {
+  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list (#6245)", async () => {
     const answers = ["3"];
     const messages: string[] = [];
     const lines: string[] = [];
@@ -702,7 +702,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     );
   });
 
-  it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", async () => {
+  it("accepts a manually entered NVIDIA Endpoints model after validating it against /models (#6245)", async () => {
     const answers = ["5", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
@@ -760,7 +760,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     );
   });
 
-  it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it", async () => {
+  it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it (#6245)", async () => {
     const answers = ["5", "bad/model", "custom/provider-model"];
     const messages: string[] = [];
     const lines: string[] = [];
@@ -788,7 +788,7 @@ describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIM
     assert.ok(lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
   });
 
-  it("shows curated Gemini models and supports Other for manual entry", async () => {
+  it("shows curated Gemini models and supports Other for manual entry (#6245)", async () => {
     const answers = ["7", "gemini-custom"];
     const messages: string[] = [];
     const lines: string[] = [];

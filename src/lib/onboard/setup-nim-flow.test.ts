@@ -132,7 +132,7 @@ afterEach(() => {
 });
 
 describe("createSetupNim", () => {
-  it("announces detected Ollama but still prompts and defaults to NVIDIA Endpoints", async () => {
+  it("announces detected Ollama but still prompts and defaults to NVIDIA Endpoints (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const step = vi.fn();
     const log = vi.fn();
@@ -191,7 +191,7 @@ describe("createSetupNim", () => {
     });
   });
 
-  it("re-enters provider selection when a handler requests a retry", async () => {
+  it("re-enters provider selection when a handler requests a retry (#6245)", async () => {
     vi.stubEnv("NEMOCLAW_PROVIDER", "");
     const prompt = vi.fn(async () => "");
     const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
@@ -218,7 +218,7 @@ describe("createSetupNim", () => {
     expect(result).toMatchObject({ model: "final-model", provider: "nvidia-prod" });
   });
 
-  it("recovers a recorded provider and model without prompting in non-interactive mode", async () => {
+  it("recovers a recorded provider and model without prompting in non-interactive mode (#6245)", async () => {
     const prompt = vi.fn(async () => unexpected("interactive provider prompt"));
     const note = vi.fn();
     const readRecordedProvider = vi.fn(() => "openai-api");
