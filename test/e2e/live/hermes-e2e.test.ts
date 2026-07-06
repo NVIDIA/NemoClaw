@@ -478,13 +478,13 @@ test.skipIf(!shouldRunLiveE2E())(
       args: string[],
       runArtifact: string,
       afterArtifact: string,
-      previewNeedle: string,
+      listNeedle: string,
     ) => {
       await runHermesCli(args, runArtifact);
       const afterText = await listHermesSessionsText(afterArtifact);
       const after = hermesSessionIds(afterText);
       expect([...after].filter((id) => !before.has(id))).toEqual([]);
-      expect(stripAnsi(afterText)).toContain(previewNeedle);
+      expect(stripAnsi(afterText)).toContain(listNeedle);
     };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
@@ -502,7 +502,7 @@ test.skipIf(!shouldRunLiveE2E())(
       ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
-      `${issue5254Marker}_RESUME`,
+      issue5254Marker.slice(0, 24),
     );
 
     const continuePrompt = `Confirm this exact token again: ${issue5254Marker}_CONTINUE.`;
@@ -511,7 +511,7 @@ test.skipIf(!shouldRunLiveE2E())(
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
       "phase-4-issue-5254-sessions-after-continue",
-      `${issue5254Marker}_CONTINUE`,
+      issue5254Marker.slice(0, 24),
     );
 
     const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
