@@ -181,12 +181,12 @@ describe("DCode config restore ownership", () => {
     expect(mergedJson(result.current)).toEqual({
       models: fresh.models,
       update: fresh.update,
-      ui: backup.ui,
+      ui: { show_scrollbar: true, show_url_open_toast: false },
       threads: backup.threads,
     });
   });
 
-  it("drops unknown, executable, routing, and credential-shaped backup data (#6311)", () => {
+  it("drops free-form themes, executable, routing, and unknown backup data (#6311)", () => {
     const providerSecret = ["sk", "abcdefghijklmnopqrst"].join("-");
     const tracingSecret = ["lsv2", "pt", "abcdefghijklmnop"].join("_");
     const backup = {

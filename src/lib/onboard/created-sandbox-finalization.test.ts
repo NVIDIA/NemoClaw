@@ -73,6 +73,7 @@ function makeRestoreFixture(): {
       "",
       "[ui]",
       'theme = "dark"',
+      "show_scrollbar = true",
       "",
     ].join("\n"),
   );
@@ -249,7 +250,8 @@ describe("created DCode sandbox finalization", () => {
       expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
       expect(registeredConfigs[0]).not.toContain("old-model");
       expect(registeredConfigs[0]).not.toContain("[agents]");
-      expect(registeredConfigs[0]).toContain('[ui]\ntheme = "dark"');
+      expect(registeredConfigs[0]).toContain("[ui]\nshow_scrollbar = true");
+      expect(registeredConfigs[0]).not.toContain('theme = "dark"');
     } finally {
       process.env.PATH = fixture.oldPath;
     }
@@ -337,6 +339,8 @@ describe("created DCode sandbox finalization", () => {
       expect(registeredConfigs).toHaveLength(1);
       expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
       expect(registeredConfigs[0]).not.toContain("old-model");
+      expect(registeredConfigs[0]).toContain("[ui]\nshow_scrollbar = true");
+      expect(registeredConfigs[0]).not.toContain('theme = "dark"');
     } finally {
       process.env.PATH = fixture.oldPath;
     }
