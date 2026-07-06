@@ -42,6 +42,7 @@ describe("Hermes doctor and config hash boundary", () => {
         path.join(libDir, "sandbox-init.sh"),
         path.join(libDir, "gateway-supervisor.sh"),
         path.join(libDir, "validate-hermes-env-secret-boundary.py"),
+        path.join(libDir, "patch-hermes-session-list-preview.py"),
         path.join(libDir, "seed-hermes-dashboard-config.py"),
         path.join(libDir, "hermes-runtime-config-guard.py"),
         buildMcpDigestPath,
