@@ -133,6 +133,9 @@ const server = createServer(async (req, res) => {
       method: "GET",
       path,
       bodyBytes: 0,
+      // Presence only (never the token) so callers can prove a probe sent its
+      // credential without leaking it into the requests log (#6177).
+      authorizationSent: Boolean(req.headers.authorization),
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
     });
     const modelEntry: JsonObject = { id: model, object: "model" };

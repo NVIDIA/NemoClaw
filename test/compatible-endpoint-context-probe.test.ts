@@ -45,6 +45,28 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
 
+  it("sends the endpoint credential through curl's --config auth flow (#6177)", async () => {
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 32_768,
+      apiKey: "secret-key",
+    });
+
+    const env: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+      env,
+      apiKey: "secret-key",
+      fetchModels: fetchCompatibleEndpointModels,
+    });
+
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+    // The real curl probe transmitted an Authorization header built from the
+    // credential (via the temp --config file), proving the auth path works.
+    expect(
+      server.requests().some((entry) => entry.path === "/v1/models" && entry.authorizationSent),
+    ).toBe(true);
+  });
+
   it("keeps the default context window when the endpoint omits max_model_len", async () => {
     server = await startFakeOpenAiCompatibleServer({ model: MODEL });
 

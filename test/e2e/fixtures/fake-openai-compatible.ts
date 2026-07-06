@@ -15,6 +15,7 @@ export interface FakeOpenAiCompatibleRequest {
   readonly path: string;
   readonly bodyBytes: number;
   readonly auth?: string;
+  readonly authorizationSent?: boolean;
   readonly model?: string;
   readonly stream?: boolean;
   readonly forbiddenMarkerMatches?: number;

@@ -32,6 +32,12 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * the same source vLLM local onboarding reads, generalized to any configured
  * OpenAI-compatible endpoint (custom / `compatible-endpoint`). Auth is sent when
  * the endpoint requires an API key (e.g. a vLLM launched with `--api-key`).
+ *
+ * Security: this runs host-side during privileged onboarding, before the
+ * sandbox and its OpenShell network policy exist, and targets the same endpoint
+ * URL the immediately-preceding chat-completions validation probe already
+ * reached — so it adds no egress surface beyond that validation. The credential
+ * travels in a curl `--config` temp file (0600), never on the argv.
  */
 export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: string): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
@@ -65,6 +71,10 @@ export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: strin
 // endpoint/model), so a value we set on an earlier pass must not be mistaken
 // for a user override on the next — otherwise a stale window from endpoint A
 // would be kept for endpoint B. Mirrors the Ollama auto-state contract.
+// TODO(#6177): this auto-state tracking mirrors the Ollama contract
+// (autoDetectedOllamaContextWindow in ollama-runtime-context.ts). If a third
+// provider adopts the same "auto-detected vs user override" pattern, extract a
+// shared trackAutoDetectedContextWindow helper instead of duplicating it again.
 let autoDetectedCompatibleContextWindow: string | null = null;
 
 /** Test-only: forget any tracked auto value without touching the environment. */

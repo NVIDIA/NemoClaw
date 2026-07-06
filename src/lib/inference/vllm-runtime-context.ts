@@ -3,6 +3,9 @@
 
 import { hasExplicitContextWindow, parsePositiveInteger } from "./ollama-runtime-context";
 
+// 4 MiB tokens (2^22) — far above any practical model context window, so it
+// rejects obviously broken daemon responses while never clipping a real one.
+// Matches the Ollama auto-detect ceiling (MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW).
 const MAX_AUTODETECTED_VLLM_CONTEXT_WINDOW = 4_194_304;
 
 type ModelEntry = { id?: unknown; max_model_len?: unknown };
