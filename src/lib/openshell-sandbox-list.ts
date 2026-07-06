@@ -15,7 +15,6 @@ type SandboxListResult = ReturnType<typeof captureOpenshell>;
 export type SandboxListPreflightContext = {
   action: string;
   command: string;
-  gatewayName?: string;
 };
 
 export type SandboxListRecoveryResult = {
@@ -28,8 +27,11 @@ export type CaptureSandboxListWithGatewayRecoveryOptions = {
   gatewayName?: string;
 };
 
-export function isRecoverableSandboxListGatewayFailure(result: SandboxListResult): boolean {
-  if (result.status === 0 || detectOpenShellStateRpcResultIssue(result)) {
+export function isRecoverableSandboxListGatewayFailure(
+  result: SandboxListResult,
+  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
+): boolean {
+  if (result.status === 0 || detectOpenShellStateRpcResultIssue(result, options)) {
     return false;
   }
   const output = stripAnsi(String(result.output || ""));
@@ -45,7 +47,7 @@ export async function captureSandboxListWithGatewayRecovery(
     runOpenshell(["gateway", "select", options.gatewayName], { ignoreError: true });
   }
   const initial = captureOpenshell(["sandbox", "list"]);
-  if (!isRecoverableSandboxListGatewayFailure(initial)) {
+  if (!isRecoverableSandboxListGatewayFailure(initial, options)) {
     return { result: initial, recoveryAttempted: false, recoverySucceeded: false };
   }
 
@@ -69,17 +71,16 @@ export async function captureSandboxListWithGatewayRecovery(
 
 export async function captureSandboxListWithGatewayPreflightOrExit(
   context: SandboxListPreflightContext,
+  options: CaptureSandboxListWithGatewayRecoveryOptions = {},
 ): Promise<SandboxListResult> {
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue(options);
   if (preflightIssue) {
     printOpenShellStateRpcIssue(preflightIssue, context);
     process.exit(1);
   }
 
-  const recovery = await captureSandboxListWithGatewayRecovery({
-    gatewayName: context.gatewayName,
-  });
-  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result);
+  const recovery = await captureSandboxListWithGatewayRecovery(options);
+  const resultIssue = detectOpenShellStateRpcResultIssue(recovery.result, options);
   if (resultIssue) {
     printOpenShellStateRpcIssue(resultIssue, context);
     process.exit(1);

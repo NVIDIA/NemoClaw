@@ -149,16 +149,22 @@ function isPreparedRecoveryCandidate(
 // just-recreated gateway, so absence is confirmed against a second, independent
 // listing before it can drive a recreate: a sandbox that has become Ready by
 // the second read is dropped rather than rebuilt from a possibly stale backup.
+// A non-Ready phase on the second read remains eligible because prepared-backup
+// restore intent explicitly targets sandboxes stuck in those phases.
+// Any confirmation preflight or listing failure aborts the command, so recovery
+// fails closed rather than proceeding from uncorroborated absence.
 async function confirmAbsentRecoveryCandidates(
   absentCandidates: registry.SandboxEntry[],
   selectedGatewayName: string,
 ): Promise<registry.SandboxEntry[]> {
   if (absentCandidates.length === 0) return absentCandidates;
-  const confirmation = await captureSandboxListWithGatewayPreflightOrExit({
-    action: "confirming sandboxes absent from the selected gateway",
-    command: `${CLI_NAME} upgrade-sandboxes`,
-    gatewayName: selectedGatewayName,
-  });
+  const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "confirming sandboxes absent from the selected gateway",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
   const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
   return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
 }
@@ -176,13 +182,18 @@ export async function upgradeSandboxes(
     return;
   }
 
-  // Query live sandboxes so we can tell the user which are running
+  // Resolve the configured gateway once and pin every observation to it. The
+  // initial list, the confirmation list, and persisted-binding eligibility must
+  // share this source; OpenShell's mutable current selection may be a sibling
+  // gateway where the same sandbox name has different state.
   const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
-  const liveResult = await captureSandboxListWithGatewayPreflightOrExit({
-    action: "checking sandbox upgrade state",
-    command: `${CLI_NAME} upgrade-sandboxes`,
-    gatewayName: selectedGatewayName,
-  });
+  const liveResult = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "checking sandbox upgrade state",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
   const liveNames = parseReadySandboxNames(liveResult.output || "");
   // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
   // the selected gateway is handled by isPreparedRecoveryCandidate, which recovers
