@@ -2399,7 +2399,7 @@ start_auto_pair() {
   (
     if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
       # shellcheck source=/dev/null
-      . "$_RUNTIME_SHELL_ENV_FILE"
+      builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
     fi
     export OPENCLAW_BIN="$OPENCLAW"
     exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
