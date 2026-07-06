@@ -1382,6 +1382,21 @@ liveTest(
     expect(probe.exitCode, resultText(probe)).toBe(0);
     expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
 
+    // #5324 command coverage (PRA-3): the operator scope-upgrade / approval
+    // boundary is scope-keyed and command-agnostic, not per-command. Automatic
+    // approval is bounded to {operator.pairing, operator.read, operator.write}
+    // (scripts/lib/openclaw_device_approval_policy.py `ALLOWED_SCOPES`), while
+    // operator.admin always requires a reviewed `devices approve`. The pending
+    // request is selected by its requested scope + CLI/operator role, never by
+    // command name (ADMIN_REQUEST_SELECTOR_PY in issue-4462-admin-approval-helper.ts).
+    // Every non-TUI OpenClaw command (`agent`, `cron add`, `cron run`, `exec`)
+    // reaches the gateway through the same device-token operator client and is
+    // gated purely by the scope it requests. This test exercises both tiers on
+    // that single shared boundary: operator.write via the gateway-backed `agent`
+    // turns above, and operator.admin via the `cron add` trigger + manual
+    // approval below. `cron run` and `exec` cannot follow a different approval
+    // path — whichever tier they request is one of the two already proven here,
+    // so no separate per-command evidence is required to close #5324.
     const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
     const cronTrigger = await host.command(
       process.execPath,
