@@ -29,9 +29,11 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      expect(state.inferenceGetCalls).toEqual([[]]);
+      expect(state.inferenceGetCalls).toEqual([["-g", "nemoclaw"]]);
       expect(state.inferenceSetCalls.length).toBe(1);
       expect(state.inferenceSetCalls[0]).toEqual([
+        "-g",
+        "nemoclaw",
         "--provider",
         "anthropic-prod",
         "--model",
@@ -84,7 +86,17 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const curlCalls = state.curlCalls as string[][];
       const curlEnvs = state.curlEnvs as Record<string, string>[];
       expect(state.inferenceSetCalls).toEqual([
-        ["--provider", "ollama-local", "--model", "qwen3:0.6b", "--no-verify", "--timeout", "321"],
+        [
+          "-g",
+          "nemoclaw",
+          "--provider",
+          "ollama-local",
+          "--model",
+          "qwen3:0.6b",
+          "--no-verify",
+          "--timeout",
+          "321",
+        ],
       ]);
       if (!isHostWsl()) {
         expect(curlCalls.some((call) => call.join(" ").includes("127.0.0.1:11435/v1/models"))).toBe(
@@ -155,7 +167,17 @@ describe("sandbox connect inference route swap (#1248)", () => {
         .map((call, index) => (call.join(" ").includes("host.docker.internal:11434") ? index : -1))
         .filter((index) => index >= 0);
       expect(state.inferenceSetCalls).toEqual([
-        ["--provider", "ollama-local", "--model", "qwen3:0.6b", "--no-verify", "--timeout", "180"],
+        [
+          "-g",
+          "nemoclaw",
+          "--provider",
+          "ollama-local",
+          "--model",
+          "qwen3:0.6b",
+          "--no-verify",
+          "--timeout",
+          "180",
+        ],
       ]);
       expect(windowsHostIndexes.length).toBeGreaterThan(0);
       for (const index of windowsHostIndexes) {
