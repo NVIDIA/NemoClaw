@@ -295,6 +295,8 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
                 saw_oneshot = True
                 oneshot_prompt = value
             elif name == "--continue":
+                if not value:
+                    return None
                 if saw_resume or saw_continue:
                     return None
                 saw_continue = True
@@ -302,6 +304,8 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             elif name in _VALUE_FLAGS:
                 canonical = _VALUE_FLAGS[name]
                 if canonical == "--resume":
+                    if not value:
+                        return None
                     if saw_resume or saw_continue:
                         return None
                     saw_resume = True
@@ -341,13 +345,12 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
         if arg in ("-c", "--continue"):
             if saw_resume or saw_continue:
                 return None
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
+                return None
             saw_continue = True
             resume_args.append("--continue")
-            if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
-                resume_args.append(argv[i + 1])
-                i += 2
-            else:
-                i += 1
+            resume_args.append(argv[i + 1])
+            i += 2
             continue
 
         if arg in _BOOLEAN_FLAGS:

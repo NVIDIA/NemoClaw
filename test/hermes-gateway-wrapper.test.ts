@@ -342,6 +342,33 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--oneshot= --resume 20260612_050401_aa9d27");
   });
 
+  it("passes --continue without a value through instead of translating a bare selector (#5254)", () => {
+    const run = runWrapper(["--continue", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--continue -z Repeat it");
+  });
+
+  it("passes empty --continue values through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--continue=", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--continue= -z Repeat it");
+  });
+
+  it("passes empty --resume values through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--resume=", "-z", "Repeat it"], {});
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).toBe("");
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("--resume= -z Repeat it");
+  });
+
   it("passes --version through (build assertion path) without invoking the guard", () => {
     const run = runWrapper(["--version"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
 
