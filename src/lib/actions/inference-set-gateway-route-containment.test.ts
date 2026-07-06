@@ -148,6 +148,43 @@ describe("runtime shared gateway route containment", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("refreshes peers after async endpoint validation before route mutation (#6315)", async () => {
+    const alpha = entry("alpha");
+    const peer = entry("late-peer", {
+      provider: "compatible-endpoint",
+      model: "custom/model",
+      endpointUrl: "https://peer.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const deps = createDeps({ config: {}, entries: [alpha], defaultSandbox: "alpha" });
+    const listSandboxes = vi
+      .fn()
+      .mockReturnValueOnce({ sandboxes: [alpha], defaultSandbox: "alpha" })
+      .mockReturnValue({ sandboxes: [alpha, peer], defaultSandbox: "alpha" });
+    deps.listSandboxes = listSandboxes;
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "custom/model",
+          sandboxName: "alpha",
+          endpointUrl: "https://alpha.example.test/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "openai-completions",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("late-peer");
+
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).toHaveBeenCalledOnce();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("blocks an incomplete legacy custom target even without a peer (#6315)", async () => {
     const deps = createDeps({
       config: {},

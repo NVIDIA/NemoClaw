@@ -307,7 +307,7 @@ export async function finalizeInferenceSetRoute(options: {
   sandboxName: string;
   provider: string;
   model: string;
-  sandboxes: SandboxEntry[];
+  getSandboxes: () => SandboxEntry[];
   rewriteUrlWithDnsPinning: RewriteConfigUrlsWithDnsPinning;
 }): Promise<{
   registryMetadata: RegistryInferenceMetadata;
@@ -333,7 +333,7 @@ export async function finalizeInferenceSetRoute(options: {
     provider: options.provider,
     model: options.model,
     metadata: registryMetadata,
-    sandboxes: options.sandboxes,
+    sandboxes: options.getSandboxes(),
   });
   return {
     registryMetadata,

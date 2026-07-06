@@ -535,7 +535,7 @@ async function runInferenceSetWithoutHostLock(
     sandboxName,
     provider,
     model,
-    sandboxes: routeSandboxes,
+    getSandboxes: () => deps.listSandboxes().sandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
   });
 

@@ -10,7 +10,10 @@ import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
-export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpenshell) {
+export function createInferenceRouteHelpers(
+  runCaptureOpenshell: RunCaptureOpenshell,
+  listSandboxesFn: typeof listSandboxes = listSandboxes,
+) {
   function verifyInferenceRoute(gatewayName: string, _provider: string, _model: string): void {
     const output = runCaptureOpenshell(["inference", "get", "-g", gatewayName], {
       ignoreError: true,
@@ -31,7 +34,7 @@ export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpens
   const checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck = (request) =>
     checkGatewayRouteCompatibilityForRegistry({
       ...request,
-      sandboxes: listSandboxes().sandboxes,
+      sandboxes: listSandboxesFn().sandboxes,
     });
 
   return { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility };

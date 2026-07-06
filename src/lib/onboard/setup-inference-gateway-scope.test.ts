@@ -154,4 +154,34 @@ describe("gateway-scoped inference route readers", () => {
       expect(call).toEqual([["inference", "get", "-g", GATEWAY], { ignoreError: true }]);
     }
   });
+
+  it("reads compatibility peers through the injected registry boundary", () => {
+    const listSandboxes = vi.fn(() => ({
+      defaultSandbox: "alpha",
+      sandboxes: [
+        {
+          name: "alpha",
+          gatewayName: GATEWAY,
+          gatewayPort: 9090,
+          provider: "openai-api",
+          model: "gpt-test",
+          gpuEnabled: false,
+          policies: [],
+        },
+      ],
+    }));
+    const route = createInferenceRouteHelpers(
+      vi.fn(() => null),
+      listSandboxes,
+    );
+
+    expect(
+      route.checkGatewayRouteCompatibility({
+        gatewayName: GATEWAY,
+        sandboxName: "alpha",
+        route: { provider: "openai-api", model: "gpt-test" },
+      }),
+    ).toEqual({ ok: true });
+    expect(listSandboxes).toHaveBeenCalledOnce();
+  });
 });
