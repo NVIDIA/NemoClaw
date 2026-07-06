@@ -449,6 +449,12 @@ describe("handleProviderInferenceState", () => {
       provider: "compatible-anthropic-endpoint",
       preferredInferenceApi: "openai-completions",
     });
+    // The coerced value must also be persisted so later readers of
+    // session.preferredInferenceApi stop seeing the stale anthropic-messages.
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
   });
 
   it("keeps a resumed anthropic-messages seed for agents that speak Anthropic natively", async () => {
@@ -473,6 +479,8 @@ describe("handleProviderInferenceState", () => {
       provider: "compatible-anthropic-endpoint",
       preferredInferenceApi: "anthropic-messages",
     });
+    // Unchanged seed keeps the plain-resume shortcut: no re-record.
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
   });
 
   it("records failed Ollama repair events before propagating resume repair errors", async () => {

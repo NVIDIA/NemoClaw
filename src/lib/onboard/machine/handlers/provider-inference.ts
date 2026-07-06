@@ -277,7 +277,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // and rewritten into the session. Persist that trusted selection so a
       // later plain `onboard --resume` recovery cannot fall back to ambient or
       // default provider selection if the recreate fails after this point.
-      shouldRecordProviderSelection = authoritativeResumeConfig;
+      // Also re-record when the #6294 seed coercion changed the persisted
+      // inference API, so later readers of session.preferredInferenceApi
+      // (e.g. resolveRuntimeInferenceApi) stop seeing the stale value.
+      shouldRecordProviderSelection =
+        authoritativeResumeConfig || preferredInferenceApi !== initial.preferredInferenceApi;
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
