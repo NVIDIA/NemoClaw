@@ -2,18 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { managedDcodeConfigRestorePolicy } from "../state/dcode-config-restore-input";
-import type { StateFileRestorePolicy } from "../state/state-file-restore-policy";
+import type { RestoreOptions, RestoreResult } from "../state/sandbox";
 import type { SelectionDrift } from "./selection-drift";
-
-type RestoreResult = {
-  success: boolean;
-  restoredDirs: string[];
-  restoredFiles: string[];
-};
-
-type RestoreOptions = {
-  stateFileRestorePolicy?: StateFileRestorePolicy;
-};
 
 export type CreatedSandboxFinalizationOptions = {
   sandboxName: string;

@@ -294,7 +294,9 @@ describe("created DCode sandbox finalization", () => {
     const restoreSandboxState = vi.fn(() => ({
       success: true,
       restoredDirs: [],
+      failedDirs: [],
       restoredFiles: ["config.toml"],
+      failedFiles: [],
     }));
 
     finalizeCreatedSandbox(
