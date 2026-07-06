@@ -11,6 +11,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
+import { resolveAgentInferenceApi } from "../../inference/config";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
@@ -227,7 +228,11 @@ export function prepareRebuildResumeConfig(
     model: trustedSelection.model,
     nimContainer: trustedSelection.nimContainer,
     credentialEnv,
-    preferredInferenceApi: trustedSelection.preferredInferenceApi,
+    preferredInferenceApi: resolveAgentInferenceApi(
+      rebuildAgent,
+      trustedSelection.provider,
+      trustedSelection.preferredInferenceApi,
+    ),
     compatibleEndpointReasoning,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,

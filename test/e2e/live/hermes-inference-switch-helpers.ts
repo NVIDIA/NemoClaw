@@ -39,12 +39,22 @@ export const SWITCH_PROVIDER =
   process.env.NEMOCLAW_SWITCH_PROVIDER ?? PUBLIC_NVIDIA_SWITCH_PROVIDER;
 export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_MODEL;
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
+export function hermesRuntimeSwitchApi(provider: string, requestedApi: string): string {
+  return provider === "compatible-anthropic-endpoint" ? "openai-completions" : requestedApi;
+}
+export const RUNTIME_SWITCH_API = hermesRuntimeSwitchApi(SWITCH_PROVIDER, SWITCH_API);
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 
 interface MockAnthropicProvider {
   endpointUrl: string;
   close(): Promise<void>;
+}
+
+export function compatibleAnthropicMetadataArgs(endpointUrl: string | null): string[] {
+  return endpointUrl
+    ? ["--endpoint-url", endpointUrl, "--credential-env", "COMPATIBLE_ANTHROPIC_API_KEY"]
+    : [];
 }
 
 export function mockAnthropicEndpointUrl(
@@ -450,12 +460,12 @@ export function maybeAssertPidStable(
 }
 
 export function expectedBaseUrl(): string {
-  return SWITCH_API === "anthropic-messages"
+  return RUNTIME_SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
 }
 
-export function inferenceLocalMaxTokens(api: string = SWITCH_API): number {
+export function inferenceLocalMaxTokens(api: string = RUNTIME_SWITCH_API): number {
   return api === "anthropic-messages" ? 32 : 100;
 }
 
@@ -463,7 +473,7 @@ export function expectedApiMode(): string | undefined {
   return new Map<string, string>([
     ["anthropic-messages", "anthropic_messages"],
     ["openai-responses", "codex_responses"],
-  ]).get(SWITCH_API);
+  ]).get(RUNTIME_SWITCH_API);
 }
 
 // This live lane runs on ubuntu-latest and intentionally uses GNU grep's
@@ -528,7 +538,7 @@ function quotePayload(payload: string): string {
 }
 
 export function inferenceLocalCommand(payload: string): string {
-  return SWITCH_API === "anthropic-messages"
+  return RUNTIME_SWITCH_API === "anthropic-messages"
     ? `curl -sS --max-time 90 https://inference.local/v1/messages -H 'Content-Type: application/json' -H 'anthropic-version: 2023-06-01' -d '${quotePayload(payload)}'`
     : `curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d '${quotePayload(payload)}'`;
 }

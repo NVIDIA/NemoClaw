@@ -13,6 +13,7 @@ import {
   apiKeyShape,
   chatContent,
   cleanupHermesSwitch,
+  compatibleAnthropicMetadataArgs,
   ensureCompatibleAnthropicSwitchProvider,
   env,
   envHash,
@@ -31,6 +32,7 @@ import {
   mockAnthropicSwitchEnabled,
   parseHermesModelBlock,
   parseInferenceRoute,
+  RUNTIME_SWITCH_API,
   registryState,
   runHermesInferenceSetWithRetry,
   runHermesPongWithRetry,
@@ -65,6 +67,7 @@ test.skipIf(!shouldRunLiveE2E())(
       switchProvider: SWITCH_PROVIDER,
       switchModel: SWITCH_MODEL,
       switchApi: SWITCH_API,
+      runtimeSwitchApi: RUNTIME_SWITCH_API,
     });
 
     cleanup.add("destroy Hermes inference switch sandbox", () =>
@@ -136,16 +139,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
-    const compatibleMetadataArgs = switchEndpointUrl
-      ? [
-          "--endpoint-url",
-          switchEndpointUrl,
-          "--credential-env",
-          "COMPATIBLE_ANTHROPIC_API_KEY",
-          "--inference-api",
-          SWITCH_API,
-        ]
-      : [];
+    const compatibleMetadataArgs = compatibleAnthropicMetadataArgs(switchEndpointUrl);
     const switched = await runHermesInferenceSetWithRetry(
       host,
       redactionValues,
@@ -232,7 +226,7 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.credentialEnv).toBe(durableCredentialEnv);
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.preferredInferenceApi).toBe(
-      publicSwitch ? null : SWITCH_API,
+      publicSwitch ? null : RUNTIME_SWITCH_API,
     );
     expect(state.registry.sandboxes?.[SANDBOX_NAME]?.nimContainer).toBeNull();
     expect(canonicalEndpoint(state.session.endpointUrl)).toBe(
@@ -241,7 +235,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(state.session.credentialEnv).toBe(
       publicSwitch ? "OPENAI_API_KEY" : durableCredentialEnv,
     );
-    expect(state.session.preferredInferenceApi).toBe(SWITCH_API);
+    expect(state.session.preferredInferenceApi).toBe(RUNTIME_SWITCH_API);
     expect(state.session.nimContainer).toBeNull();
 
     const inferenceLocalPayload = JSON.stringify({

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveAgentInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -362,6 +363,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
+    preferredInferenceApi = resolveAgentInferenceApi(
+      agentName(agent),
+      provider,
+      preferredInferenceApi,
+    );
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",

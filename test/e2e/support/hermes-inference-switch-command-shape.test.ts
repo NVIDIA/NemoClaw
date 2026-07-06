@@ -13,6 +13,8 @@ import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
+  compatibleAnthropicMetadataArgs,
+  hermesRuntimeSwitchApi,
   hostedInstallModel,
   inferenceLocalMaxTokens,
   installHermes,
@@ -36,6 +38,25 @@ describe("Hermes inference switch command shape", () => {
       }).status === 0
     );
   }
+
+  it("uses the OpenAI frontend for an Anthropic upstream in Hermes (#6289)", () => {
+    expect(hermesRuntimeSwitchApi("compatible-anthropic-endpoint", "anthropic-messages")).toBe(
+      "openai-completions",
+    );
+  });
+
+  it("preserves the requested frontend for other Hermes upstreams (#6289)", () => {
+    expect(hermesRuntimeSwitchApi("nvidia-prod", "openai-completions")).toBe("openai-completions");
+  });
+
+  it("omits the conflicting Anthropic frontend flag from Hermes switch metadata (#6289)", () => {
+    expect(compatibleAnthropicMetadataArgs("http://host.openshell.internal:18766")).toEqual([
+      "--endpoint-url",
+      "http://host.openshell.internal:18766",
+      "--credential-env",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+    ]);
+  });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {
     const command = apiKeyShapeCommand();

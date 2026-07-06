@@ -3,7 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { decideSandboxResume, type SandboxResumeSignals } from "./sandbox-resume";
+import { createSession } from "../../../state/onboard-session";
+import {
+  decideSandboxResume,
+  hasHermesCompatibleAnthropicInferenceRouteDrift,
+  type SandboxResumeSignals,
+} from "./sandbox-resume";
 
 function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxResumeSignals {
   return {
@@ -11,6 +16,7 @@ function resumeSignals(overrides: Partial<SandboxResumeSignals> = {}): SandboxRe
     resumeAgentChanged: false,
     sandboxStepComplete: true,
     sandboxReuseState: "ready",
+    inferenceRouteConfigChanged: false,
     webSearchConfigChanged: false,
     sandboxGpuConfigChanged: false,
     messagingChannelConfigChanged: false,
@@ -39,6 +45,35 @@ describe("decideSandboxResume", () => {
       kind: "recreate",
       removeRegistryEntry,
     });
+  });
+
+  it("preserves registry fidelity while recreating for Hermes inference route drift", () => {
+    expect(decideSandboxResume(resumeSignals({ inferenceRouteConfigChanged: true }))).toEqual({
+      kind: "recreate",
+      note: "  [resume] Hermes inference route configuration changed; recreating sandbox.",
+      removeRegistryEntry: false,
+    });
+  });
+
+  it("uses matching session API metadata when a legacy registry row omits it (#6289)", () => {
+    expect(
+      hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        preferredInferenceApi: "openai-completions",
+        registryEntry: {
+          name: "saved",
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+        },
+        session: createSession({
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+          preferredInferenceApi: "anthropic-messages",
+        }),
+      }),
+    ).toBe(true);
   });
 
   it("distinguishes one-time tool-disclosure migration from user configuration drift", () => {

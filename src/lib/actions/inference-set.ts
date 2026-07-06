@@ -8,6 +8,7 @@ import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
@@ -632,6 +633,18 @@ async function runInferenceSetWithoutHostLock(
     deps.rewriteConfigUrlsWithDnsPinning,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
+  if (
+    agentName === "hermes" &&
+    provider === "compatible-anthropic-endpoint" &&
+    explicitPreferredInferenceApi !== null &&
+    explicitPreferredInferenceApi !== "openai-completions"
+  ) {
+    throw new InferenceSetError(
+      "Hermes custom Anthropic endpoints require the managed openai-completions frontend. " +
+        "Set --inference-api openai-completions or omit --inference-api so NemoClaw selects it.",
+      2,
+    );
+  }
   const registryMetadata = registryMetadataForProviderSwitch({
     entry,
     provider,
@@ -696,22 +709,34 @@ async function runInferenceSetWithoutHostLock(
       nimContainer: registryMetadata.nimContainer ?? null,
     });
   if (
-    !deps.updateSandbox(sandboxName, registryFields(registryMetadata.preferredInferenceApi ?? null))
+    !deps.updateSandbox(
+      sandboxName,
+      registryFields(
+        resolveAgentInferenceApi(
+          agentName,
+          provider,
+          registryMetadata.preferredInferenceApi ?? null,
+        ),
+      ),
+    )
   ) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
-  const preferredInferenceApi =
+  const preferredInferenceApi = resolveAgentInferenceApi(
+    agentName,
+    provider,
     explicitPreferredInferenceApi ??
-    resolveRuntimeInferenceApi({
-      agentName,
-      config,
-      currentProvider: entry.provider,
-      provider,
-      sandboxName,
-      session,
-    });
+      resolveRuntimeInferenceApi({
+        agentName,
+        config,
+        currentProvider: entry.provider,
+        provider,
+        sandboxName,
+        session,
+      }),
+  );
   const effectiveRegistryMetadata: RegistryInferenceMetadata = {
     ...registryMetadata,
     preferredInferenceApi,

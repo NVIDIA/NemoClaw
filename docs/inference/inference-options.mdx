@@ -348,6 +348,13 @@ If your local server implements the Anthropic Messages API (`/v1/messages`), cho
 $$nemoclaw onboard
 ```
 
+<AgentOnly variant="hermes">
+For `compatible-anthropic-endpoint`, NemoClaw preserves the Anthropic upstream provider profile and `COMPATIBLE_ANTHROPIC_API_KEY`.
+Hermes always uses the managed OpenAI Chat Completions frontend at `https://inference.local/v1` for this provider.
+This avoids duplicate Anthropic SSE `message_start` events.
+OpenClaw custom Anthropic routes and first-party Anthropic routes remain on the native Anthropic Messages frontend.
+</AgentOnly>
+
 For non-interactive setup, use `NEMOCLAW_PROVIDER=anthropicCompatible` and set `COMPATIBLE_ANTHROPIC_API_KEY`.
 
 ```bash

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { getSandboxInferenceConfig } from "../../../inference/config";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
@@ -10,12 +11,71 @@ export interface SandboxResumeSignals {
   readonly resumeAgentChanged: boolean;
   readonly sandboxStepComplete: boolean;
   readonly sandboxReuseState: string;
+  readonly inferenceRouteConfigChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
+}
+
+interface InferenceRouteResumeInput {
+  readonly agentName: string | null | undefined;
+  readonly provider: string | null | undefined;
+  readonly model: string | null | undefined;
+  readonly preferredInferenceApi: string | null;
+  readonly registryEntry: SandboxEntry | null;
+  readonly session: Session | null;
+}
+
+function inferenceFrontendsEqual(
+  left: ReturnType<typeof getSandboxInferenceConfig>,
+  right: ReturnType<typeof getSandboxInferenceConfig>,
+): boolean {
+  return (
+    left.providerKey === right.providerKey &&
+    left.inferenceBaseUrl === right.inferenceBaseUrl &&
+    left.inferenceApi === right.inferenceApi
+  );
+}
+
+export function hasHermesCompatibleAnthropicInferenceRouteDrift({
+  agentName,
+  provider,
+  model,
+  preferredInferenceApi,
+  registryEntry,
+  session,
+}: InferenceRouteResumeInput): boolean {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    preferredInferenceApi !== "openai-completions" ||
+    !model
+  ) {
+    return false;
+  }
+
+  // The registry describes what was baked into the existing sandbox. Legacy
+  // rows can lack the API field, so use the matching target session only for
+  // fields the registry does not contain.
+  const recordedProvider = registryEntry?.provider ?? session?.provider;
+  const recordedModel = registryEntry?.model ?? session?.model ?? model;
+  if (!recordedProvider || !recordedModel) return false;
+  const sessionMatchesRecordedRoute =
+    session?.provider === recordedProvider && session.model === recordedModel;
+  const recordedPreferredInferenceApi =
+    registryEntry?.preferredInferenceApi ??
+    (sessionMatchesRecordedRoute ? (session.preferredInferenceApi ?? null) : null);
+
+  const recordedRoute = getSandboxInferenceConfig(
+    recordedModel,
+    recordedProvider,
+    recordedPreferredInferenceApi,
+  );
+  const requestedRoute = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  return !inferenceFrontendsEqual(recordedRoute, requestedRoute);
 }
 
 export function resolveToolDisclosureResumeSignals(
@@ -61,6 +121,7 @@ export interface SandboxResumeDeps {
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&
+    !signals.inferenceRouteConfigChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
@@ -92,9 +153,7 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
   return null;
 }
 
-export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
-  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
-  if (canReuseSandbox(signals)) return { kind: "reuse" };
+function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
   if (signals.resumeAgentChanged) {
     return {
       kind: "recreate",
@@ -102,6 +161,23 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       removeRegistryEntry: false,
     };
   }
+  if (signals.inferenceRouteConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Hermes inference route configuration changed; recreating sandbox.",
+      // Preserve registry-only fidelity until createSandbox captures it for
+      // the guarded recreate path.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
+export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
+  if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
+  if (canReuseSandbox(signals)) return { kind: "reuse" };
+  const compatibilityDecision = compatibilityResumeDecision(signals);
+  if (compatibilityDecision) return compatibilityDecision;
   if (signals.webSearchConfigChanged) {
     return {
       kind: "recreate",

@@ -92,6 +92,22 @@ export interface SandboxInferenceConfig {
   inferenceCompat: Record<string, unknown> | null;
 }
 
+/**
+ * Resolve agent-specific managed-proxy protocol requirements without changing
+ * the upstream provider profile. Hermes must use the OpenAI-compatible proxy
+ * frontend for custom Anthropic providers because the managed Anthropic SSE
+ * frontend can emit duplicate message_start events (#6289).
+ */
+export function resolveAgentInferenceApi(
+  agentName: string | null | undefined,
+  provider: string | null | undefined,
+  preferredInferenceApi: string | null,
+): string | null {
+  return agentName === "hermes" && provider === "compatible-anthropic-endpoint"
+    ? "openai-completions"
+    : preferredInferenceApi;
+}
+
 export function getProviderSelectionConfig(
   provider: string,
   model?: string,
