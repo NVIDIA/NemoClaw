@@ -128,6 +128,21 @@ describe("resolveCorporateCaFromEnv", () => {
     expect(resolveCorporateCaFromEnv({})).toBeNull();
   });
 
+  it("does not auto-scan the host trust store, honoring only env-configured sources (#6210)", () => {
+    // A corporate CA present only in a host /etc/ssl/certs/-style location must
+    // not be auto-discovered. #6210 is intentionally narrowed to the explicit
+    // bundle plus REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE/SSL_CERT_FILE fallbacks;
+    // scanning the host store would bake broad, unrelated OS trust into the
+    // image. The same file resolves only when a var points at it, proving the
+    // null is the no-auto-scan contract and not an invalid fixture.
+    const hostStore = tmpDir();
+    const hostCa = writeCa(hostStore);
+    expect(resolveCorporateCaFromEnv({})).toBeNull();
+    expect(resolveCorporateCaFromEnv({ [CORPORATE_CA_EXPLICIT_ENV]: hostCa })?.sourcePath).toBe(
+      hostCa,
+    );
+  });
+
   it("resolves the explicit env var first", () => {
     const p = writeCa(tmpDir());
     const resolved = resolveCorporateCaFromEnv({ [CORPORATE_CA_EXPLICIT_ENV]: p });

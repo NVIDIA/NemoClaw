@@ -28,6 +28,15 @@ import fs from "node:fs";
  * env vars the reporter already exports for their corporate proxy; when one of
  * those points at a missing/invalid file we skip it silently rather than break
  * an onboard that never asked for a corporate CA.
+ *
+ * Scope (#6210, intentionally narrowed): detection is limited to these
+ * env-configured sources. NemoClaw deliberately does NOT auto-scan the host
+ * system trust store (`/etc/ssl/certs/`): importing an OS trust store wholesale
+ * would bake broad, unrelated roots into the sandbox image and widen its trust
+ * far beyond the one corporate proxy CA the user needs. A host-store-only CA
+ * must be exported into a small PEM and pointed at via one of these vars. This
+ * boundary is asserted by `corporate-ca.test.ts` ("does not auto-scan the host
+ * trust store") and documented in `docs/reference/troubleshooting.mdx`.
  */
 export const CORPORATE_CA_EXPLICIT_ENV = "NEMOCLAW_CORPORATE_CA_BUNDLE";
 export const CORPORATE_CA_FALLBACK_ENV_VARS = [
