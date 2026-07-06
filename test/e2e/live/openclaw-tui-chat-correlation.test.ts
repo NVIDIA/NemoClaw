@@ -27,8 +27,10 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import { stripTerminalControl } from "../support/issue-4434-tui-capture.ts";
 import {
   buildIssue6194TuiExpectScript,
+  ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
   ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "./issue-6194-tui-expect.ts";
@@ -108,12 +110,6 @@ type CommandResultText = { stdout: string; stderr: string };
 
 function resultText(result: CommandResultText): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function stripTerminalControl(value: string): string {
-  return value
-    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/gu, "")
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "");
 }
 
 function textFromContent(content: unknown): string {
@@ -568,6 +564,7 @@ test(
           ...sandboxAccessEnv(),
           NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
           NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
+          NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT: ISSUE6194_NETWORK_APPROVAL_ENDPOINT,
           NEMOCLAW_ISSUE_6194_SESSION: tuiSession,
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
         },

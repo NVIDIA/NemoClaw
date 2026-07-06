@@ -3,12 +3,15 @@
 
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
 export const ISSUE6194_TUI_SESSION_PREFIX = "issue-6194-tui";
+export const ISSUE6194_NETWORK_APPROVAL_ENDPOINT =
+  "https://api.atlassian.com/oauth/token/accessible-resources";
 
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
 set session $env(NEMOCLAW_ISSUE_6194_SESSION)
+set networkEndpoint $env(NEMOCLAW_ISSUE_6194_NETWORK_ENDPOINT)
 log_file -noappend $capture
 proc mark {name} {
   puts "ISSUE6194_MARK $name"
@@ -36,7 +39,7 @@ expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
 # repro to trigger the real OpenClaw network approval UI. A local endpoint can
 # bypass that egress approval boundary; this test only needs the prompt and
 # approval handling, not a successful third-party response body.
-send -- "Use an available tool to call https://api.atlassian.com/oauth/token/accessible-resources now. Do not describe it.\\r"
+send -- "Use an available tool to call $networkEndpoint now. Do not describe it.\\r"
 expect {
   -nocase -re {(blocked|denied|rejected)} {
     send "\\003"
