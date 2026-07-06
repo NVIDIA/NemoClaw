@@ -785,15 +785,10 @@ function ensureSandboxInferenceRouteOrExit(
 }
 
 // Connect/probe/finalization budget for the shared auto-pair approval pass
-// (#4504). The realistic case here is a single pending CLI/webchat scope
-// upgrade, so MAX_APPROVALS is 1 and the approve timeout matches the in-sandbox
-// watcher's RUN_TIMEOUT_SECS = 10 (nemoclaw-start.sh). The outer spawnSync cap
-// (15s) exceeds the internal worst case (2s list + 10s × 1 = 12s) plus
-// shell/python startup so a legitimate slow approve is never SIGKILLed mid-loop
-// and the allowlisted request is never stranded. Constants live in the
-// dependency-free ./connect-autopair-budget leaf so tests can assert the
-// invariant on the real values without importing this heavy module. The doctor
-// recovery surface (#4616) keeps the wider default budget in ./auto-pair-approval.
+// (#4504). The bounded single-request budget, timeout rationale, and invariant
+// live in the dependency-free ./connect-autopair-budget leaf so tests assert the
+// real values without importing this heavy module. The doctor recovery surface
+// (#4616) keeps the wider default budget in ./auto-pair-approval.
 const CONNECT_AUTO_PAIR_BUDGET = {
   maxApprovals: CONNECT_AUTO_PAIR_MAX_APPROVALS,
   listTimeoutS: CONNECT_AUTO_PAIR_LIST_TIMEOUT_S,

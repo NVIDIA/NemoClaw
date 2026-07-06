@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 // Import source directly so tests cannot pass against a stale build.
 import {
   CLOUD_MODEL_OPTIONS,
+  coerceAgentInferenceApi,
   DEFAULT_CLOUD_MODEL,
   DEFAULT_HERMES_PROVIDER_MODEL,
   DEFAULT_OLLAMA_MODEL,
@@ -20,9 +21,30 @@ import {
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   parseGatewayInference,
   planInferenceRouteReconcile,
+  resolveAgentInferenceApi,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
+
+describe("resolveAgentInferenceApi", () => {
+  it("uses the managed OpenAI frontend for Hermes custom Anthropic routes (#6289)", () => {
+    expect(
+      resolveAgentInferenceApi("hermes", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("openai-completions");
+  });
+
+  it("preserves native Anthropic routing for OpenClaw custom endpoints (#6289)", () => {
+    expect(
+      resolveAgentInferenceApi("openclaw", "compatible-anthropic-endpoint", "anthropic-messages"),
+    ).toBe("anthropic-messages");
+  });
+
+  it("preserves native Anthropic routing for the first-party Hermes provider (#6289)", () => {
+    expect(resolveAgentInferenceApi("hermes", "anthropic-prod", "anthropic-messages")).toBe(
+      "anthropic-messages",
+    );
+  });
+});
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
@@ -338,6 +360,25 @@ describe("getSandboxInferenceConfig", () => {
     });
   });
 
+  it("keeps the /v1 suffix for an OpenAI-only agent coerced off the Anthropic Messages route (#6294)", () => {
+    const openaiOnlyAgent = { inference: { provider_type: "openai_compatible" } };
+    expect(
+      getSandboxInferenceConfig(
+        "claude-sonnet-proxy",
+        "compatible-anthropic-endpoint",
+        coerceAgentInferenceApi(openaiOnlyAgent, "anthropic-messages"),
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/claude-sonnet-proxy`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
   it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
     expect(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,
@@ -358,6 +399,47 @@ describe("getSandboxInferenceConfig", () => {
       inferenceApi: "openai-responses",
       inferenceCompat: null,
     });
+  });
+});
+
+describe("coerceAgentInferenceApi", () => {
+  const openaiOnlyAgent = { inference: { provider_type: "openai_compatible" } };
+
+  it("routes an OpenAI-only agent off Anthropic Messages onto openai-completions (#6294)", () => {
+    expect(coerceAgentInferenceApi(openaiOnlyAgent, "anthropic-messages")).toBe(
+      "openai-completions",
+    );
+  });
+
+  it("leaves an OpenAI-only agent already on openai-completions unchanged", () => {
+    expect(coerceAgentInferenceApi(openaiOnlyAgent, "openai-completions")).toBe(
+      "openai-completions",
+    );
+  });
+
+  it("leaves an unresolved (null) inference API untouched so the caller defaults it", () => {
+    expect(coerceAgentInferenceApi(openaiOnlyAgent, null)).toBeNull();
+  });
+
+  it("does not touch gateway-managed agents (OpenClaw) that speak Anthropic natively", () => {
+    const openclawAgent = { inference: { provider_type: "gateway_managed" } };
+    expect(coerceAgentInferenceApi(openclawAgent, "anthropic-messages")).toBe("anthropic-messages");
+  });
+
+  it("leaves provider-specific Hermes routing to resolveAgentInferenceApi (#6289)", () => {
+    const hermesAgent = { inference: { provider_type: "custom" } };
+    expect(coerceAgentInferenceApi(hermesAgent, "anthropic-messages")).toBe("anthropic-messages");
+  });
+
+  it("is a no-op when the agent or its inference block is absent", () => {
+    expect(coerceAgentInferenceApi(null, "anthropic-messages")).toBe("anthropic-messages");
+    expect(coerceAgentInferenceApi({}, "anthropic-messages")).toBe("anthropic-messages");
+  });
+
+  it("does not coerce when agent has inference block but no provider_type", () => {
+    expect(coerceAgentInferenceApi({ inference: {} }, "anthropic-messages")).toBe(
+      "anthropic-messages",
+    );
   });
 });
 

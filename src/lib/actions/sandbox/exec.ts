@@ -9,6 +9,9 @@ import type {
 } from "../../shields/mutable-config-perms";
 import type { SandboxEntry } from "../../state/registry";
 import { type ExecPolicyHintDeps, preparePolicyHint } from "./exec-policy-hint-integration";
+import { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
+
+export { wrapExecCommandWithRuntimeEnv } from "./runtime-env";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -409,7 +412,7 @@ export async function execSandbox(
   const completion = await runSandboxExecCommand(
     binary,
     sandboxName,
-    command,
+    wrapExecCommandWithRuntimeEnv(command),
     options,
     deps.run ?? runSandboxExecChild,
     deps.cleanupDeps ?? {
