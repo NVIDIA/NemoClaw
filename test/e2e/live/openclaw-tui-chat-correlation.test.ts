@@ -19,7 +19,11 @@ import { join } from "node:path";
 
 import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import {
+  sandboxAccessEnv,
+  type SandboxClient,
+  trustedSandboxShellScript,
+} from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
@@ -599,7 +603,7 @@ test(
       const tui = await host.command("expect", [expectScript], {
         artifactName: "issue6194-openclaw-tui-post-idle",
         env: {
-          ...buildAvailabilityProbeEnv(),
+          ...sandboxAccessEnv(),
           NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
           NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
