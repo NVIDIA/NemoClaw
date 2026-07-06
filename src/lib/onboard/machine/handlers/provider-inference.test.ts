@@ -125,6 +125,7 @@ function baseOptions(
   session: Session | null = createSession(),
 ): ProviderInferenceStateOptions<Gpu, Agent, Host> {
   return {
+    gatewayName: "nemoclaw",
     resume: false,
     fresh: false,
     session,
@@ -828,38 +829,6 @@ describe("handleProviderInferenceState", () => {
     });
 
     expect(calls.reconcileRouter).toHaveBeenCalledOnce();
-  });
-
-  it("blocks a conflicting resumed routed provider before gateway or registry mutation (#6315)", async () => {
-    const session = createSession({
-      provider: "nvidia-router",
-      model: "router/model",
-      endpointUrl: "http://host.openshell.internal:4000/v1",
-      preferredInferenceApi: "openai-completions",
-    });
-    session.steps.provider_selection.status = "complete";
-    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
-    calls.checkGatewayRouteCompatibility.mockReturnValue({
-      ok: false,
-      gatewayName: "nemoclaw",
-      sandboxName: "router-sandbox",
-      route: { provider: "nvidia-router", model: "router/model" },
-      conflicts: [{ sandboxName: "existing-sandbox", reason: "provider-model" }],
-    });
-
-    await expect(
-      handleProviderInferenceState({
-        ...baseOptions(deps, session),
-        resume: true,
-        sandboxName: "router-sandbox",
-      }),
-    ).rejects.toThrow("exit 1");
-
-    expect(calls.reconcileRouter).not.toHaveBeenCalled();
-    expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
-    expect(calls.updateSandbox).not.toHaveBeenCalled();
-    expect(calls.setupInference).not.toHaveBeenCalled();
-    expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("existing-sandbox"));
   });
 
   // #5974 instance 5: the Model Router Python preflight (`prepareModelRouterVenv`)

@@ -1,0 +1,251 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
+import {
+  connectModulePath,
+  createConnectHarness,
+  requireDist,
+} from "../../../../test/support/connect-flow-test-harness";
+import type { SandboxEntry } from "../../state/registry";
+import {
+  repairSandboxInferenceRouteWithDeps,
+  type SandboxInferenceRouteRepairDeps,
+} from "./connect";
+
+describe("connect route containment", () => {
+  let exitSpy: MockInstance;
+  const originalStdoutIsTty = process.stdout.isTTY;
+
+  beforeEach(() => {
+    process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+      throw new Error(`process.exit(${code ?? 0})`);
+    }) as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: originalStdoutIsTty,
+    });
+    delete process.env.NEMOCLAW_TEST_NO_SLEEP;
+    delete require.cache[requireDist.resolve(connectModulePath)];
+  });
+
+  it("stops before the initial endpoint probe or repair mutation when routes conflict (#6315)", () => {
+    const conflict = new Error("shared gateway route conflict");
+    const assertRouteCompatible = vi.fn(() => {
+      throw conflict;
+    });
+    const probe = vi.fn(() => ({ healthy: false, broken: true, detail: "BROKEN 503" }));
+    const applyVmDnsMonkeypatch = vi.fn(() => ({ ok: false }));
+    const reapplyVmInferenceRoute = vi.fn(() => null);
+    const repairLegacyDnsProxy = vi.fn(() => ({ exitCode: 0 }));
+    const deps: SandboxInferenceRouteRepairDeps = {
+      probe,
+      shouldApplyVmDnsMonkeypatch: vi.fn(() => false),
+      applyVmDnsMonkeypatch,
+      reapplyVmInferenceRoute,
+      repairLegacyDnsProxy,
+      assertRouteCompatible,
+    };
+    const sandbox: SandboxEntry = {
+      name: "demo",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      provider: "nvidia-prod",
+      openshellDriver: "vm",
+      gpuEnabled: false,
+      policies: [],
+    };
+
+    expect(() => repairSandboxInferenceRouteWithDeps("vm-box", sandbox, {}, deps)).toThrow(
+      conflict,
+    );
+
+    expect(assertRouteCompatible).toHaveBeenCalledWith("vm-box", sandbox);
+    expect(probe).not.toHaveBeenCalled();
+    expect(applyVmDnsMonkeypatch).not.toHaveBeenCalled();
+    expect(reapplyVmInferenceRoute).not.toHaveBeenCalled();
+    expect(repairLegacyDnsProxy).not.toHaveBeenCalled();
+  });
+
+  it("exits before connect-time route writes when another sandbox conflicts (#6315)", async () => {
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "anthropic-prod",
+      model: "claude-sonnet-4-20250514",
+    } as const;
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      registryEntry: alpha,
+      registryEntries: [
+        alpha,
+        {
+          name: "stopped-peer",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+        },
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("stopped-peer");
+    expect(errorOutput).toContain("NEMOCLAW_GATEWAY_PORT");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits before repairing a lone incomplete legacy custom route (#6315)", async () => {
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      registryEntry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "compatible-endpoint",
+        model: "custom/model",
+        endpointUrl: null,
+        preferredInferenceApi: null,
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "connect", "alpha"],
+      expect.any(Object),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "requested custom route lacks durable endpoint or API-family metadata",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("exits before an endpoint probe when an aligned route conflicts with a stopped sandbox (#6315)", async () => {
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+    } as const;
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      registryEntry: alpha,
+      registryEntries: [
+        alpha,
+        {
+          name: "stopped-peer",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          provider: "anthropic-prod",
+          model: "claude-sonnet-4-20250514",
+        },
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
+      JSON.stringify(call[0]).includes("inference.local/v1/models"),
+    );
+    expect(routeProbeCalls).toHaveLength(0);
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it("scopes every inference read and repair write to the target non-default gateway", async () => {
+    const alpha = {
+      name: "alpha",
+      agent: "openclaw",
+      gatewayName: "nemoclaw-9090",
+      gatewayPort: 9090,
+      openshellDriver: "docker",
+      provider: "anthropic-prod",
+      model: "claude-sonnet-4-20250514",
+    } as const;
+    const harness = createConnectHarness({
+      inferenceGetOutput:
+        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
+      inferenceProbeResponses: ["BROKEN 503", "BROKEN 503", "OK 200"],
+      registryEntry: alpha,
+      registryEntries: [
+        alpha,
+        {
+          name: "default-gateway-peer",
+          agent: "openclaw",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          provider: "nvidia-prod",
+          model: "nvidia/nemotron-3-super-120b-a12b",
+        },
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
+
+    const inferenceReads = harness.captureOpenshellSpy.mock.calls
+      .map((call) => call[0])
+      .filter((args) => Array.isArray(args) && args[0] === "inference" && args[1] === "get");
+    expect(inferenceReads).toEqual([["inference", "get", "-g", "nemoclaw-9090"]]);
+
+    const inferenceWrites = harness.runOpenshellSpy.mock.calls
+      .map((call) => call[0])
+      .filter((args) => Array.isArray(args) && args[0] === "inference" && args[1] === "set");
+    expect(inferenceWrites).toHaveLength(3);
+    for (const args of inferenceWrites) {
+      expect(args).toEqual([
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw-9090",
+        "--provider",
+        "anthropic-prod",
+        "--model",
+        "claude-sonnet-4-20250514",
+        "--no-verify",
+      ]);
+    }
+    expect([...inferenceReads, ...inferenceWrites]).not.toContainEqual(
+      expect.arrayContaining(["-g", "nemoclaw"]),
+    );
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+  });
+});

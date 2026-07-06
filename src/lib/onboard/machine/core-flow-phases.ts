@@ -25,6 +25,7 @@ export interface CoreOnboardFlowPhaseOptions<
   MessagingChannelConfig = unknown,
   ResourceProfile = unknown,
 > {
+  gatewayName: string;
   forceProviderSelection: boolean;
   authoritativeResumeConfig?: boolean;
   env: NodeJS.ProcessEnv;
@@ -55,6 +56,7 @@ export function createCoreOnboardFlowPhases<
 ): [OnboardSequencePhase<Context>, OnboardSequencePhase<Context>] {
   const providerInferencePhase = createProviderInferencePhase<Context>(async (context) => {
     const providerInferenceResult = await handleProviderInferenceState({
+      gatewayName: options.gatewayName,
       resume: context.resume,
       fresh: context.fresh,
       session: context.session,

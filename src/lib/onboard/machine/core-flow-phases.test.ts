@@ -75,6 +75,7 @@ function createPhases(
   } = {},
 ) {
   return createCoreOnboardFlowPhases<CoreContext, TestHost>({
+    gatewayName: "nemoclaw",
     forceProviderSelection: false,
     env: {},
     constants: {

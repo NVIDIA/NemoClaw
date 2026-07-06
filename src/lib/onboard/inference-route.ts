@@ -10,10 +10,7 @@ import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
-export function createInferenceRouteHelpers(
-  runCaptureOpenshell: RunCaptureOpenshell,
-  getGatewayName: () => string = () => "nemoclaw",
-) {
+export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpenshell) {
   function verifyInferenceRoute(_provider: string, _model: string): void {
     const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
     if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
@@ -32,7 +29,6 @@ export function createInferenceRouteHelpers(
   const checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck = (request) =>
     checkGatewayRouteCompatibilityForRegistry({
       ...request,
-      gatewayName: getGatewayName(),
       sandboxes: listSandboxes().sandboxes,
     });
 

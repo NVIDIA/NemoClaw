@@ -19,7 +19,7 @@ export interface GatewayRouteCompatibilityRequest {
 
 export type CurrentGatewayRouteCompatibilityRequest = Pick<
   GatewayRouteCompatibilityRequest,
-  "sandboxName" | "route"
+  "gatewayName" | "sandboxName" | "route"
 >;
 
 export type CurrentGatewayRouteCompatibilityCheck = (

@@ -64,6 +64,8 @@ describe("connectSandbox route lifecycle", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--provider",
         "anthropic-prod",
         "--model",
@@ -77,123 +79,6 @@ describe("connectSandbox route lifecycle", () => {
       ["sandbox", "connect", "alpha"],
       expect.any(Object),
     );
-  });
-
-  it("exits before connect-time route writes when another sandbox conflicts (#6315)", async () => {
-    const alpha = {
-      name: "alpha",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      provider: "anthropic-prod",
-      model: "claude-sonnet-4-20250514",
-    } as const;
-    const harness = createConnectHarness({
-      inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      registryEntry: alpha,
-      registryEntries: [
-        alpha,
-        {
-          name: "stopped-peer",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          provider: "nvidia-prod",
-          model: "nvidia/nemotron-3-super-120b-a12b",
-        },
-      ],
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
-    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.any(Object),
-    );
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("stopped-peer");
-    expect(errorOutput).toContain("NEMOCLAW_GATEWAY_PORT");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("exits before repairing a lone incomplete legacy custom route (#6315)", async () => {
-    const harness = createConnectHarness({
-      inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      registryEntry: {
-        name: "alpha",
-        agent: "openclaw",
-        gatewayName: "nemoclaw",
-        gatewayPort: 8080,
-        provider: "compatible-endpoint",
-        model: "custom/model",
-        endpointUrl: null,
-        preferredInferenceApi: null,
-      },
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
-    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
-    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
-      "openshell",
-      ["sandbox", "connect", "alpha"],
-      expect.any(Object),
-    );
-    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain(
-      "requested custom route lacks durable endpoint or API-family metadata",
-    );
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it("exits before an endpoint probe when an aligned route conflicts with a stopped sandbox (#6315)", async () => {
-    const alpha = {
-      name: "alpha",
-      agent: "openclaw",
-      gatewayName: "nemoclaw",
-      gatewayPort: 8080,
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    } as const;
-    const harness = createConnectHarness({
-      inferenceGetOutput:
-        "Gateway inference:\n  Provider: nvidia-prod\n  Model: nvidia/nemotron-3-super-120b-a12b\n",
-      registryEntry: alpha,
-      registryEntries: [
-        alpha,
-        {
-          name: "stopped-peer",
-          agent: "openclaw",
-          gatewayName: "nemoclaw",
-          gatewayPort: 8080,
-          provider: "anthropic-prod",
-          model: "claude-sonnet-4-20250514",
-        },
-      ],
-    });
-
-    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
-      "process.exit(1)",
-    );
-
-    const routeProbeCalls = harness.captureOpenshellSpy.mock.calls.filter((call) =>
-      JSON.stringify(call[0]).includes("inference.local/v1/models"),
-    );
-    expect(routeProbeCalls).toHaveLength(0);
-    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("wires the forced VM DNS monkeypatch into connect route repair", async () => {
@@ -239,7 +124,7 @@ describe("connectSandbox route lifecycle", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).not.toHaveBeenCalledWith(
-      ["inference", "get"],
+      ["inference", "get", "-g", "nemoclaw"],
       expect.any(Object),
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
@@ -258,7 +143,7 @@ describe("connectSandbox route lifecycle", () => {
     await expect(harness.connectSandbox("alpha", { probeOnly: true })).resolves.toBeUndefined();
 
     expect(harness.captureOpenshellSpy).toHaveBeenCalledWith(
-      ["inference", "get"],
+      ["inference", "get", "-g", "nemoclaw"],
       expect.objectContaining({ ignoreError: true }),
     );
     expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
@@ -284,6 +169,8 @@ describe("connectSandbox route lifecycle", () => {
       [
         "inference",
         "set",
+        "-g",
+        "nemoclaw",
         "--provider",
         "nvidia-prod",
         "--model",

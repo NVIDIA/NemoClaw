@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { coerceAgentInferenceApi } from "../../../inference/config";
-import {
-  type CurrentGatewayRouteCompatibilityCheck,
-  formatGatewayRouteConflict,
-} from "../../../inference/gateway-route-compatibility";
+import type { CurrentGatewayRouteCompatibilityCheck } from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 import { advanceTo, type OnboardStateTransitionResult, retryTo } from "../result";
+import { assertProviderInferenceRouteCompatible } from "./provider-inference-route-containment";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -42,6 +40,7 @@ export interface ProviderSelectionResult {
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
+  gatewayName: string;
   resume: boolean;
   fresh: boolean;
   session: Session | null;
@@ -229,6 +228,7 @@ function shouldRefreshCompatibleEndpointRouteForMessaging(
 }
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
+  gatewayName,
   resume,
   fresh,
   session,
@@ -281,6 +281,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       typeof model === "string";
     let shouldRecordProviderSelection = false;
     if (resumeProviderSelection) {
+      assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+        provider,
+        model,
+        endpointUrl,
+        preferredInferenceApi,
+      });
       const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
@@ -395,6 +401,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
+    if (!resumeProviderSelection) {
+      assertProviderInferenceRouteCompatible(deps, gatewayName, sandboxName, {
+        provider,
+        model,
+        endpointUrl,
+        preferredInferenceApi,
+      });
+    }
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -425,14 +439,6 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       effectiveResume &&
       deps.isInferenceRouteReady(provider, model);
     if (resumeInference) {
-      const compatibility = deps.checkGatewayRouteCompatibility({
-        sandboxName,
-        route: { provider, model, endpointUrl, preferredInferenceApi },
-      });
-      if (!compatibility.ok) {
-        deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
-        deps.exitProcess(1);
-      }
       if (provider === constants.hermesProviderName) {
         let inferenceResult: ProviderInferenceRetry;
         try {

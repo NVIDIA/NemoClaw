@@ -1009,7 +1009,7 @@ const providerExistsInGateway = (name: string) =>
   onboardProviders.providerExistsInGateway(name, runOpenshell);
 
 const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility } =
-  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell, () => GATEWAY_NAME);
+  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
 const {
   inspectSandboxForCreate,
   pruneStaleSandboxEntry,
@@ -4843,6 +4843,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     const [providerInferencePhase, sandboxPhase] =
       createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+        gatewayName: GATEWAY_NAME,
         forceProviderSelection: forceProviderSelectionForAgentChange,
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         env: process.env,

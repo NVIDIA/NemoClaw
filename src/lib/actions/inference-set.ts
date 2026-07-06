@@ -11,13 +11,8 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
-import {
-  checkGatewayRouteCompatibility,
-  formatGatewayRouteConflict,
-} from "../inference/gateway-route-compatibility";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
-import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -39,7 +34,13 @@ import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
 import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+import {
+  finalizeInferenceSetRoute,
+  prepareInferenceSetRoute,
+  type RegistryInferenceMetadata,
+} from "./inference-set-route-containment";
 
+export { normalizeCustomEndpointUrl } from "./inference-set-route-containment";
 export { InferenceSetError };
 
 export interface InferenceSetOptions {
@@ -385,234 +386,6 @@ function getPreferredInferenceApi(config: ConfigObject): string | null {
   return typeof inferenceProvider.api === "string" ? inferenceProvider.api : null;
 }
 
-type RegistryInferenceMetadata = Pick<
-  SandboxEntry,
-  "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
->;
-
-const CUSTOM_COMPATIBLE_CREDENTIAL_ENV: Record<string, string> = {
-  "compatible-endpoint": "COMPATIBLE_API_KEY",
-  "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
-};
-
-const INFERENCE_SET_APIS = new Set([
-  "openai-completions",
-  "anthropic-messages",
-  "openai-responses",
-]);
-
-function isCustomCompatibleProvider(provider: string): boolean {
-  return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
-}
-
-function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
-  return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
-}
-
-// TRUST BOUNDARY: host.openshell.internal is the single sandbox-to-host bridge
-// hostname provisioned by OpenShell. It resolves to the Docker host gateway
-// only inside the sandbox network namespace. This exemption is intentionally
-// limited below to HTTP, an explicit unprivileged port, and the exact hostname;
-// do not extend it to HTTPS, wildcard subdomains, localhost, RFC1918 literals,
-// or other internal DNS names.
-const ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS = new Set(["host.openshell.internal"]);
-
-function normalizeEndpointUrlShape(value: string): { url: URL; normalized: string } {
-  const url = new URL(value);
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
-    throw new Error("unsupported URL shape");
-  }
-  url.search = "";
-  url.hash = "";
-  const pathname = url.pathname.replace(/\/+$/, "");
-  url.pathname = pathname || "/";
-  return {
-    url,
-    normalized: url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`,
-  };
-}
-
-export async function normalizeCustomEndpointUrl(
-  value: string | null | undefined,
-  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
-): Promise<string> {
-  const normalized = normalizeCustomEndpointUrlWithoutDns(value);
-  const shaped = normalizeEndpointUrlShape(normalized);
-  const hostname = shaped.url.hostname.replace(/\.$/, "").toLowerCase();
-  const port = Number(shaped.url.port);
-  if (
-    ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS.has(hostname) &&
-    shaped.url.protocol === "http:" &&
-    Number.isInteger(port) &&
-    port >= 1024
-  ) {
-    // This is the single sandbox-to-host bridge name that NemoClaw itself
-    // provisions for local inference. Its supported routes are explicit
-    // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
-    // default/privileged ports, localhost, RFC1918 addresses, or arbitrary
-    // internal DNS names.
-    return normalized;
-  }
-
-  try {
-    const validated = await rewriteUrlWithDnsPinning(normalized);
-    if (typeof validated !== "string") throw new Error("URL validator returned a non-string value");
-    return normalizeEndpointUrlShape(validated).normalized;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
-  }
-}
-
-function normalizeCustomEndpointUrlWithoutDns(value: string | null | undefined): string {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw)
-    throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
-  let shaped: { url: URL; normalized: string };
-  try {
-    shaped = normalizeEndpointUrlShape(raw);
-  } catch {
-    throw new InferenceSetError(
-      "endpoint-url must be a valid http(s) URL without embedded credentials.",
-      2,
-    );
-  }
-  return shaped.normalized;
-}
-
-function normalizeExplicitCredentialEnv(
-  provider: string,
-  value: string | null | undefined,
-): string {
-  const expected = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[provider];
-  const normalized = typeof value === "string" && value.trim() ? value.trim() : expected;
-  if (normalized !== expected) {
-    throw new InferenceSetError(
-      `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
-      2,
-    );
-  }
-  return normalized;
-}
-
-function allowedExplicitInferenceApis(provider: string): string[] {
-  return provider === "compatible-endpoint"
-    ? ["openai-completions", "openai-responses"]
-    : Array.from(INFERENCE_SET_APIS);
-}
-
-function normalizeExplicitInferenceApi(provider: string, value: string | null | undefined): string {
-  const normalized = typeof value === "string" ? value.trim() : "";
-  if (!normalized) {
-    throw new InferenceSetError(
-      `inference-api is required for '${provider}' so the shared gateway route can be identified safely.`,
-      2,
-    );
-  }
-  const allowed = allowedExplicitInferenceApis(provider);
-  if (!allowed.includes(normalized)) {
-    throw new InferenceSetError(
-      `inference-api for '${provider}' must be one of: ${allowed.join(", ")}.`,
-      2,
-    );
-  }
-  return normalized;
-}
-
-function explicitCustomProviderMetadataWithoutDns(
-  provider: string,
-  options: InferenceSetOptions,
-): RegistryInferenceMetadata | null {
-  if (!hasExplicitCustomMetadata(options)) return null;
-  if (!isCustomCompatibleProvider(provider)) {
-    throw new InferenceSetError(
-      "endpoint-url, credential-env, and inference-api are only supported for compatible-endpoint and compatible-anthropic-endpoint.",
-      2,
-    );
-  }
-
-  // Source boundary: custom-compatible endpoint URLs are operator-supplied and
-  // not discoverable from the gateway provider registry with a sandbox-scoped
-  // trust guarantee. Treat these explicit flags as the durable metadata source
-  // for this switch, after URL and credential-env validation, instead of
-  // borrowing from an unrelated onboard session or global OpenShell provider.
-  return {
-    endpointUrl: normalizeCustomEndpointUrlWithoutDns(options.endpointUrl),
-    credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
-    preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
-    nimContainer: null,
-  };
-}
-
-async function materializeExplicitCustomProviderMetadata(
-  metadata: RegistryInferenceMetadata | null,
-  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
-): Promise<RegistryInferenceMetadata | null> {
-  if (!metadata) return null;
-  return {
-    ...metadata,
-    endpointUrl: await normalizeCustomEndpointUrl(metadata.endpointUrl, rewriteUrlWithDnsPinning),
-  };
-}
-
-function matchingSessionMetadata(options: {
-  session: onboardSession.Session | null;
-  sandboxName: string;
-  provider: string;
-  model: string;
-}): RegistryInferenceMetadata | null {
-  const { session, sandboxName, provider, model } = options;
-  if (
-    session?.sandboxName !== sandboxName ||
-    session.provider !== provider ||
-    session.model !== model ||
-    !session.endpointUrl
-  ) {
-    return null;
-  }
-  return {
-    endpointUrl: session.endpointUrl,
-    credentialEnv: session.credentialEnv ?? null,
-    preferredInferenceApi: session.preferredInferenceApi ?? null,
-    nimContainer: session.nimContainer ?? null,
-  };
-}
-
-function registryMetadataForProviderSwitch(options: {
-  entry: SandboxEntry;
-  provider: string;
-  model: string;
-  sandboxName: string;
-  session: onboardSession.Session | null;
-  explicitMetadata: RegistryInferenceMetadata | null;
-}): RegistryInferenceMetadata {
-  const { entry, provider, model, sandboxName, session, explicitMetadata } = options;
-  if (explicitMetadata) return explicitMetadata;
-  if (entry.provider === provider) {
-    return {
-      endpointUrl: entry.endpointUrl ?? null,
-      credentialEnv: entry.credentialEnv ?? null,
-      preferredInferenceApi: entry.preferredInferenceApi ?? null,
-      nimContainer: entry.nimContainer ?? null,
-    };
-  }
-  const sessionMetadata = matchingSessionMetadata({ session, sandboxName, provider, model });
-  if (sessionMetadata) return sessionMetadata;
-  if (isCustomCompatibleProvider(provider)) {
-    throw new InferenceSetError(
-      `Cannot switch sandbox '${sandboxName}' to '${provider}' without trusted durable endpoint metadata. ` +
-        `Re-run onboarding for this custom endpoint or restore a matching onboard session before using inference set.`,
-      2,
-    );
-  }
-  return {
-    endpointUrl: null,
-    credentialEnv: null,
-    preferredInferenceApi: null,
-    nimContainer: null,
-  };
-}
-
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
@@ -634,35 +407,16 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  let gatewayName: string;
-  try {
-    gatewayName = resolveSandboxGatewayName(entry);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(
-      `Cannot resolve the OpenShell gateway for sandbox '${sandboxName}': ${detail}`,
-      2,
-    );
-  }
   const session = deps.loadSession();
-  const preliminaryExplicitMetadata = explicitCustomProviderMetadataWithoutDns(provider, options);
-  const preliminaryRegistryMetadata = registryMetadataForProviderSwitch({
+  const preparedRoute = prepareInferenceSetRoute({
     entry,
+    sandboxName,
     provider,
     model,
-    sandboxName,
+    customRoute: options,
     session,
-    explicitMetadata: preliminaryExplicitMetadata,
-  });
-  const compatibility = checkGatewayRouteCompatibility({
-    gatewayName,
-    sandboxName,
-    route: { provider, model, ...preliminaryRegistryMetadata },
     sandboxes: deps.listSandboxes().sandboxes,
   });
-  if (!compatibility.ok) {
-    throw new InferenceSetError(formatGatewayRouteConflict(compatibility), 2);
-  }
 
   const target = deps.resolveAgentConfig(sandboxName);
   const targetAgent = normalizeSandboxAgent(target.agentName);
@@ -678,23 +432,14 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const explicitMetadata = await materializeExplicitCustomProviderMetadata(
-    preliminaryExplicitMetadata,
-    deps.rewriteConfigUrlsWithDnsPinning,
-  );
-  const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
-  const registryMetadata = explicitMetadata ?? preliminaryRegistryMetadata;
-  if (explicitMetadata) {
-    const finalizedCompatibility = checkGatewayRouteCompatibility({
-      gatewayName,
-      sandboxName,
-      route: { provider, model, ...registryMetadata },
-      sandboxes: deps.listSandboxes().sandboxes,
-    });
-    if (!finalizedCompatibility.ok) {
-      throw new InferenceSetError(formatGatewayRouteConflict(finalizedCompatibility), 2);
-    }
-  }
+  const { registryMetadata, explicitPreferredInferenceApi } = await finalizeInferenceSetRoute({
+    prepared: preparedRoute,
+    sandboxName,
+    provider,
+    model,
+    sandboxes: deps.listSandboxes().sandboxes,
+    rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
+  });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
@@ -728,7 +473,7 @@ async function runInferenceSetWithoutHostLock(
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({
-      gatewayName,
+      gatewayName: preparedRoute.gatewayName,
       provider,
       model,
       noVerify: effectiveNoVerify,

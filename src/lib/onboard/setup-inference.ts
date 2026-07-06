@@ -135,6 +135,7 @@ export function createSetupInference(
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
     const compatibility = deps.checkGatewayRouteCompatibility({
+      gatewayName: deps.getGatewayName(),
       sandboxName,
       route: {
         provider,

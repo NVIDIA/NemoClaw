@@ -23,13 +23,9 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
-import {
-  assertGatewayRouteCompatibility,
-  GatewayRouteConflictError,
-} from "../../inference/gateway-route-compatibility";
+import { GatewayRouteConflictError } from "../../inference/gateway-route-compatibility";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
-import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
@@ -59,6 +55,11 @@ import {
   exitOnMcpReconciliationRefusal,
   exitOnSecretBoundaryRefusal,
 } from "./connect-boundary-refusal";
+import {
+  assertSandboxGatewayRouteCompatible,
+  buildGatewayInferenceGetArgs,
+  buildGatewayInferenceSetArgs,
+} from "./connect-inference-gateway";
 import {
   buildSandboxInferenceRouteProbeArgs,
   type InferenceRouteProbeAgent,
@@ -402,32 +403,15 @@ function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
   return driver !== "vm" && driver !== "docker";
 }
 
-function buildInferenceSetArgs(provider: string, model: string): string[] {
-  const args = ["inference", "set", "--provider", provider, "--model", model, "--no-verify"];
-  if (["compatible-endpoint", "ollama-local", "vllm-local"].includes(provider)) {
-    args.push("--timeout", String(LOCAL_INFERENCE_TIMEOUT_SECS));
-  }
-  return args;
-}
-
-function assertSandboxGatewayRouteCompatible(sandboxName: string, sb: SandboxEntry | null): void {
-  if (!sb) return;
-  assertGatewayRouteCompatibility({
-    gatewayName: resolveSandboxGatewayName(sb),
-    sandboxName,
-    route: sb,
-    sandboxes: registry.listSandboxes().sandboxes,
-  });
-}
-
 function reapplyVmInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
+  gatewayName: string,
 ): SandboxInferenceRouteProbe | null {
   const inference = sb ? registry.getSandboxEntryInference(sb) : null;
   if (inference?.kind !== "configured") return null;
-  runOpenshell(buildInferenceSetArgs(inference.provider, inference.model), {
+  runOpenshell(buildGatewayInferenceSetArgs(gatewayName, inference.provider, inference.model), {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
@@ -572,6 +556,7 @@ function repairSandboxInferenceRouteIfNeeded(
   sandboxName: string,
   sb: SandboxEntry | null,
   agent: InferenceRouteProbeAgent,
+  gatewayName: string,
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxInferenceRouteRepairResult {
   return repairSandboxInferenceRouteWithDeps(
@@ -583,13 +568,16 @@ function repairSandboxInferenceRouteIfNeeded(
       probe: (name, options) => probeSandboxInferenceRoute(name, agent, options),
       shouldApplyVmDnsMonkeypatch,
       applyVmDnsMonkeypatch: applyOpenShellVmDnsMonkeypatch,
-      reapplyVmInferenceRoute: (name, sandbox) => reapplyVmInferenceRoute(name, sandbox, agent),
+      reapplyVmInferenceRoute: (name, sandbox) =>
+        reapplyVmInferenceRoute(name, sandbox, agent, gatewayName),
       repairLegacyDnsProxy: (name, isQuiet) =>
         runSetupDnsProxy(
-          { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
+          { gatewayName, sandboxName: name },
           { log: isQuiet ? () => undefined : console.log },
         ),
-      assertRouteCompatible: assertSandboxGatewayRouteCompatible,
+      assertRouteCompatible: (name, sandbox) => {
+        if (sandbox) assertSandboxGatewayRouteCompatible(name, sandbox, gatewayName);
+      },
     },
   );
 }
@@ -692,6 +680,7 @@ function resetManagedInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry,
   agent: InferenceRouteProbeAgent,
+  gatewayName: string,
   { detail, quiet = false }: { detail: string; quiet?: boolean },
 ): boolean {
   return resetManagedInferenceRouteWithDeps(
@@ -701,7 +690,7 @@ function resetManagedInferenceRoute(
     {
       verifyLocalInferenceRouteDependencies,
       runInferenceSet: (provider, model) =>
-        runOpenshell(buildInferenceSetArgs(provider, model), {
+        runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
           ignoreError: true,
           timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
         }),
@@ -725,15 +714,16 @@ function ensureSandboxInferenceRoute(
     inference = registry.getSandboxEntryInference(sb);
     if (inference.kind !== "configured") return { sandbox: sb, routeHealthy: null };
     const { provider, model } = inference;
+    const gatewayName = resolveSandboxGatewayName(sb);
     const live = parseGatewayInference(
-      captureOpenshell(["inference", "get"], {
+      captureOpenshell(buildGatewayInferenceGetArgs(gatewayName), {
         ignoreError: true,
         timeout: OPENSHELL_PROBE_TIMEOUT_MS,
       }).output,
     );
     const plan = planInferenceRouteReconcile(live, { provider, model });
     if (plan.kind !== "aligned") {
-      assertSandboxGatewayRouteCompatible(sandboxName, sb);
+      assertSandboxGatewayRouteCompatible(sandboxName, sb, gatewayName);
       const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
       if (plan.kind === "diverged") {
         // Shared gateway: re-point loudly (even when quiet) — silent revert was
@@ -755,7 +745,7 @@ function ensureSandboxInferenceRoute(
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
         console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
-      const swapResult = runOpenshell(buildInferenceSetArgs(provider, model), {
+      const swapResult = runOpenshell(buildGatewayInferenceSetArgs(gatewayName, provider, model), {
         ignoreError: true,
         timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
       });
@@ -765,9 +755,11 @@ function ensureSandboxInferenceRoute(
         );
       }
     }
-    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, { quiet });
+    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, agent, gatewayName, {
+      quiet,
+    });
     if (!repairResult.healthy && repairResult.repairAttempted) {
-      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, {
+      const resetResult = resetManagedInferenceRoute(sandboxName, sb, agent, gatewayName, {
         detail: repairResult.detail,
         quiet,
       });
