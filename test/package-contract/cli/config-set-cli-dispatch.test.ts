@@ -86,10 +86,17 @@ describe("config set CLI dispatch", () => {
       id: oclifRunnerPath,
       filename: oclifRunnerPath,
       loaded: true,
-      exports: {
-        runOclifArgv,
-        runOclifCommandById,
-      },
+      exports: new Proxy(
+        {
+          runOclifArgv,
+          runOclifCommandById,
+        },
+        {
+          get(target, prop) {
+            return prop in target ? target[prop as keyof typeof target] : vi.fn();
+          },
+        },
+      ),
     } as any;
 
     requireCache[registryPath] = {
