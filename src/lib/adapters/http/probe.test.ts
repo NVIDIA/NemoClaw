@@ -806,13 +806,7 @@ describe("runAnthropicStreamingEventProbe", () => {
   /** Helper to build a spawnSyncImpl that writes SSE content to the -o file. */
   function mockStreaming(sseBody: string, exitCode = 0) {
     return (_command: string, args: readonly string[]) => {
-      const oIdx = args.indexOf("-o");
-      if (oIdx !== -1) {
-        const outputPath = args[oIdx + 1];
-        if (typeof outputPath === "string") {
-          fs.writeFileSync(outputPath, sseBody);
-        }
-      }
+      writeCurlOutputBody(args, sseBody);
       return {
         pid: 1,
         output: [],
@@ -994,14 +988,8 @@ describe("runAnthropicStreamingEventProbe", () => {
       ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
       {
         spawnSyncImpl: (_command, args) => {
-          const oIdx = args.indexOf("-o");
-          if (oIdx !== -1) {
-            const nextArg = args[oIdx + 1];
-            if (typeof nextArg === "string") {
-              outputPath = nextArg;
-              fs.writeFileSync(outputPath, healthyStream);
-            }
-          }
+          outputPath = String(args[args.indexOf("-o") + 1]);
+          writeCurlOutputBody(args, healthyStream);
           return {
             pid: 1,
             output: [],
