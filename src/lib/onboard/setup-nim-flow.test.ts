@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentDefinition } from "../agent/defs";
+import type { VllmProfile } from "../inference/vllm";
 import { getWindowsHostOllamaDockerRequirement } from "./local-inference-topology";
 import type { InferenceProviderHostState } from "./provider-host-state";
 import { createSetupNim, type SetupNimFlowDeps } from "./setup-nim-flow";
@@ -268,6 +270,117 @@ describe("createSetupNim", () => {
       endpointUrl: "https://api.openai.com/v1",
       credentialEnv: "OPENAI_API_KEY",
       preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("honors a rebuild route and preserves credential-reuse return contracts (#6245)", async () => {
+    const agent = { name: "langchain-deepagents-code" } as AgentDefinition;
+    const recoveredRegistryRoute = {
+      provider: "openai-api",
+      model: "handoff-model",
+      endpointUrl: "https://handoff.example.com/v1",
+      preferredInferenceApi: "openai-responses",
+      source: "registry",
+    } as const;
+    const readRecordedProvider = vi.fn(() => "nvidia-prod");
+    const readRecordedModel = vi.fn(() => "stale-model");
+    const clearCompatibleEndpointReasoning = vi.fn(() => null);
+    const coerceAgentInferenceApi = vi.fn<SetupNimFlowDeps["coerceAgentInferenceApi"]>(
+      () => "openai-completions",
+    );
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state, recoveredRoute) => {
+        expect(args).toMatchObject({
+          selected: { key: "openai", label: "OpenAI" },
+          recoveredFromSandbox: true,
+          recoveredModel: "handoff-model",
+          sandboxName: "target-sandbox",
+        });
+        expect(recoveredRoute).toBe(recoveredRegistryRoute);
+        state.model = args.recoveredModel;
+        state.provider = "openai-api";
+        state.endpointUrl = recoveredRoute?.endpointUrl ?? null;
+        state.credentialEnv = "OPENAI_API_KEY";
+        state.preferredInferenceApi = recoveredRoute?.preferredInferenceApi ?? null;
+        state.compatibleEndpointReasoning = "stale-compatible-reasoning";
+        state.reuseGatewayCredentialWithoutLocalKey = true;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        readRecordedProvider,
+        readRecordedModel,
+        clearCompatibleEndpointReasoning,
+        coerceAgentInferenceApi,
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, "target-sandbox", agent, true, {
+      sandboxName: "target-sandbox",
+      route: recoveredRegistryRoute,
+    });
+
+    expect(readRecordedProvider).not.toHaveBeenCalled();
+    expect(readRecordedModel).not.toHaveBeenCalled();
+    expect(clearCompatibleEndpointReasoning).toHaveBeenCalledOnce();
+    expect(coerceAgentInferenceApi).toHaveBeenCalledWith(agent, "openai-responses");
+    expect(result).toMatchObject({
+      model: "handoff-model",
+      provider: "openai-api",
+      endpointUrl: "https://handoff.example.com/v1",
+      preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
+      skipHostInferenceSmoke: true,
+      reuseGatewayCredentialWithoutLocalKey: true,
+    });
+  });
+
+  it("continues from a successful managed vLLM install into provider selection (#6245)", async () => {
+    const profile = { name: "DGX Spark" } as VllmProfile;
+    const prompt = vi.fn(async () => unexpected("provider prompt"));
+    const installVllm = vi.fn<SetupNimFlowDeps["installVllm"]>(async () => ({ ok: true }));
+    const handleVllmSelection = vi.fn<SetupNimFlowDeps["handleVllmSelection"]>(async (state) => {
+      state.model = "vllm-model";
+      state.provider = "vllm";
+      state.endpointUrl = "http://127.0.0.1:8000/v1";
+      state.credentialEnv = null;
+      state.preferredInferenceApi = "openai-completions";
+      return "selected";
+    });
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-vllm",
+        prompt,
+        detectInferenceProviderHostState: () =>
+          makeHostState({
+            vllmProfile: profile,
+            hasVllmImage: true,
+            vllmEntries: [{ key: "install-vllm", label: "Start vLLM (DGX Spark)" }],
+          }),
+        installVllm,
+        handleVllmSelection,
+      }),
+    );
+
+    const result = await setupNim(null);
+
+    expect(installVllm).toHaveBeenCalledWith(profile, {
+      hasImage: true,
+      nonInteractive: true,
+      promptFn: prompt,
+    });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(handleVllmSelection).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      model: "vllm-model",
+      provider: "vllm",
+      endpointUrl: "http://127.0.0.1:8000/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
     });
   });
 });
