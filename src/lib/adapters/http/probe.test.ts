@@ -846,6 +846,7 @@ describe("runAnthropicStreamingEventProbe", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(result.curlStatus).toBe(0);
     expect(result.missingEvents).toEqual([]);
     expect(result.duplicateEvents).toEqual([]);
     expect(result.sequenceErrors).toEqual([]);
@@ -1036,6 +1037,7 @@ describe("runAnthropicStreamingEventProbe", () => {
     );
 
     expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(28);
     expect(result.missingEvents).toEqual(["message_stop"]);
   });
 
@@ -1046,6 +1048,7 @@ describe("runAnthropicStreamingEventProbe", () => {
     );
 
     expect(result.ok).toBe(true);
+    expect(result.curlStatus).toBe(28);
   });
 
   it("fails on spawn error", () => {

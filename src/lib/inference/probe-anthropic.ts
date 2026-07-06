@@ -131,7 +131,7 @@ export function probeAnthropicEndpoint(
             {
               name: "Anthropic Messages API (streaming)",
               httpStatus: 0,
-              curlStatus: 0,
+              curlStatus: streamResult.curlStatus,
               message: streamResult.message,
             },
           ],

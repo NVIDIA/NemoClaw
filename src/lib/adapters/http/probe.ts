@@ -601,6 +601,8 @@ const SINGLETON_ANTHROPIC_STREAMING_EVENTS = ["message_start", "message_stop"];
 
 export interface AnthropicStreamingProbeResult {
   ok: boolean;
+  /** curl exit status, including 28 when a bounded stream timed out. */
+  curlStatus: number;
   missingEvents: string[];
   duplicateEvents: string[];
   /** Order violations, e.g. content deltas before message_start or after message_stop. */
@@ -681,6 +683,7 @@ function runAnthropicStreamingEventProbeImpl(
       });
       return {
         ok: false,
+        curlStatus: capture.curlStatus,
         missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
         duplicateEvents: [],
         sequenceErrors: [],
@@ -719,6 +722,7 @@ function runAnthropicStreamingEventProbeImpl(
       });
       return {
         ok: false,
+        curlStatus: capture.curlStatus,
         missingEvents: missing,
         duplicateEvents: duplicates,
         sequenceErrors,
@@ -735,7 +739,14 @@ function runAnthropicStreamingEventProbeImpl(
       sequence_errors_count: 0,
       curl_status: capture.curlStatus,
     });
-    return { ok: true, missingEvents: [], duplicateEvents: [], sequenceErrors: [], message: "" };
+    return {
+      ok: true,
+      curlStatus: capture.curlStatus,
+      missingEvents: [],
+      duplicateEvents: [],
+      sequenceErrors: [],
+      message: "",
+    };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const curlStatus =
@@ -749,6 +760,7 @@ function runAnthropicStreamingEventProbeImpl(
     });
     return {
       ok: false,
+      curlStatus,
       missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
       duplicateEvents: [],
       sequenceErrors: [],
