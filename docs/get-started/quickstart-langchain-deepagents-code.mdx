@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 title: "Quickstart with LangChain Deep Agents Code"
-sidebar-title: "LangChain Deep Agents Code"
+sidebar-title: "Quickstart with Deep Agents"
 description: "Create a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness."
 description-agent: "Creates a NemoClaw sandbox that runs LangChain Deep Agents Code as a terminal harness. Use when testing dcode with NemoClaw-managed inference."
 keywords: ["langchain deep agents code nemoclaw", "dcode openshell sandbox", "langchain coding agent"]
@@ -14,8 +14,40 @@ status: published
 content:
   type: "get_started"
 ---
+import { StarterPromptFallback } from "../_components/StarterPrompt";
+import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-Use this guide to build an OpenShell sandbox with the `dcode` terminal coding agent installed and configured for NemoClaw-managed inference.
+Use NemoClaw for Deep Agents to create an OpenShell sandbox that runs LangChain Deep Agents Code.
+The `nemo-deepagents` command is an alias for `nemoclaw` with the `langchain-deepagents-code` agent pre-selected.
+
+Review the [Prerequisites](prerequisites) before starting.
+Install Docker, start it, and verify that the current shell can reach it before Deep Agents onboarding builds the sandbox image.
+On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
+If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
+On macOS, start Docker Desktop or Colima before you run the installer.
+
+## Start from Your Coding Agent
+
+Copy the starter prompt into Cursor, Claude Code, Codex, Copilot, or another local coding agent when you want the assistant to install NemoClaw with you.
+The prompt points your agent to [AI Agent Docs](../resources/agent-skills), this quickstart, the Markdown docs, and the optional `nemoclaw-user-guide` skill.
+It also asks your agent to confirm LangChain Deep Agents Code as the selected agent before it builds the install or onboard command.
+
+<StarterPromptButton />
+
+<StarterPromptFallback />
+
+## Install and Onboard
+
+Start the installer with `NEMOCLAW_AGENT=langchain-deepagents-code` set in your shell.
+The installer installs the CLI, selects the `nemo-deepagents` alias, and runs the guided onboarding flow.
+
+```bash
+export NEMOCLAW_AGENT=langchain-deepagents-code
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Deep Agents-capable build without a version override.
+If NemoClaw is already installed, start Deep Agents onboarding directly.
 
 ## Onboard
 
@@ -30,6 +62,12 @@ nemoclaw onboard --agent dcode
 nemoclaw onboard --agent deepagents
 nemoclaw onboard --agent langchain
 ```
+
+The onboard wizard asks for an inference provider, model, any required credential, sandbox name, optional Tavily web search, and policy tier before it prints the review summary.
+At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
+The default Deep Agents sandbox name is `deepagents`.
+Use a distinct sandbox name, such as `my-deepagents`, so you can run Deep Agents, Hermes, and OpenClaw sandboxes side by side.
+For provider-specific prompts, refer to [Inference Options](../inference/inference-options).
 
 The image installs hash-locked Deep Agents Code `0.1.30` with NVIDIA provider support.
 After the terminal smoke checks, onboarding runs `dcode --version` and compares the result with the version required by the agent manifest.
@@ -199,6 +237,7 @@ There is no dashboard port or long-running gateway process for this harness.
 ## Next Steps
 
 - [Inference Options](../inference/inference-options) explains how to choose a provider and model.
+- [Workspace Files](../manage-sandboxes/workspace-files) explains `/sandbox/.deepagents`, memory, skills, and what NemoClaw preserves.
 - [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
-- [Runtime Controls](../manage-sandboxes/runtime-controls) explains sandbox mutability and host-side control boundaries.
-- [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.
+- [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers) explains managed MCP configuration for Deep Agents sandboxes.
+- [Deep Agents Code overview](https://docs.langchain.com/oss/python/deepagents/code/overview) explains upstream `dcode` capabilities and commands.

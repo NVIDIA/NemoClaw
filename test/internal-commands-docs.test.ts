@@ -15,10 +15,10 @@
  * `internal:*` command must be listed in docs/reference/commands.mdx (by its
  * space-form invocation), while staying out of the public `### \`nemoclaw …\``
  * headings so command-level parity keeps treating them as hidden. The same
- * assertions run against the generated NemoHermes reference
- * (docs/reference/commands-nemohermes.mdx, `nemohermes` binary form) so a
- * regression in scripts/sync-agent-variant-docs.ts cannot silently drop the
- * section from the agent variant.
+ * assertions run against generated agent references (`nemohermes` and
+ * `nemo-deepagents` binary forms) so a regression in
+ * scripts/sync-agent-variant-docs.ts cannot silently drop the section from an
+ * agent variant.
  */
 
 import { readFileSync } from "node:fs";
@@ -26,20 +26,32 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { getRegisteredOclifCommandsMetadata } from "../src/lib/cli/oclif-metadata";
+import { renderAgentVariantPage } from "../scripts/sync-agent-variant-docs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
+
+const commandsSource = readFileSync(path.join(repoRoot, "docs/reference/commands.mdx"), "utf8");
 
 /** User-facing command references, one per agent CLI variant. */
 const references = [
   {
     name: "commands.mdx",
     binary: "nemoclaw",
-    text: readFileSync(path.join(repoRoot, "docs/reference/commands.mdx"), "utf8"),
+    text: commandsSource,
   },
   {
-    name: "commands-nemohermes.mdx",
+    name: "commands.hermes.generated.mdx",
     binary: "nemohermes",
-    text: readFileSync(path.join(repoRoot, "docs/reference/commands-nemohermes.mdx"), "utf8"),
+    text: renderAgentVariantPage(commandsSource, "hermes", {
+      sourcePath: path.join(repoRoot, "docs/reference/commands.mdx"),
+    }),
+  },
+  {
+    name: "commands.deepagents.generated.mdx",
+    binary: "nemo-deepagents",
+    text: renderAgentVariantPage(commandsSource, "deepagents", {
+      sourcePath: path.join(repoRoot, "docs/reference/commands.mdx"),
+    }),
   },
 ];
 

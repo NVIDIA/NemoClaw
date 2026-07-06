@@ -17,6 +17,12 @@ OpenClaw only.
 <AgentOnly variant="hermes">
 Hermes only.
 </AgentOnly>
+<AgentOnly variant="deepagents">
+Deep Agents only.
+</AgentOnly>
+<AgentOnly variant="openclaw,hermes">
+Gateway agents only.
+</AgentOnly>
 
 \`\`\`bash
 $$nemoclaw list
@@ -30,8 +36,10 @@ describe("agent variant docs", () => {
     const rendered = renderAgentVariantPage(source, "openclaw");
 
     expect(rendered).toContain("OpenClaw only.");
+    expect(rendered).toContain("Gateway agents only.");
     expect(rendered).toContain('description-agent: "Use when looking up nemoclaw commands."');
     expect(rendered).not.toContain("Hermes only.");
+    expect(rendered).not.toContain("Deep Agents only.");
     expect(rendered).toContain("nemoclaw list");
     expect(rendered).not.toContain("$$nemoclaw");
     expect(rendered).not.toContain("<AgentOnly");
@@ -42,8 +50,25 @@ describe("agent variant docs", () => {
 
     expect(rendered).not.toContain("OpenClaw only.");
     expect(rendered).toContain("Hermes only.");
+    expect(rendered).toContain("Gateway agents only.");
+    expect(rendered).not.toContain("Deep Agents only.");
     expect(rendered).toContain('description-agent: "Use when looking up nemohermes commands."');
     expect(rendered).toContain("nemohermes list");
+    expect(rendered).not.toContain("$$nemoclaw");
+    expect(rendered).not.toContain("<AgentOnly");
+  });
+
+  it("renders Deep Agents placeholder code and content", () => {
+    const rendered = renderAgentVariantPage(source, "deepagents");
+
+    expect(rendered).not.toContain("OpenClaw only.");
+    expect(rendered).not.toContain("Hermes only.");
+    expect(rendered).toContain("Deep Agents only.");
+    expect(rendered).not.toContain("Gateway agents only.");
+    expect(rendered).toContain(
+      'description-agent: "Use when looking up nemo-deepagents commands."',
+    );
+    expect(rendered).toContain("nemo-deepagents list");
     expect(rendered).not.toContain("$$nemoclaw");
     expect(rendered).not.toContain("<AgentOnly");
   });

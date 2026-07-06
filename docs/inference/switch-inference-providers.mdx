@@ -1,10 +1,10 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Switch Inference Models at Runtime"
+title: "Switch Inference Models"
 sidebar-title: "Switch Inference Providers"
-description: "Change the active inference model for a running sandbox without restarting it."
-description-agent: "Changes the active inference model for a running sandbox without restarting it. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing."
+description: "Change the active inference model for a NemoClaw-managed sandbox."
+description-agent: "Changes the active inference model for a NemoClaw-managed sandbox. Use when switching inference providers, changing the model runtime, or reconfiguring inference routing."
 keywords: ["switch nemoclaw inference model", "change inference runtime"]
 content:
   type: "how_to"
@@ -13,8 +13,9 @@ skill:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-Change the active inference model while the sandbox is running.
-You do not need to restart the sandbox.
+Change the active inference model for a NemoClaw-managed sandbox.
+OpenClaw and Hermes can update the running sandbox route without a restart.
+Deep Agents sandboxes should use the recreate path so the OpenShell route and `/sandbox/.deepagents/config.toml` stay aligned.
 
 ## Prerequisites
 
@@ -27,6 +28,8 @@ If you run `$$nemoclaw inference set` before NemoClaw has a selected sandbox, th
 Run `$$nemoclaw onboard` first, then retry the switch.
 </Note>
 
+<AgentOnly variant="openclaw,hermes">
+
 ## Find the Provider Name
 
 The `--provider` value must match a provider already configured on the sandbox.
@@ -37,6 +40,8 @@ $$nemoclaw credentials list
 ```
 
 Use the provider ID shown there in the `inference set` commands below.
+
+</AgentOnly>
 
 ## Switch to a Different Model
 
@@ -51,10 +56,20 @@ The command updates the OpenShell inference route and synchronizes the running a
 For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) without rebuilding or restarting Hermes.
 Pass `--sandbox <name>` when you do not want to use the default registered sandbox or when you have registered more than one Hermes sandbox.
 </AgentOnly>
+<AgentOnly variant="deepagents">
+
+For Deep Agents, prefer `nemo-deepagents onboard --resume --recreate-sandbox` when you need to switch providers or models.
+The managed `dcode` runtime reads `/sandbox/.deepagents/config.toml`, which NemoClaw writes during onboarding and rebuilds.
+The recreate path keeps that file, the OpenShell route, and the host registry in sync while runtime switching for Deep Agents is still being hardened.
+Pass `--name <sandbox>` when you do not want to recreate the selected default sandbox.
+
+</AgentOnly>
 
 <AgentOnly variant="openclaw">
 Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
 </AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 ### NVIDIA Endpoints
 
@@ -92,6 +107,7 @@ $$nemoclaw inference set --provider compatible-endpoint --model <model-name>
 $$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model-name>
 ```
 
+</AgentOnly>
 <AgentOnly variant="hermes">
 
 ### Hermes Provider
@@ -103,13 +119,37 @@ $$nemoclaw inference set --provider hermes-provider --model openai/gpt-5.4-mini
 ```
 
 </AgentOnly>
+<AgentOnly variant="deepagents">
+
+### Deep Agents Recreate Path
+
+Use the recreate path for Deep Agents provider or model changes:
+
+```bash
+nemo-deepagents onboard --resume --recreate-sandbox
+```
+
+The wizard reuses the recorded sandbox context where possible, prompts for the provider and model choices that need confirmation, and rewrites the managed `dcode` config for the new route.
+If you need a fully fresh set of choices, use `nemo-deepagents onboard --fresh` instead.
+
+</AgentOnly>
 
 ### API Family Sync
+
+<AgentOnly variant="openclaw,hermes">
 
 Before patching the in-sandbox config, NemoClaw resolves the target route's API family: OpenAI chat completions, Anthropic Messages, or OpenAI Responses.
 For OpenClaw, `inference set` syncs the provider API family and primary model reference into the running config.
 For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
 Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents, NemoClaw keeps the managed runtime on Chat Completions with `use_responses_api = false`.
+`NEMOCLAW_PREFERRED_API=openai-responses` can affect compatible-endpoint onboarding probes for other variants, but it does not switch managed `dcode` to the Responses API.
+</AgentOnly>
+
+<AgentOnly variant="openclaw,hermes">
 
 Amazon Bedrock Runtime routes created through `compatible-anthropic-endpoint` are the exception.
 When you switch within the same Bedrock Runtime compatible provider, NemoClaw keeps the route OpenAI-compatible and does not set Hermes to Anthropic Messages mode.
@@ -139,6 +179,8 @@ If you recreate the sandbox without the override environment variable, the image
 A fresh `$$nemoclaw onboard` is the reliable fix because it updates both the session and the baked image.
 </Note>
 
+</AgentOnly>
+
 ## Cross-Provider Switching
 
 <AgentOnly variant="openclaw">
@@ -160,6 +202,15 @@ Run the rebuild before relying on the running agent if the warning says the imag
 
 ```bash
 $$nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --no-verify
+```
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+Cross-provider changes for Deep Agents should use sandbox recreation instead of `$$nemoclaw inference set`.
+The recreate flow validates the target provider, rewrites `/sandbox/.deepagents/config.toml`, preserves manifest-defined state, and rebuilds managed MCP projection state from the host registry.
+
+```bash
+nemo-deepagents onboard --resume --recreate-sandbox
 ```
 
 </AgentOnly>
@@ -217,6 +268,14 @@ Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
 Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
 Direct in-sandbox edits are not the supported or durable way to change NemoClaw-managed defaults.
 Rebuild the sandbox with `$$nemoclaw onboard` to apply a new value.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+`NEMOCLAW_AGENT_TIMEOUT` controls the request timeout baked into the Deep Agents sandbox image.
+Increase it for slow local inference, such as CPU-only Ollama or vLLM on modest hardware.
+Direct edits to `/sandbox/.deepagents/config.toml` are not the supported or durable way to change NemoClaw-managed defaults.
+Recreate the sandbox with `nemo-deepagents onboard --resume --recreate-sandbox` to apply a new value.
 
 </AgentOnly>
 
@@ -307,6 +366,15 @@ The status output includes the active provider, model, and endpoint with the res
 - `$$nemoclaw inference set` patches the selected running Hermes sandbox config and recomputes its config hash.
 - Use `$$nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
+
+</AgentOnly>
+<AgentOnly variant="deepagents">
+
+- The host keeps provider credentials.
+- The sandbox continues to use `inference.local`.
+- Use `nemo-deepagents onboard --resume --recreate-sandbox` for provider, model, context window, max tokens, reasoning mode, timeout, or image-content changes.
+- The managed `dcode` runtime uses Chat Completions through `/sandbox/.deepagents/config.toml` with `use_responses_api = false`.
+- Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`.
 
 </AgentOnly>
 

@@ -24,6 +24,10 @@ The provider flow is the same, with the NVIDIA Endpoints route available for Ope
 For Hermes onboarding, use `$$nemoclaw onboard`.
 The provider flow is the same, with the Hermes Provider route available for Hermes Agent.
 </AgentOnly>
+<AgentOnly variant="deepagents">
+For Deep Agents onboarding, use `$$nemoclaw onboard`.
+The provider flow is the same, and the managed `dcode` configuration uses the OpenAI-compatible `https://inference.local/v1` route inside the sandbox.
+</AgentOnly>
 
 ## How Inference Routing Works
 
@@ -35,6 +39,10 @@ Provider credentials stay on the host.
 The sandbox does not receive your API key.
 Local Ollama and local vLLM do not require your host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes, and rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
+<AgentOnly variant="deepagents">
+For Deep Agents, NemoClaw writes `/sandbox/.deepagents/config.toml` with the managed OpenAI-compatible `https://inference.local/v1` route, a scoped placeholder API key, and `use_responses_api = false`.
+The managed `dcode` runtime uses Chat Completions through OpenShell even when a compatible endpoint also supports the Responses API.
+</AgentOnly>
 
 ## Provider Status
 
@@ -248,6 +256,11 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Local NVIDIA NIM | Validates through `/v1/chat/completions` only; NemoClaw skips the `/v1/responses` probe (same as NVIDIA Endpoints). |
 
+<AgentOnly variant="deepagents">
+Deep Agents runtime validation also checks that generated `config.toml` points at `https://inference.local/v1` and that the sandbox can use the managed OpenShell L7 proxy path.
+If you change providers or models for an existing Deep Agents sandbox, prefer `nemo-deepagents onboard --resume --recreate-sandbox` so NemoClaw rewrites the config and route together.
+</AgentOnly>
+
 ## Setup Details for Local and Compatible Providers
 
 The sections below collect the detailed setup prompts and environment variables for local and compatible inference providers.
@@ -332,6 +345,10 @@ NEMOCLAW_PREFERRED_API=openai-responses $$nemoclaw onboard
 The wizard then probes `/v1/responses` and only selects it when streaming support is complete.
 If the probe fails, the wizard falls back to `/v1/chat/completions` automatically.
 You can use this variable in both interactive and non-interactive mode.
+<AgentOnly variant="deepagents">
+This environment variable does not change the managed Deep Agents `dcode` runtime.
+Deep Agents sandboxes keep `use_responses_api = false` in `/sandbox/.deepagents/config.toml` so the terminal harness uses Chat Completions through the OpenShell route.
+</AgentOnly>
 
 | Variable | Values | Default |
 |---|---|---|
