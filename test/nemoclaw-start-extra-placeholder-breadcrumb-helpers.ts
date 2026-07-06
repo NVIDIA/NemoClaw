@@ -74,14 +74,17 @@ export function runRefresh(config: unknown, env: Record<string, string> = {}): R
   ].join("\n");
   const script = path.join(root, "run.sh");
   fs.writeFileSync(script, wrapper, { mode: 0o700 });
-  const result = spawnSync("bash", [script], {
-    encoding: "utf-8",
-    env: { PATH: process.env.PATH || "", ...env },
-    timeout: 5000,
-  });
-  const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-  fs.rmSync(root, { recursive: true, force: true });
-  return { result, config: updated };
+  try {
+    const result = spawnSync("bash", [script], {
+      encoding: "utf-8",
+      env: { PATH: process.env.PATH || "", ...env },
+      timeout: 5000,
+    });
+    const updated = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    return { result, config: updated };
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 }
 
 // Mirror the messaging-runtime plan the entrypoint forwards so the in-

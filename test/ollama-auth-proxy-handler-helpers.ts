@@ -78,20 +78,32 @@ export async function startProxy(
     stdio: ["ignore", "pipe", "pipe"],
   });
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("proxy did not start in time")), 5_000);
+    let settled = false;
+    const timer = setTimeout(() => {
+      settled = true;
+      reject(new Error("proxy did not start in time"));
+    }, 5_000);
     const tryConnect = (): void => {
+      if (settled) return;
       const req = http.request(
         { host: "127.0.0.1", port: proxyPort, path: "/", method: "GET" },
         (res) => {
           res.resume();
+          settled = true;
           clearTimeout(timer);
           resolve();
         },
       );
-      req.on("error", () => setTimeout(tryConnect, 100));
+      req.on("error", () => {
+        if (!settled) setTimeout(tryConnect, 100);
+      });
       req.end();
     };
-    child.once("exit", (code) => reject(new Error(`proxy exited early with code ${code}`)));
+    child.once("exit", (code) => {
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`proxy exited early with code ${code}`));
+    });
     tryConnect();
   });
   return child;

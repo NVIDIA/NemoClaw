@@ -87,15 +87,9 @@ describe("dashboard access helpers", () => {
 // asserted in the live dashboard-remote-bind E2E.
 describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   const LOOPBACK_URL = "http://127.0.0.1:18789";
-  const savedEnv = process.env.NEMOCLAW_DASHBOARD_BIND;
-
-  const restoreEnv = (value: string | undefined) => {
-    delete process.env.NEMOCLAW_DASHBOARD_BIND;
-    Object.assign(process.env, value === undefined ? {} : { NEMOCLAW_DASHBOARD_BIND: value });
-  };
 
   afterEach(() => {
-    restoreEnv(savedEnv);
+    vi.unstubAllEnvs();
   });
 
   it("opens the remote bind when env NEMOCLAW_DASHBOARD_BIND=0.0.0.0", () => {
@@ -147,14 +141,14 @@ describe("NEMOCLAW_DASHBOARD_BIND remote-bind opt-in gate (#3259)", () => {
   });
 
   it("falls back to process.env when no options.env override is provided", () => {
-    process.env.NEMOCLAW_DASHBOARD_BIND = "0.0.0.0";
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
     const chain = buildDashboardChain(LOOPBACK_URL);
     expect(chain.bindAddress).toBe("0.0.0.0");
     expect(chain.forwardTarget).toBe("0.0.0.0:18789");
   });
 
   it("does NOT open a remote bind for invalid process.env value", () => {
-    process.env.NEMOCLAW_DASHBOARD_BIND = "0.0.0.0; rm -rf";
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0; rm -rf");
     const chain = buildDashboardChain(LOOPBACK_URL);
     expect(chain.bindAddress).toBe("127.0.0.1");
     expect(chain.forwardTarget).toBe("18789");

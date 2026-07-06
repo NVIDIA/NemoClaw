@@ -130,11 +130,35 @@ function patchQrcodeTerminal(mod) {
   return mod;
 }
 
+// Pure routing decision shared by the installed hook and its tests. Only a
+// request string that mentions qrcode is eligible; the shape-detect guards then
+// decide which patch (if any) applies. Keeping the request filter ahead of the
+// patch calls means a non-qrcode request never mutates `loaded` as a side
+// effect. A patch failure degrades to the unpatched module.
+function resolvePatchedModule(request, loaded) {
+  if (typeof request === "string" && request.indexOf("qrcode") !== -1) {
+    try {
+      if (isQrcodePackage(loaded)) return patchQrcode(loaded);
+      if (isQrcodeTerminalPackage(loaded)) return patchQrcodeTerminal(loaded);
+    } catch (_e) {
+      return loaded;
+    }
+  }
+  return loaded;
+}
+
 // Named exports so the pure shape-detect + patch helpers can be unit-tested
 // (NemoClaw#4522 regression class) without pulling in a real qrcode dependency.
 // The auto-install below still uses the exact same functions, so the runtime
 // hook behaves identically.
-export { hasOwn, isQrcodePackage, isQrcodeTerminalPackage, patchQrcode, patchQrcodeTerminal };
+export {
+  hasOwn,
+  isQrcodePackage,
+  isQrcodeTerminalPackage,
+  patchQrcode,
+  patchQrcodeTerminal,
+  resolvePatchedModule,
+};
 
 // Install the Module._load hook that patches qrcode / qrcode-terminal on load.
 // Guarded so double-require is a no-op. Runs on import (the file is loaded via
@@ -152,19 +176,11 @@ function installWhatsappQrCompactHook() {
 
   Module._load = function (request, _parent, _isMain) {
     var loaded = origLoad.apply(this, arguments);
-    // Cheap path filter: only inspect modules whose request mentions qrcode.
-    // `import("qrcode")` arrives here as the resolved absolute path
-    // (…/qrcode/lib/index.js), so match on the path segment too, not just the
-    // bare specifier.
-    if (typeof request === "string" && request.indexOf("qrcode") !== -1) {
-      try {
-        if (isQrcodePackage(loaded)) return patchQrcode(loaded);
-        if (isQrcodeTerminalPackage(loaded)) return patchQrcodeTerminal(loaded);
-      } catch (_e) {
-        return loaded;
-      }
-    }
-    return loaded;
+    // Cheap path filter + shape-detect routing. `import("qrcode")` arrives here
+    // as the resolved absolute path (…/qrcode/lib/index.js), so the filter in
+    // resolvePatchedModule matches on the path segment too, not just the bare
+    // specifier.
+    return resolvePatchedModule(request, loaded);
   };
 }
 

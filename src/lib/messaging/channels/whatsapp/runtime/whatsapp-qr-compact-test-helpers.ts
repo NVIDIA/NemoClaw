@@ -2,20 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Test harness helpers for whatsapp-qr-compact.test.ts. The Module._load hook
-// (which branches on the resolved request path) lives here so the test body
-// stays linear; it reuses the same shape-detect + patch helpers as the runtime.
+// keeps the test body linear; the routing decision itself reuses the runtime's
+// exported resolvePatchedModule so the test exercises real production logic
+// rather than a re-implemented copy.
 
-import {
-  isQrcodePackage,
-  isQrcodeTerminalPackage,
-  patchQrcode,
-  patchQrcodeTerminal,
-} from "./whatsapp-qr-compact";
+import { resolvePatchedModule } from "./whatsapp-qr-compact";
 
 /**
  * Build a Module._load wrapper identical to the runtime's: for the given
- * absolute path it returns `patchedModule`, applies the compact patch to any
- * request whose string contains "qrcode", and passes everything else through.
+ * absolute path it returns `patchedModule`, otherwise a bare object, then
+ * delegates to the runtime's resolvePatchedModule so patching happens only for
+ * qrcode-shaped requests and never leaks onto passthrough modules.
  */
 export function makeQrcodeLoadHook(
   absolutePath: string,
@@ -23,12 +20,6 @@ export function makeQrcodeLoadHook(
 ): (request: unknown, ...rest: unknown[]) => unknown {
   return function (request: unknown, ..._rest: unknown[]) {
     const loaded = request === absolutePath ? patchedModule : {};
-    const isQrcodeRequest = typeof request === "string" && request.indexOf("qrcode") !== -1;
-    const patched = isQrcodePackage(loaded)
-      ? patchQrcode(loaded)
-      : isQrcodeTerminalPackage(loaded)
-        ? patchQrcodeTerminal(loaded)
-        : loaded;
-    return isQrcodeRequest ? patched : loaded;
+    return resolvePatchedModule(request, loaded);
   };
 }
