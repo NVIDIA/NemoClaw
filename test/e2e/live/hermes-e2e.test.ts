@@ -474,6 +474,16 @@ test.skipIf(!shouldRunLiveE2E())(
     };
     const listHermesSessions = async (artifactName: string) =>
       hermesSessionIds(await runHermesCli(["sessions", "list"], artifactName, 60_000));
+    const expectNoNewHermesSessions = async (
+      before: Set<string>,
+      args: string[],
+      runArtifact: string,
+      afterArtifact: string,
+    ) => {
+      await runHermesCli(args, runArtifact);
+      const after = await listHermesSessions(afterArtifact);
+      expect([...after].filter((id) => !before.has(id))).toEqual([]);
+    };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
     const beforeSeedSessions = await listHermesSessions("phase-4-issue-5254-sessions-before-seed");
@@ -488,29 +498,23 @@ test.skipIf(!shouldRunLiveE2E())(
       "phase-4-issue-5254-sessions-before-resume",
     );
     const resumePrompt = `Repeat this exact token: ${issue5254Marker}.`;
-    await runHermesCli(
+    await expectNoNewHermesSessions(
+      beforeResumeSessions,
       ["--resume", seedSessionId, "-z", resumePrompt],
       "phase-4-issue-5254-resume-oneshot",
+      "phase-4-issue-5254-sessions-after-resume",
     );
-    expect(
-      [...(await listHermesSessions("phase-4-issue-5254-sessions-after-resume"))].filter(
-        (id) => !beforeResumeSessions.has(id),
-      ),
-    ).toEqual([]);
 
     const beforeContinueSessions = await listHermesSessions(
       "phase-4-issue-5254-sessions-before-continue",
     );
     const continuePrompt = `Confirm this exact token again: ${issue5254Marker}.`;
-    await runHermesCli(
+    await expectNoNewHermesSessions(
+      beforeContinueSessions,
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
+      "phase-4-issue-5254-sessions-after-continue",
     );
-    expect(
-      [...(await listHermesSessions("phase-4-issue-5254-sessions-after-continue"))].filter(
-        (id) => !beforeContinueSessions.has(id),
-      ),
-    ).toEqual([]);
 
     const exportedSession = await runHermesCli(
       ["sessions", "export", "--session-id", seedSessionId],
