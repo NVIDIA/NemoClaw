@@ -14,7 +14,8 @@ import * as defs from "../../agent/defs";
 import * as store from "../../credentials/store";
 import * as policy from "../../policy";
 import * as registry from "../../state/registry";
-import { addSandboxChannel, policyChannelDependencies } from "./policy-channel";
+import { addSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 
 function agentFixture(name: string): defs.AgentDefinition {
   return { name } as defs.AgentDefinition;

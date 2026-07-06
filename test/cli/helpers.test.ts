@@ -55,8 +55,22 @@ describe("source-loader Node options", () => {
   it("preserves unrelated options byte-for-byte when the source loader is absent", () => {
     const nodeOptions =
       '--require=/tmp/onboard-script-mocks.cjs.backup --conditions="development mode"';
+    const malformed = '--conditions="development mode --trace-warnings';
 
     expect(nodeOptionsWithoutSourceLoader(nodeOptions)).toBe(nodeOptions);
+    expect(nodeOptionsWithoutSourceLoader(malformed)).toBe(malformed);
+  });
+
+  it("handles mixed quotes and escaped backslashes while removing the source loader", () => {
+    const spacedWindowsHook = String.raw`C:\NemoClaw worktree\onboard-script-mocks.cjs`;
+    const mixedOptions = `--conditions='development mode' ${sourceLoaderNodeOptions(
+      undefined,
+      spacedWindowsHook,
+    )} --trace-warnings`;
+
+    expect(nodeOptionsWithoutSourceLoader(mixedOptions, spacedWindowsHook)).toBe(
+      "--conditions='development mode' --trace-warnings",
+    );
   });
 
   it("keeps unrelated preloads active without installing the TypeScript source hook", () => {

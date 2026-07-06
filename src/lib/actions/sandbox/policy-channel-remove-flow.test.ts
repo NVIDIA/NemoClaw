@@ -5,12 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import * as policies from "../../policy";
 import * as registry from "../../state/registry";
-import {
-  policyChannelDependencies,
-  removeSandboxChannel,
-  startSandboxChannel,
-  stopSandboxChannel,
-} from "./policy-channel";
+import { removeSandboxChannel, startSandboxChannel, stopSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 
 describe("policy channel remove/enable flows", () => {
   let exitSpy: MockInstance;

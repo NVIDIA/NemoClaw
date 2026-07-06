@@ -18,11 +18,8 @@ import * as onboardSession from "../../state/onboard-session";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as messagingHostForwardLifecycle from "./messaging-host-forward-lifecycle";
-import {
-  addSandboxChannel,
-  policyChannelDependencies,
-  startSandboxChannel,
-} from "./policy-channel";
+import { addSandboxChannel, startSandboxChannel } from "./policy-channel";
+import { policyChannelDependencies } from "./policy-channel-dependencies";
 import * as processRecovery from "./process-recovery";
 
 function agentFixture(name: string): defs.AgentDefinition {

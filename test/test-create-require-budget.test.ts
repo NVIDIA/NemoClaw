@@ -41,6 +41,13 @@ describe("CLI createRequire budget", () => {
         '// createRequire is documentation\nconst fixture = "createRequire(import.meta.url)";',
       ),
     ).toBe(false);
+    expect(
+      containsCreateRequireIdentifier("const fixture = `createRequire(${notExecutable})`;"),
+    ).toBe(false);
+  });
+
+  it("conservatively treats arbitrary createRequire properties as boundaries", () => {
+    expect(containsCreateRequireIdentifier("helper.createRequire();")).toBe(true);
   });
 
   it("treats a production createRequire identifier as a real boundary", () => {
@@ -69,6 +76,22 @@ describe("CLI createRequire budget", () => {
     expect(
       collectTestSupportCreateRequireSources(directory).map((file) => path.basename(file)),
     ).toEqual(["helper.cts", "production.mts"]);
+  });
+
+  it("does not follow symlinks outside the configured scan root", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-require-root-"));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-require-outside-"));
+    tempDirs.add(directory);
+    tempDirs.add(outside);
+    fs.writeFileSync(
+      path.join(outside, "external.ts"),
+      'import { createRequire } from "node:module";',
+    );
+    fs.symlinkSync(outside, path.join(directory, "external"), "dir");
+    fs.symlinkSync(path.join(outside, "external.ts"), path.join(directory, "external.ts"), "file");
+
+    expect(collectProductionCreateRequireSources(directory)).toEqual([]);
+    expect(collectTestSupportCreateRequireSources(directory)).toEqual([]);
   });
 
   it("requires the budget to fall with the remaining file count", () => {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,7 +36,6 @@ export const CLI_CREATE_REQUIRE_FILES = [
   "src/lib/actions/sandbox/sandbox-gateway-routing.test.ts",
   "src/lib/actions/upgrade-sandboxes-recovery.test.ts",
   "src/lib/adapters/openshell/gateway-drift.test.ts",
-  "src/lib/gateway-runtime-action.test.ts",
   "src/lib/hermes-provider-auth.test.ts",
   "src/lib/inference/nim-igpu-compute-constrained.test.ts",
   "src/lib/inference/nim.test.ts",
@@ -71,7 +70,8 @@ function* walkTypeScriptFiles(directory: string): Generator<string> {
 
   for (const entry of readdirSync(directory)) {
     const absolutePath = path.join(directory, entry);
-    const stats = statSync(absolutePath);
+    const stats = lstatSync(absolutePath);
+    if (stats.isSymbolicLink()) continue;
     if (stats.isDirectory()) {
       yield* walkTypeScriptFiles(absolutePath);
     } else if (stats.isFile() && TYPESCRIPT_PATTERN.test(entry)) {
