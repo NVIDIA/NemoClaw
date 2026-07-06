@@ -1,11 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "module";
 import { describe, expect, it } from "vitest";
 
-const require = createRequire(import.meta.url);
-const runner = require("./runner");
+import * as runner from "./runner";
 
 describe("run with argv array", () => {
   it("executes a simple command and returns result", () => {
@@ -52,6 +50,7 @@ describe("run with argv array", () => {
   });
 
   it("rejects string commands", () => {
+    // @ts-expect-error Exercise the runtime guard for legacy string input.
     expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(/argv array instead/);
   });
 
@@ -62,7 +61,7 @@ describe("run with argv array", () => {
     });
     // spawnSync sets result.error for missing executables
     expect(result.error).toBeDefined();
-    expect(result.error.code).toBe("ENOENT");
+    expect((result.error as NodeJS.ErrnoException).code).toBe("ENOENT");
   });
 });
 
@@ -80,6 +79,7 @@ describe("runInteractive with argv array", () => {
   });
 
   it("rejects string commands", () => {
+    // @ts-expect-error Exercise the runtime guard for legacy string input.
     expect(() => runner.runInteractive("echo hello", { suppressOutput: true })).toThrow(
       /argv array instead/,
     );
@@ -169,6 +169,7 @@ describe("runCapture with argv array", () => {
   });
 
   it("rejects string commands", () => {
+    // @ts-expect-error Exercise the runtime guard for legacy string input.
     expect(() => runner.runCapture("echo hello")).toThrow(/argv array instead/);
   });
 

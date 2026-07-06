@@ -5,15 +5,13 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { R, RD } from "../../cli/terminal-style";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
+import { rebuildOnboardDependencies } from "./rebuild-onboard-dependencies";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import { getRebuildCredentialEnvFromRegistry } from "./rebuild-resume-config";
 
-const onboardModule = require("../../onboard") as {
-  hydrateCredentialEnv: (name: string) => string | null;
-};
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
   HERMES_INFERENCE_CREDENTIAL_ENV: string;
@@ -169,7 +167,7 @@ export function preflightRebuildCredentials(
     return true;
   }
 
-  const credentialValue = onboardModule.hydrateCredentialEnv(rebuildCredentialEnv);
+  const credentialValue = rebuildOnboardDependencies.hydrateCredentialEnv(rebuildCredentialEnv);
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
