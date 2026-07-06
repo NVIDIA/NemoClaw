@@ -14,6 +14,11 @@ import {
   type OpenShellDockerSandboxContainerQuery,
   queryOpenShellDockerSandboxContainers,
 } from "./openshell-docker-sandbox-containers";
+import {
+  CLEANUP_POLL_INTERVAL_MS,
+  MAX_CLEANUP_ATTEMPTS,
+  STABLE_ABSENCE_CHECKS,
+} from "./sandbox-gpu-fallback-constants";
 
 export type SandboxGpuCreateFailureStage = "create" | "readiness" | "gpu-proof";
 
@@ -153,8 +158,8 @@ export function cleanupNativeGpuAttemptForFallback(
   deps: NativeGpuFallbackCleanupDeps,
   options: { maxAttempts?: number; stableAbsenceChecks?: number } = {},
 ): NativeGpuFallbackCleanupResult {
-  const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
-  const stableAbsenceChecks = Math.max(1, options.stableAbsenceChecks ?? 2);
+  const maxAttempts = Math.max(1, options.maxAttempts ?? MAX_CLEANUP_ATTEMPTS);
+  const stableAbsenceChecks = Math.max(1, options.stableAbsenceChecks ?? STABLE_ABSENCE_CHECKS);
   const deletion = deps.runOpenshell(["sandbox", "delete", sandboxName], {
     ignoreError: true,
     suppressOutput: true,
@@ -199,7 +204,7 @@ export function cleanupNativeGpuAttemptForFallback(
             ? containers.error
             : `labeled Docker containers remain: ${containers.ids.join(", ")}`;
     }
-    if (attempt < maxAttempts - 1) deps.sleep?.(1);
+    if (attempt < maxAttempts - 1) deps.sleep?.(CLEANUP_POLL_INTERVAL_MS / 1_000);
   }
 
   return {

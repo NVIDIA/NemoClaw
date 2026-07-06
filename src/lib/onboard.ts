@@ -2795,6 +2795,9 @@ async function createSandboxWithBaseImageResolution(
     "policies",
     "openclaw-sandbox.yaml",
   );
+  // TODO: Keep GPU route resolution, policy materialization, and create execution in their focused
+  // modules; extract this remaining handoff if it acquires another responsibility. This boundary
+  // deliberately coordinates those modules without re-implementing their trust-boundary logic.
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
   const dockerDriverGateway = isLinuxDockerDriverGatewayEnabled();
   const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } =

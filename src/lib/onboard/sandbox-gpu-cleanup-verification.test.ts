@@ -7,6 +7,11 @@ import {
   cleanupNativeGpuAttemptForFallback,
   type NativeGpuFallbackCleanupResult,
 } from "./sandbox-gpu-create-attempt";
+import {
+  CLEANUP_POLL_INTERVAL_MS,
+  MAX_CLEANUP_ATTEMPTS,
+  STABLE_ABSENCE_CHECKS,
+} from "./sandbox-gpu-fallback-constants";
 
 const SAFE_CLEANUP: NativeGpuFallbackCleanupResult = {
   safe: true,
@@ -23,6 +28,27 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
   ) {
     return vi.fn((args: string[]) => (args[1] === "delete" ? deleteResult : listResult));
   }
+
+  it("uses the documented fail-closed cleanup limits by default", () => {
+    const runOpenshell = openshellWithList({ status: 0, stdout: "alpha Ready" });
+    const sleep = vi.fn();
+
+    const result = cleanupNativeGpuAttemptForFallback("alpha", {
+      runOpenshell,
+      queryContainers: () => ({ ok: true, ids: [] }),
+      sleep,
+    });
+
+    expect(result.safe).toBe(false);
+    expect(MAX_CLEANUP_ATTEMPTS).toBe(5);
+    expect(STABLE_ABSENCE_CHECKS).toBe(2);
+    expect(CLEANUP_POLL_INTERVAL_MS).toBe(1_000);
+    expect(runOpenshell.mock.calls.filter(([args]) => args[1] === "list")).toHaveLength(
+      MAX_CLEANUP_ATTEMPTS,
+    );
+    expect(sleep).toHaveBeenCalledTimes(MAX_CLEANUP_ATTEMPTS - 1);
+    expect(sleep).toHaveBeenCalledWith(CLEANUP_POLL_INTERVAL_MS / 1_000);
+  });
 
   it("requires two stable sandbox and labeled-container absence checks", () => {
     const runOpenshell = openshellWithList({ status: 0, stdout: "" });

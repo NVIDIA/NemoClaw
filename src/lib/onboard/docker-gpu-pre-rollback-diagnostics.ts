@@ -6,13 +6,6 @@ import {
   dockerLogs as defaultDockerLogs,
 } from "../adapters/docker";
 import { discoverDockerGpuDiagnosticSensitiveValues } from "./docker-gpu-diagnostic-redaction";
-import type {
-  DockerContainerInspect,
-  DockerGpuPatchDeps,
-  DockerGpuPatchDiagnostics,
-  DockerGpuPatchFailureContext,
-  DockerGpuPatchResult,
-} from "./docker-gpu-patch";
 import {
   captureDockerGpuPatchSandboxSnapshot,
   classifyDockerGpuPatchFailure,
@@ -20,6 +13,13 @@ import {
   findOpenShellDockerSandboxContainerIds,
 } from "./docker-gpu-patch";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import type {
+  DockerContainerInspect,
+  DockerGpuPatchDeps,
+  DockerGpuPatchDiagnostics,
+  DockerGpuPatchFailureContext,
+  DockerGpuPatchResult,
+} from "./docker-gpu-patch-types";
 
 const PRE_ROLLBACK_DIAGNOSTICS_TOTAL_BUDGET_MS = 10_000;
 const PRE_ROLLBACK_DIAGNOSTICS_CALL_TIMEOUT_MS = 2_000;

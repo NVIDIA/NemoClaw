@@ -17,6 +17,13 @@ export const HERMES_GPU_EXTRA_PLACEHOLDER_KEYS = [
   "TELEGRAM_BOT_TOKEN_AGENT_A",
   "SLACK_BOT_TOKEN_AGENT_B",
 ] as const;
+export const HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS = [
+  "recreating the OpenShell-managed Docker container",
+  "legacy GPU compatibility envelope",
+  "may relax container confinement",
+  "NEMOCLAW_DOCKER_GPU_PATCH=0",
+  "native-only behavior",
+] as const;
 
 interface HermesGpuStartupProofOptions {
   env: NodeJS.ProcessEnv;
@@ -48,14 +55,16 @@ export async function assertHermesGpuStartupProof({
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
     expect(installText).toContain("Docker GPU mode selected:");
-    expect(installText).not.toContain("retrying once with the compatibility path");
+    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+      expect(installText).not.toContain(fragment);
+    }
   } else if (gpuRoute === "compatibility-fallback") {
     expect(installText).toContain(
       "Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.",
     );
-    expect(installText).toContain(
-      "Native OpenShell GPU onboarding did not complete; retrying once with the compatibility path...",
-    );
+    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+      expect(installText).toContain(fragment);
+    }
     expect(installText).toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
@@ -68,7 +77,9 @@ export async function assertHermesGpuStartupProof({
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
     expect(installText).not.toContain("Docker GPU mode selected:");
-    expect(installText).not.toContain("retrying once with the compatibility path");
+    for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+      expect(installText).not.toContain(fragment);
+    }
   }
   const plainStatus = stripAnsi(resultText(status));
   expect(plainStatus).toMatch(/Phase:\s*Ready/i);

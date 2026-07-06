@@ -5,7 +5,7 @@ import type {
   DockerContainerInspect,
   DockerGpuCloneRunOptions,
   DockerGpuPatchMode,
-} from "./docker-gpu-patch";
+} from "./docker-gpu-patch-types";
 
 const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 const GPU_ENV_KEYS = new Set([

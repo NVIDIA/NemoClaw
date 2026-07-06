@@ -5,14 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { dockerCapture, dockerRm, dockerRun } from "../adapters/docker";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import type {
   DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchMode,
   DockerGpuPatchModeAttempt,
   DockerGpuPatchModeKind,
-} from "./docker-gpu-patch";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+} from "./docker-gpu-patch-types";
 
 function resultText(result: {
   stdout?: string | Buffer | null;

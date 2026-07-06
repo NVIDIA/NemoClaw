@@ -17,7 +17,12 @@ export type SandboxGpuRoutePolicies = {
   compatibilityPolicyPath: string | null;
 };
 
-/** Materialize narrow native and compatibility fallback policies before create side effects. */
+/**
+ * Materialize narrow native and compatibility fallback policies before sandbox-create side
+ * effects. `preparePolicy` may create secure temporary files; every successful result carries its
+ * cleanup, this function combines both cleanups, and a failed second materialization immediately
+ * cleans the first. No provider, registry, gateway, or sandbox mutation occurs here.
+ */
 export function prepareSandboxGpuRoutePolicies(
   basePolicyPath: string,
   activeMessagingChannels: string[],

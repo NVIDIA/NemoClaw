@@ -7,6 +7,8 @@ import path from "node:path";
 
 import { dockerCapture, dockerLogs } from "../adapters/docker";
 import { createDockerGpuDiagnosticRedactor } from "./docker-gpu-diagnostic-redaction";
+import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
 import type {
   DockerContainerInspect,
   DockerContainerState,
@@ -16,9 +18,7 @@ import type {
   DockerGpuPatchFailureContext,
   DockerGpuPatchMode,
   DockerGpuPatchSandboxSnapshot,
-} from "./docker-gpu-patch";
-import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
-import { getDockerGpuPatchFailureContext } from "./docker-gpu-patch-recreate";
+} from "./docker-gpu-patch-types";
 import {
   findOpenShellDockerSandboxContainerIds,
   OPENSHELL_MANAGED_BY_LABEL,

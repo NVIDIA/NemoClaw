@@ -24,6 +24,7 @@ import {
 import {
   assertHermesGpuStartupProof,
   HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
+  HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS,
 } from "./hermes-gpu-startup-proof.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -318,6 +319,8 @@ test.skipIf(!shouldRunLiveE2E())(
       });
       expect(realOpenshell.exitCode, resultText(realOpenshell)).toBe(0);
       const wrapper = createHermesGpuFallbackWrapper(realOpenshell.stdout.trim());
+      // Security-scoped #6110 fault injection: always remove the private wrapper root through the
+      // E2E cleanup stack. Do not generalize PATH interception to other tests without review.
       cleanup.add("remove Hermes GPU fallback wrapper", () =>
         fs.rmSync(wrapper.rootDir, { recursive: true, force: true }),
       );
@@ -365,9 +368,9 @@ test.skipIf(!shouldRunLiveE2E())(
         HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
       ]);
       expect(resultText(install)).toContain("Native GPU diagnostics saved:");
-      expect(resultText(install)).toContain(
-        "Native OpenShell GPU onboarding did not complete; retrying once with the compatibility path...",
-      );
+      for (const fragment of HERMES_GPU_FALLBACK_DISCLOSURE_FRAGMENTS) {
+        expect(resultText(install)).toContain(fragment);
+      }
     };
     await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 

@@ -23,12 +23,12 @@
 // and delete this module along with its callers in docker-gpu-patch.ts and
 // docker-gpu-sandbox-create.ts.
 
-import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import {
   resolveDockerGpuPatchRollbackDeps,
   rollbackToBackupContainer,
 } from "./docker-gpu-patch-rollback";
+import type { DockerGpuPatchDeps, DockerGpuPatchResult } from "./docker-gpu-patch-types";
 
 export {
   restoreDockerGpuPatchBackupAfterRecreateFailure as rollbackDockerGpuPatchOnRecreateFailure,

@@ -5,10 +5,10 @@ import { getLocalProviderLabel } from "../inference/local";
 import type { SandboxGpuProofResult } from "../state/registry";
 import {
   DOCKER_GPU_PATCH_NETWORK_ENV,
-  type DockerGpuPatchMode,
   getDockerGpuPatchNetworkMode,
   printDockerGpuProofFailure,
 } from "./docker-gpu-patch";
+import type { DockerGpuPatchMode } from "./docker-gpu-patch-types";
 import type { SelectedDockerGpuRoute } from "./docker-gpu-route";
 import { adaptDockerGpuRouteForPatch } from "./docker-gpu-route-patch-adapter";
 import { executeSandboxCommandForVerification } from "./sandbox-verification-exec";

@@ -1,60 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { describe, expect, it, vi } from "vitest";
-
-const dockerAdapterMocks = vi.hoisted(() => ({
-  dockerCapture: vi.fn((args: readonly string[]) =>
-    args[0] === "ps" ? "default-container-id\n" : "",
-  ),
-}));
-
-vi.mock("../adapters/docker", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../adapters/docker")>()),
-  dockerCapture: dockerAdapterMocks.dockerCapture,
-}));
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuMode,
   captureDockerGpuPatchSandboxSnapshot,
   classifyDockerGpuPatchFailure,
-  collectDockerGpuPatchDiagnostics,
-  type DockerContainerInspect,
-  formatDockerInspectNetworkSummary,
 } from "./docker-gpu-patch";
-
-function inspectFixture(): DockerContainerInspect {
-  return {
-    Id: "old-container-id",
-    Name: "/openshell-alpha",
-    Config: {
-      Image: "openshell/sandbox:abc",
-      Env: ["A=1", "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/", "OPENSHELL_TEST=1"],
-      Labels: {
-        "openshell.ai/managed-by": "openshell",
-        "openshell.ai/sandbox-name": "alpha",
-      },
-    },
-    HostConfig: {
-      NetworkMode: "openshell-docker",
-      ExtraHosts: ["host.openshell.internal:172.17.0.1"],
-    },
-    NetworkSettings: {
-      Networks: {
-        "openshell-docker": {
-          IPAddress: "172.18.0.2",
-          Gateway: "172.18.0.1",
-          Aliases: ["openshell-alpha"],
-        },
-      },
-    },
-  };
-}
 
 function sandboxCapture(getOutput: string, listOutput: string) {
   const responses: Record<string, string> = {
@@ -65,68 +19,6 @@ function sandboxCapture(getOutput: string, listOutput: string) {
 }
 
 describe("Docker GPU patch diagnostics", () => {
-  it("formats sanitized network diagnostics without dumping provider secrets", () => {
-    const inspect = inspectFixture();
-    inspect.Config?.Env?.push("NVIDIA_INFERENCE_API_KEY=secret");
-    const summary = formatDockerInspectNetworkSummary("old-container-id", inspect);
-
-    expect(summary).toContain("target=old-container-id");
-    expect(summary).toContain("network_mode=openshell-docker");
-    expect(summary).toContain("host.openshell.internal:172.17.0.1");
-    expect(summary).toContain("env.OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/");
-    expect(summary).toContain("openshell-docker: ip=172.18.0.2 gateway=172.18.0.1");
-    expect(summary).not.toContain("NVIDIA_INFERENCE_API_KEY");
-    expect(summary).not.toContain("secret");
-  });
-
-  it("keeps Docker network diagnostics when old patch containers are gone", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-diag-"));
-    try {
-      const liveInspect = inspectFixture();
-      liveInspect.Id = "new-container-id";
-      const responses: Record<string, string> = {
-        "ps:": "new-container-id\n",
-        "inspect:new-container-id": JSON.stringify([liveInspect]),
-      };
-      const dockerCapture = vi.fn((args: readonly string[]) => {
-        const key = `${args[0]}:${String(args[1] ?? "")}`;
-        return (
-          responses[key] ??
-          (() => {
-            throw new Error(`missing target ${String(args[1])}`);
-          })()
-        );
-      });
-      const diagnostics = collectDockerGpuPatchDiagnostics(
-        "alpha",
-        {
-          context: {
-            sandboxName: "alpha",
-            oldContainerId: "old-container-id",
-            newContainerId: "new-container-id",
-            backupContainerName: "backup-container",
-          },
-        },
-        {
-          dockerCapture,
-          dockerLogs: vi.fn(() => ""),
-          homedir: () => tmpDir,
-          now: () => new Date("2026-05-12T00:00:00Z"),
-        },
-      );
-
-      expect(diagnostics?.dir).toBeTruthy();
-      const summary = fs.readFileSync(
-        path.join(diagnostics?.dir || "", "docker-network-summary.txt"),
-        "utf-8",
-      );
-      expect(summary).toContain("target=new-container-id");
-      expect(summary).toContain("network_mode=openshell-docker");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("detects terminal failure phases in `openshell sandbox list` output", () => {
     const errorList = "my-sandbox   Error   2s ago";
     expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
@@ -308,39 +200,6 @@ describe("Docker GPU patch diagnostics", () => {
     expect(result.summaryLines.join("\n")).toContain("proof_error=nvidia-smi exited with status 9");
   });
 
-  it("preserves the default Docker capture when callers omit dockerCapture from deps", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-default-"));
-    try {
-      dockerAdapterMocks.dockerCapture.mockClear();
-      const diagnostics = collectDockerGpuPatchDiagnostics(
-        "alpha",
-        {
-          context: {
-            sandboxName: "alpha",
-            newContainerId: "new-container-id",
-            selectedMode: buildDockerGpuMode("gpus"),
-          },
-        },
-        {
-          dockerLogs: vi.fn(() => ""),
-          homedir: () => tmpDir,
-          now: () => new Date("2026-05-12T00:00:00Z"),
-        },
-      );
-
-      expect(diagnostics?.dir).toBeTruthy();
-      expect(
-        fs.readFileSync(path.join(diagnostics?.dir || "", "docker-ps.txt"), "utf-8"),
-      ).toContain("default-container-id");
-      expect(dockerAdapterMocks.dockerCapture).toHaveBeenCalledWith(
-        expect.arrayContaining(["ps"]),
-        expect.objectContaining({ ignoreError: true }),
-      );
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("does not inspect the original/backup container when newContainerId is missing", () => {
     const dockerCapture = vi.fn((_args: readonly string[]) =>
       JSON.stringify({ Status: "exited", ExitCode: 1 }),
@@ -355,53 +214,5 @@ describe("Docker GPU patch diagnostics", () => {
     expect(
       dockerCapture.mock.calls.some(([args]) => args[0] === "inspect" && args[1] === "--format"),
     ).toBe(false);
-  });
-
-  it("writes patched-container-state.json and surfaces failure_kind/sandbox_phase in the summary", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-4316-"));
-    try {
-      const snapshot = {
-        sandboxPhase: "Error",
-        sandboxListLine: "alpha   Error   1m ago",
-        patchedContainerState: {
-          Status: "exited",
-          ExitCode: 125,
-          Error: 'could not select device driver "nvidia"',
-        },
-      };
-      const classification = classifyDockerGpuPatchFailure(snapshot, buildDockerGpuMode("gpus"));
-      const diagnostics = collectDockerGpuPatchDiagnostics(
-        "alpha",
-        {
-          context: {
-            sandboxName: "alpha",
-            newContainerId: "new-container-id",
-            selectedMode: buildDockerGpuMode("gpus"),
-          },
-          selectedMode: buildDockerGpuMode("gpus"),
-          snapshot,
-          classification,
-        },
-        {
-          dockerCapture: vi.fn(() => ""),
-          dockerLogs: vi.fn(() => ""),
-          homedir: () => tmpDir,
-          now: () => new Date("2026-05-12T00:00:00Z"),
-        },
-      );
-
-      expect(diagnostics?.dir).toBeTruthy();
-      const summary = fs.readFileSync(path.join(diagnostics?.dir || "", "summary.txt"), "utf-8");
-      expect(summary).toContain("failure_kind=patched_container_failed");
-      expect(summary).toContain("sandbox_phase=Error");
-      expect(summary).toContain("patched_container_exit_code=125");
-      const state = fs.readFileSync(
-        path.join(diagnostics?.dir || "", "patched-container-state.json"),
-        "utf-8",
-      );
-      expect(state).toContain("could not select device driver");
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 });

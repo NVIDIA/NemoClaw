@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redactFull } from "../security/redact";
-import type { DockerContainerInspect } from "./docker-gpu-patch";
+import type { DockerContainerInspect } from "./docker-gpu-patch-types";
 
 const SENSITIVE_ENV_KEY =
   /(?:api_?key|private_?key|(?:^|_)key$|token|secret|password|credential|authorization|cookie|proxy)/i;

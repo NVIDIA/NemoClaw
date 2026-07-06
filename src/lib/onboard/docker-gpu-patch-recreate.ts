@@ -11,12 +11,6 @@ import {
 } from "../adapters/docker";
 import { detectSandboxFallbackDns } from "./docker-gpu-dns-fallback";
 import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
-import type {
-  DockerContainerInspect,
-  DockerGpuPatchDeps,
-  DockerGpuPatchFailureContext,
-  DockerGpuPatchResult,
-} from "./docker-gpu-patch";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -28,6 +22,12 @@ import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
 import { reconcileSupervisorReconnect } from "./docker-gpu-patch-finalize";
 import { selectDockerGpuPatchMode } from "./docker-gpu-patch-mode";
 import { restoreDockerGpuPatchBackupAfterRecreateFailure } from "./docker-gpu-patch-rollback";
+import type {
+  DockerContainerInspect,
+  DockerGpuPatchDeps,
+  DockerGpuPatchFailureContext,
+  DockerGpuPatchResult,
+} from "./docker-gpu-patch-types";
 import { waitForOpenShellSupervisorReconnect } from "./docker-gpu-supervisor-reconnect";
 import { findOpenShellDockerSandboxContainerIds } from "./openshell-docker-sandbox-containers";
 

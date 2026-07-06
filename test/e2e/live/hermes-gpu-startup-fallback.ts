@@ -68,6 +68,9 @@ function quoteShellLiteral(value: string): string {
  * invocation transparently delegates its original argv to the real CLI. This
  * test-only wrapper never logs argv: its sole artifact is an event log made of
  * fixed labels, so sandbox-create environment arguments never enter artifacts.
+ * This interception pattern is specific to the #6110 fallback proof and must
+ * not be copied to another E2E path without security review. The caller owns
+ * the wrapper root and registers recursive removal with the test cleanup stack.
  */
 export function createHermesGpuFallbackWrapper(
   realOpenshellPath: string,

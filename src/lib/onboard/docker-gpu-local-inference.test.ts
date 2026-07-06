@@ -174,6 +174,18 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(result).toEqual({ status: "skipped", reason: "not-local-provider" });
   });
 
+  it("skips the compatibility-only inference gate on the native route", () => {
+    const execInSandbox = vi.fn();
+    const result = verifyDockerGpuSandboxLocalInference(
+      GPU_CONFIG,
+      "ollama-local",
+      gpuPatchOptions({ selectedRoute: "native", deps: { execInSandbox } }),
+    );
+
+    expect(result).toEqual({ status: "skipped", reason: "not-docker-gpu-patch" });
+    expect(execInSandbox).not.toHaveBeenCalled();
+  });
+
   it("probes inference.local from the runtime context, never a loopback or docker exec", () => {
     const execInSandbox = execEmitting("HTTP_200");
     const result = verifyDockerGpuSandboxLocalInference(

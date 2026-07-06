@@ -7,8 +7,8 @@ import {
   dockerStart as defaultDockerStart,
   dockerStop as defaultDockerStop,
 } from "../adapters/docker";
-import type { DockerGpuPatchDeps } from "./docker-gpu-patch";
 import { DOCKER_GPU_PATCH_TIMEOUT_MS } from "./docker-gpu-patch-constants";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 type DockerRunResult = {
   status?: number | null;

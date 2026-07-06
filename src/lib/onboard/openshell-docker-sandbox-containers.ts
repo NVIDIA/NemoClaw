@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerCapture, dockerRun } from "../adapters/docker";
-import type { DockerGpuPatchDeps } from "./docker-gpu-patch";
+import type { DockerGpuPatchDeps } from "./docker-gpu-patch-types";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";

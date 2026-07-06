@@ -33,6 +33,8 @@ export function parseResolvConfNameservers(content: string): string[] {
 export function detectSandboxFallbackDns(
   deps: { readFile?: (path: string) => string | null } = {},
 ): string | null {
+  // `readFile` is a test seam, not a production path input. Production calls omit it, and this
+  // function invokes either implementation only with the two hardcoded host resolver paths below.
   const readFile =
     deps.readFile ??
     ((path: string): string | null => {

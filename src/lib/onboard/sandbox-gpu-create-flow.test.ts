@@ -245,4 +245,32 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     expect(warning).toContain("native-only behavior");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
   });
+
+  it("reuses the built image when native CDI injection fails after the build", async () => {
+    const input = createInput();
+    input.prebuild = {
+      createArgs: ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--gpu"],
+      imageRef: null,
+    };
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output:
+        "Built image openshell/sandbox-from:built\nCDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+      sawProgress: true,
+    });
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(input, deps)).resolves.toMatchObject({
+      route: "compatibility",
+      selectedCreateImageRef: "openshell/sandbox-from:built",
+    });
+
+    expect(deps.openshellShellCommand).toHaveBeenCalledWith(
+      expect.arrayContaining(["--from", "openshell/sandbox-from:built"]),
+    );
+    expect(deps.openshellShellCommand).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["--from", "/tmp/build/Dockerfile"]),
+    );
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+  });
 });

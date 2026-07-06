@@ -16,6 +16,7 @@ const TEGRA_GPU_DEVICE_NODES = [
   "/dev/nvgpu/igpu0/as",
   "/dev/nvgpu/igpu0/prof",
 ] as const;
+const MAX_DOCKER_SUPPLEMENTARY_GID = 2_147_483_647;
 
 /** Find supplementary groups required to access Jetson/Tegra GPU device nodes. */
 export function detectTegraDeviceGroupGids(
@@ -33,7 +34,14 @@ export function detectTegraDeviceGroupGids(
   const gids = new Set<string>();
   for (const node of TEGRA_GPU_DEVICE_NODES) {
     const gid = statGid(node);
-    if (gid !== null && gid > 0) gids.add(String(gid));
+    if (
+      gid !== null &&
+      Number.isSafeInteger(gid) &&
+      gid > 0 &&
+      gid <= MAX_DOCKER_SUPPLEMENTARY_GID
+    ) {
+      gids.add(String(gid));
+    }
   }
   return [...gids].sort((left, right) => Number(left) - Number(right));
 }

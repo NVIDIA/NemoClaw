@@ -296,6 +296,31 @@ describe("route-specific policy materialization", () => {
     expect(nativeCleanup).toHaveBeenCalledOnce();
     expect(compatibilityCleanup).toHaveBeenCalledOnce();
   });
+
+  it("cleans the initial temporary policy when fallback policy materialization fails", () => {
+    const nativeCleanup = vi.fn(() => true);
+    const preparePolicy = vi
+      .fn()
+      .mockReturnValueOnce({
+        policyPath: "/tmp/native.yaml",
+        appliedPresets: [],
+        cleanup: nativeCleanup,
+      })
+      .mockImplementationOnce(() => {
+        throw new Error("compatibility policy failed");
+      });
+
+    expect(() =>
+      prepareSandboxGpuRoutePolicies(
+        "/repo/policy.yaml",
+        [],
+        { directGpu: true },
+        "native-with-fallback",
+        preparePolicy,
+      ),
+    ).toThrow("compatibility policy failed");
+    expect(nativeCleanup).toHaveBeenCalledOnce();
+  });
 });
 
 describe("selected route consumers", () => {

@@ -3,13 +3,6 @@
 
 import { getSandboxFailurePhase } from "../state/gateway";
 import type { SandboxGpuProofResult } from "../state/registry";
-import type {
-  DockerGpuPatchBackend,
-  DockerGpuPatchDeps,
-  DockerGpuPatchFailureContext,
-  DockerGpuPatchMode,
-  DockerGpuPatchResult,
-} from "./docker-gpu-patch";
 import {
   getDockerGpuSupervisorReconnectTimeoutSecs,
   printDockerGpuPatchFailureAndExit,
@@ -19,6 +12,13 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
+import type {
+  DockerGpuPatchBackend,
+  DockerGpuPatchDeps,
+  DockerGpuPatchFailureContext,
+  DockerGpuPatchMode,
+  DockerGpuPatchResult,
+} from "./docker-gpu-patch-types";
 import { captureDockerGpuPreRollbackDiagnostics } from "./docker-gpu-pre-rollback-diagnostics";
 import {
   type DockerGpuRoutePlan,
@@ -34,6 +34,9 @@ export type {
   SelectedDockerGpuRoute,
 } from "./docker-gpu-route";
 
+// NemoClaw onboarding is a short-lived process, and the active Docker daemon cannot switch
+// between native Linux and Docker Desktop WSL during one run. Cache that stable host fact for the
+// process lifetime; tests that substitute the probe explicitly reset it between scenarios.
 let cachedDockerDesktopWslRuntime: boolean | null = null;
 
 export function isDockerDesktopWslRuntime(): boolean {
