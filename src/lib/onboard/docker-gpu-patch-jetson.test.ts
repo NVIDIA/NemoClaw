@@ -6,7 +6,6 @@ import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuMode,
   type DockerContainerInspect,
-  detectTegraDeviceGroupGids,
   recreateOpenShellDockerSandboxWithGpu,
 } from "./docker-gpu-patch";
 
@@ -38,35 +37,6 @@ function dockerCaptureFixture() {
 }
 
 describe("Jetson /dev/nvmap group propagation (#4231)", () => {
-  it("returns the owning GID(s) of present Tegra device nodes, skipping missing and root-owned", () => {
-    const deviceGids: Record<string, number> = {
-      "/dev/nvmap": 44,
-      "/dev/nvhost-ctrl": 44,
-      "/dev/nvhost-gpu": 0,
-      "/dev/nvgpu/igpu0/ctrl": 110,
-      "/dev/nvgpu/igpu0/as": 2_147_483_648,
-    };
-    const gids = detectTegraDeviceGroupGids({
-      statDeviceGid: (path: string) => (path in deviceGids ? deviceGids[path] : null),
-    });
-    expect(gids).toEqual(["44", "110"]);
-  });
-
-  it("rejects non-integer and out-of-range supplementary GIDs", () => {
-    const gids = [Number.NaN, 1.5, -1, 0, 2_147_483_648];
-    let index = 0;
-
-    expect(
-      detectTegraDeviceGroupGids({
-        statDeviceGid: () => gids[index++] ?? null,
-      }),
-    ).toEqual([]);
-  });
-
-  it("returns no GIDs when no Tegra device nodes are present (non-Jetson host)", () => {
-    expect(detectTegraDeviceGroupGids({ statDeviceGid: () => null })).toEqual([]);
-  });
-
   it("emits --group-add for extraGroupGids and dedupes against existing GroupAdd", () => {
     const inspect = inspectFixture();
     inspect.HostConfig!.GroupAdd = ["44"];

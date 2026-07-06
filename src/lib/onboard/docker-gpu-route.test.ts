@@ -139,14 +139,21 @@ describe("resolveDockerGpuRoutePlan", () => {
 
   it("preserves legacy nonzero compatibility routing with a visible warning", () => {
     const log = vi.fn();
-    expect(
-      resolveDockerGpuRoutePlan(GPU_CONFIG, {
-        ...LINUX_DOCKER,
-        env: { NEMOCLAW_DOCKER_GPU_PATCH: "true" },
-        log,
-      }),
-    ).toBe("compatibility-only");
+    const plan = resolveDockerGpuRoutePlan(GPU_CONFIG, {
+      ...LINUX_DOCKER,
+      env: { NEMOCLAW_DOCKER_GPU_PATCH: "true" },
+      log,
+    });
+
+    expect(plan).toBe("compatibility-only");
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
+    expect(
+      renderSandboxCreateArgsForGpuRoute(
+        ["--from", "sandbox:built", "--policy", "/tmp/native.yaml", "--gpu"],
+        initialDockerGpuRoute(plan),
+        { compatibilityPolicyPath: "/tmp/compatibility.yaml" },
+      ),
+    ).toEqual(["--from", "sandbox:built", "--policy", "/tmp/compatibility.yaml"]);
   });
 
   it("keeps Docker Desktop WSL on compatibility and explains why zero is ignored", () => {

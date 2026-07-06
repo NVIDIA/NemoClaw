@@ -2,14 +2,30 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { isIP } from "node:net";
 
 export function parseResolvConfNameservers(content: string): string[] {
   return content
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.startsWith("nameserver"))
+    .filter((line) => /^nameserver(?:\s|$)/.test(line))
     .map((line) => line.split(/\s+/)[1])
-    .filter((ip): ip is string => Boolean(ip));
+    .filter((ip): ip is string => Boolean(ip) && isIP(ip) !== 0);
+}
+
+function isLoopbackResolver(ip: string): boolean {
+  return /^127\./.test(ip) || ip === "::1";
+}
+
+function isUsableUpstreamResolver(ip: string): boolean {
+  if (isLoopbackResolver(ip) || ip === "0.0.0.0" || ip === "::") return false;
+  if (isIP(ip) === 4) {
+    const firstOctet = Number(ip.split(".")[0]);
+    // Keep unicast link-local resolvers: cloud hosts legitimately publish
+    // addresses such as the Route 53 Resolver at 169.254.169.253.
+    return firstOctet > 0 && firstOctet < 224;
+  }
+  return !/^ff/i.test(ip);
 }
 
 /**
@@ -47,9 +63,9 @@ export function detectSandboxFallbackDns(
   const resolvConf = readFile("/etc/resolv.conf");
   if (!resolvConf) return null;
   const nameservers = parseResolvConfNameservers(resolvConf);
-  if (nameservers.length === 0 || !nameservers.every((ip) => /^127\./.test(ip))) return null;
+  if (nameservers.length === 0 || !nameservers.every(isLoopbackResolver)) return null;
   const upstreamFile = readFile("/run/systemd/resolve/resolv.conf");
   return upstreamFile
-    ? (parseResolvConfNameservers(upstreamFile).find((ip) => !/^127\./.test(ip)) ?? null)
+    ? (parseResolvConfNameservers(upstreamFile).find(isUsableUpstreamResolver) ?? null)
     : null;
 }

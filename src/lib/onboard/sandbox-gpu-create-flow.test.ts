@@ -42,7 +42,8 @@ vi.mock("./docker-gpu-patch", async (importOriginal) => ({
   collectDockerGpuPatchDiagnostics: mocks.collectDockerGpuPatchDiagnostics,
 }));
 
-vi.mock("./openshell-docker-sandbox-containers", () => ({
+vi.mock("./openshell-docker-sandbox-containers", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./openshell-docker-sandbox-containers")>()),
   queryOpenShellDockerSandboxContainers: mocks.queryOpenShellDockerSandboxContainers,
   queryOpenShellDockerSandboxImage: mocks.queryOpenShellDockerSandboxImage,
 }));

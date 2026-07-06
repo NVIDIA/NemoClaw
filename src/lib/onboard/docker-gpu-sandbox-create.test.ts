@@ -374,4 +374,22 @@ describe("resolveDockerGpuSandboxCreatePlan", () => {
       expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
     }
   });
+
+  it("forwards the legacy nonzero warning through the create-plan boundary", () => {
+    const log = vi.fn();
+
+    const result = resolveDockerGpuSandboxCreatePlan(
+      { sandboxGpuEnabled: true },
+      {
+        dockerDriverGateway: true,
+        dockerDesktopWsl: false,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: "true" },
+        platform: "linux",
+        log,
+      },
+    );
+
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
+    expect(log).toHaveBeenCalledWith(expect.stringMatching(/unrecognized.*compatibility-only/i));
+  });
 });

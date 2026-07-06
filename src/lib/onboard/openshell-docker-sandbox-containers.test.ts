@@ -36,4 +36,25 @@ describe("queryOpenShellDockerSandboxImage", () => {
     });
     expect(dockerRun).toHaveBeenCalledOnce();
   });
+
+  it("refuses malformed inspect output while preserving custom registry and digest references", () => {
+    const dockerRun = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "registry.example:5000/team/image@sha256:abc\n" });
+
+    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
+      ok: true,
+      imageRef: "registry.example:5000/team/image@sha256:abc",
+      containerId: "container-a",
+    });
+
+    dockerRun
+      .mockReturnValueOnce({ status: 0, stdout: "container-a\n", stderr: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "image:tag embedded-value\n", stderr: "" });
+    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
+      ok: false,
+      error: "image:tag embedded-value",
+    });
+  });
 });

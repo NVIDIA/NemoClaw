@@ -14,9 +14,11 @@ describe("parseResolvConfNameservers", () => {
     ).toEqual(["127.0.0.53", "192.168.1.1"]);
   });
 
-  it("ignores empty and malformed resolver lines", () => {
+  it("ignores empty, malformed, and non-IP resolver lines", () => {
     expect(
-      parseResolvConfNameservers("\nsearch lan\nnameserver\nnot-a-resolver 8.8.8.8\n"),
+      parseResolvConfNameservers(
+        "\nsearch lan\nnameserver\nnameserver not-an-ip\nnameserver-alias 8.8.8.8\nnot-a-resolver 1.1.1.1\n",
+      ),
     ).toEqual([]);
   });
 });
@@ -81,5 +83,32 @@ describe("detectSandboxFallbackDns", () => {
       .mockReturnValueOnce("nameserver 127.0.0.53\n")
       .mockReturnValueOnce("search lan\nnameserver\n");
     expect(detectSandboxFallbackDns({ readFile: malformed })).toBeNull();
+  });
+
+  it("rejects unspecified and multicast upstreams while preserving valid link-local DNS", () => {
+    const unsafe = vi
+      .fn()
+      .mockReturnValueOnce("nameserver 127.0.0.53\n")
+      .mockReturnValueOnce(
+        "nameserver 0.0.0.0\nnameserver 224.0.0.1\nnameserver ::\nnameserver ff02::1\n",
+      );
+    expect(detectSandboxFallbackDns({ readFile: unsafe })).toBeNull();
+
+    const linkLocal = vi
+      .fn()
+      .mockReturnValueOnce("nameserver 127.0.0.53\n")
+      .mockReturnValueOnce("nameserver 169.254.169.253\n");
+    expect(detectSandboxFallbackDns({ readFile: linkLocal })).toBe("169.254.169.253");
+  });
+
+  it("supports an IPv6 loopback stub with a unicast IPv6 upstream", () => {
+    const files: Record<string, string> = {
+      "/etc/resolv.conf": "nameserver ::1\n",
+      "/run/systemd/resolve/resolv.conf": "nameserver 2001:4860:4860::8888\n",
+    };
+
+    expect(detectSandboxFallbackDns({ readFile: (path) => files[path] ?? null })).toBe(
+      "2001:4860:4860::8888",
+    );
   });
 });

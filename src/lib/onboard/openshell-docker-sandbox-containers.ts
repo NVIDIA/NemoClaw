@@ -83,6 +83,14 @@ export type OpenShellDockerSandboxImageQuery =
   | { ok: true; imageRef: string; containerId: string }
   | { ok: false; error: string };
 
+function isSyntacticallySafeDockerImageRef(imageRef: string): boolean {
+  // The exact labeled container is the provenance boundary: an actor that can
+  // forge Docker inspect already controls the host daemon. Keep custom registry
+  // and digest references valid while rejecting data that cannot be one argv
+  // token when the compatibility create command is rendered.
+  return imageRef.length <= 4096 && !/[\s\u0000-\u001f\u007f]/.test(imageRef);
+}
+
 /** Resolve the one labeled native container's reusable image before deletion. */
 export function queryOpenShellDockerSandboxImage(
   sandboxName: string,
@@ -107,7 +115,11 @@ export function queryOpenShellDockerSandboxImage(
     },
   );
   const imageRef = String(inspect.stdout ?? "").trim();
-  if (Number(inspect.status ?? 1) !== 0 || !imageRef) {
+  if (
+    Number(inspect.status ?? 1) !== 0 ||
+    !imageRef ||
+    !isSyntacticallySafeDockerImageRef(imageRef)
+  ) {
     return {
       ok: false,
       error:
