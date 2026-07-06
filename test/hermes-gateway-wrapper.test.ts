@@ -825,7 +825,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
 
   it("masks YAML block-scalar headers with indentation and chomping indicators", () => {
     const fixture = [
-      "provider_token: |2",
+      "token: |2",
       "    leaked-yaml-indent-12345",
       "api_key: |2-",
       "    leaked-yaml-indent-trail-12345",
