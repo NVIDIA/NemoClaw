@@ -515,6 +515,8 @@ test(
       issues: ["#2603", "#3145", "#6194"],
       ownerIssue: "#4347",
       pinnedOpenClawVersion: EXPECTED_OPENCLAW_VERSION,
+      historicalReproScope:
+        "#6194 reported NemoClaw v0.0.72 as the known-bad release; this live target guards the current branch against the same post-idle TUI regression instead of reinstalling the old bad version.",
     });
 
     // Setup ────────────────────────────────────────────────────────
@@ -523,9 +525,12 @@ test(
       sandboxName: SANDBOX_NAME,
     });
 
-    // Assertion: openclaw-version-pinned. The regression target only
-    // reproduces against the bundled OpenClaw build; if the sandbox installed
-    // a different version, the rest of the test is meaningless.
+    // Assertion: openclaw-version-pinned. The issue reporter used NemoClaw
+    // v0.0.72 to demonstrate the historical failure. Reinstalling that known
+    // bad release in PR CI would prove the old bug, not the proposed guard.
+    // This target provisions the current branch and validates the bundled
+    // OpenClaw build before exercising the same post-connected-idle terminal
+    // paths so future changes cannot reintroduce #6194.
     //
     // Every sandbox.* call must pass `env: buildAvailabilityProbeEnv()`:
     // ShellProbe.run spawns with an empty env when none is provided,
