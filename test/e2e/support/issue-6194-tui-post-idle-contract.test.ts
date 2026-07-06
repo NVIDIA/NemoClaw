@@ -20,17 +20,28 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     expect(script).toContain("openclaw tui --session test-session");
     expect(script).toContain('puts "ISSUE6194_MARK $name"');
     expect(script).toContain('send_log "ISSUE6194_MARK $name\\n"');
-    expect(script).toContain("mark connected_idle_initial");
-    expect(script).toContain("mark chat_reply");
-    expect(script).toContain("mark connected_idle_after_chat");
+    expect(script).toContain("proc expect_or_exit");
+    expect(script).toContain(
+      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11",
+    );
+    expect(script).toContain("expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21");
+    expect(script).toContain(
+      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23",
+    );
     expect(script).toContain("/nemoclaw status");
     expect(script).toContain("Sandbox:[^\\r\\n]*$sandbox");
-    expect(script).toContain("mark slash_status_output");
-    expect(script).toContain("mark connected_idle_after_status");
+    expect(script).toContain(
+      'expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31',
+    );
+    expect(script).toContain(
+      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33",
+    );
     expect(script).toContain("https://api.atlassian.com/oauth/token/accessible-resources");
     expect(script).toContain("mark network_approval_prompt");
     expect(script).toContain("mark network_approval_processed");
-    expect(script).toContain("mark connected_idle_after_network_approval");
+    expect(script).toContain(
+      "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_network_approval 56 57",
+    );
     expect(script).toContain("mark clean_exit");
     expect(script).not.toContain("NEMOCLAW_ISSUE_6194_TUI_TIMEOUT_SEC");
     expect(script).not.toContain("(nemoclaw|sandbox|docker|status|managed|openclaw)");

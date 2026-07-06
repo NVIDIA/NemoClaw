@@ -13,49 +13,24 @@ proc mark {name} {
   puts "ISSUE6194_MARK $name"
   send_log "ISSUE6194_MARK $name\\n"
 }
+proc expect_or_exit {pattern markName timeoutExit eofExit} {
+  expect {
+    -nocase -re $pattern { mark $markName }
+    timeout {
+      send "\\003"
+      exit $timeoutExit
+    }
+    eof { exit $eofExit }
+  }
+}
 spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui --session ${ISSUE6194_TUI_SESSION}}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_initial }
-  timeout {
-    send "\\003"
-    exit 10
-  }
-  eof { exit 11 }
-}
+expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11
 send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHAT, OK. Put only that joined token on its own line. Do not use tools.\\r"
-expect {
-  -nocase -re {NEMOCLAW6194_CHAT_OK} { mark chat_reply }
-  timeout {
-    send "\\003"
-    exit 20
-  }
-  eof { exit 21 }
-}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_chat }
-  timeout {
-    send "\\003"
-    exit 22
-  }
-  eof { exit 23 }
-}
+expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21
+expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
 send -- "/nemoclaw status\\r"
-expect {
-  -nocase -re "Sandbox:[^\\r\\n]*$sandbox" { mark slash_status_output }
-  timeout {
-    send "\\003"
-    exit 30
-  }
-  eof { exit 31 }
-}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_status }
-  timeout {
-    send "\\003"
-    exit 32
-  }
-  eof { exit 33 }
-}
+expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31
+expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
 send -- "Use an available tool to call https://api.atlassian.com/oauth/token/accessible-resources now. Do not describe it.\\r"
 expect {
   -nocase -re {(blocked|denied|rejected)} {
@@ -84,14 +59,7 @@ expect {
   }
   eof { exit 55 }
 }
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { mark connected_idle_after_network_approval }
-  timeout {
-    send "\\003"
-    exit 56
-  }
-  eof { exit 57 }
-}
+expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_network_approval 56 57
 send "\\003"
 expect {
   eof {
