@@ -4,8 +4,8 @@
 import { Flags } from "@oclif/core";
 
 import { InferenceSetError, runInferenceSet } from "../../lib/actions/inference-set";
-import { CLI_NAME } from "../../lib/cli/branding";
 import { nonEmptyFlag } from "../../lib/cli/flag-helpers";
+import { inferenceSetRequiredFlagsFailureLines } from "../../lib/cli/inference-set-help";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 // Global inference:set is paired with the sandbox-first sandbox:inference:set
@@ -73,15 +73,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
 
   private printRequiredFlags(): void {
     this.failWithLines(
-      [
-        `  ${CLI_NAME} inference set requires --provider and --model.`,
-        "",
-        `  Run: ${CLI_NAME} inference set --provider <provider> --model <model> [--sandbox <name>]`,
-        "  NemoClaw must perform this operation so it can protect every sandbox sharing the target gateway.",
-        "",
-        `  Run '${CLI_NAME} help' for NemoClaw commands.`,
-      ],
-      1,
+      inferenceSetRequiredFlagsFailureLines("inference set", " [--sandbox <name>]"),
     );
   }
 }
