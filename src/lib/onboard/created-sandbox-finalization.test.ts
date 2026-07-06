@@ -290,7 +290,8 @@ describe("created DCode sandbox finalization", () => {
     ).toThrow("exit 1");
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
-    expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw dcode rebuild"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('openshell sandbox delete "dcode"'));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
   it("keeps custom-image restores outside the managed config merge (#6311)", () => {

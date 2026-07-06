@@ -71,9 +71,9 @@ export function finalizeCreatedSandbox(
       deps.error(
         `  DCode live model/provider validation failed for sandbox '${options.sandboxName}'. The sandbox still exists, but its live route is unverified and registry metadata was not updated.`,
       );
-      deps.error(
-        `  To recover, run \`nemoclaw ${options.sandboxName} rebuild\` or repair /sandbox/.deepagents/config.toml before retrying.`,
-      );
+      deps.error("  Remove the unregistered sandbox before retrying:");
+      deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
+      deps.error("  Then rerun the original `nemoclaw onboard` command.");
       if (options.restoreBackupPath) {
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);
       }
