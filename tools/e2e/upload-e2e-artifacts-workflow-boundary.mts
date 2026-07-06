@@ -35,7 +35,7 @@ const MCP_SCANNED_UPLOAD_CONDITION =
   "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}";
 const TARGET_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const EXPECTED_UPLOAD_JOB_COUNT = 73;
-const EXPECTED_DEFAULT_CALLER_COUNT = 62;
+const EXPECTED_DEFAULT_CALLER_COUNT = 61;
 
 type WorkflowRecord = Record<string, unknown>;
 type WorkflowStep = WorkflowRecord & {
@@ -92,6 +92,13 @@ const EXPLICIT_UPLOAD_CONTRACTS = new Map<string, ExplicitUploadContract>([
     {
       name: "e2e-hermes-inference-switch-${{ matrix.mode }}",
       path: "e2e-artifacts/live/hermes-inference-switch/${{ matrix.mode }}/",
+    },
+  ],
+  [
+    "hermes-gpu-startup",
+    {
+      name: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
+      path: "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/",
     },
   ],
   [

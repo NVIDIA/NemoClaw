@@ -56,7 +56,10 @@ type ResolvedRollbackDeps = {
 };
 
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
+  // spawnSync reports `status: null` when the process times out or cannot be
+  // spawned. Cleanup and rollback are safety gates, so only an explicit zero
+  // exit status is success.
+  return result?.status === 0;
 }
 
 function resolveRollbackDeps(deps: DockerGpuPatchDeps): ResolvedRollbackDeps {

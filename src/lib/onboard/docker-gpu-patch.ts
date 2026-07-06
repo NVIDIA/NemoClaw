@@ -20,6 +20,11 @@ import {
   rollbackDockerGpuPatchOnRecreateFailure,
 } from "./docker-gpu-patch-finalize";
 import {
+  initialDockerGpuRoute,
+  resolveDockerGpuRoutePlan,
+  type SelectedDockerGpuRoute,
+} from "./docker-gpu-route";
+import {
   DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
   DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
   type DockerGpuSupervisorReconnectDeps,
@@ -369,7 +374,7 @@ function resultText(result: DockerRunResult | null | undefined): string {
 }
 
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
+  return result?.status === 0;
 }
 
 function sanitizePathPart(value: string): string {
@@ -548,34 +553,21 @@ export function shouldApplyDockerGpuPatch(
     log?: (message: string) => void;
   } = {},
 ): boolean {
-  const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const dockerDesktopWsl = options.dockerDesktopWsl === true;
   const dockerDriverGateway =
     options.dockerDriverGateway ?? (platform === "linux" || dockerDesktopWsl);
-  if (
-    !(config.sandboxGpuEnabled && (platform === "linux" || dockerDesktopWsl) && dockerDriverGateway)
-  ) {
-    return false;
-  }
-  const control = String(env.NEMOCLAW_DOCKER_GPU_PATCH || "")
-    .trim()
-    .toLowerCase();
-  const optedOut = control === "0";
-  if (optedOut && dockerDesktopWsl) {
-    const log = options.log ?? ((message: string) => console.warn(message));
-    log(
-      "  NEMOCLAW_DOCKER_GPU_PATCH=0 ignored on Docker Desktop WSL: GPU passthrough on this runtime requires the patch.",
-    );
-    log("  Skip GPU passthrough entirely with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.");
-    return true;
-  }
-  if (dockerDesktopWsl) return true;
-  if (config.hostGpuPlatform === "jetson") return !optedOut;
-  // OpenShell 0.0.71 natively injects CDI devices for ordinary native Linux.
-  // Keep the container-swap path as an explicit compatibility control while
-  // WSL and Jetson retain the legacy defaults they still require.
-  return control === "1";
+  return (
+    initialDockerGpuRoute(
+      resolveDockerGpuRoutePlan(config, {
+        dockerDriverGateway,
+        dockerDesktopWsl,
+        env: options.env,
+        platform,
+        log: options.log,
+      }),
+    ) === "compatibility"
+  );
 }
 
 export function buildDockerGpuCloneRunOptions(
@@ -832,6 +824,80 @@ export function findOpenShellDockerSandboxContainerIds(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+export type OpenShellDockerSandboxContainerQuery =
+  | { ok: true; ids: string[] }
+  | { ok: false; ids: []; error: string };
+
+/**
+ * Status-bearing variant used when an empty container list is a safety proof.
+ * The older capture helper intentionally remains best-effort for diagnostics;
+ * fallback cleanup must distinguish Docker failure from zero labeled matches.
+ */
+export function queryOpenShellDockerSandboxContainers(
+  sandboxName: string,
+  deps: DockerGpuPatchDeps = {},
+): OpenShellDockerSandboxContainerQuery {
+  const d = depsWithDefaults(deps);
+  const result = d.dockerRun(
+    [
+      "ps",
+      "-a",
+      "--filter",
+      `label=${OPENSHELL_MANAGED_BY_LABEL}=${OPENSHELL_MANAGED_BY_VALUE}`,
+      "--filter",
+      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--format",
+      "{{.ID}}",
+    ],
+    { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+  );
+  if (Number(result.status ?? 1) !== 0) {
+    return {
+      ok: false,
+      ids: [],
+      error: resultText(result) || "docker ps did not complete successfully",
+    };
+  }
+  const ids = String(result.stdout ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return { ok: true, ids };
+}
+
+export type OpenShellDockerSandboxImageQuery =
+  | { ok: true; imageRef: string; containerId: string }
+  | { ok: false; error: string };
+
+/** Resolve the one labeled native container's reusable image before deletion. */
+export function queryOpenShellDockerSandboxImage(
+  sandboxName: string,
+  deps: DockerGpuPatchDeps = {},
+): OpenShellDockerSandboxImageQuery {
+  const containers = queryOpenShellDockerSandboxContainers(sandboxName, deps);
+  if (!containers.ok) return { ok: false, error: containers.error };
+  if (containers.ids.length !== 1) {
+    return {
+      ok: false,
+      error: `expected one labeled sandbox container, found ${containers.ids.length}`,
+    };
+  }
+  const d = depsWithDefaults(deps);
+  const containerId = containers.ids[0];
+  const inspect = d.dockerRun(
+    ["inspect", "--type", "container", "--format", "{{.Config.Image}}", containerId],
+    { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+  );
+  const imageRef = String(inspect.stdout ?? "").trim();
+  if (Number(inspect.status ?? 1) !== 0 || !imageRef) {
+    return {
+      ok: false,
+      error: resultText(inspect) || "docker inspect did not return a reusable image reference",
+    };
+  }
+  return { ok: true, imageRef, containerId };
 }
 
 function inspectDockerContainer(
@@ -1303,6 +1369,7 @@ export function printDockerGpuPatchFailureAndExit(
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
     selectedMode?: DockerGpuPatchMode | null;
+    selectedRoute?: SelectedDockerGpuRoute;
   },
 ): never {
   const context = deps.context || getDockerGpuPatchFailureContext(error) || null;
@@ -1316,7 +1383,7 @@ export function printDockerGpuPatchFailureAndExit(
   const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, context, selectedMode, snapshot, classification },
+    { error, context, selectedMode, selectedRoute: deps.selectedRoute, snapshot, classification },
     inspectDeps,
   );
   console.error("");
@@ -1329,9 +1396,7 @@ export function printDockerGpuPatchFailureAndExit(
     console.error(`  Diagnostics saved: ${diagnostics.dir}`);
   }
   console.error("  Escape hatches:");
-  console.error(
-    "    NEMOCLAW_DOCKER_GPU_PATCH=1  force the legacy Docker GPU container-swap path.",
-  );
+  console.error("    NEMOCLAW_DOCKER_GPU_PATCH=1  use only the Docker GPU compatibility path.");
   console.error(
     "    NEMOCLAW_DOCKER_GPU_PATCH=0  use native OpenShell GPU injection (ignored on Docker Desktop WSL; Jetson also defaults to the compatibility path).",
   );
@@ -1347,6 +1412,7 @@ export function printDockerGpuReadinessFailure(
   selectedMode: DockerGpuPatchMode | null,
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
+    selectedRoute?: SelectedDockerGpuRoute;
   },
 ): void {
   const context = deps.context ?? null;
@@ -1359,7 +1425,7 @@ export function printDockerGpuReadinessFailure(
   const classification = classifyDockerGpuPatchFailure(snapshot, selectedMode);
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { selectedMode, context, snapshot, classification },
+    { selectedMode, selectedRoute: deps.selectedRoute, context, snapshot, classification },
     inspectDeps,
   );
   printDockerGpuPatchClassificationLines(classification);
@@ -1375,6 +1441,7 @@ export function printDockerGpuProofFailure(
   selectedMode: DockerGpuPatchMode | null,
   deps: Pick<DockerGpuPatchDeps, "runCaptureOpenshell" | "dockerCapture"> & {
     context?: DockerGpuPatchFailureContext | null;
+    selectedRoute?: SelectedDockerGpuRoute;
   },
 ): void {
   const context = deps.context ?? null;
@@ -1389,7 +1456,7 @@ export function printDockerGpuProofFailure(
   });
   const diagnostics = collectDockerGpuPatchDiagnostics(
     sandboxName,
-    { error, selectedMode, context, snapshot, classification },
+    { error, selectedMode, selectedRoute: deps.selectedRoute, context, snapshot, classification },
     inspectDeps,
   );
   printDockerGpuPatchClassificationLines(classification);
@@ -1707,6 +1774,7 @@ export function collectDockerGpuPatchDiagnostics(
     selectedMode?: DockerGpuPatchMode | null;
     snapshot?: DockerGpuPatchSandboxSnapshot | null;
     classification?: DockerGpuPatchFailureClassification | null;
+    selectedRoute?: SelectedDockerGpuRoute;
     additionalSensitiveValues?: readonly string[];
     dockerTopOutput?: string | null;
   } = {},
@@ -1772,12 +1840,14 @@ export function collectDockerGpuPatchDiagnostics(
         : "none",
   );
   const selectedMode = options.selectedMode || context?.selectedMode || null;
+  const selectedRoute = options.selectedRoute ?? (selectedMode ? "compatibility" : "none");
   const snapshot = options.snapshot ?? null;
   const classification = options.classification ?? null;
   const summaryLines = [
     `created_at=${now.toISOString()}`,
     `sandbox_name=${redactor.redactText(sandboxName)}`,
     `error=${errorText}`,
+    `selected_gpu_route=${selectedRoute}`,
     `selected_gpu_mode=${redactor.redactText(selectedMode?.label ?? "none")}`,
     `old_container_id=${redactor.redactText(context?.oldContainerId ?? "unknown")}`,
     `new_container_id=${redactor.redactText(context?.newContainerId ?? "unknown")}`,

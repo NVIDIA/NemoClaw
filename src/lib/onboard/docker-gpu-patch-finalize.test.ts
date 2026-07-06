@@ -104,4 +104,30 @@ describe("finalizeDockerGpuPatchBackup", () => {
       expect.objectContaining({ ignoreError: true }),
     );
   });
+
+  it("fails closed when backup removal has no exit status", () => {
+    const dockerRm = vi.fn((_name: string) => ({ status: null, stderr: "timed out" }));
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: true },
+      { dockerRm },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+  });
+
+  it.each([
+    ["rename", { dockerRename: vi.fn(() => ({ status: null })) }],
+    ["start", { dockerStart: vi.fn(() => ({ status: null })) }],
+  ])("fails closed when rollback %s has no exit status", (_stage, override) => {
+    const outcome = finalizeDockerGpuPatchBackup(
+      { result: deferredCreateResult(), supervisorReady: false },
+      {
+        dockerStop: vi.fn(() => ({ status: 0 })),
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        dockerRename: vi.fn(() => ({ status: 0 })),
+        dockerStart: vi.fn(() => ({ status: 0 })),
+        ...override,
+      },
+    );
+    expect(outcome).toEqual({ backupRemoved: false, rolledBack: false });
+  });
 });

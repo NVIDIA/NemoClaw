@@ -6,6 +6,8 @@ import type { MessagingTokenDef } from "./messaging-prep";
 import {
   materializeSandboxCreatePlan,
   prepareSandboxCreatePlan,
+  renderCompatibilityFallbackCreateArgs,
+  renderSandboxCreateArgsForGpuRoute,
   resolveSandboxCreateIntent,
   resolveSandboxCreateMessagingProviderRequests,
 } from "./sandbox-create-plan";
@@ -41,6 +43,44 @@ const channels = [
   },
 ];
 
+describe("renderCompatibilityFallbackCreateArgs", () => {
+  const nativeArgs = [
+    "--from",
+    "/tmp/build/Dockerfile",
+    "--name",
+    "alpha",
+    "--gpu",
+    "--gpu-device",
+    "nvidia.com/gpu=0",
+    "--provider",
+    "provider-a",
+  ];
+
+  it("reuses a proven image while preserving non-GPU arguments", () => {
+    expect(
+      renderCompatibilityFallbackCreateArgs(nativeArgs, {
+        imageRef: "openshell/sandbox-from:123",
+      }),
+    ).toEqual([
+      "--from",
+      "openshell/sandbox-from:123",
+      "--name",
+      "alpha",
+      "--provider",
+      "provider-a",
+    ]);
+  });
+
+  it("uses the unbuilt source only for an explicitly allowed pre-build rejection", () => {
+    expect(renderCompatibilityFallbackCreateArgs(nativeArgs, { allowUnbuiltSource: true })).toEqual(
+      ["--from", "/tmp/build/Dockerfile", "--name", "alpha", "--provider", "provider-a"],
+    );
+    expect(() => renderCompatibilityFallbackCreateArgs(nativeArgs, {})).toThrow(
+      /refusing to rebuild/i,
+    );
+  });
+});
+
 function expectCredentialBindingFailure({
   expectedMessage,
   materializedTokenDefs,
@@ -66,7 +106,7 @@ function expectCredentialBindingFailure({
     hermesToolGateways: [],
     sandboxGpuConfig,
     gpuCreateArgs: [],
-    useDockerGpuPatch: false,
+    gpuRoutePlan: "native-only",
     sandboxGpuLogMessage: null,
     policyTier: null,
   });
@@ -158,7 +198,7 @@ describe("resolveSandboxCreateIntent", () => {
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu", "--gpu-device", "nvidia.com/gpu=0"],
-      useDockerGpuPatch: false,
+      gpuRoutePlan: "native-only" as const,
       sandboxGpuLogMessage: "gpu note",
       agentName: "hermes",
       policyTier: "balanced",
@@ -215,7 +255,7 @@ describe("resolveSandboxCreateIntent", () => {
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
       gpuCreateArgs: ["--gpu"],
-      useDockerGpuPatch: false,
+      gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       agentName: "hermes",
       policyTier: "balanced",
@@ -385,7 +425,7 @@ describe("prepareSandboxCreatePlan", () => {
       agentName: "langchain-deepagents-code",
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-          useDockerGpuPatch: false,
+          gpuRoutePlan: "native-with-fallback" as const,
           logMessage: "gpu note",
         })),
         prepareInitialSandboxCreatePolicy,
@@ -399,7 +439,7 @@ describe("prepareSandboxCreatePlan", () => {
       ["telegram", "slack", "discord", "whatsapp"],
       {
         directGpu: true,
-        dockerGpuPatch: false,
+        dockerGpuPatch: true,
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
         policyTier: null,
@@ -432,6 +472,32 @@ describe("prepareSandboxCreatePlan", () => {
       "sandbox-existing-discord",
     ]);
     expect(result.sandboxGpuLogMessage).toBe("gpu note");
+    expect(result.gpuRoutePlan).toBe("native-with-fallback");
+    expect(renderSandboxCreateArgsForGpuRoute(result.createArgs, "native")).toEqual(
+      result.createArgs,
+    );
+    expect(renderSandboxCreateArgsForGpuRoute(result.createArgs, "compatibility")).toEqual([
+      "--from",
+      "/tmp/nemoclaw-build-1/Dockerfile",
+      "--name",
+      "sandbox",
+      "--policy",
+      "/tmp/policy.yaml",
+      "--memory",
+      "16g",
+      "--provider",
+      "sandbox-telegram-bridge",
+      "--provider",
+      "sandbox-slack-bridge",
+      "--provider",
+      "sandbox-existing-discord",
+      "--provider",
+      "sandbox-hermes-tools",
+    ]);
+    expect(prepareInitialSandboxCreatePolicy).toHaveBeenCalledTimes(1);
+    expect(appendResourceFlags).toHaveBeenCalledTimes(1);
+    expect(runProviderPreDeleteCleanup).toHaveBeenCalledTimes(1);
+    expect(upsertMessagingProviders).toHaveBeenCalledTimes(1);
     expect(events).toEqual(["resources", "cleanup", "upsert"]);
   });
 
@@ -469,7 +535,7 @@ describe("prepareSandboxCreatePlan", () => {
       getHermesToolGatewayProviderName: vi.fn(),
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-          useDockerGpuPatch: false,
+          gpuRoutePlan: "native-only" as const,
           logMessage: null,
         })),
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -493,7 +559,7 @@ describe("prepareSandboxCreatePlan", () => {
     expect(result.createArgs).not.toContain("sandbox-slack-bridge");
   });
 
-  it("does not activate slack from an app token alone and suppresses --gpu for Docker GPU patching", () => {
+  it("does not activate slack from an app token alone and carries a compatibility-only route", () => {
     const result = prepareSandboxCreatePlan({
       basePolicyPath: "/repo/policy.yaml",
       buildCtx: "/tmp/nemoclaw-build-1",
@@ -520,7 +586,7 @@ describe("prepareSandboxCreatePlan", () => {
       getHermesToolGatewayProviderName: vi.fn(),
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-          useDockerGpuPatch: true,
+          gpuRoutePlan: "compatibility-only" as const,
           logMessage: null,
         })),
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -532,7 +598,7 @@ describe("prepareSandboxCreatePlan", () => {
     });
 
     expect(result.activeMessagingChannels).toEqual([]);
-    expect(result.useDockerGpuPatch).toBe(true);
+    expect(result.gpuRoutePlan).toBe("compatibility-only");
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",
@@ -565,7 +631,7 @@ describe("prepareSandboxCreatePlan", () => {
       getHermesToolGatewayProviderName: vi.fn(),
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-          useDockerGpuPatch: false,
+          gpuRoutePlan: "native-only" as const,
           logMessage: null,
         })),
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({
@@ -611,7 +677,7 @@ describe("prepareSandboxCreatePlan", () => {
       getHermesToolGatewayProviderName: vi.fn(),
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
-          useDockerGpuPatch: false,
+          gpuRoutePlan: "native-only" as const,
           logMessage: null,
         })),
         prepareInitialSandboxCreatePolicy: vi.fn(() => ({

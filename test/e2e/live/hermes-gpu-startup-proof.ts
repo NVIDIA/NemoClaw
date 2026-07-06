@@ -20,7 +20,7 @@ export const HERMES_GPU_EXTRA_PLACEHOLDER_KEYS = [
 
 interface HermesGpuStartupProofOptions {
   env: NodeJS.ProcessEnv;
-  gpuRoute: "legacy-patch" | "native-openshell";
+  gpuRoute: "compatibility-fallback" | "compatibility-only" | "native-success";
   host: HostCliClient;
   install: Pick<ShellProbeResult, "stdout" | "stderr">;
   sandbox: SandboxClient;
@@ -37,24 +37,38 @@ export async function assertHermesGpuStartupProof({
   sandboxName,
   status,
 }: HermesGpuStartupProofOptions): Promise<void> {
-  expect(resultText(install)).toContain("Starting OpenShell Docker-driver gateway...");
-  expect(resultText(install)).toContain("Docker-driver gateway is healthy");
-  expect(resultText(install)).not.toContain("Reusing healthy NemoClaw gateway.");
-  expect(resultText(install)).not.toContain("Reusing existing Docker-driver gateway");
-  expect(resultText(install)).not.toContain("[reuse] Skipping gateway (running)");
-  if (gpuRoute === "legacy-patch") {
-    expect(resultText(install)).toContain(
+  const installText = resultText(install);
+  expect(installText).toContain("Starting OpenShell Docker-driver gateway...");
+  expect(installText).toContain("Docker-driver gateway is healthy");
+  expect(installText).not.toContain("Reusing healthy NemoClaw gateway.");
+  expect(installText).not.toContain("Reusing existing Docker-driver gateway");
+  expect(installText).not.toContain("[reuse] Skipping gateway (running)");
+  if (gpuRoute === "compatibility-only") {
+    expect(installText).toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(resultText(install)).toContain("Docker GPU mode selected:");
+    expect(installText).toContain("Docker GPU mode selected:");
+    expect(installText).not.toContain("retrying once with the compatibility path");
+  } else if (gpuRoute === "compatibility-fallback") {
+    expect(installText).toContain(
+      "Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.",
+    );
+    expect(installText).toContain(
+      "Native OpenShell GPU onboarding did not complete; retrying once with the compatibility path...",
+    );
+    expect(installText).toContain(
+      "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
+    );
+    expect(installText).toContain("Docker GPU mode selected:");
   } else {
-    expect(resultText(install)).toContain(
-      "Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.",
+    expect(installText).toContain(
+      "Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.",
     );
-    expect(resultText(install)).not.toContain(
+    expect(installText).not.toContain(
       "Recreating OpenShell Docker sandbox container with NVIDIA GPU access",
     );
-    expect(resultText(install)).not.toContain("Docker GPU mode selected:");
+    expect(installText).not.toContain("Docker GPU mode selected:");
+    expect(installText).not.toContain("retrying once with the compatibility path");
   }
   const plainStatus = stripAnsi(resultText(status));
   expect(plainStatus).toMatch(/Phase:\s*Ready/i);
@@ -217,7 +231,7 @@ raise SystemExit(1)`,
     entrypoint: ["/opt/openshell/bin/openshell-sandbox"],
     has_openshell_sandbox_command: true,
   });
-  if (gpuRoute === "legacy-patch") {
+  if (gpuRoute !== "native-success") {
     expect(commandBoundary.command_ends_with_nemoclaw_start).toBe(true);
     expect(commandBoundary.command_is_sleep_infinity).toBe(false);
   } else {
@@ -254,10 +268,10 @@ raise SystemExit(1)`,
     },
   );
   expect(allContainers.exitCode, resultText(allContainers)).toBe(0);
-  expect(
-    allContainers.stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean),
-  ).toHaveLength(1);
+  const allContainerNames = allContainers.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  expect(allContainerNames).toHaveLength(1);
+  expect(allContainerNames.filter((name) => name.includes("-nemoclaw-gpu-backup-"))).toEqual([]);
 }

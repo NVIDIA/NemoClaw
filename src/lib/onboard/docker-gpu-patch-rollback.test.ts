@@ -106,7 +106,10 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     ).toBe(false);
   });
 
-  it("restores the pre-patch sandbox when the recreate run fails before the supervisor wait (#5512)", () => {
+  it.each([
+    1,
+    null,
+  ])("restores the pre-patch sandbox when the recreate run returns status %s before the supervisor wait (#5512)", (runStatus) => {
     const captureResponses: Record<string, string> = {
       ps: "old-container-id\n",
       inspect: JSON.stringify([inspectFixture()]),
@@ -117,7 +120,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     );
     const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
     // The recreate `docker run` fails after the original was renamed aside.
-    const dockerRunDetached = vi.fn(() => ({ status: 1, stderr: "docker: boom" }));
+    const dockerRunDetached = vi.fn(() => ({ status: runStatus, stderr: "docker: boom" }));
     const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
     const dockerStop = vi.fn(() => ({ status: 0 }));
     const dockerStart = vi.fn(() => ({ status: 0 }));
@@ -160,6 +163,34 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     expect(
       dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
+  });
+
+  it("does not start a replacement when the original-container rename has no exit status", () => {
+    const captureResponses: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspectFixture()]),
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => captureResponses[String(args[0])] ?? "",
+    );
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        { sandboxName: "alpha", timeoutSecs: 1 },
+        {
+          dockerCapture,
+          dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
+          dockerRunDetached,
+          dockerRename: vi.fn(() => ({ status: null, stderr: "timed out" })),
+          dockerStop: vi.fn(() => ({ status: 0 })),
+          dockerRm: vi.fn(() => ({ status: 0 })),
+          sleep: vi.fn(),
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      ),
+    ).toThrow(/Could not move original sandbox container aside/);
+    expect(dockerRunDetached).not.toHaveBeenCalled();
   });
 
   it("reports early recreate rollback failure when backup rename back fails (#5512)", () => {

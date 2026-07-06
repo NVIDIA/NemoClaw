@@ -146,7 +146,9 @@ describe("prepareSandboxDockerfilePatch", () => {
       sandboxGpuConfig,
       {
         dockerDriverGateway: true,
+        gatewayPort: undefined,
         log,
+        selectedRoute: "none",
       },
     );
     expect(patchStagedDockerfile).toHaveBeenCalledWith(

@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import {
   type HostCliClient,
+  outputContainsSandbox,
   resultText,
   type SandboxClient,
   validateSandboxName,
@@ -13,6 +15,12 @@ import {
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import {
+  createHermesGpuFallbackWrapper,
+  HERMES_GPU_FALLBACK_EVENTS,
+  readHermesGpuFallbackEvents,
+  resolveHermesGpuStartupScenario,
+} from "./hermes-gpu-startup-fallback.ts";
 import {
   assertHermesGpuStartupProof,
   HERMES_GPU_EXTRA_PLACEHOLDER_KEYS,
@@ -27,6 +35,8 @@ const GATEWAY_CLEANUP_SCRIPT = String.raw`
 command -v openshell >/dev/null 2>&1 || exit 0
 exec node -e 'const { cleanupGatewayAfterLastSandbox } = require(process.argv[1]); cleanupGatewayAfterLastSandbox(process.argv[2]);' "$@"
 `;
+const GATEWAY_ALREADY_ABSENT =
+  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-gpu-startup";
 const FAKE_API_KEY = "e2e-hermes-gpu-startup-key";
 const FAKE_MODEL = "test-model";
@@ -34,7 +44,10 @@ const EXTRA_PLACEHOLDER_TOKEN_A = "e2e-hermes-gpu-extra-telegram-token";
 const EXTRA_PLACEHOLDER_TOKEN_B = "e2e-hermes-gpu-extra-slack-token";
 const LIVE_TIMEOUT_MS = 70 * 60_000;
 const FORCE_LEGACY_GPU_PATCH = process.env.NEMOCLAW_DOCKER_GPU_PATCH === "1";
-const GPU_ROUTE = FORCE_LEGACY_GPU_PATCH ? "legacy-patch" : "native-openshell";
+const { route: GPU_ROUTE, scenario: GPU_STARTUP_SCENARIO } = resolveHermesGpuStartupScenario(
+  process.env.E2E_HERMES_GPU_STARTUP_SCENARIO,
+  FORCE_LEGACY_GPU_PATCH,
+);
 validateSandboxName(SANDBOX_NAME);
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -66,7 +79,7 @@ async function cleanupHermes(
   label: string,
 ): Promise<void> {
   await bestEffort(() =>
-    host.nemoclaw([SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
+    host.nemoclaw([SANDBOX_NAME, "destroy", "--yes"], {
       artifactName: `${label}-nemoclaw-destroy`,
       env: commandEnv(),
       timeoutMs: 120_000,
@@ -79,6 +92,25 @@ async function cleanupHermes(
       timeoutMs: 60_000,
     }),
   );
+  // Check the OpenShell control-plane view before intentionally removing its
+  // gateway. A clean runner can have the CLI installed but no active gateway;
+  // that explicit state is also valid absence evidence.
+  const sandboxList = await host.command(
+    "bash",
+    [
+      "-lc",
+      "if command -v openshell >/dev/null 2>&1; then openshell sandbox list; else printf '%s\\n' openshell-unavailable; fi",
+    ],
+    {
+      artifactName: `${label}-openshell-sandbox-absent`,
+      env: commandEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  sandboxList.exitCode === 0
+    ? expect(outputContainsSandbox(sandboxList, SANDBOX_NAME)).toBe(false)
+    : expect(resultText(sandboxList)).toMatch(GATEWAY_ALREADY_ABSENT);
+
   const runtimeCleanup = await host.command(
     "bash",
     ["-c", GATEWAY_CLEANUP_SCRIPT, "gateway-runtime-cleanup", GATEWAY_CLEANUP_MODULE, "nemoclaw"],
@@ -119,6 +151,34 @@ async function cleanupHermes(
     portAvailable.exitCode,
     `gateway port ${gatewayPort} remains occupied after cleanup: ${resultText(portAvailable)}`,
   ).toBe(0);
+
+  const labeledContainers = await host.command(
+    "docker",
+    ["ps", "-aq", "--filter", `label=openshell.ai/sandbox-name=${SANDBOX_NAME}`],
+    {
+      artifactName: `${label}-labeled-containers-absent`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(labeledContainers.exitCode, resultText(labeledContainers)).toBe(0);
+  expect(labeledContainers.stdout.trim()).toBe("");
+
+  const namedContainers = await host.command(
+    "docker",
+    ["ps", "-a", "--filter", `name=${SANDBOX_NAME}`, "--format", "{{.Names}}"],
+    {
+      artifactName: `${label}-backup-containers-absent`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  expect(namedContainers.exitCode, resultText(namedContainers)).toBe(0);
+  expect(
+    namedContainers.stdout
+      .split(/\r?\n/u)
+      .filter((name) => name.includes(`${SANDBOX_NAME}-nemoclaw-gpu-backup-`)),
+  ).toEqual([]);
 }
 
 async function captureFailedGpuContainer(
@@ -172,7 +232,7 @@ done`;
 }
 
 test.skipIf(!shouldRunLiveE2E())(
-  "hermes-gpu-startup: selected OpenShell GPU route reaches stable Ready state",
+  `hermes-gpu-startup: ${GPU_STARTUP_SCENARIO} OpenShell GPU route reaches stable Ready state`,
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox }) => {
     await artifacts.writeJson("target.json", {
@@ -182,6 +242,7 @@ test.skipIf(!shouldRunLiveE2E())(
       sandboxName: SANDBOX_NAME,
       inference: "hermetic fake OpenAI-compatible endpoint",
       gpuRoute: GPU_ROUTE,
+      scenario: GPU_STARTUP_SCENARIO,
     });
 
     await cleanupHermes(host, sandbox, "pre-cleanup");
@@ -226,14 +287,46 @@ test.skipIf(!shouldRunLiveE2E())(
       await artifacts.writeJson("fake-openai-compatible-requests.json", fake.requests());
       await fake.close();
     });
-    cleanup.add(`destroy Hermes sandbox ${SANDBOX_NAME}`, async () => {
-      await cleanupHermes(host, sandbox, "cleanup");
-    });
+    let cleanTeardownVerified = false;
+    cleanup.add(`destroy Hermes sandbox ${SANDBOX_NAME}`, () =>
+      cleanTeardownVerified ? Promise.resolve() : cleanupHermes(host, sandbox, "cleanup"),
+    );
     await artifacts.writeJson("fake-openai-compatible.json", {
       baseUrl: fake.baseUrl,
       model: FAKE_MODEL,
       publicHost: hostAddress,
     });
+
+    const prepareFallbackWrapper = async () => {
+      const openshellInstall = await host.command(
+        "bash",
+        [path.join(REPO_ROOT, "scripts/install-openshell.sh")],
+        {
+          artifactName: "phase-2-install-openshell-for-gpu-fallback-wrapper",
+          cwd: REPO_ROOT,
+          env: commandEnv(),
+          timeoutMs: 5 * 60_000,
+        },
+      );
+      expect(openshellInstall.exitCode, resultText(openshellInstall)).toBe(0);
+      const realOpenshell = await host.command("bash", ["-lc", "command -v openshell"], {
+        artifactName: "phase-2-resolve-real-openshell-for-gpu-fallback-wrapper",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      });
+      expect(realOpenshell.exitCode, resultText(realOpenshell)).toBe(0);
+      const wrapper = createHermesGpuFallbackWrapper(realOpenshell.stdout.trim());
+      cleanup.add("remove Hermes GPU fallback wrapper", () =>
+        fs.rmSync(wrapper.rootDir, { recursive: true, force: true }),
+      );
+      await artifacts.writeJson("gpu-fallback-wrapper.json", {
+        behavior: "reject exactly the first sandbox create containing --gpu, then delegate",
+        eventVocabulary: HERMES_GPU_FALLBACK_EVENTS,
+      });
+      return wrapper;
+    };
+    const fallbackWrapper =
+      GPU_STARTUP_SCENARIO === "fallback" ? await prepareFallbackWrapper() : undefined;
 
     const env = commandEnv({
       COMPATIBLE_API_KEY: FAKE_API_KEY,
@@ -244,6 +337,7 @@ test.skipIf(!shouldRunLiveE2E())(
       NEMOCLAW_POLICY_MODE: "suggested",
       NEMOCLAW_PREFERRED_API: "openai-completions",
       NEMOCLAW_PROVIDER: "custom",
+      ...(fallbackWrapper?.componentEnv ?? {}),
       [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[0]]: EXTRA_PLACEHOLDER_TOKEN_A,
       [HERMES_GPU_EXTRA_PLACEHOLDER_KEYS[1]]: EXTRA_PLACEHOLDER_TOKEN_B,
     });
@@ -260,6 +354,20 @@ test.skipIf(!shouldRunLiveE2E())(
       ? captureFailedGpuContainer(host, preRollbackDiagnosticsDir)
       : Promise.resolve());
     expect(install.exitCode, resultText(install)).toBe(0);
+
+    const verifyFallback = async (wrapper: ReturnType<typeof createHermesGpuFallbackWrapper>) => {
+      const fallbackEvents = readHermesGpuFallbackEvents(wrapper.eventsPath);
+      await artifacts.writeJson("gpu-fallback-events.json", fallbackEvents);
+      expect(fallbackEvents).toEqual([
+        HERMES_GPU_FALLBACK_EVENTS.rejectNativeCreate,
+        HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
+      ]);
+      expect(resultText(install)).toContain("Native GPU diagnostics saved:");
+      expect(resultText(install)).toContain(
+        "Native OpenShell GPU onboarding did not complete; retrying once with the compatibility path...",
+      );
+    };
+    await (fallbackWrapper ? verifyFallback(fallbackWrapper) : Promise.resolve());
 
     const status = await host.command("nemoclaw", [SANDBOX_NAME, "status"], {
       artifactName: "phase-3-nemoclaw-status",
@@ -297,10 +405,20 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_A);
     expect(JSON.stringify(fakeRequests)).not.toContain(EXTRA_PLACEHOLDER_TOKEN_B);
 
+    await cleanupHermes(host, sandbox, "phase-5-clean-teardown");
+    cleanTeardownVerified = true;
+
     await artifacts.writeJson("target-result.json", {
       id: "hermes-gpu-startup",
+      gpuRoute: GPU_ROUTE,
+      scenario: GPU_STARTUP_SCENARIO,
       assertions: {
         selectedGpuRouteVerified: true,
+        ...(GPU_ROUTE === "compatibility-fallback"
+          ? { automaticCompatibilityFallbackVerified: true }
+          : GPU_ROUTE === "native-success"
+            ? { nativeGpuRouteVerified: true }
+            : { compatibilityOnlyRouteVerified: true }),
         openshellReady: true,
         sandboxCudaVerified: true,
         extraPlaceholderCommandRoundTripValid: true,
@@ -309,6 +427,7 @@ test.skipIf(!shouldRunLiveE2E())(
         supervisorTopologyValid: true,
         authenticatedInferenceRequestVerified: true,
         placeholderTokensAbsentFromInference: true,
+        cleanTeardownVerified: true,
       },
     });
   },

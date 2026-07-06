@@ -5,6 +5,11 @@ import {
   listMessagingCredentialMetadata,
   type MessagingCredentialMetadata,
 } from "../messaging/channels";
+import {
+  type DockerGpuRoutePlan,
+  type SelectedDockerGpuRoute,
+  supportsDockerGpuCompatibility,
+} from "./docker-gpu-route";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingTokenDef } from "./messaging-prep";
 import type { MessagingChannel } from "./messaging-state";
@@ -91,9 +96,53 @@ export type SandboxCreatePlan = {
   initialSandboxPolicy: InitialSandboxPolicy;
   createArgs: string[];
   messagingProviders: string[];
-  useDockerGpuPatch: boolean;
+  gpuRoutePlan: DockerGpuRoutePlan;
   sandboxGpuLogMessage: string | null;
 };
+
+/** Render a route-specific argv without repeating policy/provider materialization. */
+export function renderSandboxCreateArgsForGpuRoute(
+  createArgs: readonly string[],
+  route: SelectedDockerGpuRoute,
+): string[] {
+  if (route !== "compatibility") return [...createArgs];
+  const rendered: string[] = [];
+  for (let index = 0; index < createArgs.length; index += 1) {
+    const arg = createArgs[index];
+    if (arg === "--gpu") continue;
+    if (arg === "--gpu-device") {
+      index += 1;
+      continue;
+    }
+    rendered.push(arg);
+  }
+  return rendered;
+}
+
+export function replaceSandboxCreateImage(
+  createArgs: readonly string[],
+  imageRef: string,
+): string[] {
+  const rendered = [...createArgs];
+  const fromIndex = rendered.indexOf("--from");
+  if (fromIndex < 0 || !rendered[fromIndex + 1]) {
+    throw new Error("Cannot reuse sandbox image; create arguments do not contain --from.");
+  }
+  rendered[fromIndex + 1] = imageRef;
+  return rendered;
+}
+
+export function renderCompatibilityFallbackCreateArgs(
+  createArgs: readonly string[],
+  options: { imageRef?: string | null; allowUnbuiltSource?: boolean },
+): string[] {
+  const compatibilityArgs = renderSandboxCreateArgsForGpuRoute(createArgs, "compatibility");
+  if (options.imageRef) return replaceSandboxCreateImage(compatibilityArgs, options.imageRef);
+  if (options.allowUnbuiltSource) return compatibilityArgs;
+  throw new Error(
+    "Native GPU fallback cannot reuse the completed sandbox image; refusing to rebuild it.",
+  );
+}
 
 function getDockerGpuSandboxCreatePlan(
   ...args: Parameters<ResolveDockerGpuSandboxCreatePlan>
@@ -239,7 +288,7 @@ export function resolveSandboxCreateIntent({
   hermesToolGateways,
   sandboxGpuConfig,
   gpuCreateArgs,
-  useDockerGpuPatch,
+  gpuRoutePlan,
   sandboxGpuLogMessage,
   agentName,
   policyTier,
@@ -275,14 +324,14 @@ export function resolveSandboxCreateIntent({
       activeMessagingChannels: [...activeMessagingChannels],
       options: {
         directGpu: sandboxGpuConfig.sandboxGpuEnabled,
-        dockerGpuPatch: useDockerGpuPatch,
+        dockerGpuPatch: supportsDockerGpuCompatibility(gpuRoutePlan),
         additionalPresets: [...hermesToolGateways],
         ...(agentName !== undefined ? { agentName } : {}),
         policyTier,
       },
     },
     gpuCreateArgs: [...gpuCreateArgs],
-    useDockerGpuPatch,
+    gpuRoutePlan,
     sandboxGpuLogMessage,
     disabledChannelNames: [...disabledChannelNames],
   };
@@ -392,7 +441,7 @@ export function materializeSandboxCreatePlan({
     initialSandboxPolicy,
     createArgs,
     messagingProviders,
-    useDockerGpuPatch: intent.useDockerGpuPatch,
+    gpuRoutePlan: intent.gpuRoutePlan,
     sandboxGpuLogMessage: intent.sandboxGpuLogMessage,
   };
 }
@@ -420,14 +469,11 @@ export function prepareSandboxCreatePlan({
   policyTier = readPolicyTierEnv(),
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
-  const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } = (
+  const { gpuRoutePlan, logMessage: sandboxGpuLogMessage } = (
     deps.resolveDockerGpuSandboxCreatePlan ?? getDockerGpuSandboxCreatePlan
   )(sandboxGpuConfig, { dockerDriverGateway });
   const gpuCreateArgs = (deps.buildSandboxGpuCreateArgs ?? buildSandboxGpuCreateArgs)(
     sandboxGpuConfig,
-    {
-      suppressGpuFlag: useDockerGpuPatch,
-    },
   );
   const messagingProviderRequests = resolveSandboxCreateMessagingProviderRequests(
     messagingTokenDefs,
@@ -447,7 +493,7 @@ export function prepareSandboxCreatePlan({
     hermesToolGateways,
     sandboxGpuConfig,
     gpuCreateArgs,
-    useDockerGpuPatch,
+    gpuRoutePlan,
     sandboxGpuLogMessage,
     agentName,
     policyTier,

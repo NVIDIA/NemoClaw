@@ -11,6 +11,7 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "hermes-gpu-startup";
 const RUN_STEP_NAME = "Run Hermes GPU startup live Vitest test";
+const UPLOAD_STEP_NAME = "Upload Hermes GPU startup artifacts";
 const DOCKER_AUTH_STEP_NAME = "Authenticate to Docker Hub";
 const HOSTED_PROVIDER_ENV_NAMES = [
   "COMPATIBLE_API_KEY",
@@ -61,16 +62,32 @@ export function validateHermesGpuStartupWorkflowBoundary(
   if (job["timeout-minutes"] !== 75) {
     errors.push(`${JOB_NAME} job must keep the 75 minute timeout`);
   }
+  const strategy = asRecord(job.strategy);
+  const matrix = asRecord(strategy.matrix);
+  if (strategy["fail-fast"] !== false) {
+    errors.push(`${JOB_NAME} strategy must keep fail-fast disabled`);
+  }
+  if (
+    !Array.isArray(matrix.scenario) ||
+    matrix.scenario.length !== 2 ||
+    matrix.scenario[0] !== "native" ||
+    matrix.scenario[1] !== "fallback"
+  ) {
+    errors.push(`${JOB_NAME} matrix must run exactly the native and fallback scenarios`);
+  }
 
   const jobEnv = asRecord(job.env);
   const requiredEnv = {
     E2E_DEFAULT_ENABLED: "0",
+    E2E_ARTIFACT_DIR:
+      "${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
+    E2E_HERMES_GPU_STARTUP_SCENARIO: "${{ matrix.scenario }}",
     E2E_JOB: "1",
     E2E_TARGET_ID: JOB_NAME,
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_RUN_LIVE_E2E: "1",
     NEMOCLAW_SANDBOX_GPU: "1",
-    NEMOCLAW_SANDBOX_NAME: "e2e-hermes-gpu-startup",
+    NEMOCLAW_SANDBOX_NAME: "e2e-hermes-gpu-startup-${{ matrix.scenario }}",
   } as const;
   for (const [name, expected] of Object.entries(requiredEnv)) {
     if (jobEnv[name] !== expected) {
@@ -118,6 +135,19 @@ export function validateHermesGpuStartupWorkflowBoundary(
   }
   if (!runScript.includes("test/e2e/live/hermes-gpu-startup.test.ts")) {
     errors.push(`${JOB_NAME} step must run the dedicated Hermes GPU startup test`);
+  }
+
+  const uploadStep = steps.find((step) => step.name === UPLOAD_STEP_NAME);
+  if (!uploadStep) {
+    errors.push(`${JOB_NAME} job missing step: ${UPLOAD_STEP_NAME}`);
+  } else {
+    const uploadWith = asRecord(uploadStep.with);
+    if (uploadWith.name !== "e2e-hermes-gpu-startup-${{ matrix.scenario }}") {
+      errors.push(`${JOB_NAME} upload must use a scenario-specific artifact name`);
+    }
+    if (uploadWith.path !== "e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}/") {
+      errors.push(`${JOB_NAME} upload must use the scenario-specific artifact path`);
+    }
   }
 
   return errors;

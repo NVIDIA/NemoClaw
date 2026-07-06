@@ -22,6 +22,7 @@ import {
   formatDockerInspectNetworkSummary,
   getDockerGpuPatchNetworkMode,
   getDockerGpuSupervisorReconnectTimeoutSecs,
+  queryOpenShellDockerSandboxImage,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
@@ -132,6 +133,38 @@ describe("docker-gpu-patch", () => {
         { env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" }, platform: "linux", dockerDriverGateway: true },
       ),
     ).toBe(false);
+  });
+
+  it("resolves a reusable image only from one status-bearing labeled-container result", () => {
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args[0] === "ps"
+        ? { status: 0, stdout: "container-a\n", stderr: "" }
+        : { status: 0, stdout: "openshell/sandbox-from:123\n", stderr: "" },
+    );
+
+    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
+      ok: true,
+      imageRef: "openshell/sandbox-from:123",
+      containerId: "container-a",
+    });
+    expect(dockerRun).toHaveBeenLastCalledWith(
+      ["inspect", "--type", "container", "--format", "{{.Config.Image}}", "container-a"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("refuses an image reference when labeled-container state is ambiguous", () => {
+    const dockerRun = vi.fn(() => ({
+      status: 0,
+      stdout: "container-a\ncontainer-b\n",
+      stderr: "",
+    }));
+
+    expect(queryOpenShellDockerSandboxImage("alpha", { dockerRun })).toEqual({
+      ok: false,
+      error: "expected one labeled sandbox container, found 2",
+    });
+    expect(dockerRun).toHaveBeenCalledOnce();
   });
 
   it("builds clone args that preserve OpenShell labels and runtime settings", () => {
@@ -397,6 +430,24 @@ describe("docker-gpu-patch", () => {
       "gpus",
       "nvidia-runtime",
     ]);
+  });
+
+  it("does not accept a GPU mode probe with no exit status", () => {
+    const dockerRun = vi.fn(() => ({ status: null, stderr: "timed out" }));
+
+    const selected = selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc" },
+      {
+        dockerCapture: vi.fn(() => ""),
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      },
+    );
+
+    expect(selected.mode).toBeNull();
+    expect(selected.attempts).toHaveLength(2);
   });
 
   it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {

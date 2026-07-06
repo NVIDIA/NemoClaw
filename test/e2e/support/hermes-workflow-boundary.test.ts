@@ -16,6 +16,10 @@ describe("Hermes E2E workflow boundary", () => {
     const gpuJob = workflow.jobs["hermes-gpu-startup"];
     gpuJob["runs-on"] = "ubuntu-latest";
     gpuJob.if = "${{ always() }}";
+    gpuJob.strategy["fail-fast"] = true;
+    gpuJob.strategy.matrix.scenario = ["native"];
+    gpuJob.env.E2E_ARTIFACT_DIR = "e2e-artifacts/shared";
+    gpuJob.env.E2E_HERMES_GPU_STARTUP_SCENARIO = "native";
     gpuJob.env.NEMOCLAW_DOCKER_GPU_PATCH = "1";
     gpuJob.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE = "1";
     gpuJob.env.UNRELATED_SECRET = "${{ github.ref == 'refs/heads/main' && secrets.FOO || '' }}";
@@ -29,10 +33,19 @@ describe("Hermes E2E workflow boundary", () => {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
     };
     gpuRun.run = "npx vitest run --project e2e-live test/e2e/live/hermes-e2e.test.ts";
+    const gpuUpload = gpuJob.steps.find(
+      (step: { name?: string }) => step.name === "Upload Hermes GPU startup artifacts",
+    );
+    gpuUpload.with = {
+      name: "e2e-hermes-gpu-startup",
+      path: "e2e-artifacts/live/hermes-gpu-startup/",
+    };
     gpuJob.steps.push({
       name: "Unexpected hosted test",
       run: "npx vitest run --project e2e-live test/e2e/live/hermes-e2e.test.ts",
-      with: { token: "${{ github.ref == 'refs/heads/main' && secrets.FOO || '' }}" },
+      with: {
+        token: "${{ github.ref == 'refs/heads/main' && secrets.FOO || '' }}",
+      },
     });
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -43,6 +56,10 @@ describe("Hermes E2E workflow boundary", () => {
           "hermes-e2e job must use the shared hosted-compatible model default",
           "hermes-gpu-startup job must run on the native RTX PRO 6000 GPU runner",
           "hermes-gpu-startup job must remain explicit-only behind generate-matrix",
+          "hermes-gpu-startup strategy must keep fail-fast disabled",
+          "hermes-gpu-startup matrix must run exactly the native and fallback scenarios",
+          "hermes-gpu-startup job must set E2E_ARTIFACT_DIR=${{ github.workspace }}/e2e-artifacts/live/hermes-gpu-startup/${{ matrix.scenario }}",
+          "hermes-gpu-startup job must set E2E_HERMES_GPU_STARTUP_SCENARIO=${{ matrix.scenario }}",
           "hermes-gpu-startup job must leave NEMOCLAW_DOCKER_GPU_PATCH unset to exercise auto routing",
           "hermes-gpu-startup job env must not expose NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
           "hermes-gpu-startup job env must not consume repository secrets",
@@ -55,6 +72,8 @@ describe("Hermes E2E workflow boundary", () => {
           "hermes-gpu-startup step 'Run Hermes GPU startup live Vitest test' must not run the hosted Hermes E2E test",
           "hermes-gpu-startup step 'Unexpected hosted test' must not run the hosted Hermes E2E test",
           "hermes-gpu-startup step 'Unexpected hosted test' must not consume repository secrets",
+          "hermes-gpu-startup upload must use a scenario-specific artifact name",
+          "hermes-gpu-startup upload must use the scenario-specific artifact path",
         ]),
       );
     } finally {

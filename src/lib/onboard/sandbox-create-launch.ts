@@ -71,6 +71,20 @@ export interface SandboxCreateLaunchWithPrebuild extends SandboxCreateLaunch {
   prebuild: SandboxPrebuildResult;
 }
 
+export function renderSandboxCreateCommand(
+  createArgs: readonly string[],
+  sandboxStartupCommand: readonly string[],
+  openshellShellCommand: OpenshellShellCommand,
+): string {
+  return `${openshellShellCommand([
+    "sandbox",
+    "create",
+    ...createArgs,
+    "--",
+    ...sandboxStartupCommand,
+  ])} 2>&1`;
+}
+
 export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): SandboxCreateLaunch {
   const env = input.env ?? process.env;
   const manageDashboard = input.manageDashboard ?? true;
@@ -132,13 +146,11 @@ export function prepareSandboxCreateLaunch(input: SandboxCreateLaunchInput): San
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
   const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
-  const createCommand = `${input.openshellShellCommand([
-    "sandbox",
-    "create",
-    ...input.createArgs,
-    "--",
-    ...sandboxStartupCommand,
-  ])} 2>&1`;
+  const createCommand = renderSandboxCreateCommand(
+    input.createArgs,
+    sandboxStartupCommand,
+    input.openshellShellCommand,
+  );
 
   return {
     createCommand,

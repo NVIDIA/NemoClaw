@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
 import {
   createDockerGpuSandboxCreatePatch,
+  type DockerGpuRoutePlan,
   resolveDockerGpuSandboxCreatePlan,
 } from "./docker-gpu-sandbox-create";
-import { buildSandboxGpuCreateArgs } from "./sandbox-gpu-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {
@@ -87,6 +87,40 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
     expect(finalizeBackup).toHaveBeenCalledWith({ result, supervisorReady: true }, deps);
     expect(capturePreRollbackDiagnostics).not.toHaveBeenCalled();
     expect(onPatchFailureExit).not.toHaveBeenCalled();
+  });
+
+  it("refuses compatibility success when the backup container cannot be removed", () => {
+    const deps = makeDeps();
+    const result = deferredCreateResult();
+    const onPatchFailureExit = vi.fn();
+    const patch = createDockerGpuSandboxCreatePatch({
+      enabled: true,
+      selectedRoute: "compatibility",
+      sandboxName: "alpha",
+      timeoutSecs: 60,
+      deps,
+      overrides: {
+        findContainerIds: vi.fn(() => ["existing-container"]),
+        recreatePatch: vi.fn(() => result),
+        waitForSupervisor: vi.fn(() => true),
+        finalizeBackup: vi.fn(() => ({ backupRemoved: false, rolledBack: false })),
+        onPatchFailureExit,
+      },
+    });
+
+    patch.maybeApplyDuringCreate();
+    patch.waitForSupervisorReconnectIfNeeded();
+
+    expect(onPatchFailureExit).toHaveBeenCalledOnce();
+    expect(onPatchFailureExit.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({ message: expect.stringContaining("backup container") }),
+    );
+    expect(onPatchFailureExit.mock.calls[0]?.[2]).toEqual(
+      expect.objectContaining({
+        selectedRoute: "compatibility",
+        context: expect.objectContaining({ backupContainerName: result.backupContainerName }),
+      }),
+    );
   });
 
   it("rolls back to the backup container and surfaces rolledBack=true diagnostics when supervisorReady=false", () => {
@@ -233,110 +267,82 @@ describe("createDockerGpuSandboxCreatePatch composed flow", () => {
   });
 });
 
-describe("resolveDockerGpuSandboxCreatePlan Docker Desktop WSL handling", () => {
-  it("keeps useDockerGpuPatch=true on Docker Desktop WSL even when NEMOCLAW_DOCKER_GPU_PATCH=0", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const plan = resolveDockerGpuSandboxCreatePlan(
-        { sandboxGpuEnabled: true },
-        {
-          dockerDriverGateway: true,
-          detectDockerDesktopWsl: () => true,
-        },
-      );
-      expect(plan.useDockerGpuPatch).toBe(true);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
+describe("resolveDockerGpuSandboxCreatePlan", () => {
+  type RouteCase = {
+    label: string;
+    gpuEnabled?: boolean;
+    hostGpuPlatform?: string;
+    control?: string;
+    dockerDriverGateway?: boolean;
+    dockerDesktopWsl?: boolean;
+    platform?: NodeJS.Platform;
+    expected: DockerGpuRoutePlan;
+  };
 
-  it("honors NEMOCLAW_DOCKER_GPU_PATCH=0 when not on Docker Desktop WSL", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const plan = resolveDockerGpuSandboxCreatePlan(
-        { sandboxGpuEnabled: true },
-        {
-          dockerDriverGateway: true,
-          detectDockerDesktopWsl: () => false,
-        },
-      );
-      expect(plan.useDockerGpuPatch).toBe(false);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
+  it.each<RouteCase>([
+    { label: "GPU disabled", gpuEnabled: false, expected: "none" },
+    { label: "ordinary Linux default", expected: "native-with-fallback" },
+    { label: "ordinary Linux auto", control: "auto", expected: "native-with-fallback" },
+    { label: "ordinary Linux opt-out", control: "0", expected: "native-only" },
+    { label: "ordinary Linux forced compatibility", control: "1", expected: "compatibility-only" },
+    { label: "ordinary Linux legacy nonzero", control: "2", expected: "compatibility-only" },
+    {
+      label: "non-Docker driver",
+      dockerDriverGateway: false,
+      expected: "native-only",
+    },
+    {
+      label: "non-Linux Docker driver",
+      platform: "darwin",
+      expected: "native-only",
+    },
+    {
+      label: "Docker Desktop WSL default",
+      dockerDesktopWsl: true,
+      expected: "compatibility-only",
+    },
+    {
+      label: "Docker Desktop WSL ignores opt-out",
+      dockerDesktopWsl: true,
+      control: "0",
+      expected: "compatibility-only",
+    },
+    {
+      label: "Jetson default",
+      hostGpuPlatform: "jetson",
+      expected: "compatibility-only",
+    },
+    {
+      label: "Jetson auto",
+      hostGpuPlatform: "jetson",
+      control: "auto",
+      expected: "compatibility-only",
+    },
+    {
+      label: "Jetson opt-out",
+      hostGpuPlatform: "jetson",
+      control: "0",
+      expected: "native-only",
+    },
+  ])("resolves $label to $expected", (testCase) => {
+    const log = vi.fn();
+    const result = resolveDockerGpuSandboxCreatePlan(
+      {
+        sandboxGpuEnabled: testCase.gpuEnabled ?? true,
+        hostGpuPlatform: testCase.hostGpuPlatform,
+      },
+      {
+        dockerDriverGateway: testCase.dockerDriverGateway ?? true,
+        dockerDesktopWsl: testCase.dockerDesktopWsl ?? false,
+        env: { NEMOCLAW_DOCKER_GPU_PATCH: testCase.control },
+        platform: testCase.platform ?? "linux",
+        log,
+      },
+    );
 
-  it("uses native OpenShell GPU by default and preserves the explicit legacy force", () => {
-    vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "");
-    try {
-      expect(
-        resolveDockerGpuSandboxCreatePlan(
-          { sandboxGpuEnabled: true },
-          {
-            dockerDriverGateway: true,
-            detectDockerDesktopWsl: () => false,
-            platform: "linux",
-          },
-        ).useDockerGpuPatch,
-      ).toBe(false);
-
-      vi.stubEnv("NEMOCLAW_DOCKER_GPU_PATCH", "1");
-      expect(
-        resolveDockerGpuSandboxCreatePlan(
-          { sandboxGpuEnabled: true },
-          {
-            dockerDriverGateway: true,
-            detectDockerDesktopWsl: () => false,
-            platform: "linux",
-          },
-        ).useDockerGpuPatch,
-      ).toBe(true);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
-  it("suppresses the openshell sandbox create --gpu flag on Docker Desktop WSL when the opt-out is ignored", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const sandboxGpuConfig = { sandboxGpuEnabled: true };
-      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
-        dockerDriverGateway: true,
-        detectDockerDesktopWsl: () => true,
-      });
-      expect(plan.useDockerGpuPatch).toBe(true);
-      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
-        suppressGpuFlag: plan.useDockerGpuPatch,
-      });
-      expect(createArgs).toEqual([]);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
-    }
-  });
-
-  it("emits --gpu when the patch is disabled outside Docker Desktop WSL", () => {
-    const originalEnv = process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-    process.env.NEMOCLAW_DOCKER_GPU_PATCH = "0";
-    try {
-      const sandboxGpuConfig = { sandboxGpuEnabled: true };
-      const plan = resolveDockerGpuSandboxCreatePlan(sandboxGpuConfig, {
-        dockerDriverGateway: true,
-        detectDockerDesktopWsl: () => false,
-      });
-      expect(plan.useDockerGpuPatch).toBe(false);
-      const createArgs = buildSandboxGpuCreateArgs(sandboxGpuConfig, {
-        suppressGpuFlag: plan.useDockerGpuPatch,
-      });
-      expect(createArgs).toEqual(["--gpu"]);
-    } finally {
-      if (originalEnv === undefined) delete process.env.NEMOCLAW_DOCKER_GPU_PATCH;
-      else process.env.NEMOCLAW_DOCKER_GPU_PATCH = originalEnv;
+    expect(result.gpuRoutePlan).toBe(testCase.expected);
+    if (testCase.dockerDesktopWsl && testCase.control === "0") {
+      expect(log).toHaveBeenCalledWith(expect.stringContaining("ignored on Docker Desktop WSL"));
     }
   });
 });

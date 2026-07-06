@@ -67,6 +67,21 @@ describe("docker-gpu-supervisor-reconnect Error-phase debounce", () => {
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
+  it("does not accept a supervisor exec with no exit status", () => {
+    const runOpenshell = vi.fn(() => ({ status: null, stderr: "timed out" }));
+    const runCaptureOpenshell = vi.fn(() => "alpha   Error   1s ago");
+
+    const ok = waitForOpenShellSupervisorReconnect("alpha", 600, {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep: vi.fn(),
+      errorPhaseDebouncePolls: 1,
+    });
+
+    expect(ok).toBe(false);
+    expect(runOpenshell).toHaveBeenCalledOnce();
+  });
+
   it("resets the consecutive-Error counter when the phase recovers", () => {
     // Error, Error, Provisioning (counter resets), Error, Error, Error
     // -> bails out on the 3rd post-recovery Error, not earlier.

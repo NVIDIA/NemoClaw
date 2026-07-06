@@ -1822,12 +1822,15 @@ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benc
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
 
-### Docker GPU patch failed during sandbox create
+### Automatic GPU fallback or compatibility patch failed
 
-On ordinary native Linux Docker-driver hosts with usable CDI, NemoClaw uses OpenShell native GPU injection by default.
-On Docker Desktop WSL and Jetson/Tegra, NemoClaw uses the compatibility patch by default, which creates the sandbox first and then recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
-Set `NEMOCLAW_DOCKER_GPU_PATCH=1` to force this compatibility path on ordinary native Linux for diagnostics or older host compatibility.
-If that compatibility patch fails, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
+On ordinary native Linux Docker-driver hosts, automatic GPU onboarding first uses native OpenShell GPU injection.
+If native sandbox creation, readiness, or GPU verification reports a hard failure, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-labeled Docker container remains, and retries exactly once through the compatibility path.
+If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
+Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
+On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly, which creates the sandbox first and then recreates the OpenShell-managed Docker container with NVIDIA GPU flags.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=1`, or another legacy nonzero value, to use only the compatibility path on ordinary native Linux for diagnostics or older host compatibility.
+If the compatibility attempt fails, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
 
 <Note>
 Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/task/<tid>/comm` permission case during this patch path.
@@ -1842,7 +1845,7 @@ openshell sandbox delete <sandbox-name>
 
 Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
-Set `NEMOCLAW_DOCKER_GPU_PATCH=0` to select native OpenShell GPU injection on ordinary native Linux or Jetson/Tegra.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=0` to use native OpenShell GPU injection without the compatibility fallback on ordinary native Linux or Jetson/Tegra.
 Use this override on Jetson/Tegra only for troubleshooting because it bypasses the compatibility path's `/dev/nvmap` and `/dev/nvhost-*` group propagation, so CUDA may not initialize.
 On Docker Desktop WSL, the patch is required for GPU passthrough.
 `NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.

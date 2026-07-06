@@ -77,7 +77,7 @@ function defaultSleep(seconds: number): void {
 }
 
 function isZeroStatus(result: DockerRunResult | null | undefined): boolean {
-  return Number(result?.status ?? 0) === 0;
+  return result?.status === 0;
 }
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
