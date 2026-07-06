@@ -10,7 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { patchStagedDockerfile } from "./dockerfile-patch";
 
@@ -43,15 +43,11 @@ function patchHermes(dockerfilePath: string): void {
   );
 }
 
-// Each test controls NEMOCLAW_CONTEXT_WINDOW by direct assignment; the hooks
-// always start and end from a cleared state (no branching), matching the
-// sibling dockerfile-patch test suites.
-beforeEach(() => {
-  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
-});
-
+// Each test controls NEMOCLAW_CONTEXT_WINDOW via vi.stubEnv, and afterEach
+// restores the real environment through vi.unstubAllEnvs (no manual delete,
+// no branching — keeps the file within the changed-test-file if-statement guard).
 afterEach(() => {
-  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+  vi.unstubAllEnvs();
   for (const dir of tmpRoots.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -64,20 +60,21 @@ describe("patchStagedDockerfile :: Hermes NEMOCLAW_CONTEXT_WINDOW (#6177)", () =
 
   it("bakes a probed/explicit context window into the staged Hermes Dockerfile", () => {
     const dockerfilePath = stageHermesDockerfile();
-    process.env.NEMOCLAW_CONTEXT_WINDOW = "65536";
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "65536");
     patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=65536");
   });
 
   it("leaves the empty default when no context window is configured", () => {
     const dockerfilePath = stageHermesDockerfile();
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "");
     patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
   });
 
   it("ignores a malformed context window and preserves auto-detect", () => {
     const dockerfilePath = stageHermesDockerfile();
-    process.env.NEMOCLAW_CONTEXT_WINDOW = "not-a-number";
+    vi.stubEnv("NEMOCLAW_CONTEXT_WINDOW", "not-a-number");
     patchHermes(dockerfilePath);
     expect(contextWindowArg(dockerfilePath)).toBe("ARG NEMOCLAW_CONTEXT_WINDOW=");
   });
