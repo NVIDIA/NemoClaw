@@ -25,12 +25,13 @@ function readProviderApi(config: ConfigObject, providerKey: string): InferenceAp
   if (!isConfigObject(models)) return null;
   const providers = models.providers;
   if (!isConfigObject(providers)) return null;
+  if (!Object.hasOwn(providers, providerKey)) return null;
   const provider = providers[providerKey];
   if (!isConfigObject(provider)) return null;
   return normalizeInferenceApi(provider.api);
 }
 
-function readOpenClawPrimaryProviderKey(config: ConfigObject): "anthropic" | "inference" | null {
+function readOpenClawPrimaryProviderKey(config: ConfigObject): string | null {
   const agents = config.agents;
   if (!isConfigObject(agents)) return null;
   const defaults = agents.defaults;
@@ -40,20 +41,17 @@ function readOpenClawPrimaryProviderKey(config: ConfigObject): "anthropic" | "in
   const primary = model.primary;
   if (typeof primary !== "string") return null;
 
-  if (primary.startsWith("anthropic/")) return "anthropic";
-  if (primary.startsWith("inference/")) return "inference";
-  return null;
+  const separator = primary.indexOf("/");
+  return separator > 0 ? primary.slice(0, separator) : null;
 }
 
-function readOpenClawPrimaryRouteApi(config: ConfigObject): InferenceApi | null {
+export function readOpenClawPrimaryRouteApi(config: ConfigObject): InferenceApi | null {
   const providerKey = readOpenClawPrimaryProviderKey(config);
-  if (providerKey === "anthropic") {
-    return "anthropic-messages";
-  }
-  if (providerKey === "inference") {
-    const api = readProviderApi(config, "inference");
-    return api === "openai-responses" ? "openai-responses" : "openai-completions";
-  }
+  if (!providerKey) return null;
+  const configuredApi = readProviderApi(config, providerKey);
+  if (configuredApi) return configuredApi;
+  if (providerKey === "anthropic") return "anthropic-messages";
+  if (providerKey === "inference" || providerKey === "openai") return "openai-completions";
   return null;
 }
 

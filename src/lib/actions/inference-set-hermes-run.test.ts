@@ -102,6 +102,7 @@ describe("runInferenceSet Hermes routing", () => {
       configChanged: true,
       sessionUpdated: true,
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("syncs Hermes compatible Anthropic switches to Anthropic Messages when changing provider families", async () => {
@@ -175,6 +176,7 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for Hermes switches", async () => {

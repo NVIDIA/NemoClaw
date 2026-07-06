@@ -832,7 +832,13 @@ exit "$rc"
   });
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
   const reply = parseOpenClawAgentText(raw);
-  if (result.exitCode === 0 && agentReplyContainsToken(reply, "PONG")) return "ok";
+  const fallbackOrPairing =
+    /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i.test(
+      [raw, warnings, result.stderr].filter(Boolean).join("\n"),
+    );
+  if (result.exitCode === 0 && agentReplyContainsToken(reply, "PONG") && !fallbackOrPairing) {
+    return "ok";
+  }
   if (result.exitCode === 124) {
     return {
       skipped: "OpenClaw agent turn timed out after switch; route/config checks already passed",
@@ -948,7 +954,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         "Docker is running and an authenticated compatible baseline endpoint is staged",
         "install.sh --non-interactive onboards an OpenClaw sandbox",
         "nemoclaw inference set switches the running sandbox route",
-        "OpenClaw gateway process stays running across the switch when its PID is observable",
+        "OpenClaw gateway is supervisor-restarted only when the inference API family changes",
         "OpenShell route points at the switched provider/model",
         "OpenClaw config and .config-hash reflect the switched inference API/model",
         "registry and onboard session record the switched provider/model",
@@ -1054,6 +1060,11 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         ? await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider)
         : null;
 
+    expect(baseline.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
+    const gatewayRestartExpected = SWITCH_MOCK_ANTHROPIC === "1";
+    expect(SWITCH_INFERENCE_API).toBe(
+      gatewayRestartExpected ? "anthropic-messages" : "openai-completions",
+    );
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runOpenClawInferenceSetWithRetry(
       host,
@@ -1062,14 +1073,22 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
       switchEndpointUrl,
     );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
+    expect(
+      resultText(switchResult).includes(
+        `Restarting the OpenClaw gateway in '${SANDBOX_NAME}' to apply the new inference API family`,
+      ),
+      `managed cross-family restart marker mismatch: ${resultText(switchResult)}`,
+    ).toBe(gatewayRestartExpected);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);
     const gatewayPidStable = pidBefore && pidAfter ? pidBefore === pidAfter : null;
     if (gatewayPidStable !== null) {
       expect(
         gatewayPidStable,
-        `OpenClaw gateway process changed (${pidBefore} -> ${pidAfter})`,
-      ).toBe(true);
+        gatewayRestartExpected
+          ? `OpenClaw gateway process did not change for API-family switch (${pidBefore} -> ${pidAfter})`
+          : `OpenClaw gateway process changed for same-family switch (${pidBefore} -> ${pidAfter})`,
+      ).toBe(!gatewayRestartExpected);
     }
 
     await assertOpenShellRoute(host, home);
@@ -1112,6 +1131,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         dockerRunning: docker.exitCode === 0,
         installCompleted: install.exitCode === 0,
         inferenceSetCompleted: switchResult.exitCode === 0,
+        gatewayRestartExpected,
         gatewayPidStable,
         routeChecked: true,
         configChecked: true,
