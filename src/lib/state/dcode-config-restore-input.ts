@@ -17,6 +17,7 @@ const DCODE_CONFIG_FILE = "config.toml";
  * user-owned settings. Until the agent manifest can express key-level
  * ownership, restore must merge this one canonical file through a local,
  * explicit key allowlist.
+ * TODO(#6334): remove this policy when manifests support key-level ownership.
  */
 function shouldMergeManagedDcodeConfigStateFile(
   agentType: string | null | undefined,
