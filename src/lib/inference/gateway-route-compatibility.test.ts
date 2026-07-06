@@ -237,9 +237,9 @@ describe("shared gateway inference route compatibility", () => {
 
   it("skips registry rows without a complete provider and model (#6315)", () => {
     expect(
-      check(route("anthropic-prod", "claude-new"), [
+      check(route("nvidia-prod", "nvidia/model-a"), [
         sandbox("empty", { provider: null, model: null }),
-        sandbox("provider-only", { provider: "nvidia-prod", model: null }),
+        sandbox("provider-only", { model: null }),
       ]),
     ).toEqual({ ok: true });
   });
