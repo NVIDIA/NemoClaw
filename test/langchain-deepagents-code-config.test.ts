@@ -82,6 +82,13 @@ describe("LangChain Deep Agents Code config generator", () => {
     expect(config).toContain('models = ["gpt-oss-120b"]');
   });
 
+  it("preserves colons that belong to the model ID", () => {
+    const config = runGenerator({ NEMOCLAW_MODEL: "minimax/minimax-m2.5:free" });
+
+    expect(config).toContain('default = "openai:minimax/minimax-m2.5:free"');
+    expect(config).toContain('models = ["minimax/minimax-m2.5:free"]');
+  });
+
   it("rejects credential-bearing inference base URLs before writing config", () => {
     const result = runGeneratorProcess({
       NEMOCLAW_INFERENCE_BASE_URL: "https://user:pass@example.test/v1",
