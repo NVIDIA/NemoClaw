@@ -2377,6 +2377,8 @@ start_auto_pair() {
   OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
+import base64
+import hashlib
 import os
 import re
 import stat
@@ -2403,10 +2405,11 @@ def load_approval_policy(path):
     return (
         module.approval_request_decision,
         module.gateway_approval_env,
+        module.ALLOWED_SCOPES,
     )
 
 
-approval_request_decision, gateway_approval_env = load_approval_policy(APPROVAL_POLICY_FILE)
+approval_request_decision, gateway_approval_env, policy_allowed_scopes = load_approval_policy(APPROVAL_POLICY_FILE)
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
 
@@ -2493,6 +2496,103 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
 
+def _read_json_object(path):
+    with open(path, 'r', encoding='utf-8') as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise RuntimeError(f'{path} is not a JSON object')
+    return data
+
+
+def _identity_public_key(identity):
+    raw = str(identity.get('publicKey', '') or '').strip()
+    if raw:
+        return raw
+    pem = str(identity.get('publicKeyPem', '') or '')
+    body = ''.join(line.strip() for line in pem.splitlines() if '---' not in line)
+    if not body:
+        return ''
+    der = base64.b64decode(body)
+    if len(der) < 32:
+        return ''
+    return base64.urlsafe_b64encode(der[-32:]).decode('ascii').rstrip('=')
+
+
+def initial_cli_request_is_allowlisted(request_id):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list bootstrap):
+    # Invalid state: `devices list --json` can be gated by the same initial
+    # CLI pairing request the watcher needs to approve, so the request id is
+    # only available in the structured error text.
+    # Source boundary: this function reads local OpenClaw pending/identity
+    # state only to validate the parsed request id before delegating approval
+    # back to `openclaw devices approve`, which owns locking, token creation,
+    # and state publication. The watcher never writes OpenClaw state.
+    # Source-fix constraint: OpenClaw should expose a first-run local
+    # bootstrap/list API that returns the pending request without requiring an
+    # already-approved device. This compatibility path supports packaged
+    # gateway builds that still gate list.
+    # Removal condition: delete this branch once the pinned OpenClaw release
+    # exposes that bootstrap/list API and NemoClaw no longer supports gated
+    # list behavior for first-run CLI pairing.
+    state_dir = os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw'
+    pending_path = os.path.join(state_dir, 'devices', 'pending.json')
+    identity_path = os.path.join(state_dir, 'identity', 'device.json')
+    try:
+        pending = _read_json_object(pending_path)
+        identity = _read_json_object(identity_path)
+        request = pending.get(request_id)
+        if not isinstance(request, dict):
+            return False
+        device_id = str(identity.get('deviceId', '') or '').strip()
+        public_key = _identity_public_key(identity)
+        if not device_id or not public_key:
+            return False
+        public_key_raw = base64.urlsafe_b64decode(public_key + '=' * (-len(public_key) % 4))
+        if len(public_key_raw) != 32 or hashlib.sha256(public_key_raw).hexdigest() != device_id:
+            return False
+        if str(request.get('deviceId', '')).strip() != device_id:
+            return False
+        if str(request.get('publicKey', '')).strip() != public_key:
+            return False
+        if str(request.get('clientId', '')).strip() != 'cli':
+            return False
+        if str(request.get('clientMode', '')).strip() != 'cli':
+            return False
+        roles = set()
+        role = request.get('role')
+        if role is not None:
+            if not isinstance(role, str) or not role.strip():
+                return False
+            roles.add(role.strip())
+        raw_roles = request.get('roles')
+        if raw_roles is not None:
+            if not isinstance(raw_roles, list):
+                return False
+            for item in raw_roles:
+                if not isinstance(item, str) or not item.strip():
+                    return False
+                roles.add(item.strip())
+        if roles != {'operator'}:
+            return False
+        raw_scopes = request.get('scopes')
+        if not isinstance(raw_scopes, list) or not raw_scopes:
+            return False
+        scopes = set()
+        for item in raw_scopes:
+            if not isinstance(item, str) or not item.strip():
+                return False
+            scope = item.strip()
+            if scope not in policy_allowed_scopes or scope in scopes:
+                return False
+            scopes.add(scope)
+        if 'operator.pairing' not in scopes:
+            return False
+        return approval_request_decision(request)['allowed'] is True
+    except (OSError, ValueError, RuntimeError) as err:
+        print(f'[auto-pair] initial CLI pairing validation skipped request={request_id}: {brief_child_error("", str(err))}')
+        return False
+
+
 def is_pairing_required_list_failure(out, err):
     message = f'{out}\n{err}'.lower()
     return 'pairing required' in message and 'device is not approved yet' in message
@@ -2569,7 +2669,11 @@ while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
         initial_request_id = pairing_required_request_id(out, err)
-        if initial_request_id and initial_request_id not in HANDLED:
+        if (
+            initial_request_id
+            and initial_request_id not in HANDLED
+            and initial_cli_request_is_allowlisted(initial_request_id)
+        ):
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', initial_request_id, '--json', strip_gateway_env=True,
             )

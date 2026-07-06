@@ -146,7 +146,7 @@ exit 2
     }
   }, 40_000);
 
-  it("does not seed when device list fails for a non-pairing error", () => {
+  it("does not seed when device list fails for a non-pairing error (#6113)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-nonpairing-"));
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateDir = path.join(tmpDir, "state");
