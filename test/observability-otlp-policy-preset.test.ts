@@ -101,7 +101,7 @@ describe("backend-neutral OTLP observability policy preset", () => {
     ["alternate path", "host.openshell.internal", "POST", "/v1/logs"],
     ["path suffix", "host.openshell.internal", "POST", "/v1/traces/extra"],
     ["alternate host", "collector.example", "POST", "/v1/traces"],
-  ])("denies %s", (_label, host, method, path) => {
+  ])("denies %s (#3915)", (_label, host, method, path) => {
     const parsed = loadObservabilityPreset();
     const endpoint = parsed.network_policies?.["observability-otlp-local"]?.endpoints?.[0];
 
@@ -109,7 +109,7 @@ describe("backend-neutral OTLP observability policy preset", () => {
     expect(allows(endpoint ?? {}, host, method, path)).toBe(false);
   });
 
-  it("contains no exporter credential or header configuration", () => {
+  it("contains no exporter credential or header configuration (#3915)", () => {
     const parsed = loadObservabilityPreset();
     const endpoint = parsed.network_policies?.["observability-otlp-local"]?.endpoints?.[0];
 
