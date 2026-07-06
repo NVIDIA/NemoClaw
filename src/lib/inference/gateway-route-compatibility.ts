@@ -100,7 +100,9 @@ function customRouteConflict(
  * Compare a requested route with every configured registry row on the same
  * OpenShell gateway. Registry rows are intentionally used without a live-state
  * filter because stopped sandboxes still depend on the gateway route when they
- * restart.
+ * restart. The requested route must already carry the target agent's effective
+ * API family; recorded peer metadata is compared literally so this guard never
+ * silently treats a legacy sandbox as migrated.
  */
 export function checkGatewayRouteCompatibility(
   request: GatewayRouteCompatibilityRequest,

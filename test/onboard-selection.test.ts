@@ -9,7 +9,12 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { normalizeProviderBaseUrl } from "../src/lib/core/url-utils.js";
-import { promptInputModel, promptRemoteModel } from "../src/lib/inference/model-prompts.js";
+import {
+  promptCloudModel,
+  promptInputModel,
+  promptRemoteModel,
+} from "../src/lib/inference/model-prompts.js";
+import { parseNvidiaFeaturedModels } from "../src/lib/inference/nvidia-featured-models.js";
 import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
@@ -83,6 +88,23 @@ const TEST_ANTHROPIC_CONFIG = {
   endpointUrl: TEST_ANTHROPIC_ENDPOINT_URL,
   helpUrl: null,
 };
+const TEST_NVIDIA_FEATURED_MODELS = parseNvidiaFeaturedModels(
+  JSON.stringify({
+    "featured-models": [
+      {
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        "model-name": "Nemotron 3 Ultra 550B",
+      },
+      {
+        model: "nemotron-3-super-120b-a12b",
+        "model-name": "Nemotron 3 Super 120B",
+      },
+      { model: "z-ai/glm-5.1", "model-name": "GLM 5.1" },
+      { model: "moonshotai/kimi-k2.6", "model-name": "Kimi K2.6" },
+      { model: "minimaxai/minimax-m2.7", "model-name": "Minimax M2.7" },
+    ],
+  }),
+);
 
 function makeRemoteSelectionState(
   overrides: Partial<SetupNimSelectionState> = {},
@@ -164,10 +186,7 @@ async function captureConsoleOutput<T>(callback: () => Promise<T>): Promise<{
   }
 }
 
-function buildWindowsProviderMenu(
-  requirement: WindowsRequirement,
-  overrides: ProviderMenuOverrides = {},
-) {
+function buildProviderMenu(overrides: ProviderMenuOverrides = {}) {
   return buildInferenceProviderMenu({
     remoteProviderConfig: TEST_REMOTE_PROVIDER_CONFIG,
     agentProviderOptions: [],
@@ -177,17 +196,30 @@ function buildWindowsProviderMenu(
     ollamaRunning: false,
     ollamaHost: null,
     ollamaPort: 11434,
-    isWsl: true,
+    isWsl: false,
     hasWindowsOllama: false,
     isWindowsHostOllama: false,
-    windowsHostLabelSuffix: requirement.supported ? "" : requirement.labelSuffix,
-    windowsHostInstallLabel: requirement.installLabel,
-    windowsHostStartLabel: requirement.startLabel,
+    windowsHostLabelSuffix: "",
+    windowsHostInstallLabel: "Install Ollama on Windows host (recommended)",
+    windowsHostStartLabel: () => "Start Ollama on Windows host (suggested)",
     windowsOllamaReachable: false,
     winOllamaLoopbackOnly: false,
     ollamaInstallEntry: null,
     vllmEntries: [],
     routedEnabled: false,
+    ...overrides,
+  });
+}
+
+function buildWindowsProviderMenu(
+  requirement: WindowsRequirement,
+  overrides: ProviderMenuOverrides = {},
+) {
+  return buildProviderMenu({
+    isWsl: true,
+    windowsHostLabelSuffix: requirement.supported ? "" : requirement.labelSuffix,
+    windowsHostInstallLabel: requirement.installLabel,
+    windowsHostStartLabel: requirement.startLabel,
     ...overrides,
   });
 }
@@ -598,570 +630,227 @@ const agent = ${JSON.stringify(scenario.agent || null)}
 }
 
 describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
-  it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  it("does not label NVIDIA Endpoints as recommended in the provider list (#6245)", () => {
+    const buildOption = buildProviderMenu().options.find((option) => option.key === "build");
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
+    assert.equal(buildOption?.label, "NVIDIA Endpoints");
+    assert.doesNotMatch(buildOption?.label || "", /recommended/i);
+  });
 
-let promptCalls = 0;
-const messages = [];
-const updates = [];
-
-credentials.prompt = async (message) => {
-  promptCalls += 1;
-  messages.push(message);
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now\\nqwen3:32b  def  20 GB  now";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  return "";
-};
-registry.updateSandbox = (_name, update) => updates.push(update);
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("selection-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list (#6245)", async () => {
+    const answers = ["3"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const model = await promptCloudModel({
+      defaultModelId: "nvidia/nemotron-3-super-120b-a12b",
+      cloudModelOptions: TEST_NVIDIA_FEATURED_MODELS,
+      promptFn: async (message) => {
+        messages.push(message);
+        return answers.shift() || "";
       },
+      writeLine: (line) => lines.push(line),
     });
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "nvapi-test",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: makeInteractiveValidationRecovery().promptValidationRecovery,
+    });
+    const state = makeRemoteSelectionState({
+      model,
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateOpenAiLikeSelection: validation.validateOpenAiLikeSelection,
+      }),
+    );
+    const validated = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "build" },
+        remoteConfig: {
+          label: "NVIDIA Endpoints",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    );
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).not.toBe("");
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.equal(payload.promptCalls, 2);
-    assert.match(payload.messages[0], /Choose \[/);
-    assert.match(payload.messages[1], /Choose model \[2\]/);
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Detected local inference option")),
-    );
-    assert.ok(payload.lines.some((line: string) => line.includes("Cloud models:")));
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
-    );
-    // #3951: step 3 banner must be provider-agnostic — selecting a non-NIM
-    // provider (here, NVIDIA Endpoints) must not be labeled "(NIM)".
-    assert.ok(
-      payload.lines.some((line: string) => /\[3\/8\] Configuring inference provider\b/.test(line)),
-      "expected provider-agnostic [3/8] banner",
-    );
-    assert.ok(
-      !payload.lines.some((line: string) => line.includes("Configuring inference (NIM)")),
-      'step 3 banner must not be labeled "Configuring inference (NIM)" for non-NIM providers',
+    assert.equal(model, "moonshotai/kimi-k2.6");
+    assert.equal(validated.result, "selected");
+    assert.equal(state.provider, "nvidia-prod");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.match(messages[0], /Choose model \[2\]/);
+    assert.ok(lines.some((line) => line.includes("Kimi K2.6")));
+    assert.ok(!lines.some((line) => line.includes("GLM 5.1")));
+    assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
+    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+      "https://integrate.api.nvidia.com/v1",
+      "moonshotai/kimi-k2.6",
+      "nvapi-test",
+      expect.any(Object),
     );
   });
 
-  it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "no-recommended-label-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, '{"id":"ok"}');
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const messages = [];
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    await setupNim(null);
-    originalLog(JSON.stringify({ messages, lines }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("accepts a manually entered NVIDIA Endpoints model after validating it against /models (#6245)", async () => {
+    const answers = ["5", "custom/provider-model"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const validateNvidiaEndpointModelFn = vi.fn((model: string) => ({
+      ok: model === "custom/provider-model",
+    }));
+    const model = await promptCloudModel({
+      defaultModelId: "nvidia/nemotron-3-super-120b-a12b",
+      cloudModelOptions: TEST_NVIDIA_FEATURED_MODELS,
+      getCredentialFn: () => "nvapi-test",
+      validateNvidiaEndpointModelFn,
+      promptFn: async (message) => {
+        messages.push(message);
+        return answers.shift() || "";
       },
+      writeLine: (line) => lines.push(line),
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(payload.lines.some((line: string) => line.includes("NVIDIA Endpoints")));
-    assert.ok(
-      !payload.lines.some((line: string) => line.includes("NVIDIA Endpoints (recommended)")),
-    );
-  });
-
-  it("selects Kimi K2.6 from the filtered NVIDIA Endpoints featured model list", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-kimi-selection-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-kimi-selection-check.js");
-    const curlArgsLog = path.join(tmpDir, "kimi-curl-args.log");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-args_log=${JSON.stringify(curlArgsLog)}
-printf '%s\\n' "$*" >> "$args_log"
-body='{"id":"ok"}'
-status="200"
-outfile="" streaming=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -N) streaming="1"; shift ;;
-    -w) shift 2 ;;
-    *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q 'featured-models.json$'; then
-  body='{"featured-models":[{"model":"nvidia/nemotron-3-ultra-550b-a55b","model-name":"Nemotron 3 Ultra 550B"},{"model":"nemotron-3-super-120b-a12b","model-name":"Nemotron 3 Super 120B"},{"model":"z-ai/glm-5.1","model-name":"GLM 5.1"},{"model":"moonshotai/kimi-k2.6","model-name":"Kimi K2.6"},{"model":"minimaxai/minimax-m2.7","model-name":"Minimax M2.7"}]}'
-elif [ "$streaming" = "1" ]; then
-  body='data: {"id":"chatcmpl-test","choices":[{"delta":{"content":"OK"}}]}'$'\\n\\n''data: [DONE]'$'\\n'
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["1", "3"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  return "";
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+    const state = makeRemoteSelectionState({
+      model,
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "moonshotai/kimi-k2.6");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.match(payload.messages[1], /Choose model \[2\]/);
-    assert.ok(payload.lines.some((line: string) => line.includes("Loading NVIDIA")));
-    assert.ok(payload.lines.some((line: string) => line.includes("Kimi K2.6")));
-    assert.ok(!payload.lines.some((line: string) => line.includes("GLM 5.1")));
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
-    );
-    const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
-    assert.match(curlInvocations, /chat\/completions/);
-  });
-
-  it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-build-model-selection-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-model-selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateOpenAiLikeSelection: async () => ({
+          ok: true,
+          api: "openai-completions",
+        }),
+      }),
     );
 
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["1", "5", "custom/provider-model"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
-runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  return "";
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "custom/provider-model");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.match(payload.messages[1], /Choose model \[2\]/);
-    assert.match(payload.messages[2], /NVIDIA Endpoints model id:/);
-    assert.ok(payload.lines.some((line: string) => line.includes("Other...")));
-  });
-
-  it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-model-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-model-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"id":"ok"}'
-status="200"
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[{"id":"nvidia/nemotron-3-super-120b-a12b"},{"id":"custom/provider-model"}]}'
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["1", "5", "bad/model", "custom/provider-model"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test"; };
-runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  return "";
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.model, "custom/provider-model");
     assert.equal(
-      payload.messages.filter((message: string) => /NVIDIA Endpoints model id:/.test(message))
-        .length,
+      await validateSelectedRemoteModel({
+        selected: { key: "build" },
+        remoteConfig: {
+          label: "NVIDIA Endpoints",
+          endpointUrl: "https://integrate.api.nvidia.com/v1",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+      "selected",
+    );
+    assert.equal(state.provider, "nvidia-prod");
+    assert.equal(state.model, "custom/provider-model");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.match(messages[0], /Choose model \[2\]/);
+    assert.match(messages[1], /NVIDIA Endpoints model id:/);
+    assert.ok(lines.some((line) => line.includes("Other...")));
+    expect(validateNvidiaEndpointModelFn).toHaveBeenCalledWith(
+      "custom/provider-model",
+      "nvapi-test",
+    );
+  });
+
+  it("reprompts for a manual NVIDIA Endpoints model when /models validation rejects it (#6245)", async () => {
+    const answers = ["5", "bad/model", "custom/provider-model"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const model = await promptCloudModel({
+      defaultModelId: "nvidia/nemotron-3-super-120b-a12b",
+      cloudModelOptions: TEST_NVIDIA_FEATURED_MODELS,
+      getCredentialFn: () => "nvapi-test",
+      validateNvidiaEndpointModelFn: (candidate) => ({
+        ok: candidate === "custom/provider-model",
+        message: `Model '${candidate}' is not available from NVIDIA Endpoints.`,
+      }),
+      promptFn: async (message) => {
+        messages.push(message);
+        return answers.shift() || "";
+      },
+      errorLine: (line) => lines.push(line),
+      writeLine: (line) => lines.push(line),
+    });
+
+    assert.equal(model, "custom/provider-model");
+    assert.equal(
+      messages.filter((message) => /NVIDIA Endpoints model id:/.test(message)).length,
       2,
     );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("is not available from NVIDIA Endpoints")),
-    );
+    assert.ok(lines.some((line) => line.includes("is not available from NVIDIA Endpoints")));
   });
 
-  it("shows curated Gemini models and supports Other for manual entry", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gemini-selection-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "gemini-selection-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body=""
-status="404"
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -d) body="$2"; shift 2 ;;
-    *)
-      url="$1"
-      shift
-      ;;
-  esac
-done
-if echo "$url" | grep -q '/chat/completions'; then
-  status="200"
-  body='{"choices":[{"message":{"content":"OK"}}]}'
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-    const answers = ["6", "7", "gemini-custom"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.GEMINI_API_KEY = "gemini-secret";
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("shows curated Gemini models and supports Other for manual entry (#6245)", async () => {
+    const answers = ["7", "gemini-custom"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const model = await promptRemoteModel("Google Gemini", "gemini", "gemini-2.5-flash", null, {
+      promptFn: async (message) => {
+        messages.push(message);
+        return answers.shift() || "";
       },
+      writeLine: (line) => lines.push(line),
     });
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "gemini-secret",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: makeInteractiveValidationRecovery().promptValidationRecovery,
+    });
+    const state = makeRemoteSelectionState({
+      model,
+      provider: "gemini-api",
+      endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      credentialEnv: "GEMINI_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateOpenAiLikeSelection: validation.validateOpenAiLikeSelection,
+        getProbeAuthMode: () => "query-param",
+      }),
+    );
+    const validated = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "gemini" },
+        remoteConfig: {
+          label: "Google Gemini",
+          endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "GEMINI_API_KEY",
+      }),
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "gemini-api");
-    assert.equal(payload.result.model, "gemini-custom");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.match(payload.messages[0], /Choose \[/);
-    assert.match(payload.messages[1], /Choose model \[5\]/);
-    assert.match(payload.messages[2], /Google Gemini model id:/);
-    assert.ok(payload.lines.some((line: string) => line.includes("Google Gemini models:")));
-    assert.ok(payload.lines.some((line: string) => line.includes("gemini-2.5-flash")));
-    assert.ok(payload.lines.some((line: string) => line.includes("Other...")));
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    assert.equal(validated.result, "selected");
+    assert.equal(state.provider, "gemini-api");
+    assert.equal(state.model, "gemini-custom");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.match(messages[0], /Choose model \[5\]/);
+    assert.match(messages[1], /Google Gemini model id:/);
+    assert.ok(lines.some((line) => line.includes("Google Gemini models:")));
+    assert.ok(lines.some((line) => line.includes("gemini-2.5-flash")));
+    assert.ok(lines.some((line) => line.includes("Other...")));
+    assert.ok(validated.lines.some((line) => line.includes("Chat Completions API available")));
+    expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "gemini-custom",
+      "gemini-secret",
+      expect.objectContaining({ authMode: "query-param" }),
     );
   });
 

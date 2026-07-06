@@ -31,6 +31,7 @@ Run `$$nemoclaw onboard` first, then retry the switch.
 OpenShell currently exposes one inference route per gateway, not one route per sandbox.
 All registered sandboxes on the same gateway must use the same provider and model.
 Custom compatible routes must also use the same endpoint and API family.
+An OpenClaw native-Anthropic route and a Hermes OpenAI-frontend route therefore cannot share a gateway, even when their custom endpoint and model are otherwise identical.
 NemoClaw checks stopped sandboxes because they depend on that route when restarted.
 When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
 Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
@@ -120,8 +121,23 @@ For OpenClaw, `inference set` syncs the provider API family and primary model re
 For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
 Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
 
-Amazon Bedrock Runtime routes created through `compatible-anthropic-endpoint` are the exception.
-When you switch within the same Bedrock Runtime compatible provider, NemoClaw keeps the route OpenAI-compatible and does not set Hermes to Anthropic Messages mode.
+<AgentOnly variant="hermes">
+For `compatible-anthropic-endpoint`, NemoClaw selects the managed OpenAI Chat Completions frontend at `https://inference.local/v1` and verifies the endpoint's `/v1/chat/completions` surface before registering it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+The route retains `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
+Hermes omits `model.api_mode` for this route.
+OpenClaw custom Anthropic routes and first-party Anthropic routes remain on the native Anthropic Messages frontend.
+AWS Bedrock routes retain their existing OpenAI-compatible adapter behavior.
+
+To migrate an already affected Hermes sandbox, rebuild it so NemoClaw can verify the OpenAI surface, repair the gateway provider protocol, and recreate the sandbox configuration:
+
+```bash
+$$nemoclaw <sandbox-name> rebuild
+```
+
+Resuming onboarding also detects and repairs a stale route.
+`inference set` can select this provider after it has been registered on the verified OpenAI surface, but it fails before mutation for a legacy Anthropic registration because that command cannot change a gateway provider's protocol type.
+When supplying new custom metadata, Hermes may omit `--inference-api` for this provider because NemoClaw deterministically selects `openai-completions`; an explicit non-OpenAI value is rejected.
+</AgentOnly>
 
 #### Switching from Responses API to Chat Completions
 

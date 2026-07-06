@@ -111,6 +111,28 @@ describe("shared gateway inference route compatibility", () => {
     ).toEqual({ ok: true });
   });
 
+  it("blocks Hermes OpenAI frontend against a recorded native Anthropic route", () => {
+    const result = check(
+      route("compatible-anthropic-endpoint", "anthropic/model", {
+        endpointUrl: "https://example.test/v1",
+        preferredInferenceApi: "openai-completions",
+      }),
+      [
+        sandbox("legacy-anthropic-peer", {
+          provider: "compatible-anthropic-endpoint",
+          model: "anthropic/model",
+          endpointUrl: "https://example.test",
+          preferredInferenceApi: "anthropic-messages",
+        }),
+      ],
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [{ sandboxName: "legacy-anthropic-peer", reason: "custom-api" }],
+    });
+  });
+
   it("ignores credential environment differences in route identity (#6315)", () => {
     expect(
       check(

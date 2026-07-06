@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
-import { createDeps } from "./inference-set.test-support";
+import { baseSession, createDeps, HERMES_TARGET } from "./inference-set.test-support";
 
 const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntry => ({
   name,
@@ -140,6 +141,110 @@ describe("runtime shared gateway route containment", () => {
     ).rejects.toThrow("requested custom route lacks durable endpoint or API-family metadata");
 
     expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("scopes Hermes provider inspection and route mutation to a non-default gateway", async () => {
+    const config: ConfigObject = { model: {} };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        gatewayName: "nemoclaw-9090",
+        gatewayPort: 9090,
+        provider: "compatible-anthropic-endpoint",
+        model: "old-model",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.calls.captureOpenshell.mockImplementation((args: string[]) =>
+      args[0] === "provider"
+        ? {
+            status: 0,
+            output:
+              "Name: compatible-anthropic-endpoint\nType: openai\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: OPENAI_BASE_URL",
+            stdout: "",
+            stderr: "",
+          }
+        : { status: 0, output: "", stdout: "", stderr: "" },
+    );
+
+    await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "new-model",
+        sandboxName: "hermes",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
+      ["provider", "get", "-g", "nemoclaw-9090", "compatible-anthropic-endpoint"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "-g",
+        "nemoclaw-9090",
+        "--provider",
+        "compatible-anthropic-endpoint",
+        "--model",
+        "new-model",
+        "--no-verify",
+      ],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("blocks a stopped legacy Hermes Anthropic route before gateway inspection", async () => {
+    const deps = createDeps({
+      config: { model: {} },
+      entries: [
+        entry("hermes", { agent: "hermes", provider: "hermes-provider", model: "old-model" }),
+        entry("stopped-hermes-peer", {
+          agent: "hermes",
+          provider: "compatible-anthropic-endpoint",
+          model: "new-model",
+          endpointUrl: "https://anthropic-compatible.example/v1",
+          credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+          preferredInferenceApi: "anthropic-messages",
+        }),
+      ],
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({
+        agent: "hermes",
+        sandboxName: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "new-model",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "new-model",
+          sandboxName: "hermes",
+        },
+        deps,
+      ),
+    ).rejects.toThrow("stopped-hermes-peer");
+
     expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();

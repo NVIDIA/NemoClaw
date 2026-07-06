@@ -134,8 +134,9 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    const gatewayName = deps.getGatewayName();
     const compatibility = deps.checkGatewayRouteCompatibility({
-      gatewayName: deps.getGatewayName(),
+      gatewayName,
       sandboxName,
       route: {
         provider,
@@ -149,7 +150,7 @@ export function createSetupInference(
       return deps.exitProcess(1);
     }
     deps.step(4, 8, "Setting up inference provider");
-    deps.runOpenshell(["gateway", "select", deps.getGatewayName()], { ignoreError: true });
+    deps.runOpenshell(["gateway", "select", gatewayName], { ignoreError: true });
 
     const commonDeps = {
       runOpenshell: deps.runOpenshell,

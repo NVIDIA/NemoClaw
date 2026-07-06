@@ -33,6 +33,7 @@ function createDeps() {
     setupNim: vi.fn(async () => ({ ...fallbackSelection })),
     setupInference: vi.fn(async () => ({ ok: true as const })),
     recordStepComplete: vi.fn(async () => createSession()),
+    surfaceReady: vi.fn(() => true),
     reconcileRouter: vi.fn(async () => undefined),
     reupsertRoutedProvider: vi.fn(
       (_provider: string, endpointUrl: string | null, _credentialEnv: string | null) => ({
@@ -60,6 +61,7 @@ function createDeps() {
       forceInferenceSetup: false,
       credentialEnv: credentialEnv ?? null,
     })),
+    isResumeProviderSurfaceReady: calls.surfaceReady,
     recordStateSkipped: vi.fn(async () => createSession()),
     recordRepairEvent: vi.fn(async () => createSession()),
     hydrateCredentialEnv: vi.fn(() => "test-key"),
@@ -161,6 +163,7 @@ describe("provider route containment", () => {
       },
     });
     expect(calls.recordStepComplete).not.toHaveBeenCalled();
+    expect(calls.surfaceReady).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
   });
@@ -186,6 +189,7 @@ describe("provider route containment", () => {
       },
     });
     expect(calls.reconcileRouter).not.toHaveBeenCalled();
+    expect(calls.surfaceReady).not.toHaveBeenCalled();
     expect(calls.reupsertRoutedProvider).not.toHaveBeenCalled();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
@@ -218,6 +222,7 @@ describe("provider route containment", () => {
       },
     });
     expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.surfaceReady).not.toHaveBeenCalled();
     expect(calls.updateSandbox).not.toHaveBeenCalled();
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("existing-sandbox"));
   });

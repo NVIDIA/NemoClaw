@@ -15,6 +15,7 @@ describe("onboard shared gateway route containment", () => {
     const upsertProvider = vi.fn(() => ({ ok: true }));
     const verifyInferenceRoute = vi.fn();
     const verifyOnboardInferenceSmoke = vi.fn();
+    const getGatewayName = vi.fn(() => "nemoclaw-9090");
     const error = vi.fn((message: string) => events.push(`error:${message}`));
     const exitProcess = vi.fn((code: number): never => {
       events.push(`exit:${code}`);
@@ -24,7 +25,7 @@ describe("onboard shared gateway route containment", () => {
       events.push("guard");
       return {
         ok: false as const,
-        gatewayName: "nemoclaw",
+        gatewayName: "nemoclaw-9090",
         sandboxName: "new-sandbox",
         route: { provider: "anthropic-prod", model: "claude-new" },
         conflicts: [{ sandboxName: "stopped-sandbox", reason: "provider-model" as const }],
@@ -33,7 +34,7 @@ describe("onboard shared gateway route containment", () => {
     const setupInference = createSetupInference({
       checkGatewayRouteCompatibility,
       step: () => events.push("step"),
-      getGatewayName: () => "nemoclaw",
+      getGatewayName,
       runOpenshell,
       updateSandbox,
       upsertProvider,
@@ -54,6 +55,10 @@ describe("onboard shared gateway route containment", () => {
     ).rejects.toThrow("exit 1");
 
     expect(events[0]).toBe("guard");
+    expect(getGatewayName).toHaveBeenCalledOnce();
+    expect(checkGatewayRouteCompatibility).toHaveBeenCalledWith(
+      expect.objectContaining({ gatewayName: "nemoclaw-9090" }),
+    );
     expect(runOpenshell).not.toHaveBeenCalled();
     expect(upsertProvider).not.toHaveBeenCalled();
     expect(verifyInferenceRoute).not.toHaveBeenCalled();

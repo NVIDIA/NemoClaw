@@ -32,7 +32,8 @@ NemoClaw v0.0.74 upgrades the OpenShell policy boundary, adds managed MCP and pr
   For more information, refer to [Tool Calling Reliability](../inference/tool-calling-reliability), [Model Capability Audit](../inference/model-capability-audit), and [NemoClaw CLI Commands Reference](../reference/commands).
 - Shared OpenShell gateways now enforce a single compatible inference route across every registered sandbox, including stopped sandboxes.
   Onboarding, connect-time repair, and `inference set` reject provider/model conflicts; custom routes must also match the normalized endpoint and API family.
-  As a migration requirement, switching to a custom compatible provider now requires both `--endpoint-url` and `--inference-api`, and incomplete legacy custom-route metadata fails closed until the sandbox is removed and re-onboarded with complete metadata.
+  As a migration requirement, custom switches must provide `--endpoint-url` and an unambiguous API family, and incomplete legacy custom-route metadata fails closed until the sandbox is removed and re-onboarded with complete metadata.
+  Hermes deterministically selects `openai-completions` for `compatible-anthropic-endpoint`, so that one route may omit `--inference-api`; explicit incompatible values are rejected.
   Use a different `NEMOCLAW_GATEWAY_PORT` when sandboxes need independent routes.
   For more information, refer to [Switch Inference Providers](../inference/switch-inference-providers), [NemoClaw CLI Commands Reference](../reference/commands), and [Troubleshooting](../reference/troubleshooting).
 - LangChain Deep Agents Code now provides managed `status`, `whoami`, and `identity` commands without launching the interactive UI, validates the installed agent version during onboarding, and keeps credential-shaped or tracing configuration out of persisted runtime metadata.

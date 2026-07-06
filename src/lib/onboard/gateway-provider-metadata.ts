@@ -20,6 +20,29 @@ export type GatewayProviderMetadata = {
   configKeys: string[];
 };
 
+export type GatewayProviderBinding = {
+  name: string;
+  type: string;
+  credentialKey: string;
+  configKey: string;
+};
+
+/** Match the complete non-secret provider identity used for route decisions. */
+export function matchesGatewayProviderBinding(
+  metadata: GatewayProviderMetadata | null,
+  expected: GatewayProviderBinding,
+): boolean {
+  return Boolean(
+    metadata &&
+      metadata.name === expected.name &&
+      metadata.type === expected.type &&
+      metadata.credentialKeys.length === 1 &&
+      metadata.credentialKeys[0] === expected.credentialKey &&
+      metadata.configKeys.length === 1 &&
+      metadata.configKeys[0] === expected.configKey,
+  );
+}
+
 type GatewayProviderCommandResult = {
   status: number | null;
   stdout?: string | Buffer | null;
@@ -130,10 +153,14 @@ export function parseGatewayProviderMetadata(output: string): GatewayProviderMet
 export function readGatewayProviderMetadata(
   name: string,
   runOpenshell: GatewayProviderRunner,
+  gatewayName?: string | null,
 ): GatewayProviderMetadata | null {
   if (!isSafeIdentifier(name, MAX_PROVIDER_NAME_LENGTH)) return null;
 
-  const result = runOpenshell(["provider", "get", name], {
+  const args = ["provider", "get"];
+  if (gatewayName) args.push("-g", gatewayName);
+  args.push(name);
+  const result = runOpenshell(args, {
     ignoreError: true,
     suppressOutput: true,
     stdio: ["ignore", "pipe", "pipe"],

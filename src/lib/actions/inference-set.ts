@@ -5,14 +5,20 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  resolveAgentInferenceApi,
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  matchesGatewayProviderBinding,
+  parseGatewayProviderMetadata,
+} from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -386,6 +392,47 @@ function getPreferredInferenceApi(config: ConfigObject): string | null {
   return typeof inferenceProvider.api === "string" ? inferenceProvider.api : null;
 }
 
+function assertHermesCompatibleAnthropicOpenAiProvider(
+  sandboxName: string,
+  agentName: string,
+  gatewayName: string,
+  provider: string,
+  endpointUrl: string | null,
+  deps: InferenceSetDeps,
+): void {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    isBedrockRuntimeEndpoint(endpointUrl)
+  ) {
+    return;
+  }
+
+  const result = deps.captureOpenshell(["provider", "get", "-g", gatewayName, provider], {
+    ignoreError: true,
+    includeStreams: true,
+    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  });
+  const output = result.output || `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const metadata = result.status === 0 ? parseGatewayProviderMetadata(output) : null;
+  if (
+    matchesGatewayProviderBinding(metadata, {
+      name: provider,
+      type: "openai",
+      credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    })
+  ) {
+    return;
+  }
+
+  throw new InferenceSetError(
+    `Hermes requires provider '${provider}' to be registered on its verified OpenAI-compatible surface. ` +
+      `Run '${CLI_NAME} ${sandboxName} rebuild' to migrate this sandbox, or re-run onboarding for the endpoint before using inference set.`,
+    2,
+  );
+}
+
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
@@ -408,14 +455,61 @@ async function runInferenceSetWithoutHostLock(
     );
   }
   const session = deps.loadSession();
+  const explicitInferenceApi =
+    typeof options.inferenceApi === "string" && options.inferenceApi.trim()
+      ? options.inferenceApi.trim()
+      : null;
+  if (
+    agentName === "hermes" &&
+    provider === "compatible-anthropic-endpoint" &&
+    explicitInferenceApi !== null &&
+    explicitInferenceApi !== "openai-completions"
+  ) {
+    throw new InferenceSetError(
+      "Hermes custom Anthropic endpoints require the managed openai-completions frontend. " +
+        "Set --inference-api openai-completions or omit --inference-api so NemoClaw selects it.",
+      2,
+    );
+  }
+  const hasExplicitCustomRoute = Boolean(
+    options.endpointUrl || options.credentialEnv || options.inferenceApi,
+  );
+  const customRoute = hasExplicitCustomRoute
+    ? {
+        ...options,
+        inferenceApi: resolveAgentInferenceApi(agentName, provider, explicitInferenceApi),
+      }
+    : options;
+  const routeEntry = {
+    ...entry,
+    preferredInferenceApi: resolveAgentInferenceApi(
+      agentName,
+      provider,
+      entry.preferredInferenceApi ?? null,
+    ),
+  };
+  const routeSession = session
+    ? {
+        ...session,
+        preferredInferenceApi: resolveAgentInferenceApi(
+          agentName,
+          provider,
+          session.preferredInferenceApi ?? null,
+        ),
+      }
+    : null;
+  // Registered peers are compared exactly as recorded. In particular, a
+  // stopped legacy Hermes row that still records the Anthropic frontend will
+  // depend on that route when restarted and must not be normalized away.
+  const routeSandboxes = deps.listSandboxes().sandboxes;
   const preparedRoute = prepareInferenceSetRoute({
-    entry,
+    entry: routeEntry,
     sandboxName,
     provider,
     model,
-    customRoute: options,
-    session,
-    sandboxes: deps.listSandboxes().sandboxes,
+    customRoute,
+    session: routeSession,
+    sandboxes: routeSandboxes,
   });
 
   const target = deps.resolveAgentConfig(sandboxName);
@@ -437,7 +531,7 @@ async function runInferenceSetWithoutHostLock(
     sandboxName,
     provider,
     model,
-    sandboxes: deps.listSandboxes().sandboxes,
+    sandboxes: routeSandboxes,
     rewriteUrlWithDnsPinning: deps.rewriteConfigUrlsWithDnsPinning,
   });
 
@@ -470,6 +564,18 @@ async function runInferenceSetWithoutHostLock(
     }
   }
 
+  // `inference set` changes the selected route but cannot change a gateway
+  // provider's protocol type. Fail before mutation when a legacy Anthropic
+  // registration would make the required Hermes OpenAI frontend unroutable.
+  assertHermesCompatibleAnthropicOpenAiProvider(
+    sandboxName,
+    agentName,
+    preparedRoute.gatewayName,
+    provider,
+    registryMetadata.endpointUrl ?? null,
+    deps,
+  );
+
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({
@@ -501,7 +607,16 @@ async function runInferenceSetWithoutHostLock(
       nimContainer: registryMetadata.nimContainer ?? null,
     });
   if (
-    !deps.updateSandbox(sandboxName, registryFields(registryMetadata.preferredInferenceApi ?? null))
+    !deps.updateSandbox(
+      sandboxName,
+      registryFields(
+        resolveAgentInferenceApi(
+          agentName,
+          provider,
+          registryMetadata.preferredInferenceApi ?? null,
+        ),
+      ),
+    )
   ) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }

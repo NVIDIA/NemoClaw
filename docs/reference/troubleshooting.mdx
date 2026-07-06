@@ -326,6 +326,7 @@ $$nemoclaw list
 OpenShell currently exposes one inference route per gateway.
 Sandboxes that share a gateway must record the same provider and model.
 Custom compatible routes must also record the same normalized endpoint and API family.
+An OpenClaw sandbox using the native Anthropic Messages frontend and a Hermes sandbox using the managed OpenAI frontend need separate gateway ports, even when they use the same custom endpoint and model.
 NemoClaw includes stopped sandboxes in this check because they use the gateway route when restarted.
 
 If onboarding, `inference set`, or connect-time route repair reports a shared-gateway conflict, choose one of these recovery paths:
