@@ -143,6 +143,24 @@ function isPreparedRecoveryCandidate(
   }
 }
 
+// A sandbox the gateway already observes in a non-Ready phase does not need
+// further confirmation — its state is already known from the one listing. A
+// sandbox that is merely absent might instead still be reconnecting to a
+// just-recreated gateway, so absence is confirmed against a second, independent
+// listing before it can drive a recreate: a sandbox that has become Ready by
+// the second read is dropped rather than rebuilt from a possibly stale backup.
+async function confirmAbsentRecoveryCandidates(
+  absentCandidates: registry.SandboxEntry[],
+): Promise<registry.SandboxEntry[]> {
+  if (absentCandidates.length === 0) return absentCandidates;
+  const confirmation = await captureSandboxListWithGatewayPreflightOrExit({
+    action: "confirming sandboxes absent from the selected gateway",
+    command: `${CLI_NAME} upgrade-sandboxes`,
+  });
+  const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
+  return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -196,13 +214,21 @@ export async function upgradeSandboxes(
   // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
   const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
-  const backupRecoveryAssessments = recoverPreparedBackups
-    ? sandboxes
-        .filter((sandbox) =>
-          isPreparedRecoveryCandidate(sandbox, liveNames, nonReadyLiveNames, selectedGatewayName),
-        )
-        .map(prepareBackupRecovery)
-    : [];
+  let recoveryCandidates: registry.SandboxEntry[] = [];
+  if (recoverPreparedBackups) {
+    const gatewayEligible = sandboxes.filter((sandbox) =>
+      isPreparedRecoveryCandidate(sandbox, liveNames, nonReadyLiveNames, selectedGatewayName),
+    );
+    const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
+      nonReadyLiveNames.has(sandbox.name),
+    );
+    const absentCandidates = gatewayEligible.filter(
+      (sandbox) => !nonReadyLiveNames.has(sandbox.name),
+    );
+    const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(absentCandidates);
+    recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
+  }
+  const backupRecoveryAssessments = recoveryCandidates.map(prepareBackupRecovery);
   const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
   const rejectedRecoveries = backupRecoveryAssessments.filter(
     (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),

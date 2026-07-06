@@ -58,9 +58,12 @@ function createRecoveryHarness(
   rebuildSpy: ReturnType<typeof vi.fn>;
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
+  liveListSpy: ReturnType<typeof vi.spyOn>;
 } {
   delete require.cache[requireDist.resolve(upgradeModulePath)];
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
+  vi.stubEnv("NEMOCLAW_GATEWAY_PORT", "8080");
+  delete require.cache[requireDist.resolve("../core/ports.js")];
 
   const coreVersion = requireDist("../core/version.js");
   const sandboxList = requireDist("../openshell-sandbox-list.js");
@@ -72,10 +75,12 @@ function createRecoveryHarness(
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
-  vi.spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit").mockResolvedValue({
-    status: 0,
-    output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
-  });
+  const liveListSpy = vi
+    .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
+    .mockResolvedValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: names.map((name) => ({
       name,
@@ -116,6 +121,7 @@ function createRecoveryHarness(
     rebuildSpy,
     latestBackupSpy,
     managedEvidenceSpy,
+    liveListSpy,
   };
 }
 
@@ -243,6 +249,42 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
     );
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not recover an absent sandbox when a confirming second listing shows it has become Ready", async () => {
+    const harness = createRecoveryHarness(["reconnecting-box"], {
+      staleNames: ["reconnecting-box"],
+    });
+    harness.liveListSpy
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "reconnecting-box Ready" });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
+    );
+  });
+
+  it("recovers an absent sandbox when a confirming second listing still does not report it Ready", async () => {
+    const harness = createRecoveryHarness(["orphaned-box"], {
+      liveOutput: "other-box Ready",
+    });
+    harness.liveListSpy
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "orphaned-box Provisioning" });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+    });
   });
 
   it("attempts both a live stale rebuild and a prepared non-Ready recovery", async () => {
