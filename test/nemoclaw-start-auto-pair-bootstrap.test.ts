@@ -265,13 +265,22 @@ exit 2
       "multiple request ids",
       "pairing required: device is not approved yet requestId: request-1 requestId: request-2",
     ],
+    ["missing request id", "pairing required: device is not approved yet"],
     [
       "overlong request id",
       `pairing required: device is not approved yet requestId: ${"r".repeat(129)}`,
     ],
     [
+      "overlong request id with pending prefix",
+      `pairing required: device is not approved yet requestId: ${"p".repeat(129)}`,
+    ],
+    [
       "whitespace request id",
       "pairing required: device is not approved yet (requestId: request 1)",
+    ],
+    [
+      "whitespace request id with pending prefix",
+      "pairing required: device is not approved yet requestId: request 1",
     ],
   ])(
     "rejects %s from gated-list errors before initial CLI approve (#6113)",
@@ -311,7 +320,9 @@ exit 2
           "request-1": { requestId: "request-1", ...validRequest },
           "request-2": { requestId: "request-2", ...validRequest },
           ["r".repeat(129)]: { requestId: "r".repeat(129), ...validRequest },
+          ["p".repeat(128)]: { requestId: "p".repeat(128), ...validRequest },
           "request 1": { requestId: "request 1", ...validRequest },
+          request: { requestId: "request", ...validRequest },
         }),
       );
       fs.writeFileSync(

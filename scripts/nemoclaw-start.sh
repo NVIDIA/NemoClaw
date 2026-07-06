@@ -2658,8 +2658,11 @@ def pairing_required_request_id(out, err):
     for text in (out, err):
         candidates.extend(_structured_request_ids(text))
     candidates.extend(
-        match.group(1).strip()
-        for match in re.finditer(r'\brequestId\b["\']?\s*[:=]\s*["\']?([A-Za-z0-9._:-]{1,128})', message)
+        next(group for group in match.groups() if group is not None)
+        for match in re.finditer(
+            r'\brequestId\b["\']?\s*[:=]\s*(?:"([A-Za-z0-9._:-]{1,128})"|\'([A-Za-z0-9._:-]{1,128})\'|([A-Za-z0-9._:-]{1,128})(?=$|[,}\]\)]))',
+            message,
+        )
     )
     candidates.extend(
         match.group(1).strip()
