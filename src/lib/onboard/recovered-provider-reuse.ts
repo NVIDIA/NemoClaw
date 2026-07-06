@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { canonicalEndpoint, type EndpointFlavor } from "../core/url-utils";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import { isSafeModelId } from "../validation";
 import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
@@ -122,22 +123,42 @@ export function assessRecoveredProviderCredentialReuse(options: {
     return { kind: "reject", reason: "the recovered inference API is missing or unsupported" };
   }
   const gatewayProvider = options.gatewayProvider;
+  // #6294: an OpenAI-only agent coerced onto openai-completions registers the
+  // compatible-anthropic-endpoint provider as type=openai (OPENAI_BASE_URL),
+  // so the reuse identity must expect that surface rather than the static
+  // anthropic profile. Bedrock endpoints keep their own adapter identity and
+  // are excluded so their recovery semantics stay unchanged.
+  const expectedProviderType =
+    options.selectedKey === "anthropicCompatible" &&
+    options.recoveredPreferredInferenceApi === "openai-completions" &&
+    !isBedrockRuntimeEndpoint(options.endpointIdentity?.selected ?? null)
+      ? "openai"
+      : options.expectedProviderType;
   const expectedConfigKey =
-    options.expectedProviderType === "openai"
+    expectedProviderType === "openai"
       ? "OPENAI_BASE_URL"
-      : options.expectedProviderType === "anthropic"
+      : expectedProviderType === "anthropic"
         ? "ANTHROPIC_BASE_URL"
         : null;
   if (
     !gatewayProvider ||
     gatewayProvider.name !== selectedProvider ||
-    gatewayProvider.type !== options.expectedProviderType ||
+    gatewayProvider.type !== expectedProviderType ||
     gatewayProvider.credentialKeys.length !== 1 ||
     gatewayProvider.credentialKeys[0] !== options.expectedCredentialEnv ||
     !expectedConfigKey ||
     gatewayProvider.configKeys.length !== 1 ||
     gatewayProvider.configKeys[0] !== expectedConfigKey
   ) {
+    if (expectedProviderType === "openai" && gatewayProvider?.type === "anthropic") {
+      return {
+        kind: "reject",
+        reason:
+          `provider '${selectedProvider}' is still registered for the Anthropic Messages ` +
+          `surface; export ${options.expectedCredentialEnv} so onboarding can re-register ` +
+          `it for the OpenAI-compatible route`,
+      };
+    }
     return {
       kind: "reject",
       reason: `provider '${selectedProvider}' has no compatible non-secret identity in OpenShell`,

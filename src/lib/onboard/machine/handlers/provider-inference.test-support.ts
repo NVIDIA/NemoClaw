@@ -12,7 +12,7 @@ import { createSession, type Session, type SessionUpdates } from "../../../state
 import type { ProviderInferenceStateOptions, ProviderSelectionResult } from "./provider-inference";
 
 export type Gpu = { type: string } | null;
-export type Agent = { name: string } | null;
+export type Agent = { name: string; inference?: { provider_type?: string } } | null;
 export type Host = { cpus?: number };
 
 export const baseSelection: ProviderSelectionResult = {

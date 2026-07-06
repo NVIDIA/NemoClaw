@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
+import { coerceAgentInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -13,6 +14,13 @@ export interface ProviderInferenceSetupOptions {
   allowToolsIncompatible?: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  /**
+   * Resolved (agent-coerced) inference API for the selection. Lets the
+   * remote-provider registration pick the gateway surface that matches the
+   * sandbox contract (#6294: openai_compatible agents on
+   * compatible-anthropic-endpoint register type=openai).
+   */
+  preferredInferenceApi?: string | null;
 }
 
 export interface ProviderSelectionResult {
@@ -242,7 +250,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
-  let preferredInferenceApi = initial.preferredInferenceApi;
+  // A session persisted before the #6294 fix can carry anthropic-messages for
+  // an OpenAI-/chat/completions-only agent (provider_type: openai_compatible).
+  // The resume shortcut below skips setupNim — the fresh-onboard coercion
+  // point — so coerce the persisted seed here too, or a resume/rebuild would
+  // re-bake the sandbox base_url without its /v1 suffix.
+  let preferredInferenceApi = coerceAgentInferenceApi(agent, initial.preferredInferenceApi);
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
@@ -273,6 +286,16 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // later plain `onboard --resume` recovery cannot fall back to ambient or
       // default provider selection if the recreate fails after this point.
       shouldRecordProviderSelection = authoritativeResumeConfig;
+      if (preferredInferenceApi !== initial.preferredInferenceApi) {
+        // #6294 heal: the pre-fix session left the gateway provider
+        // registered for the Anthropic Messages surface. Re-run inference
+        // setup so the registration is refreshed for the coerced OpenAI
+        // route. The coerced value is persisted only after that setup
+        // succeeds (below, with the inference step record) — persisting it
+        // here would disarm the heal permanently if the first attempt fails
+        // (e.g. keyless resume), stranding the sandbox on a stale route.
+        forceInferenceSetup = true;
+      }
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
       // A rebuild recreate may leave `openshell inference get` reporting the
       // same provider/model while the newly created messaging sandbox's
@@ -362,6 +385,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       shouldRecordProviderSelection = true;
     }
 
+    // #6294: persist the coerced inference API only together with a
+    // successful inference-step record further below — a failed heal must
+    // leave the stale persisted seed in place so the next resume re-arms.
+    const healCoercedInferenceApi =
+      resumeProviderSelection && preferredInferenceApi !== initial.preferredInferenceApi;
     const selected = requireSelection(provider, model, deps);
     const selectedProvider = selected.provider;
     const selectedModel = selected.model;
@@ -408,6 +436,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             ...(reuseGatewayCredentialWithoutLocalKey
               ? { reuseGatewayCredentialWithoutLocalKey }
               : {}),
+            ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
           };
           await deps.startRecordedStep("inference", { provider, model });
           inferenceResult = await withInferenceTrace(
@@ -529,6 +558,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         allowToolsIncompatible,
         ...(skipHostInferenceSmoke ? { skipHostInferenceSmoke } : {}),
         ...(reuseGatewayCredentialWithoutLocalKey ? { reuseGatewayCredentialWithoutLocalKey } : {}),
+        ...(preferredInferenceApi ? { preferredInferenceApi } : {}),
       };
       await deps.startRecordedStep("inference", { provider, model });
       inferenceResult = await withInferenceTrace(
@@ -570,6 +600,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoning,
         nimContainer,
         hermesToolGateways,
+        // The forced #6294 heal succeeded: the gateway registration now
+        // matches the coerced route, so the session may safely stop carrying
+        // the stale anthropic-messages seed.
+        ...(healCoercedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
     break;
