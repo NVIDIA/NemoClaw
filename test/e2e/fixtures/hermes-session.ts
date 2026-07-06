@@ -17,7 +17,7 @@ export interface HermesSessionRow {
 }
 
 const SESSION_ROW_SCRIPT =
-  "from hermes_state import SessionDB\nimport json,sys\nrow=next((r for r in SessionDB().list_sessions_rich(limit=200) if r['id']==sys.argv[1]), None)\nassert row is not None, sys.argv[1]\nprint(json.dumps({'id':row['id'],'last_active':row['last_active'],'message_count':row['message_count'],'preview':row['preview']}))";
+  "from hermes_state import SessionDB; import json, sys; row = next((r for r in SessionDB().list_sessions_rich(limit=200) if r['id'] == sys.argv[1]), None); assert row is not None, sys.argv[1]; print(json.dumps({'id': row['id'], 'last_active': row['last_active'], 'message_count': row['message_count'], 'preview': row['preview']}))";
 
 export async function hermesSessionRow(
   sandbox: SandboxClient,
