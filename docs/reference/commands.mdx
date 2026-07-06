@@ -2296,6 +2296,10 @@ It is also available in sandbox-first form as `$$nemoclaw <name> inference set -
 <AgentOnly variant="openclaw">
 
 For OpenClaw, the patch updates the OpenClaw config provider namespace and selected model.
+Same-API-family changes hot-reload without replacing the gateway process.
+When the API family changes, NemoClaw commits the config and integrity hash, then uses the managed supervisor to restart only the OpenClaw gateway and verify its health and forwards.
+The sandbox remains running, but agent requests are briefly interrupted.
+If the restart fails, the route and config remain committed; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
 
 </AgentOnly>
 <AgentOnly variant="hermes">

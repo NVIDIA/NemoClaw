@@ -108,6 +108,11 @@ $$nemoclaw inference set --provider hermes-provider --model openai/gpt-5.4-mini
 
 Before patching the in-sandbox config, NemoClaw resolves the target route's API family: OpenAI chat completions, Anthropic Messages, or OpenAI Responses.
 For OpenClaw, `inference set` syncs the provider API family and primary model reference into the running config.
+Switches within the current API family hot-reload without replacing the gateway process.
+When the API family changes, for example from OpenAI Chat Completions to Anthropic Messages, NemoClaw uses the managed supervisor to restart only the OpenClaw gateway after the config and integrity hash are committed.
+The sandbox stays running, but active agent requests are briefly interrupted while gateway health and forwards recover.
+The audit trail records `gateway restart pending` before this post-commit restart and `gateway restart failed` if the supervisor cannot complete it.
+That failure does not roll back the committed route or config; run `$$nemoclaw <name> gateway restart` to finish applying the switch.
 For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anthropic Messages routes, `model.api_mode: codex_responses` for OpenAI Responses routes, and removes `api_mode` for OpenAI-style chat-completions routes.
 Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
 

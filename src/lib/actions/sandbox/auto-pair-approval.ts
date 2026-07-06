@@ -25,14 +25,15 @@
  * Workaround boundary (NemoClaw#4462): OpenClaw owns device-pairing approval
  * semantics. In the reviewed OpenClaw 2026.6.10, a gateway-pinned
  * `devices approve` for a scope-upgrade can request the upgraded scopes for
- * its own connection and
- * return the pending-scope failure it is trying to resolve. The approval call
- * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env, and the reviewed
- * dist patch forces OpenClaw's existing local-only stored-device-auth path for
+ * its own connection and return the pending-scope failure it is trying to
+ * resolve. The sourced runtime environment makes the list call inspect the
+ * same live gateway through local loopback, while the approval call also
+ * strips OPENCLAW_GATEWAY_URL/PORT/TOKEN from the child env. The reviewed dist
+ * patch then forces OpenClaw's existing local-only stored-device-auth path for
  * the exact bounded self-repair shape so a shared token reloaded from config
- * cannot take precedence. The list call stays gateway-pinned so it inspects
- * the live gateway. Remove this compatibility path when OpenClaw can complete
- * scope upgrades natively through device-token auth using operator.pairing.
+ * cannot take precedence. Remove this compatibility path when OpenClaw can
+ * complete scope upgrades natively through device-token auth using
+ * operator.pairing.
  */
 
 import { spawnSync } from "node:child_process";

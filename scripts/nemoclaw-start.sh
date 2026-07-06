@@ -632,6 +632,7 @@ PY_CLASSIFY_MUTABLE_CONFIG
 # 2770/660 after every command outcome; do not replace that upstream source fix
 # with a NemoClaw timeout or permission escape flag.
 run_oneshot_command() {
+  local _nemoclaw_runtime_env_file="${_RUNTIME_SHELL_ENV_FILE:-/tmp/nemoclaw-proxy-env.sh}"
   local _nemoclaw_oneshot_child_pid=""
   local _nemoclaw_oneshot_signal=""
   local _nemoclaw_oneshot_wait_rc=0
@@ -643,7 +644,19 @@ run_oneshot_command() {
   # direct child rather than adding a forwarding process.
   (
     trap - TERM INT
-    exec "$@"
+    # Source the root-owned runtime environment before stepping down so PID-1
+    # one-shot commands use the same proxy, state, and gateway routing contract
+    # as connect-shell and host `exec` commands.
+    # shellcheck source=/dev/null
+    if [ -r "$_nemoclaw_runtime_env_file" ]; then
+      builtin source "$_nemoclaw_runtime_env_file" || exit $?
+    fi
+    # The shared, sandbox-readable file also exports the gateway token.
+    # Remove it from the child's ambient environment so ordinary one-shot argv
+    # uses local device auth and does not print it accidentally. This is not a
+    # secrecy boundary against a command that deliberately reads the file.
+    builtin unset OPENCLAW_GATEWAY_TOKEN
+    builtin exec -- "$@"
   ) <&0 &
   _nemoclaw_oneshot_child_pid=$!
   trap '_nemoclaw_oneshot_signal=TERM; kill -TERM "$_nemoclaw_oneshot_child_pid" 2>/dev/null || true' TERM
@@ -2377,7 +2390,20 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  # The gateway must retain NemoClaw's private-interface URL, but the watcher
+  # is an ordinary OpenClaw CLI client. Source the trusted runtime environment
+  # in this child only so an injected private URL is removed before the first
+  # `devices list`. OpenClaw can then complete its local-loopback pairing
+  # bootstrap before this unchanged watcher starts approving bounded requests.
+  # An explicit URL override is preserved by write_runtime_shell_env().
+  (
+    if [ -r "$_RUNTIME_SHELL_ENV_FILE" ]; then
+      # shellcheck source=/dev/null
+      builtin source "$_RUNTIME_SHELL_ENV_FILE" || exit $?
+    fi
+    export OPENCLAW_BIN="$OPENCLAW"
+    exec nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u -
+  ) <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
 import os
@@ -2494,14 +2520,16 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-# Workaround boundary (NemoClaw#4462): list calls stay gateway-pinned so the
-# watcher inspects live state. Approval calls drop the gateway env triplet so
-# OpenClaw resolves its local loopback gateway and device token. The reviewed
-# 2026.6.10 dist patch requests only operator.pairing for a complete bounded
-# CLI self-upgrade and forces the existing local-only stored-device-auth path
-# so a shared token reloaded from config cannot win authentication. The gateway
-# then validates and commits in OpenClaw's canonical locked pairing writer.
-# Remove both pieces when upstream supports that flow.
+# Workaround boundary (NemoClaw#4462): the watcher child sources the trusted
+# runtime environment, so list calls resolve the same live gateway through
+# local loopback instead of the injected private-interface URL. Approval calls
+# additionally drop the gateway env triplet so OpenClaw must use the local
+# device token. The reviewed 2026.6.10 dist patch requests only
+# operator.pairing for a complete bounded CLI self-upgrade and forces the
+# existing local-only stored-device-auth path so a shared token reloaded from
+# config cannot win authentication. The gateway then validates and commits in
+# OpenClaw's canonical locked pairing writer. Remove both pieces when upstream
+# supports that flow.
 def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
@@ -2905,16 +2933,28 @@ PROXYEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
       _escaped_gateway_url="$(printf '%s' "$OPENCLAW_GATEWAY_URL" | sed "s/'/'\\\\''/g")"
-      printf "export OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      # Preserve NemoClaw's sandbox-interface dial-back URL for the few
+      # NemoClaw-owned commands that require it without forcing ordinary
+      # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
+      printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
+      cat <<'GATEWAYURLENVEOF'
+# Equality identifies NemoClaw's inherited private-interface value. A different
+# nonempty raw value was supplied explicitly after this file was generated, so
+# preserve that caller override and its matching insecure-WS marker.
+if [ -z "${OPENCLAW_GATEWAY_URL:-}" ] || [ "${OPENCLAW_GATEWAY_URL}" = "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ]; then
+  unset OPENCLAW_GATEWAY_URL
+  unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS
+fi
+GATEWAYURLENVEOF
     fi
     if [ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
       _escaped_gateway_token="$(printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_TOKEN='%s'\n" "$_escaped_gateway_token"
     fi
     if [ -n "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
-      # Mirrors the gateway-process export above so connect-shell CLI
-      # clients accept the plaintext eth0 ws:// gateway URL too.
-      printf "export OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
+      # Retain the matching break-glass under the same private namespace.
+      # WhatsApp reinjects it only for its gateway-backed login command.
+      printf "export NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS='1'\n"
     fi
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
@@ -3072,8 +3112,17 @@ openclaw() {
           # "1008 abnormal closure") is diagnosed separately from QR rendering,
           # and force compact QR output so the code fits on the screen.
           if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
-            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
-              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+            # Keep an explicit override coupled to its own opt-in. The private
+            # veth URL may inherit only NemoClaw's matching private-WS marker.
+            if [ -n "${OPENCLAW_GATEWAY_URL:-}" ]; then
+              _nemoclaw_whatsapp_gateway_url="$OPENCLAW_GATEWAY_URL"
+              _nemoclaw_whatsapp_insecure_ws="${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            else
+              _nemoclaw_whatsapp_gateway_url="${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}"
+              _nemoclaw_whatsapp_insecure_ws="${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}"
+            fi
+            if [ -z "$_nemoclaw_whatsapp_gateway_url" ]; then
+              echo "Error: WhatsApp pairing cannot start — gateway URL is not set in this shell." >&2
               echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
               echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
               echo "" >&2
@@ -3085,10 +3134,10 @@ openclaw() {
             # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
             # so a typo'd/clobbered URL is reported as a gateway/env problem
             # rather than failing inside the login as an ambiguous close.
-            case "${OPENCLAW_GATEWAY_URL}" in
+            case "$_nemoclaw_whatsapp_gateway_url" in
               ws://*|wss://*) ;;
               *)
-                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "Error: WhatsApp pairing cannot start — gateway URL='${_nemoclaw_whatsapp_gateway_url}' is not a ws:// gateway URL." >&2
                 echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
                 echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
                 echo "" >&2
@@ -3097,7 +3146,7 @@ openclaw() {
                 return 1
                 ;;
             esac
-            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] Pairing via gateway ${_nemoclaw_whatsapp_gateway_url}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
             # Defense-in-depth: connect-session NODE_OPTIONS already wires
             # manifest-declared connect preloads for every openclaw invocation;
@@ -3105,9 +3154,14 @@ openclaw() {
             # preload modules are idempotent, so a double --require is harmless.
             _nemoclaw_connect_node_options="$(_nemoclaw_messaging_connect_node_options)"
             if [ -n "$_nemoclaw_connect_node_options" ]; then
-              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }$_nemoclaw_connect_node_options" \
+                command openclaw "$@"
             else
-              command openclaw "$@"
+              OPENCLAW_GATEWAY_URL="$_nemoclaw_whatsapp_gateway_url" \
+                OPENCLAW_ALLOW_INSECURE_PRIVATE_WS="$_nemoclaw_whatsapp_insecure_ws" \
+                command openclaw "$@"
             fi
             _whatsapp_login_exit=$?
             if [ "$_whatsapp_login_exit" -ne 0 ]; then

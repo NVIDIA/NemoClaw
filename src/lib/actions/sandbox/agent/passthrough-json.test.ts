@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { buildOpenshellExecArgs, wrapExecCommandWithRuntimeEnv } from "../exec";
 import { runAgentJsonPassthrough } from "./passthrough-json";
 
 describe("runAgentJsonPassthrough", () => {
@@ -59,7 +60,11 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(spawnSync).toHaveBeenCalledWith(
       "/usr/local/bin/openshell",
-      ["sandbox", "exec", "--name", "alpha", "--no-tty", "--", "openclaw", "agent", "--json"],
+      buildOpenshellExecArgs(
+        "alpha",
+        wrapExecCommandWithRuntimeEnv(["openclaw", "agent", "--json"]),
+        { tty: false },
+      ),
       expect.objectContaining({
         encoding: "utf-8",
         maxBuffer: 64 * 1024 * 1024,
