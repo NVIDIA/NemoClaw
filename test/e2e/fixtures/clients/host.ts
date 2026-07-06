@@ -42,6 +42,10 @@ export class HostCliClient {
     args: string[] = [],
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
+    // Trust boundary: this runs trusted host binaries with test-authored
+    // arguments on the CI host. Do not pass sandbox- or user-controlled
+    // script content here; sandbox interaction should stay mediated by
+    // OpenShell/ShellProbe redaction.
     const merged: ShellProbeRunOptions = { ...options };
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;

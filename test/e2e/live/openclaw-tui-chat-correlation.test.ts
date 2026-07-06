@@ -23,6 +23,10 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
+import {
+  buildIssue6194TuiExpectScript,
+  ISSUE6194_TUI_TIMEOUT_SEC,
+} from "./issue-6194-tui-expect.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
 // `cloud-openclaw` onboarding profile (already in
@@ -43,10 +47,6 @@ const EXPECTED_OPENCLAW_VERSION =
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;
-const ISSUE6194_TUI_TIMEOUT_SEC = Number.parseInt(
-  process.env.NEMOCLAW_ISSUE_6194_TUI_TIMEOUT_SEC ?? "240",
-  10,
-);
 
 // ─── Trace analyzer types + helpers (mirrored from
 //     test/openclaw-tui-chat-correlation.test.ts so the live test is
@@ -231,68 +231,6 @@ function analyzeIssue2603Trace({
     missingUserTurns,
     duplicateUserTurns,
   };
-}
-
-function buildIssue6194TuiExpectScript(): string {
-  return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
-set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
-set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
-log_file -a $capture
-spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_initial" }
-  timeout {
-    send "\\003"
-    exit 10
-  }
-  eof { exit 11 }
-}
-send -- "Reply exactly NEMOCLAW6194_CHAT_OK and nothing else. Do not use tools.\\r"
-expect {
-  -nocase -re {NEMOCLAW6194_CHAT_OK} { puts "ISSUE6194_MARK chat_reply" }
-  timeout {
-    send "\\003"
-    exit 20
-  }
-  eof { exit 21 }
-}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_chat" }
-  timeout { puts "ISSUE6194_MARK connected_idle_after_chat_missing" }
-  eof { exit 22 }
-}
-send -- "/nemoclaw status\\r"
-expect {
-  -nocase -re {(nemoclaw|sandbox|docker|status|managed|openclaw)} { puts "ISSUE6194_MARK slash_status_output" }
-  timeout {
-    send "\\003"
-    exit 30
-  }
-  eof { exit 31 }
-}
-expect {
-  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_status" }
-  timeout { puts "ISSUE6194_MARK connected_idle_after_status_missing" }
-  eof { exit 32 }
-}
-send "\\003"
-expect {
-  eof {
-    puts "ISSUE6194_MARK clean_exit"
-    exit 0
-  }
-  timeout {
-    send "\\003"
-    expect {
-      eof {
-        puts "ISSUE6194_MARK clean_exit"
-        exit 0
-      }
-      timeout { exit 40 }
-    }
-  }
-}
-`;
 }
 
 // The zero-chat-events failure is an observability race at the live
@@ -564,7 +502,7 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 test(
   "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
   async ({ artifacts, environment, host, onboard, sandbox, secrets }) => {
-    secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.writeJson("target.json", {
       id: "openclaw-tui-chat-correlation",
@@ -664,9 +602,21 @@ test(
         NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
         NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
       },
+      redactionValues: [apiKey],
       timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
     });
-    const plainCapture = stripTerminalControl(readFileSync(captureFile, "utf8"));
+    let rawCapture = "";
+    try {
+      rawCapture = readFileSync(captureFile, "utf8");
+    } catch (error) {
+      const fileError = error as NodeJS.ErrnoException;
+      if (fileError.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    const redactedCapture = secrets.redact(rawCapture, [apiKey]);
+    writeFileSync(captureFile, redactedCapture, "utf8");
+    const plainCapture = stripTerminalControl(redactedCapture);
     const combined = `${resultText(tui)}\n${plainCapture}`;
     await artifacts.writeText("issue6194-openclaw-tui-capture.plain.log", plainCapture);
     await artifacts.writeJson("issue6194-target-result.json", {
@@ -674,7 +624,13 @@ test(
       expectExitCode: tui.exitCode,
       connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
       chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
+      connectedIdleAfterChat: combined.includes("ISSUE6194_MARK connected_idle_after_chat"),
       slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
+      connectedIdleAfterStatus: combined.includes("ISSUE6194_MARK connected_idle_after_status"),
+      networkApprovalPrompt: combined.includes("ISSUE6194_MARK network_approval_prompt"),
+      connectedIdleAfterNetworkApproval: combined.includes(
+        "ISSUE6194_MARK connected_idle_after_network_approval",
+      ),
       cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
     });
 
@@ -685,8 +641,21 @@ test(
     expect(combined, "post-idle chat must return a visible reply before timeout").toContain(
       "ISSUE6194_MARK chat_reply",
     );
+    expect(combined, "TUI must return to connected idle after the post-idle chat reply").toContain(
+      "ISSUE6194_MARK connected_idle_after_chat",
+    );
     expect(combined, "post-idle slash command must render status output before timeout").toContain(
       "ISSUE6194_MARK slash_status_output",
+    );
+    expect(combined, "TUI must return to connected idle after /nemoclaw status").toContain(
+      "ISSUE6194_MARK connected_idle_after_status",
+    );
+    expect(
+      combined,
+      "post-idle network request must present the sandbox approval prompt",
+    ).toContain("ISSUE6194_MARK network_approval_prompt");
+    expect(combined, "TUI must return to connected idle after network approval input").toContain(
+      "ISSUE6194_MARK connected_idle_after_network_approval",
     );
     expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
       "ISSUE6194_MARK clean_exit",
