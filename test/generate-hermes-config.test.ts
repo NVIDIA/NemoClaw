@@ -580,6 +580,28 @@ describe("agents/hermes/generate-config.ts", () => {
     });
   });
 
+  it("configures the managed OpenAI frontend for a custom Anthropic upstream (#6289)", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-anthropic-endpoint",
+      NEMOCLAW_PROVIDER_KEY: "inference",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+    });
+
+    expect(config.model).toEqual({
+      default: "nvidia/nvidia/nemotron-3-super-v3",
+      provider: "custom",
+      base_url: "https://inference.local/v1",
+      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+    });
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+    });
+    expect(config.custom_providers[0].api_mode).toBeUndefined();
+  });
+
   it("maps OpenAI Responses routing to Hermes' codex_responses api mode", () => {
     const { config } = runConfigScript({
       NEMOCLAW_INFERENCE_API: "openai-responses",

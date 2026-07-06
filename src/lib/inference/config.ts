@@ -92,6 +92,23 @@ export interface SandboxInferenceConfig {
   inferenceCompat: Record<string, unknown> | null;
 }
 
+/**
+ * Resolve provider-specific managed-proxy protocol requirements for an agent.
+ * Hermes must use the OpenAI-compatible frontend for custom Anthropic routes
+ * because the managed Anthropic SSE frontend can emit duplicate message_start
+ * events (#6289). Provider setup then verifies the endpoint's OpenAI surface
+ * and aligns the OpenShell provider type before the route is used.
+ */
+export function resolveAgentInferenceApi(
+  agentName: string | null | undefined,
+  provider: string | null | undefined,
+  preferredInferenceApi: string | null,
+): string | null {
+  return agentName === "hermes" && provider === "compatible-anthropic-endpoint"
+    ? "openai-completions"
+    : preferredInferenceApi;
+}
+
 export function getProviderSelectionConfig(
   provider: string,
   model?: string,
@@ -262,6 +279,25 @@ export function getSandboxInferenceConfig(
   }
 
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
+}
+
+/**
+ * OpenAI-only agents cannot consume an Anthropic Messages route. Select the
+ * managed OpenAI frontend for those agents; provider setup then probes the
+ * endpoint's OpenAI surface and registers the OpenShell provider as `openai`
+ * before routing traffic. Provider-specific overrides for multi-protocol
+ * agents such as Hermes are applied separately by resolveAgentInferenceApi().
+ */
+export function coerceAgentInferenceApi(
+  agent: unknown,
+  preferredInferenceApi: string | null,
+): string | null {
+  const providerType = (agent as { inference?: { provider_type?: string } } | null | undefined)
+    ?.inference?.provider_type;
+  if (providerType === "openai_compatible" && preferredInferenceApi === "anthropic-messages") {
+    return "openai-completions";
+  }
+  return preferredInferenceApi;
 }
 
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {

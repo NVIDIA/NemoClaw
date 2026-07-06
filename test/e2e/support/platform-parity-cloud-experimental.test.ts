@@ -12,6 +12,7 @@ import {
   assertRequiredCloudExperimentalResult,
   buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
+  cloudExperimentalCheckTimeoutMs,
 } from "../live/cloud-experimental-checks.ts";
 
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
@@ -133,6 +134,7 @@ describe("P0-E cloud-experimental parity guardrails", () => {
 
   it("registers executable Deep Agents cloud-experimental checks", () => {
     expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
@@ -145,6 +147,19 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
     }
+  });
+
+  it("gives the destructive fresh re-onboard check its onboarding budget", () => {
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/04-deepagents-code-fresh-reonboard.sh",
+      ),
+    ).toBe(15 * 60_000);
+    expect(
+      cloudExperimentalCheckTimeoutMs(
+        "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      ),
+    ).toBe(180_000);
   });
 
   it("documents Deep Agents check scripts in generated launch/QA evidence", () => {

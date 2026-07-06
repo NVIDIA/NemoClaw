@@ -40,6 +40,7 @@ function createRecoveryHarness(
   names: string[],
   options: {
     gatewayNames?: Record<string, string>;
+    gatewayPort?: number;
     liveOutput?: string;
     latestBackup?: ReturnType<typeof makeManifest> | null;
     registryOverrides?: Record<
@@ -58,9 +59,12 @@ function createRecoveryHarness(
   rebuildSpy: ReturnType<typeof vi.fn>;
   latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
+  liveListSpy: ReturnType<typeof vi.spyOn>;
 } {
   delete require.cache[requireDist.resolve(upgradeModulePath)];
   vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
+  vi.stubEnv("NEMOCLAW_GATEWAY_PORT", String(options.gatewayPort ?? 8080));
+  delete require.cache[requireDist.resolve("../core/ports.js")];
 
   const coreVersion = requireDist("../core/version.js");
   const sandboxList = requireDist("../openshell-sandbox-list.js");
@@ -71,17 +75,21 @@ function createRecoveryHarness(
 
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
-  vi.spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit").mockResolvedValue({
-    status: 0,
-    output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
-  });
+  const liveListSpy = vi
+    .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
+    .mockResolvedValue({
+      status: 0,
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
+    });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
     sandboxes: names.map((name) => ({
       name,
       agent: null,
       agentVersion: "2026.5.27",
       gatewayName: options.gatewayNames?.[name],
+      gatewayPort: options.gatewayPort,
       nemoclawVersion: "0.0.71",
       ...options.registryOverrides?.[name],
     })),
@@ -116,6 +124,7 @@ function createRecoveryHarness(
     rebuildSpy,
     latestBackupSpy,
     managedEvidenceSpy,
+    liveListSpy,
   };
 }
 
@@ -209,6 +218,171 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
       expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
     );
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("recovers a registered sandbox absent from the selected gateway when it resolves to the selected gateway", async () => {
+    const harness = createRecoveryHarness(["orphaned-box"], {
+      liveOutput: "other-box Ready",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+    });
+  });
+
+  it("does not recover an absent sandbox bound to a different gateway even when a validated backup exists", async () => {
+    const harness = createRecoveryHarness(["registered-elsewhere"], {
+      gatewayNames: { "registered-elsewhere": "gateway-b" },
+      liveOutput: "selected-box Ready",
+      staleNames: ["registered-elsewhere"],
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
+    );
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("targets both sandbox-list probes at the selected gateway before absent recovery (#6114)", async () => {
+    const harness = createRecoveryHarness(["orphaned-box"], {
+      gatewayPort: 12345,
+      liveOutput: "other-box Ready",
+    });
+    harness.liveListSpy
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "still-other-box Ready" });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    const expectedContext = expect.objectContaining({
+      action: expect.any(String),
+      command: expect.any(String),
+    });
+    const expectedGateway = { gatewayName: "nemoclaw-12345" };
+    expect(harness.liveListSpy).toHaveBeenNthCalledWith(1, expectedContext, expectedGateway);
+    expect(harness.liveListSpy).toHaveBeenNthCalledWith(2, expectedContext, expectedGateway);
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+    });
+  });
+
+  it("does not recover a healthy non-default sandbox based on the current gateway's absence (#6114)", async () => {
+    const targetGatewayName = "nemoclaw-12345";
+    const harness = createRecoveryHarness(["healthy-box"], { gatewayPort: 12345 });
+    harness.liveListSpy.mockImplementation(async (...args: unknown[]) =>
+      (args[1] as { gatewayName?: string } | undefined)?.gatewayName === targetGatewayName
+        ? { status: 0, output: "healthy-box Ready" }
+        : { status: 0, output: "default-other-box Ready" },
+    );
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.liveListSpy).toHaveBeenCalledWith(expect.any(Object), {
+      gatewayName: targetGatewayName,
+    });
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not assess or rebuild an absent sandbox with a tampered gateway binding (#6114)", async () => {
+    const harness = createRecoveryHarness(["tampered-box"], {
+      gatewayNames: { "tampered-box": "attacker" },
+      liveOutput: "other-box Ready",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: sandbox "tampered-box" has an invalid persisted gateway binding; skipping prepared-backup recovery.',
+    );
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("attacker"));
+  });
+
+  it("does not assess or rebuild a non-Ready sandbox with a tampered gateway binding (#6114)", async () => {
+    const harness = createRecoveryHarness(["tampered-box"], {
+      gatewayNames: { "tampered-box": "attacker" },
+      liveOutput: "tampered-box Error",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: sandbox "tampered-box" has an invalid persisted gateway binding; skipping prepared-backup recovery.',
+    );
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("attacker"));
+  });
+
+  it("does not recover a non-Ready sandbox bound to another valid gateway (#6114)", async () => {
+    const harness = createRecoveryHarness(["registered-elsewhere"], {
+      gatewayNames: { "registered-elsewhere": "nemoclaw-12345" },
+      liveOutput: "registered-elsewhere Provisioning",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it("does not recover an absent sandbox when a confirming second listing shows it has become Ready", async () => {
+    const harness = createRecoveryHarness(["reconnecting-box"], {
+      staleNames: ["reconnecting-box"],
+    });
+    harness.liveListSpy
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: "reconnecting-box Ready" });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
+    );
+  });
+
+  it.each([
+    "Provisioning",
+    "Error",
+  ])("recovers an absent sandbox when confirmation reports the %s phase (#6114)", async (phase) => {
+    const harness = createRecoveryHarness(["orphaned-box"], {
+      liveOutput: "other-box Ready",
+    });
+    harness.liveListSpy
+      .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
+      .mockResolvedValueOnce({ status: 0, output: `orphaned-box ${phase}` });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledTimes(2);
+    expect(harness.latestBackupSpy).toHaveBeenCalledWith("orphaned-box");
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("orphaned-box", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "orphaned-box" }),
+    });
   });
 
   it("attempts both a live stale rebuild and a prepared non-Ready recovery", async () => {

@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   detectResultIssue: vi.fn(),
   printIssue: vi.fn(),
   recoverNamedGatewayRuntime: vi.fn(),
-  runOpenshell: vi.fn(),
   stripAnsi: vi.fn((value: string) => value),
 }));
 
@@ -25,7 +24,6 @@ vi.mock("./adapters/openshell/client", () => ({
 }));
 vi.mock("./adapters/openshell/runtime", () => ({
   captureOpenshell: mocks.captureOpenshell,
-  runOpenshell: mocks.runOpenshell,
 }));
 vi.mock("./gateway-runtime-action", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
@@ -65,7 +63,7 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     mocks.detectPreflightIssue.mockReturnValue(null);
     mocks.detectResultIssue.mockReturnValue(null);
     mocks.captureOpenshell.mockReturnValue({ status: 0, output: "alpha Ready" });
-    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true });
+    mocks.recoverNamedGatewayRuntime.mockResolvedValue({ recovered: true, attempted: false });
     exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code ?? 0})`);
     }) as never);
@@ -100,6 +98,60 @@ describe("sandbox list gateway preflight and recovery (#6237)", () => {
     expect(mocks.captureOpenshell).toHaveBeenCalledWith(["sandbox", "list"]);
     expect(mocks.recoverNamedGatewayRuntime).not.toHaveBeenCalled();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("proves and recovers an explicit gateway instead of the current selection (#6114)", async () => {
+    const options = { gatewayName: "nemoclaw-12345" };
+    mocks.captureOpenshell
+      .mockReturnValueOnce({ status: 1, output: "client error (Connect): Connection refused" })
+      .mockReturnValueOnce({ status: 0, output: "alpha Ready" });
+
+    const result = await captureSandboxListWithGatewayPreflightOrExit(context, options);
+
+    expect(mocks.detectPreflightIssue).toHaveBeenCalledWith(options);
+    const expectedRecoveryOptions = {
+      gatewayName: "nemoclaw-12345",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    };
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenNthCalledWith(1, expectedRecoveryOptions);
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenNthCalledWith(2, expectedRecoveryOptions);
+    expect(mocks.detectResultIssue).toHaveBeenCalledWith(result, options);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when target selection fails while a sibling list is healthy (#6114)", async () => {
+    const options = { gatewayName: "nemoclaw-12345" };
+    mocks.recoverNamedGatewayRuntime.mockResolvedValueOnce({
+      recovered: false,
+      attempted: true,
+      before: { state: "connected_other", activeGateway: "nemoclaw" },
+      after: { state: "connected_other", activeGateway: "nemoclaw" },
+    });
+    // This is the process-global sibling output that must never be accepted
+    // after the target gateway select/verification fails.
+    mocks.captureOpenshell.mockReturnValue({ status: 0, output: "default-box Ready" });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(captureSandboxListWithGatewayPreflightOrExit(context, options)).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(mocks.recoverNamedGatewayRuntime).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-12345",
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
+    });
+    expect(mocks.captureOpenshell).not.toHaveBeenCalled();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("recovery did not complete");
   });
 
   it("recovers a disconnected gateway once and retries the sandbox list", async () => {

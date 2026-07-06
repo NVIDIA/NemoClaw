@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../cli/branding";
 import { B, D, G, R, YW } from "../cli/terminal-style";
+import { GATEWAY_PORT } from "../core/ports";
 import { getVersion } from "../core/version";
 import { prompt as askPrompt } from "../credentials/store";
 import {
@@ -15,6 +16,7 @@ import {
   splitRebuildableSandboxes,
   type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
+import { resolveGatewayName, resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
@@ -118,6 +120,60 @@ function isPreparedBackupRecovery(
   return "manifest" in candidate;
 }
 
+// Under installer restore intent, a registry sandbox the selected gateway does
+// not report Ready/Running is eligible for prepared-backup recovery only when
+// its persisted binding resolves to that selected gateway, whether the gateway
+// observes it in a non-Ready phase or it is absent. Observation alone is
+// insufficient: a sandbox bound to a different recorded gateway may be Ready
+// there, so recovering it would clobber a healthy sandbox.
+// resolveSandboxGatewayName throws on an invalid persisted
+// binding — report that fixed, sanitized condition and treat it as ineligible so
+// a corrupted registry row never drives a recreate. Remove this guard only when
+// every registry write path validates gateway bindings before persistence.
+function isPreparedRecoveryCandidate(
+  sandbox: registry.SandboxEntry,
+  liveNames: Set<string>,
+  selectedGatewayName: string,
+): boolean {
+  if (liveNames.has(sandbox.name)) return false;
+  try {
+    return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
+  } catch {
+    console.warn(
+      `  Warning: sandbox ${JSON.stringify(sandbox.name)} has an invalid persisted gateway binding; skipping prepared-backup recovery.`,
+    );
+    return false;
+  }
+}
+
+// A sandbox the gateway already observes in a non-Ready phase does not need
+// further confirmation — its state is already known from the one listing. A
+// sandbox that is merely absent might instead still be reconnecting to a
+// just-recreated gateway, so absence is confirmed against a second, independent
+// listing before it can drive a recreate: a sandbox that has become Ready by
+// the second read is dropped rather than rebuilt from a possibly stale backup.
+// A non-Ready phase on the second read remains eligible because prepared-backup
+// restore intent explicitly targets sandboxes stuck in those phases.
+// Any confirmation preflight or listing failure deliberately aborts the whole
+// command, even when other candidates were already observed. Continuing after
+// target-gateway evidence becomes unavailable could mix stale and current state
+// in one destructive recovery run, so uncorroborated absence always fails closed.
+async function confirmAbsentRecoveryCandidates(
+  absentCandidates: registry.SandboxEntry[],
+  selectedGatewayName: string,
+): Promise<registry.SandboxEntry[]> {
+  if (absentCandidates.length === 0) return absentCandidates;
+  const confirmation = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "confirming sandboxes absent from the selected gateway",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
+  const confirmedLiveNames = parseReadySandboxNames(confirmation.output || "");
+  return absentCandidates.filter((sandbox) => !confirmedLiveNames.has(sandbox.name));
+}
+
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
 ): Promise<void> {
@@ -131,15 +187,22 @@ export async function upgradeSandboxes(
     return;
   }
 
-  // Query live sandboxes so we can tell the user which are running
-  const liveResult = await captureSandboxListWithGatewayPreflightOrExit({
-    action: "checking sandbox upgrade state",
-    command: `${CLI_NAME} upgrade-sandboxes`,
-  });
+  // Resolve the configured gateway once and pin every observation to it. The
+  // initial list, the confirmation list, and persisted-binding eligibility must
+  // share this source; OpenShell's mutable current selection may be a sibling
+  // gateway where the same sandbox name has different state.
+  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+  const liveResult = await captureSandboxListWithGatewayPreflightOrExit(
+    {
+      action: "checking sandbox upgrade state",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    },
+    { gatewayName: selectedGatewayName },
+  );
   const liveNames = parseReadySandboxNames(liveResult.output || "");
-  // Absence from the selected gateway is not evidence of failure: a registered
-  // sandbox may be Ready on another recorded gateway. Only an explicitly
-  // observed, known non-Ready phase is eligible for prepared-backup recovery.
+  // Sandboxes the selected gateway observes in a non-Ready phase. Absence from
+  // the selected gateway is handled by isPreparedRecoveryCandidate, which recovers
+  // an absent sandbox only when it resolves to the selected gateway.
   const nonReadyLiveNames = new Set(
     parseLiveSandboxEntries(liveResult.output || "")
       .filter(
@@ -170,9 +233,24 @@ export async function upgradeSandboxes(
   // bridge with onboard's matching consumer once prepared-backup installer recovery
   // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
-  const backupRecoveryAssessments = recoverPreparedBackups
-    ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)
-    : [];
+  let recoveryCandidates: registry.SandboxEntry[] = [];
+  if (recoverPreparedBackups) {
+    const gatewayEligible = sandboxes.filter((sandbox) =>
+      isPreparedRecoveryCandidate(sandbox, liveNames, selectedGatewayName),
+    );
+    const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
+      nonReadyLiveNames.has(sandbox.name),
+    );
+    const absentCandidates = gatewayEligible.filter(
+      (sandbox) => !nonReadyLiveNames.has(sandbox.name),
+    );
+    const confirmedAbsentCandidates = await confirmAbsentRecoveryCandidates(
+      absentCandidates,
+      selectedGatewayName,
+    );
+    recoveryCandidates = [...nonReadyCandidates, ...confirmedAbsentCandidates];
+  }
+  const backupRecoveryAssessments = recoveryCandidates.map(prepareBackupRecovery);
   const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
   const rejectedRecoveries = backupRecoveryAssessments.filter(
     (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),

@@ -7,12 +7,20 @@ import {
   makePreparedRecoveryManifest,
   resetRebuildFlowTestEnvironment,
   restoreRebuildFlowTestEnvironment,
+  snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
-describe("prepared rebuild recovery", () => {
-  beforeEach(resetRebuildFlowTestEnvironment);
+const restoreSandboxEnv = snapshotEnv(["NEMOCLAW_SANDBOX_NAME"]);
 
-  afterEach(restoreRebuildFlowTestEnvironment);
+describe("prepared rebuild recovery", () => {
+  beforeEach(() => {
+    resetRebuildFlowTestEnvironment();
+  });
+
+  afterEach(() => {
+    restoreRebuildFlowTestEnvironment();
+    restoreSandboxEnv();
+  });
 
   it("restores the validated pre-upgrade manifest without taking a second backup (#6114)", async () => {
     const harness = createRebuildFlowHarness({
