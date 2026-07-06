@@ -895,7 +895,7 @@ describe("runAnthropicStreamingEventProbe", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.sequenceErrors).toEqual(["content_block_delta before message_start"]);
+    expect(result.sequenceErrors).toEqual(["content events before message_start"]);
     expect(result.message).toContain("out of order");
   });
 
@@ -918,7 +918,32 @@ describe("runAnthropicStreamingEventProbe", () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.sequenceErrors).toEqual(["content_block_delta after message_stop"]);
+    expect(result.sequenceErrors).toEqual(["content events after message_stop"]);
+  });
+
+  it("fails when non-delta content events trail message_stop", () => {
+    const stopNotTerminal = [
+      "event: message_start",
+      "data: {}",
+      "",
+      "event: content_block_delta",
+      "data: {}",
+      "",
+      "event: message_stop",
+      "data: {}",
+      "",
+      "event: content_block_stop",
+      "data: {}",
+      "",
+    ].join("\n");
+
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(stopNotTerminal) },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.sequenceErrors).toEqual(["content events after message_stop"]);
   });
 
   it("tolerates interleaved unknown events like ping in a well-formed stream", () => {

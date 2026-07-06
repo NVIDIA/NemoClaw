@@ -609,22 +609,36 @@ export interface AnthropicStreamingProbeResult {
 }
 
 /**
+ * Known Anthropic Messages payload events that must sit between
+ * `message_start` and `message_stop` in a well-formed stream.
+ */
+const ANTHROPIC_CONTENT_STREAMING_EVENTS = new Set([
+  "content_block_start",
+  "content_block_delta",
+  "content_block_stop",
+  "message_delta",
+]);
+
+/**
  * Order rules for a well-formed Anthropic Messages stream: `message_start`
- * opens the stream before any content delta, and `message_stop` terminates
- * it after the last content delta. Only evaluated once all required events
- * are present; interleaved unknown events (e.g. `ping`) are ignored.
+ * opens the stream before any content event, and `message_stop` terminates
+ * it after the last one. Only evaluated once all required events are
+ * present; interleaved unknown events (e.g. `ping`) are ignored.
  */
 function anthropicSequenceErrors(eventSequence: string[]): string[] {
   const errors: string[] = [];
   const firstStart = eventSequence.indexOf("message_start");
-  const firstDelta = eventSequence.indexOf("content_block_delta");
-  const lastDelta = eventSequence.lastIndexOf("content_block_delta");
   const lastStop = eventSequence.lastIndexOf("message_stop");
-  if (firstDelta < firstStart) {
-    errors.push("content_block_delta before message_start");
+  const contentIndexes = eventSequence
+    .map((event, index) => (ANTHROPIC_CONTENT_STREAMING_EVENTS.has(event) ? index : -1))
+    .filter((index) => index >= 0);
+  const firstContent = contentIndexes[0] ?? -1;
+  const lastContent = contentIndexes[contentIndexes.length - 1] ?? -1;
+  if (firstContent >= 0 && firstContent < firstStart) {
+    errors.push("content events before message_start");
   }
-  if (lastStop < lastDelta) {
-    errors.push("content_block_delta after message_stop");
+  if (lastContent >= 0 && lastStop < lastContent) {
+    errors.push("content events after message_stop");
   }
   return errors;
 }
