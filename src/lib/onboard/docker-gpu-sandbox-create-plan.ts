@@ -72,13 +72,29 @@ export function resolveDockerGpuSandboxCreatePlan(
     log: options.log,
   });
   const logMessage = config.sandboxGpuEnabled
-    ? gpuRoutePlan === "compatibility-only"
-      ? config.hostGpuPlatform === "jetson"
-        ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
-        : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization."
-      : gpuRoutePlan === "native-with-fallback"
-        ? "  Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback."
-        : "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment."
+    ? gpuRouteLogMessage(gpuRoutePlan, config.hostGpuPlatform)
     : null;
   return { gpuRoutePlan, logMessage };
+}
+
+function gpuRouteLogMessage(
+  route: DockerGpuRoutePlan,
+  hostGpuPlatform: string | null | undefined,
+): string | null {
+  switch (route) {
+    case "none":
+      return null;
+    case "compatibility-only":
+      return hostGpuPlatform === "jetson"
+        ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
+        : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization.";
+    case "native-with-fallback":
+      return "  Automatic sandbox GPU enabled; trying native OpenShell injection with compatibility fallback.";
+    case "native-only":
+      return "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment.";
+    default: {
+      const exhaustiveRoute: never = route;
+      throw new Error(`Unhandled Docker GPU route: ${exhaustiveRoute}`);
+    }
+  }
 }

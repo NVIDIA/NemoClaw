@@ -1833,7 +1833,7 @@ If sandbox creation is rejected for native GPU routing, readiness diagnostics id
 Before that retry, NemoClaw warns that the legacy GPU compatibility envelope recreates the OpenShell-managed Docker container and may relax container confinement compared with native injection; set `NEMOCLAW_DOCKER_GPU_PATCH=0` to require native-only behavior instead.
 NemoClaw verifies cleanup with two stable checks (sandbox absent from gateway list and no labeled containers) before retrying through the compatibility path.
 Cleanup is polled at most five times, one second apart, and both conditions must pass twice consecutively; otherwise onboarding stops before the retry.
-These fail-closed safety limits are internal constants (two stable absence checks, five maximum attempts, and a one-second interval) and are not configurable through environment variables.
+These fail-closed safety limits are the internal constants `STABLE_ABSENCE_CHECKS` (2), `MAX_CLEANUP_ATTEMPTS` (5), and `CLEANUP_POLL_INTERVAL_MS` (1,000 ms); they are not configurable through environment variables.
 If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
 Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=1`, or another legacy nonzero value, to use only the compatibility path for diagnostics or older host compatibility.

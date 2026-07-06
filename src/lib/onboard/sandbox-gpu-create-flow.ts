@@ -87,6 +87,10 @@ export interface SandboxGpuCreateFlowResult {
  *   supported OpenShell version provides reliable native GPU injection across
  *   ordinary Linux, Docker Desktop WSL, and Jetson/Tegra hosts.
  *
+ * Keep this module bounded to one create-attempt execution plus composition of
+ * the generic fallback plan. If another lifecycle stage or retry route is
+ * added, extract the attempt executor instead of growing this trust boundary.
+ *
  * Create a sandbox through the selected GPU route, with one fail-closed
  * compatibility retry when the native-first plan permits it.
  */

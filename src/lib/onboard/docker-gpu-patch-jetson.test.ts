@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import { detectTegraDeviceGroupGids } from "./docker-gpu-jetson-groups";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuMode,
@@ -60,7 +61,11 @@ describe("Jetson /dev/nvmap group propagation (#4231)", () => {
 
   it("plumbs detected Tegra device GIDs into the Jetson recreate as --group-add", () => {
     const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
-    const detectTegraDeviceGroupGidsStub = vi.fn(() => ["44"]);
+    const detectTegraDeviceGroupGidsStub = vi.fn(() =>
+      detectTegraDeviceGroupGids({
+        statDeviceGid: (path) => (path === "/dev/nvmap" ? 44 : null),
+      }),
+    );
 
     recreateOpenShellDockerSandboxWithGpu(
       { sandboxName: "alpha", timeoutSecs: 1, backend: "jetson" },
