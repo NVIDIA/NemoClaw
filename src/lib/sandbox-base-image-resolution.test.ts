@@ -373,18 +373,21 @@ describe("sandbox base-image warm resolution", () => {
     dockerMocks.imageInspect.mockImplementation((ref: string) => ({
       status: ref === REF || ref === platformRef ? 0 : 1,
     }));
-    dockerMocks.imageInspectFormat.mockImplementation((format: string, ref: string) => {
-      if (format === "{{json .RepoDigests}}") return JSON.stringify([platformRef]);
-      if (format === "{{json .}}" && ref === platformRef) {
-        return JSON.stringify({
-          Id: IMAGE_ID,
-          RepoDigests: [platformRef],
-          Os: "linux",
-          Architecture: "amd64",
-        });
-      }
-      return null;
-    });
+    const metadataByRef = {
+      [platformRef]: JSON.stringify({
+        Id: IMAGE_ID,
+        RepoDigests: [platformRef],
+        Os: "linux",
+        Architecture: "amd64",
+      }),
+    };
+    dockerMocks.imageInspectFormat.mockImplementation(
+      (format: string, ref: keyof typeof metadataByRef) =>
+        ({
+          "{{json .RepoDigests}}": JSON.stringify([platformRef]),
+          "{{json .}}": metadataByRef[ref] ?? null,
+        })[format] ?? null,
+    );
 
     const resolved = resolveSandboxBaseImage({
       ...resolutionOptions(),
