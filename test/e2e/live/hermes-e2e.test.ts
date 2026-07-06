@@ -459,9 +459,6 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
     expect(configProbe.stdout).toContain("OK");
 
-    // Regression coverage for #5254 against the real sandbox-installed Hermes
-    // runtime: top-level resumed/continued one-shot invocations must append to
-    // the selected session instead of creating a new follow-up session.
     const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 180_000) => {
       const result = await sandbox.exec(SANDBOX_NAME, ["hermes", ...args], {
         artifactName,
@@ -472,17 +469,22 @@ test.skipIf(!shouldRunLiveE2E())(
       expect(result.exitCode, resultText(result)).toBe(0);
       return resultText(result);
     };
+    const listHermesSessionsText = (artifactName: string) =>
+      runHermesCli(["sessions", "list"], artifactName, 60_000);
     const listHermesSessions = async (artifactName: string) =>
-      hermesSessionIds(await runHermesCli(["sessions", "list"], artifactName, 60_000));
+      hermesSessionIds(await listHermesSessionsText(artifactName));
     const expectNoNewHermesSessions = async (
       before: Set<string>,
       args: string[],
       runArtifact: string,
       afterArtifact: string,
+      previewNeedle: string,
     ) => {
       await runHermesCli(args, runArtifact);
-      const after = await listHermesSessions(afterArtifact);
+      const afterText = await listHermesSessionsText(afterArtifact);
+      const after = hermesSessionIds(afterText);
       expect([...after].filter((id) => !before.has(id))).toEqual([]);
+      expect(stripAnsi(afterText)).toContain(previewNeedle);
     };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
@@ -494,26 +496,22 @@ test.skipIf(!shouldRunLiveE2E())(
       await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
     );
 
-    const beforeResumeSessions = await listHermesSessions(
-      "phase-4-issue-5254-sessions-before-resume",
-    );
-    const resumePrompt = `Repeat this exact token: ${issue5254Marker}.`;
+    const resumePrompt = `Repeat this exact token: ${issue5254Marker}_RESUME.`;
     await expectNoNewHermesSessions(
-      beforeResumeSessions,
+      await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
       ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
+      `${issue5254Marker}_RESUME`,
     );
 
-    const beforeContinueSessions = await listHermesSessions(
-      "phase-4-issue-5254-sessions-before-continue",
-    );
-    const continuePrompt = `Confirm this exact token again: ${issue5254Marker}.`;
+    const continuePrompt = `Confirm this exact token again: ${issue5254Marker}_CONTINUE.`;
     await expectNoNewHermesSessions(
-      beforeContinueSessions,
+      await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
       "phase-4-issue-5254-sessions-after-continue",
+      `${issue5254Marker}_CONTINUE`,
     );
 
     const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
