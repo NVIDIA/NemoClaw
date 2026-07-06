@@ -49,7 +49,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { flags } = await this.parse(InferenceSetCommand);
     if (!flags.provider || !flags.model) {
-      this.printOpenShellRedirect();
+      this.printRequiredFlags();
       return;
     }
     try {
@@ -71,14 +71,13 @@ export default class InferenceSetCommand extends NemoClawCommand {
     }
   }
 
-  private printOpenShellRedirect(): void {
+  private printRequiredFlags(): void {
     this.failWithLines(
       [
-        `  Unknown ${CLI_NAME} command: inference set`,
+        `  ${CLI_NAME} inference set requires --provider and --model.`,
         "",
-        "  This operation belongs to OpenShell.",
-        "  Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
-        `  To also sync the running sandbox config, pass --provider and --model to ${CLI_NAME} inference set.`,
+        `  Run: ${CLI_NAME} inference set --provider <provider> --model <model> [--sandbox <name>]`,
+        "  NemoClaw must perform this operation so it can protect every sandbox sharing the target gateway.",
         "",
         `  Run '${CLI_NAME} help' for NemoClaw commands.`,
       ],

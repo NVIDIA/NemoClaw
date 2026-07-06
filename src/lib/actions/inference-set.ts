@@ -11,8 +11,13 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
+import {
+  checkGatewayRouteCompatibility,
+  formatGatewayRouteConflict,
+} from "../inference/gateway-route-compatibility";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import { resolveSandboxGatewayName } from "../onboard/gateway-binding";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -351,6 +356,7 @@ function updateMatchingOnboardSession(
 }
 
 function openshellInferenceSetArgs(options: {
+  gatewayName: string;
   provider: string;
   model: string;
   noVerify?: boolean;
@@ -359,7 +365,7 @@ function openshellInferenceSetArgs(options: {
     "inference",
     "set",
     "-g",
-    "nemoclaw",
+    options.gatewayName,
     "--provider",
     options.provider,
     "--model",
@@ -430,19 +436,8 @@ export async function normalizeCustomEndpointUrl(
   value: string | null | undefined,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
 ): Promise<string> {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw)
-    throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
-  let shaped: { url: URL; normalized: string };
-  try {
-    shaped = normalizeEndpointUrlShape(raw);
-  } catch {
-    throw new InferenceSetError(
-      "endpoint-url must be a valid http(s) URL without embedded credentials.",
-      2,
-    );
-  }
-
+  const normalized = normalizeCustomEndpointUrlWithoutDns(value);
+  const shaped = normalizeEndpointUrlShape(normalized);
   const hostname = shaped.url.hostname.replace(/\.$/, "").toLowerCase();
   const port = Number(shaped.url.port);
   if (
@@ -456,17 +451,33 @@ export async function normalizeCustomEndpointUrl(
     // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
     // default/privileged ports, localhost, RFC1918 addresses, or arbitrary
     // internal DNS names.
-    return shaped.normalized;
+    return normalized;
   }
 
   try {
-    const validated = await rewriteUrlWithDnsPinning(shaped.normalized);
+    const validated = await rewriteUrlWithDnsPinning(normalized);
     if (typeof validated !== "string") throw new Error("URL validator returned a non-string value");
     return normalizeEndpointUrlShape(validated).normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
   }
+}
+
+function normalizeCustomEndpointUrlWithoutDns(value: string | null | undefined): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw)
+    throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
+  let shaped: { url: URL; normalized: string };
+  try {
+    shaped = normalizeEndpointUrlShape(raw);
+  } catch {
+    throw new InferenceSetError(
+      "endpoint-url must be a valid http(s) URL without embedded credentials.",
+      2,
+    );
+  }
+  return shaped.normalized;
 }
 
 function normalizeExplicitCredentialEnv(
@@ -490,12 +501,14 @@ function allowedExplicitInferenceApis(provider: string): string[] {
     : Array.from(INFERENCE_SET_APIS);
 }
 
-function normalizeExplicitInferenceApi(
-  provider: string,
-  value: string | null | undefined,
-): string | null {
+function normalizeExplicitInferenceApi(provider: string, value: string | null | undefined): string {
   const normalized = typeof value === "string" ? value.trim() : "";
-  if (!normalized) return null;
+  if (!normalized) {
+    throw new InferenceSetError(
+      `inference-api is required for '${provider}' so the shared gateway route can be identified safely.`,
+      2,
+    );
+  }
   const allowed = allowedExplicitInferenceApis(provider);
   if (!allowed.includes(normalized)) {
     throw new InferenceSetError(
@@ -506,11 +519,10 @@ function normalizeExplicitInferenceApi(
   return normalized;
 }
 
-async function explicitCustomProviderMetadata(
+function explicitCustomProviderMetadataWithoutDns(
   provider: string,
   options: InferenceSetOptions,
-  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
-): Promise<RegistryInferenceMetadata | null> {
+): RegistryInferenceMetadata | null {
   if (!hasExplicitCustomMetadata(options)) return null;
   if (!isCustomCompatibleProvider(provider)) {
     throw new InferenceSetError(
@@ -525,10 +537,21 @@ async function explicitCustomProviderMetadata(
   // for this switch, after URL and credential-env validation, instead of
   // borrowing from an unrelated onboard session or global OpenShell provider.
   return {
-    endpointUrl: await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning),
+    endpointUrl: normalizeCustomEndpointUrlWithoutDns(options.endpointUrl),
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
     preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
+  };
+}
+
+async function materializeExplicitCustomProviderMetadata(
+  metadata: RegistryInferenceMetadata | null,
+  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
+): Promise<RegistryInferenceMetadata | null> {
+  if (!metadata) return null;
+  return {
+    ...metadata,
+    endpointUrl: await normalizeCustomEndpointUrl(metadata.endpointUrl, rewriteUrlWithDnsPinning),
   };
 }
 
@@ -611,6 +634,36 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
+  let gatewayName: string;
+  try {
+    gatewayName = resolveSandboxGatewayName(entry);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new InferenceSetError(
+      `Cannot resolve the OpenShell gateway for sandbox '${sandboxName}': ${detail}`,
+      2,
+    );
+  }
+  const session = deps.loadSession();
+  const preliminaryExplicitMetadata = explicitCustomProviderMetadataWithoutDns(provider, options);
+  const preliminaryRegistryMetadata = registryMetadataForProviderSwitch({
+    entry,
+    provider,
+    model,
+    sandboxName,
+    session,
+    explicitMetadata: preliminaryExplicitMetadata,
+  });
+  const compatibility = checkGatewayRouteCompatibility({
+    gatewayName,
+    sandboxName,
+    route: { provider, model, ...preliminaryRegistryMetadata },
+    sandboxes: deps.listSandboxes().sandboxes,
+  });
+  if (!compatibility.ok) {
+    throw new InferenceSetError(formatGatewayRouteConflict(compatibility), 2);
+  }
+
   const target = deps.resolveAgentConfig(sandboxName);
   const targetAgent = normalizeSandboxAgent(target.agentName);
   if (targetAgent !== agentName) {
@@ -625,21 +678,23 @@ async function runInferenceSetWithoutHostLock(
       2,
     );
   }
-  const session = deps.loadSession();
-  const explicitMetadata = await explicitCustomProviderMetadata(
-    provider,
-    options,
+  const explicitMetadata = await materializeExplicitCustomProviderMetadata(
+    preliminaryExplicitMetadata,
     deps.rewriteConfigUrlsWithDnsPinning,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
-  const registryMetadata = registryMetadataForProviderSwitch({
-    entry,
-    provider,
-    model,
-    sandboxName,
-    session,
-    explicitMetadata,
-  });
+  const registryMetadata = explicitMetadata ?? preliminaryRegistryMetadata;
+  if (explicitMetadata) {
+    const finalizedCompatibility = checkGatewayRouteCompatibility({
+      gatewayName,
+      sandboxName,
+      route: { provider, model, ...registryMetadata },
+      sandboxes: deps.listSandboxes().sandboxes,
+    });
+    if (!finalizedCompatibility.ok) {
+      throw new InferenceSetError(formatGatewayRouteConflict(finalizedCompatibility), 2);
+    }
+  }
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
@@ -672,7 +727,12 @@ async function runInferenceSetWithoutHostLock(
 
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(
-    openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
+    openshellInferenceSetArgs({
+      gatewayName,
+      provider,
+      model,
+      noVerify: effectiveNoVerify,
+    }),
     {
       ignoreError: true,
       includeStreams: true,

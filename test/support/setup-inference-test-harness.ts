@@ -269,6 +269,7 @@ export function createDirectSetupInferenceHarnessFactory(
       return directRunResult(options.runOpenshell?.(args, runOptions, commands));
     };
     const setupInference = createSetupInference({
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
       step: () => {},
       getGatewayName: () => "nemoclaw",
       runOpenshell,

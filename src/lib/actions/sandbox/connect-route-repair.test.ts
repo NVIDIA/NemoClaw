@@ -144,6 +144,26 @@ describe("sandbox connect route repair unit flow", () => {
     }
   });
 
+  it("stops after a broken probe but before any repair mutation when routes conflict (#6315)", () => {
+    const conflict = new Error("shared gateway route conflict");
+    const assertRouteCompatible = vi.fn(() => {
+      throw conflict;
+    });
+    const { calls, deps } = makeRepairDeps([broken()], { assertRouteCompatible });
+
+    expect(() =>
+      repairSandboxInferenceRouteWithDeps("vm-box", sandbox({ openshellDriver: "vm" }), {}, deps),
+    ).toThrow(conflict);
+
+    expect(assertRouteCompatible).toHaveBeenCalledWith(
+      "vm-box",
+      expect.objectContaining({ name: "demo" }),
+    );
+    expect(calls.monkeypatches).toEqual([]);
+    expect(calls.reapplications).toEqual([]);
+    expect(calls.legacyRepairs).toEqual([]);
+  });
+
   it("repairs legacy kubernetes routes through the DNS proxy path", () => {
     const { calls, deps } = makeRepairDeps([broken(), healthy()]);
 

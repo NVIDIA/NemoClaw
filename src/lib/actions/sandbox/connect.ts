@@ -23,6 +23,10 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
 } from "../../inference/config";
+import {
+  assertGatewayRouteCompatibility,
+  GatewayRouteConflictError,
+} from "../../inference/gateway-route-compatibility";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
@@ -124,6 +128,7 @@ export type SandboxInferenceRouteRepairDeps = {
     sandboxName: string,
     quiet: boolean,
   ) => { exitCode: number; message?: string | null };
+  assertRouteCompatible?: (sandboxName: string, sb: SandboxEntry | null) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -405,6 +410,16 @@ function buildInferenceSetArgs(provider: string, model: string): string[] {
   return args;
 }
 
+function assertSandboxGatewayRouteCompatible(sandboxName: string, sb: SandboxEntry | null): void {
+  if (!sb) return;
+  assertGatewayRouteCompatibility({
+    gatewayName: resolveSandboxGatewayName(sb),
+    sandboxName,
+    route: sb,
+    sandboxes: registry.listSandboxes().sandboxes,
+  });
+}
+
 function reapplyVmInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry | null,
@@ -437,6 +452,7 @@ export function repairSandboxInferenceRouteWithDeps(
   if (!initialProbe.broken) {
     return { healthy: true, repairAttempted: false, detail: initialProbe.detail };
   }
+  deps.assertRouteCompatible?.(sandboxName, sb);
 
   if (!shouldUseLegacyDnsProxyRepair(sb)) {
     if (deps.shouldApplyVmDnsMonkeypatch(sb)) {
@@ -574,6 +590,7 @@ function repairSandboxInferenceRouteIfNeeded(
           { gatewayName: resolveSandboxGatewayName(sb), sandboxName: name },
           { log: isQuiet ? () => undefined : console.log },
         ),
+      assertRouteCompatible: assertSandboxGatewayRouteCompatible,
     },
   );
 }
@@ -717,6 +734,7 @@ function ensureSandboxInferenceRoute(
     );
     const plan = planInferenceRouteReconcile(live, { provider, model });
     if (plan.kind !== "aligned") {
+      assertSandboxGatewayRouteCompatible(sandboxName, sb);
       const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
       if (plan.kind === "diverged") {
         // Shared gateway: re-point loudly (even when quiet) — silent revert was
@@ -759,6 +777,10 @@ function ensureSandboxInferenceRoute(
     return { sandbox: sb, routeHealthy: repairResult.healthy };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    if (error instanceof GatewayRouteConflictError) {
+      console.error(`  Error: ${error.message}`);
+      process.exit(1);
+    }
     const detail = error instanceof Error && error.message ? error.message : String(error);
     if (!quiet) {
       console.error(`  Error: failed to verify or repair inference route: ${detail}`);

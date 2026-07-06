@@ -39,6 +39,7 @@ export type ConnectHarnessOptions = {
   inferenceGetOutput?: string;
   inferenceProbeResponses?: string[];
   registryEntry?: Partial<SandboxEntry>;
+  registryEntries?: Array<Partial<SandboxEntry> & Pick<SandboxEntry, "name">>;
   sessionAgent?: unknown;
   listOutput?: string;
   processCheck?: {
@@ -152,7 +153,7 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
   const ensureOllamaAuthProxySpy = vi
     .spyOn(ollamaProxy, "ensureOllamaAuthProxy")
     .mockImplementation(() => undefined);
-  vi.spyOn(registry, "getSandbox").mockReturnValue({
+  const primaryRegistryEntry: SandboxEntry = {
     name: "alpha",
     agent: options.agentName ?? "openclaw",
     provider: null,
@@ -160,6 +161,27 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
     gpuEnabled: false,
     policies: [],
     ...options.registryEntry,
+  };
+  const registryEntries: SandboxEntry[] = options.registryEntries
+    ? options.registryEntries.map((candidate) =>
+        candidate.name === primaryRegistryEntry.name
+          ? { ...primaryRegistryEntry, ...candidate }
+          : {
+              agent: "openclaw",
+              provider: null,
+              model: null,
+              gpuEnabled: false,
+              policies: [],
+              ...candidate,
+            },
+      )
+    : [primaryRegistryEntry];
+  vi.spyOn(registry, "getSandbox").mockImplementation(
+    (name: unknown) => registryEntries.find((candidate) => candidate.name === String(name)) ?? null,
+  );
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({
+    sandboxes: registryEntries,
+    defaultSandbox: primaryRegistryEntry.name,
   });
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(
     (options.sessionAgent ?? { name: "openclaw" }) as never,

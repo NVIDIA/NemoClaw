@@ -83,6 +83,7 @@ function createPhases(
       hermesApiKeyCredentialEnv: "HERMES_API_KEY",
     },
     providerDeps: {
+      checkGatewayRouteCompatibility: () => ({ ok: true }),
       normalizeHermesAuthMethod: (value) =>
         value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({

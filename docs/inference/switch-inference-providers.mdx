@@ -27,6 +27,15 @@ If you run `$$nemoclaw inference set` before NemoClaw has a selected sandbox, th
 Run `$$nemoclaw onboard` first, then retry the switch.
 </Note>
 
+<Warning>
+OpenShell currently exposes one inference route per gateway, not one route per sandbox.
+All registered sandboxes on the same gateway must use the same provider and model.
+Custom compatible routes must also use the same endpoint and API family.
+NemoClaw checks stopped sandboxes because they depend on that route when restarted.
+When a route conflicts, onboarding, runtime switching, and connect-time repair exit non-zero before changing the gateway and name the affected sandboxes.
+Align the routes, remove the conflicting sandbox, or onboard it with another `NEMOCLAW_GATEWAY_PORT`.
+</Warning>
+
 ## Find the Provider Name
 
 The `--provider` value must match a provider already configured on the sandbox.
@@ -170,6 +179,7 @@ The error includes a redacted OpenShell detail, lists the registered providers w
 Run `$$nemoclaw onboard` to register the provider, then retry `$$nemoclaw inference set`.
 
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
+`--no-verify` does not bypass the one-route-per-gateway compatibility check.
 
 ## Tune Model Metadata
 

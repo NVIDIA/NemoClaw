@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { coerceAgentInferenceApi } from "../../../inference/config";
+import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  formatGatewayRouteConflict,
+} from "../../../inference/gateway-route-compatibility";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -67,6 +71,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesApiKeyCredentialEnv: string;
   };
   deps: {
+    checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
     normalizeHermesAuthMethod(value: string | null | undefined): HermesAuthMethod | null;
     setupNim(
       gpu: Gpu,
@@ -420,6 +425,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       effectiveResume &&
       deps.isInferenceRouteReady(provider, model);
     if (resumeInference) {
+      const compatibility = deps.checkGatewayRouteCompatibility({
+        sandboxName,
+        route: { provider, model, endpointUrl, preferredInferenceApi },
+      });
+      if (!compatibility.ok) {
+        deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+        deps.exitProcess(1);
+      }
       if (provider === constants.hermesProviderName) {
         let inferenceResult: ProviderInferenceRetry;
         try {

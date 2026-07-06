@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  formatGatewayRouteConflict,
+} from "../inference/gateway-route-compatibility";
 import type { HermesAuthMethod } from "./hermes-auth";
 import type {
   CommonDeps,
@@ -65,6 +69,7 @@ type ProviderBranchDeps = Pick<
   Pick<RoutedDeps, "reconcileModelRouter" | "routedInference">;
 
 export type SetupInferenceDeps = ProviderBranchDeps & {
+  checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck;
   step: (current: number, total: number, label: string) => void;
   getGatewayName: () => string;
   runOpenshell: import("./openshell-cli").OpenshellCliHelpers["runOpenshell"];
@@ -129,6 +134,19 @@ export function createSetupInference(
     hermesToolGateways: string[] = [],
     options: ProviderInferenceSetupOptions = {},
   ): Promise<SetupInferenceResult> {
+    const compatibility = deps.checkGatewayRouteCompatibility({
+      sandboxName,
+      route: {
+        provider,
+        model,
+        endpointUrl,
+        preferredInferenceApi: options.preferredInferenceApi ?? null,
+      },
+    });
+    if (!compatibility.ok) {
+      deps.error(`  Error: ${formatGatewayRouteConflict(compatibility)}`);
+      return deps.exitProcess(1);
+    }
     deps.step(4, 8, "Setting up inference provider");
     deps.runOpenshell(["gateway", "select", deps.getGatewayName()], { ignoreError: true });
 
