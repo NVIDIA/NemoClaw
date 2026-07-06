@@ -2378,6 +2378,7 @@ start_auto_pair() {
 import json
 import importlib.util
 import base64
+import binascii
 import hashlib
 import os
 import re
@@ -2592,7 +2593,7 @@ def initial_cli_request_is_allowlisted(request_id):
         if scopes != {'operator.pairing'}:
             return False
         return approval_request_decision(request)['allowed'] is True
-    except (OSError, ValueError, RuntimeError) as err:
+    except (OSError, ValueError, RuntimeError, binascii.Error) as err:
         print(f'[auto-pair] initial CLI pairing validation skipped request={request_id}: {brief_child_error("", str(err))}')
         return False
 

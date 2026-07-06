@@ -380,6 +380,10 @@ exit 2
   it.each([
     ["missing identity device id", { deviceId: undefined }],
     ["missing identity public key", { publicKeyPem: undefined }],
+    [
+      "malformed identity public key PEM",
+      { publicKeyPem: "-----BEGIN PUBLIC KEY-----\nnot-base64\n-----END PUBLIC KEY-----\n" },
+    ],
     ["mismatched identity device id", { deviceId: "not-the-device" }],
     ["short identity public key", { publicKey: "short" }],
     [
