@@ -315,6 +315,37 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("attacker"));
   });
 
+  it("does not assess or rebuild a non-Ready sandbox with a tampered gateway binding (#6114)", async () => {
+    const harness = createRecoveryHarness(["tampered-box"], {
+      gatewayNames: { "tampered-box": "attacker" },
+      liveOutput: "tampered-box Error",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: sandbox "tampered-box" has an invalid persisted gateway binding; skipping prepared-backup recovery.',
+    );
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("attacker"));
+  });
+
+  it("does not recover a non-Ready sandbox bound to another valid gateway (#6114)", async () => {
+    const harness = createRecoveryHarness(["registered-elsewhere"], {
+      gatewayNames: { "registered-elsewhere": "nemoclaw-12345" },
+      liveOutput: "registered-elsewhere Provisioning",
+    });
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.liveListSpy).toHaveBeenCalledOnce();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
   it("does not recover an absent sandbox when a confirming second listing shows it has become Ready", async () => {
     const harness = createRecoveryHarness(["reconnecting-box"], {
       staleNames: ["reconnecting-box"],

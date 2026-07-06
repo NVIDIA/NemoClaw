@@ -121,22 +121,21 @@ function isPreparedBackupRecovery(
 }
 
 // Under installer restore intent, a registry sandbox the selected gateway does
-// not report Ready/Running is eligible for prepared-backup recovery when the
-// gateway observes it in a non-Ready phase, or when it is absent but resolves to
-// the selected gateway. Absence alone is insufficient: a sandbox bound to a
-// different recorded gateway may be Ready there, so recovering it would clobber a
-// healthy sandbox. resolveSandboxGatewayName throws on an invalid persisted
+// not report Ready/Running is eligible for prepared-backup recovery only when
+// its persisted binding resolves to that selected gateway, whether the gateway
+// observes it in a non-Ready phase or it is absent. Observation alone is
+// insufficient: a sandbox bound to a different recorded gateway may be Ready
+// there, so recovering it would clobber a healthy sandbox.
+// resolveSandboxGatewayName throws on an invalid persisted
 // binding — report that fixed, sanitized condition and treat it as ineligible so
 // a corrupted registry row never drives a recreate. Remove this guard only when
 // every registry write path validates gateway bindings before persistence.
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
-  nonReadyLiveNames: Set<string>,
   selectedGatewayName: string,
 ): boolean {
   if (liveNames.has(sandbox.name)) return false;
-  if (nonReadyLiveNames.has(sandbox.name)) return true;
   try {
     return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
   } catch {
@@ -237,7 +236,7 @@ export async function upgradeSandboxes(
   let recoveryCandidates: registry.SandboxEntry[] = [];
   if (recoverPreparedBackups) {
     const gatewayEligible = sandboxes.filter((sandbox) =>
-      isPreparedRecoveryCandidate(sandbox, liveNames, nonReadyLiveNames, selectedGatewayName),
+      isPreparedRecoveryCandidate(sandbox, liveNames, selectedGatewayName),
     );
     const nonReadyCandidates = gatewayEligible.filter((sandbox) =>
       nonReadyLiveNames.has(sandbox.name),
