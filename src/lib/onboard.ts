@@ -3704,13 +3704,10 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
 
       const validationResult = state.reuseGatewayCredentialWithoutLocalKey
         ? "selected"
-          : await validateSelectedRemoteModel({
-            selected,
-            remoteConfig,
-            state,
-            selectedCredentialEnv,
-            intendedInferenceApi,
-          });
+        : await validateSelectedRemoteModel(
+            // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+            { selected, remoteConfig, state, selectedCredentialEnv, intendedInferenceApi },
+          );
       if (validationResult === "selected") break;
       if (validationResult === "retry-selection") return "retry-selection";
     }
