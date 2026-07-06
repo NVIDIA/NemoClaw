@@ -83,6 +83,11 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       fetchModels: fetchCompatibleEndpointModels,
     });
     expect(noKeyEnv.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+    // Assert the endpoint actually rejected the unauthenticated /v1/models
+    // request — an unset window alone could also come from a network failure.
+    expect(
+      server.requests().some((entry) => entry.path === "/v1/models" && entry.auth === "missing"),
+    ).toBe(true);
 
     // Correct credential → authorized → the window is read.
     const keyedEnv: NodeJS.ProcessEnv = {};
@@ -92,9 +97,12 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       fetchModels: fetchCompatibleEndpointModels,
     });
     expect(keyedEnv.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    expect(
+      server.requests().some((entry) => entry.path === "/v1/models" && entry.auth === "ok"),
+    ).toBe(true);
   });
 
-  it("keeps the default context window when the endpoint omits max_model_len", async () => {
+  it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
     server = await startFakeOpenAiCompatibleServer({ model: MODEL });
 
     const env: NodeJS.ProcessEnv = {};
