@@ -516,11 +516,27 @@ test.skipIf(!shouldRunLiveE2E())(
       "phase-4-issue-5254-sessions-after-continue",
     );
 
-    const exportedSession = await runHermesCli(
-      ["sessions", "export", "--session-id", seedSessionId],
-      "phase-4-issue-5254-export-session",
-      60_000,
+    const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
+    const exportResult = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript(
+        [
+          `rm -f ${shellQuote(exportPath)}`,
+          `hermes sessions export --session-id ${shellQuote(seedSessionId)} ${shellQuote(
+            exportPath,
+          )}`,
+          `cat ${shellQuote(exportPath)}`,
+        ].join(" && "),
+      ),
+      {
+        artifactName: "phase-4-issue-5254-export-session",
+        env: commandEnv(),
+        redactionValues,
+        timeoutMs: 60_000,
+      },
     );
+    expect(exportResult.exitCode, resultText(exportResult)).toBe(0);
+    const exportedSession = resultText(exportResult);
     expect(exportedSession).toContain(seedPrompt);
     expect(exportedSession).toContain(resumePrompt);
     expect(exportedSession).toContain(continuePrompt);
