@@ -46,8 +46,7 @@ const UNKNOWN_SELECTION_DRIFT: SelectionDrift = {
 
 export function normalizeDcodeModelName(model: string): string {
   const trimmed = model.trim();
-  const providerSeparator = trimmed.indexOf(":");
-  return providerSeparator > 0 ? trimmed.slice(providerSeparator + 1) : trimmed;
+  return trimmed.startsWith("openai:") ? trimmed.slice("openai:".length) : trimmed;
 }
 
 export function parseDcodeInferenceIdentity(

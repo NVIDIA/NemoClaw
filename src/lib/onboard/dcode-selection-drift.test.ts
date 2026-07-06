@@ -52,11 +52,11 @@ describe("live DCode selection drift", () => {
   });
 
   it("mirrors generated DCode model and route identity (#6311)", () => {
-    expect(normalizeDcodeModelName("  registry:model:tag  ")).toBe("model:tag");
+    expect(normalizeDcodeModelName("  openai:model:tag  ")).toBe("model:tag");
     expect(
       getExpectedDcodeInferenceIdentity(
         "compatible-anthropic-endpoint",
-        "registry:model:tag",
+        "openai:model:tag",
         "anthropic-messages",
       ),
     ).toEqual({
@@ -65,6 +65,13 @@ describe("live DCode selection drift", () => {
       model: "openai:model:tag",
       endpoint: "https://inference.local",
     });
+  });
+
+  it("preserves colon-bearing model IDs in expected DCode identity (#6311)", () => {
+    expect(normalizeDcodeModelName("minimax/minimax-m2.5:free")).toBe("minimax/minimax-m2.5:free");
+    expect(
+      getExpectedDcodeInferenceIdentity("compatible-endpoint", "minimax/minimax-m2.5:free", null),
+    ).toMatchObject({ model: "openai:minimax/minimax-m2.5:free" });
   });
 
   it("accepts only a live identity matching the requested selection (#6311)", () => {
