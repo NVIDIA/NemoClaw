@@ -3799,7 +3799,6 @@ function getSetupNimDeps(): SetupNimDeps {
 }
 
 const setupNim = setupNimFlow.createSetupNim(getSetupNimDeps());
-
 // ── Step 4: Inference provider ───────────────────────────────────
 
 function getSetupInferenceDeps(): SetupInferenceDeps {
@@ -4488,7 +4487,6 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxGpuConfig,
       gpuPassthrough,
     };
-
     const [providerInferencePhase, sandboxPhase] =
       createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
         gatewayName: GATEWAY_NAME,
