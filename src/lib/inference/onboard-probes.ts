@@ -636,18 +636,24 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   // SSRF source boundary: reject a private/internal endpoint before any curl.
-  // The two allowed internal hosts (hijacked docker-internal, sandbox-internal)
-  // are handled above; everything else that resolves to a private/reserved
-  // address is attacker-reachable SSRF surface. Reuses the shared
-  // isPrivateHostname validator (defense-in-depth alongside DNS-pinning at the
-  // config-write boundary). See PR #6293 PRA-2.
+  // The sandbox-internal alias is handled above, and host.docker.internal is
+  // gated by the allowHostDockerInternal check at the top of this function —
+  // both are trusted sandbox->host bridges, so exempt the already-permitted
+  // hijacked-docker-internal alias here. Everything else that resolves to a
+  // private/reserved address is attacker-reachable SSRF surface. Reuses the
+  // shared isPrivateHostname validator (defense-in-depth alongside DNS-pinning
+  // at the config-write boundary). See PR #6293 PRA-2.
   let probeHostname;
   try {
     probeHostname = new URL(String(endpointUrl)).hostname;
   } catch {
     probeHostname = "";
   }
-  if (probeHostname && isPrivateHostname(probeHostname)) {
+  if (
+    probeHostname &&
+    isPrivateHostname(probeHostname) &&
+    !isHijackedDockerInternalUrl(endpointUrl)
+  ) {
     return {
       ok: false,
       message: `Endpoint host "${probeHostname}" is a private/internal address and cannot be used as a remote inference endpoint. Use a routable public URL and retry onboard.`,

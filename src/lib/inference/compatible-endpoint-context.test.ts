@@ -167,7 +167,7 @@ describe("compatible-endpoint context window", () => {
     "http://169.254.169.254/v1",
     "http://172.16.0.1/v1",
     "http://192.168.1.1/v1",
-  ])("rejects the private-IP endpoint %s before probing /v1/models (SSRF, #6293)", (endpointUrl) => {
+  ])("rejects the private-IP endpoint %s before probing /v1/models SSRF (#6293)", (endpointUrl) => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
     const messages: string[] = [];
     const env: NodeJS.ProcessEnv = {};
@@ -182,7 +182,7 @@ describe("compatible-endpoint context window", () => {
     expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
   });
 
-  it("clears a stale auto value when re-probing a now private-IP endpoint (SSRF, #6293)", () => {
+  it("clears a stale auto value when re-probing a now private-IP endpoint SSRF (#6293)", () => {
     const env: NodeJS.ProcessEnv = {};
     // First endpoint auto-detects a window into the shared env.
     applyCompatibleEndpointContextWindow("https://public.example/v1", "model-a", {

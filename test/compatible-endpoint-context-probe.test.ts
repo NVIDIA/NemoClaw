@@ -115,7 +115,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     ).toBe(true);
   });
 
-  it("refuses to probe a private-IP endpoint before issuing any /v1/models request (SSRF, #6293)", async () => {
+  it("refuses to probe a private-IP endpoint before issuing any /v1/models request SSRF (#6293)", async () => {
     // The fake server binds to 127.0.0.1 — a real private/loopback address.
     // The source-boundary guard must reject it before the real curl fetcher
     // runs, so the server records zero requests and no window is set.
