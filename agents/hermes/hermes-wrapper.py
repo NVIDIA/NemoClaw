@@ -226,9 +226,11 @@ _VALUE_FLAGS = {
     "-r": "--resume",
     "--resume": "--resume",
 }
-# Keep this allowlist aligned with the top-level flags accepted by the Hermes
-# Agent CLI used in the sandbox image. Unknown flags deliberately fail closed by
-# passing the original argv through to upstream Hermes.
+# Keep this allowlist aligned with the top-level flags accepted by the pinned
+# Hermes Agent CLI in agents/hermes/Dockerfile.base (HERMES_VERSION=v2026.6.19,
+# HERMES_SEMVER=0.17.0) and agents/hermes/manifest.yaml (expected_version
+# "0.17.0"). Unknown flags deliberately fail closed by passing the original argv
+# through to upstream Hermes.
 _BOOLEAN_FLAGS = {
     "--worktree",
     "-w",
@@ -318,7 +320,7 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             continue
 
         if arg in ("-z", "--oneshot"):
-            if i + 1 >= len(argv):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
                 return None
             if saw_oneshot:
                 return None
@@ -328,10 +330,12 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
             continue
 
         if arg in _VALUE_FLAGS:
-            if i + 1 >= len(argv):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
                 return None
             canonical = _VALUE_FLAGS[arg]
             value = argv[i + 1]
+            if not value:
+                return None
             if canonical == "--resume":
                 if saw_resume or saw_continue:
                     return None
