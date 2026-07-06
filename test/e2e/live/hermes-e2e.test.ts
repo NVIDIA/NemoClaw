@@ -23,12 +23,6 @@ import {
 } from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
-// This is intentionally a direct live Vitest test, not a new registry layer:
-// the contract is the real installer/onboard/runtime boundary for Hermes.
-// Vitest owns artifacts, cleanup, redaction, and timeouts while still spawning
-// `bash install.sh --non-interactive --fresh`, `nemoclaw`, `openshell`, sandbox exec,
-// direct NVIDIA Endpoints curl, and inference.local probes.
-
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes";
 validateSandboxName(SANDBOX_NAME);
@@ -476,6 +470,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const expectNoNewHermesSessions = async (
       before: Set<string>,
       expectedSessionId: string,
+      expectedRowToken: string,
       args: string[],
       runArtifact: string,
       afterArtifact: string,
@@ -485,6 +480,10 @@ test.skipIf(!shouldRunLiveE2E())(
       const after = hermesSessionIds(afterText);
       expect([...after].filter((id) => !before.has(id))).toEqual([]);
       expect(after.has(expectedSessionId), stripAnsi(afterText)).toBe(true);
+      const row = stripAnsi(afterText)
+        .split("\n")
+        .find((line) => line.includes(expectedSessionId));
+      expect(row, stripAnsi(afterText)).toContain(expectedRowToken);
     };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
@@ -496,19 +495,21 @@ test.skipIf(!shouldRunLiveE2E())(
       await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
     );
 
-    const resumePrompt = `Repeat this exact token: ${issue5254Marker}_RESUME.`;
+    const resumePrompt = `N5254_${Date.now().toString(36)}_RESUME`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
       seedSessionId,
+      resumePrompt,
       ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
     );
 
-    const continuePrompt = `Confirm this exact token again: ${issue5254Marker}_CONTINUE.`;
+    const continuePrompt = `N5254_${Date.now().toString(36)}_CONTINUE`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
       seedSessionId,
+      continuePrompt,
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
       "phase-4-issue-5254-sessions-after-continue",
@@ -532,9 +533,8 @@ test.skipIf(!shouldRunLiveE2E())(
     );
     expect(exportResult.exitCode, resultText(exportResult)).toBe(0);
     const exportedSession = resultText(exportResult);
-    expect(exportedSession).toContain(seedPrompt);
-    expect(exportedSession).toContain(resumePrompt);
-    expect(exportedSession).toContain(continuePrompt);
+    for (const prompt of [seedPrompt, resumePrompt, continuePrompt])
+      expect(exportedSession).toContain(prompt);
 
     if (hermesDashboardE2eEnabled()) {
       const entry = registryEntry(SANDBOX_NAME);
