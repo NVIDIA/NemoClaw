@@ -278,13 +278,12 @@ export function getSandboxInferenceConfig(
  * the base_url keeps its `/v1` suffix. See #6294.
  */
 export function coerceAgentInferenceApi(
-  agent: { inference?: { provider_type?: string } } | null | undefined,
+  agent: unknown,
   preferredInferenceApi: string | null,
 ): string | null {
-  if (
-    agent?.inference?.provider_type === "openai_compatible" &&
-    preferredInferenceApi === "anthropic-messages"
-  ) {
+  const providerType = (agent as { inference?: { provider_type?: string } } | null | undefined)
+    ?.inference?.provider_type;
+  if (providerType === "openai_compatible" && preferredInferenceApi === "anthropic-messages") {
     return "openai-completions";
   }
   return preferredInferenceApi;

@@ -17,7 +17,7 @@ import {
 } from "./provider-inference";
 
 type Gpu = { type: string } | null;
-type Agent = { name: string } | null;
+type Agent = { name: string; inference?: { provider_type?: string } } | null;
 type Host = { cpus?: number };
 
 const baseSelection: ProviderSelectionResult = {
@@ -422,6 +422,57 @@ describe("handleProviderInferenceState", () => {
       model: "llama3.1",
     });
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
+  });
+
+  it("coerces a resumed anthropic-messages seed for an OpenAI-only agent (#6294)", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { provider_type: "openai_compatible" },
+      },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
+  it("keeps a resumed anthropic-messages seed for agents that speak Anthropic natively", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "openclaw", inference: { provider_type: "gateway_managed" } },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "anthropic-messages",
+    });
   });
 
   it("records failed Ollama repair events before propagating resume repair errors", async () => {

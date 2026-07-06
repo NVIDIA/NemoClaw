@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { coerceAgentInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -241,7 +242,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
-  let preferredInferenceApi = initial.preferredInferenceApi;
+  // A session persisted before the #6294 fix can carry anthropic-messages for
+  // an OpenAI-/chat/completions-only agent (provider_type: openai_compatible).
+  // The resume shortcut below skips setupNim — the fresh-onboard coercion
+  // point — so coerce the persisted seed here too, or a resume/rebuild would
+  // re-bake the sandbox base_url without its /v1 suffix.
+  let preferredInferenceApi = coerceAgentInferenceApi(agent, initial.preferredInferenceApi);
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
