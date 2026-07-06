@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getSandboxInferenceConfig } from "../../../inference/config";
 import type { Session } from "../../../state/onboard-session";
 import type { SandboxEntry } from "../../../state/registry";
 import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
@@ -26,18 +25,6 @@ interface InferenceRouteResumeInput {
   readonly model: string | null | undefined;
   readonly preferredInferenceApi: string | null;
   readonly registryEntry: SandboxEntry | null;
-  readonly session: Session | null;
-}
-
-function inferenceFrontendsEqual(
-  left: ReturnType<typeof getSandboxInferenceConfig>,
-  right: ReturnType<typeof getSandboxInferenceConfig>,
-): boolean {
-  return (
-    left.providerKey === right.providerKey &&
-    left.inferenceBaseUrl === right.inferenceBaseUrl &&
-    left.inferenceApi === right.inferenceApi
-  );
 }
 
 export function hasHermesCompatibleAnthropicInferenceRouteDrift({
@@ -46,7 +33,6 @@ export function hasHermesCompatibleAnthropicInferenceRouteDrift({
   model,
   preferredInferenceApi,
   registryEntry,
-  session,
 }: InferenceRouteResumeInput): boolean {
   if (
     agentName !== "hermes" ||
@@ -57,25 +43,16 @@ export function hasHermesCompatibleAnthropicInferenceRouteDrift({
     return false;
   }
 
-  // The registry describes what was baked into the existing sandbox. Legacy
-  // rows can lack the API field, so use the matching target session only for
-  // fields the registry does not contain.
-  const recordedProvider = registryEntry?.provider ?? session?.provider;
-  const recordedModel = registryEntry?.model ?? session?.model ?? model;
-  if (!recordedProvider || !recordedModel) return false;
-  const sessionMatchesRecordedRoute =
-    session?.provider === recordedProvider && session.model === recordedModel;
-  const recordedPreferredInferenceApi =
-    registryEntry?.preferredInferenceApi ??
-    (sessionMatchesRecordedRoute ? (session.preferredInferenceApi ?? null) : null);
-
-  const recordedRoute = getSandboxInferenceConfig(
-    recordedModel,
-    recordedProvider,
-    recordedPreferredInferenceApi,
+  // The registry records what was baked into the existing sandbox. Do not
+  // fall back to the session: provider setup repairs that session before the
+  // sandbox decision runs, which could make a stale sandbox look migrated.
+  // Missing legacy metadata is therefore drift and triggers a one-time rebuild.
+  if (!registryEntry) return true;
+  return (
+    registryEntry.provider !== provider ||
+    registryEntry.model !== model ||
+    registryEntry.preferredInferenceApi !== preferredInferenceApi
   );
-  const requestedRoute = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  return !inferenceFrontendsEqual(recordedRoute, requestedRoute);
 }
 
 export function resolveToolDisclosureResumeSignals(

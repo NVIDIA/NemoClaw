@@ -20,6 +20,7 @@ import {
   installHermes,
   mockAnthropicEndpointUrl,
   mockAnthropicSwitchEnabled,
+  openAiSurfaceEndpointUrl,
   openshellGatewayName,
   parseInferenceRoute,
   runHermesInferenceSetWithRetry,
@@ -56,6 +57,15 @@ describe("Hermes inference switch command shape", () => {
       "--credential-env",
       "COMPATIBLE_ANTHROPIC_API_KEY",
     ]);
+  });
+
+  it("normalizes the verified OpenAI surface URL for Hermes custom Anthropic routes (#6289)", () => {
+    expect(openAiSurfaceEndpointUrl("https://inference-api.nvidia.com/")).toBe(
+      "https://inference-api.nvidia.com/v1",
+    );
+    expect(openAiSurfaceEndpointUrl("https://inference-api.nvidia.com/v1")).toBe(
+      "https://inference-api.nvidia.com/v1",
+    );
   });
 
   it("uses direct single-line argv for the in-sandbox API-key probe", () => {

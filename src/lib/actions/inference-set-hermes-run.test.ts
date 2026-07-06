@@ -132,6 +132,17 @@ describe("runInferenceSet Hermes routing", () => {
         preferredInferenceApi: "anthropic-messages",
       }),
     });
+    deps.calls.captureOpenshell.mockImplementation((args: string[]) =>
+      args[0] === "provider" && args[1] === "get"
+        ? {
+            status: 0,
+            output:
+              "Name: compatible-anthropic-endpoint\nType: openai\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: OPENAI_BASE_URL",
+            stdout: "",
+            stderr: "",
+          }
+        : { status: 0, output: "", stdout: "", stderr: "" },
+    );
 
     const result = await runInferenceSet(
       {
@@ -174,6 +185,48 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "inference",
       primaryModelRef: "inference/claude-sonnet-proxy",
     });
+  });
+
+  it("rejects inference set before mutating a legacy Anthropic provider (#6289)", async () => {
+    const config: ConfigObject = { model: {} };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes",
+        agent: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      defaultSandbox: "hermes",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes" }),
+    });
+    deps.calls.captureOpenshell.mockReturnValue({
+      status: 0,
+      output:
+        "Name: compatible-anthropic-endpoint\nType: anthropic\nCredential keys: COMPATIBLE_ANTHROPIC_API_KEY\nConfig keys: ANTHROPIC_BASE_URL",
+      stdout: "",
+      stderr: "",
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+          sandboxName: "hermes",
+          noVerify: true,
+        },
+        deps,
+      ),
+    ).rejects.toThrow("Run 'nemoclaw hermes rebuild'");
+
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledTimes(1);
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it("rejects an explicit Anthropic frontend request for Hermes custom endpoints (#6289)", async () => {
@@ -231,6 +284,7 @@ describe("runInferenceSet Hermes routing", () => {
         agent: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
       },
       defaultSandbox: "hermes",
       target: HERMES_TARGET,
@@ -239,6 +293,7 @@ describe("runInferenceSet Hermes routing", () => {
         sandboxName: "hermes",
         provider: "compatible-anthropic-endpoint",
         model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        endpointUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
         preferredInferenceApi: "openai-completions",
       }),
     });

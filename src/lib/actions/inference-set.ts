@@ -5,6 +5,7 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
+import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -14,6 +15,10 @@ import {
 import { resolveContextWindowForModel } from "../inference/context-window";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import {
+  matchesGatewayProviderBinding,
+  parseGatewayProviderMetadata,
+} from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -400,6 +405,46 @@ function isCustomCompatibleProvider(provider: string): boolean {
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
 }
 
+function assertHermesCompatibleAnthropicOpenAiProvider(
+  sandboxName: string,
+  agentName: string,
+  provider: string,
+  endpointUrl: string | null,
+  deps: InferenceSetDeps,
+): void {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    isBedrockRuntimeEndpoint(endpointUrl)
+  ) {
+    return;
+  }
+
+  const result = deps.captureOpenshell(["provider", "get", provider], {
+    ignoreError: true,
+    includeStreams: true,
+    maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+  });
+  const output = result.output || `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  const metadata = result.status === 0 ? parseGatewayProviderMetadata(output) : null;
+  if (
+    matchesGatewayProviderBinding(metadata, {
+      name: provider,
+      type: "openai",
+      credentialKey: "COMPATIBLE_ANTHROPIC_API_KEY",
+      configKey: "OPENAI_BASE_URL",
+    })
+  ) {
+    return;
+  }
+
+  throw new InferenceSetError(
+    `Hermes requires provider '${provider}' to be registered on its verified OpenAI-compatible surface. ` +
+      `Run '${CLI_NAME} ${sandboxName} rebuild' to migrate this sandbox, or re-run onboarding for the endpoint before using inference set.`,
+    2,
+  );
+}
+
 function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
   return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
 }
@@ -682,6 +727,17 @@ async function runInferenceSetWithoutHostLock(
       );
     }
   }
+
+  // `inference set` changes the selected route but cannot change a gateway
+  // provider's protocol type. Fail before mutation when a legacy Anthropic
+  // registration would make the required Hermes OpenAI frontend unroutable.
+  assertHermesCompatibleAnthropicOpenAiProvider(
+    sandboxName,
+    agentName,
+    provider,
+    registryMetadata.endpointUrl ?? null,
+    deps,
+  );
 
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
   const setResult = deps.captureOpenshell(

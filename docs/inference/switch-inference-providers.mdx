@@ -112,18 +112,20 @@ For Hermes, `inference set` writes `model.api_mode: anthropic_messages` for Anth
 Hermes also keeps `model.api_key` on the OpenShell proxy placeholder so dashboard and API sessions continue to authenticate through the gateway after a route change.
 
 <AgentOnly variant="hermes">
-For `compatible-anthropic-endpoint`, NemoClaw preserves the Anthropic upstream provider profile and `COMPATIBLE_ANTHROPIC_API_KEY` while always selecting the managed OpenAI Chat Completions frontend at `https://inference.local/v1`.
+For `compatible-anthropic-endpoint`, NemoClaw selects the managed OpenAI Chat Completions frontend at `https://inference.local/v1` and verifies the endpoint's `/v1/chat/completions` surface before registering it with OpenShell as `type=openai` using `OPENAI_BASE_URL`.
+The route retains `COMPATIBLE_ANTHROPIC_API_KEY` as its credential binding.
 Hermes omits `model.api_mode` for this route.
 OpenClaw custom Anthropic routes and first-party Anthropic routes remain on the native Anthropic Messages frontend.
+AWS Bedrock routes retain their existing OpenAI-compatible adapter behavior.
 
-To migrate an already affected live Hermes sandbox, reapply its recorded provider and model without `--inference-api`:
+To migrate an already affected Hermes sandbox, rebuild it so NemoClaw can verify the OpenAI surface, repair the gateway provider protocol, and recreate the sandbox configuration:
 
 ```bash
-$$nemoclaw inference set --provider compatible-anthropic-endpoint --model <model> --sandbox <sandbox-name>
+$$nemoclaw <sandbox-name> rebuild
 ```
 
-This updates the recorded API family and the running Hermes configuration.
-Rebuilding the sandbox or resuming onboarding also migrates the recorded route.
+Resuming onboarding also detects and repairs a stale route.
+`inference set` can select this provider after it has been registered on the verified OpenAI surface, but it fails before mutation for a legacy Anthropic registration because that command cannot change a gateway provider's protocol type.
 </AgentOnly>
 
 #### Switching from Responses API to Chat Completions

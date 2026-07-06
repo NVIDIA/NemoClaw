@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createSession } from "../../../state/onboard-session";
 import {
   decideSandboxResume,
   hasHermesCompatibleAnthropicInferenceRouteDrift,
@@ -55,7 +54,7 @@ describe("decideSandboxResume", () => {
     });
   });
 
-  it("uses matching session API metadata when a legacy registry row omits it (#6289)", () => {
+  it("treats missing registry API metadata as stale after the session is repaired (#6289)", () => {
     expect(
       hasHermesCompatibleAnthropicInferenceRouteDrift({
         agentName: "hermes",
@@ -67,13 +66,25 @@ describe("decideSandboxResume", () => {
           provider: "compatible-anthropic-endpoint",
           model: "claude-sonnet-proxy",
         },
-        session: createSession({
-          provider: "compatible-anthropic-endpoint",
-          model: "claude-sonnet-proxy",
-          preferredInferenceApi: "anthropic-messages",
-        }),
       }),
     ).toBe(true);
+  });
+
+  it("reuses a Hermes route only when registry metadata records the OpenAI frontend (#6289)", () => {
+    expect(
+      hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        preferredInferenceApi: "openai-completions",
+        registryEntry: {
+          name: "saved",
+          provider: "compatible-anthropic-endpoint",
+          model: "claude-sonnet-proxy",
+          preferredInferenceApi: "openai-completions",
+        },
+      }),
+    ).toBe(false);
   });
 
   it("distinguishes one-time tool-disclosure migration from user configuration drift", () => {

@@ -137,7 +137,7 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
-  it("repairs legacy Hermes custom Anthropic routes before rebuild (#6289)", () => {
+  it("preserves a stale Hermes API marker so rebuild re-arms provider setup (#6289)", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue(null);
 
     const config = prepareRebuildResumeConfig(
@@ -160,7 +160,7 @@ describe("prepareRebuildResumeConfig", () => {
       model: "nvidia/nvidia/nemotron-3-super-v3",
       endpointUrl: "https://inference-api.nvidia.com",
       credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      preferredInferenceApi: "openai-completions",
+      preferredInferenceApi: "anthropic-messages",
     });
   });
 

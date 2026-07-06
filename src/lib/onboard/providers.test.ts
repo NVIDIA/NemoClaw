@@ -114,9 +114,11 @@ function withProviderEnv(next: Record<string, string | undefined>, testBody: () 
 }
 
 describe("onboard provider helpers", () => {
-  it("keeps custom Anthropic upstreams on the Anthropic provider profile (#6289)", () => {
+  it("keeps the discovery profile Anthropic before agent-specific surface selection (#6289)", () => {
     const provider = REMOTE_PROVIDER_CONFIG.anthropicCompatible;
 
+    // Remote provider setup can replace this registration with type=openai
+    // after an agent selects and verifies the endpoint's OpenAI surface.
     expect(provider).toMatchObject({
       providerName: "compatible-anthropic-endpoint",
       providerType: "anthropic",

@@ -11,7 +11,6 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
-import { resolveAgentInferenceApi } from "../../inference/config";
 import { normalizeInferenceSelection } from "../../inference/selection";
 import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
 import * as onboardSession from "../../state/onboard-session";
@@ -228,11 +227,10 @@ export function prepareRebuildResumeConfig(
     model: trustedSelection.model,
     nimContainer: trustedSelection.nimContainer,
     credentialEnv,
-    preferredInferenceApi: resolveAgentInferenceApi(
-      rebuildAgent,
-      trustedSelection.provider,
-      trustedSelection.preferredInferenceApi,
-    ),
+    // Preserve the recorded API family through the handoff. The provider
+    // inference state compares it with the agent-required route and must see
+    // the stale value to re-arm gateway provider setup before recreation.
+    preferredInferenceApi: trustedSelection.preferredInferenceApi,
     compatibleEndpointReasoning,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,

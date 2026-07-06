@@ -390,7 +390,6 @@ class SandboxStateFlow<
         model: this.options.model,
         preferredInferenceApi: this.options.preferredInferenceApi,
         registryEntry,
-        session: state.session,
       }),
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
