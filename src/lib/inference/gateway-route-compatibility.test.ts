@@ -57,8 +57,9 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "stopped-peer", reason: "provider-model" }],
     });
-    if (result.ok) throw new Error("expected a route conflict");
-    expect(formatGatewayRouteConflict(result)).toContain("Stopped sandboxes are included");
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
+      "Stopped sandboxes are included",
+    );
   });
 
   it("allows different routes on different gateways (#6315)", () => {
@@ -183,8 +184,7 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "legacy-custom", reason: "incomplete-custom-route" }],
     });
-    if (result.ok) throw new Error("expected a route conflict");
-    expect(formatGatewayRouteConflict(result)).toContain(
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "remove and re-onboard that sandbox with complete custom-route metadata",
     );
   });
@@ -208,8 +208,7 @@ describe("shared gateway inference route compatibility", () => {
         },
       ],
     });
-    if (result.ok) throw new Error("expected a route conflict");
-    expect(formatGatewayRouteConflict(result)).toContain(
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "requested custom route lacks durable endpoint or API-family metadata",
     );
   });
@@ -232,8 +231,7 @@ describe("shared gateway inference route compatibility", () => {
       ok: false,
       conflicts: [{ sandboxName: "unknown-gateway", reason: "invalid-gateway-binding" }],
     });
-    if (result.ok) throw new Error("expected a route conflict");
-    expect(formatGatewayRouteConflict(result)).toContain(
+    expect(formatGatewayRouteConflict(result as Exclude<typeof result, { ok: true }>)).toContain(
       "restore its known-good gateway binding or remove and re-onboard that sandbox",
     );
   });
