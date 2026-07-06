@@ -105,6 +105,14 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const {
+  getDcodeSelectionDrift,
+  requiresSelectionRecreate,
+  usesManagedDcodeIdentity,
+}: typeof import("./onboard/dcode-selection-drift") = require("./onboard/dcode-selection-drift");
+const {
+  finalizeCreatedSandbox,
+}: typeof import("./onboard/created-sandbox-finalization") = require("./onboard/created-sandbox-finalization");
 const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   isLinuxDockerDriverGatewayEnabled,
@@ -154,9 +162,6 @@ const os = require("os");
 const path = require("path");
 const pRetry = require("p-retry");
 
-/** Strip ANSI escape sequences before printing process output to the terminal.
- *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
-const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -514,7 +519,7 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { printDockerDaemonRecovery, reportLegacyGatewayStartResultFailure } =
+const { createFinalGatewayStartFailureHandler, reportLegacyGatewayStartResultFailure } =
   require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
@@ -1331,80 +1336,15 @@ function destroyGateway(
   });
 }
 
-type FinalGatewayStartFailureOptions = {
-  retries: number;
-  dockerUnreachable?: boolean;
-  collectDiagnostics?: () => string | null | undefined;
-  cleanupGateway?: () => void;
-  exitProcess?: (code: number) => never;
-  printError?: (message?: string) => void;
-};
-
-function handleFinalGatewayStartFailure({
-  retries,
-  dockerUnreachable = false,
-  collectDiagnostics = () =>
+const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
+  getGatewayName: () => GATEWAY_NAME,
+  collectDiagnostics: () =>
     runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
       ignoreError: true,
       timeout: 10_000,
     }),
-  cleanupGateway = destroyGateway,
-  exitProcess = (code) => process.exit(code),
-  printError = (message = "") => console.error(message),
-}: FinalGatewayStartFailureOptions): never {
-  if (dockerUnreachable) {
-    printDockerDaemonRecovery(printError);
-    return exitProcess(1);
-  }
-
-  printError(`  Gateway failed to start after ${retries + 1} attempts.`);
-  printError("  Gateway state preserved until diagnostics are collected.");
-  printError("");
-
-  try {
-    const logs = redact(collectDiagnostics() || "");
-    if (logs) {
-      printError("  Gateway logs:");
-      for (const line of String(logs)
-        .split("\n")
-        .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
-        .filter(Boolean)) {
-        printError(`    ${line}`);
-      }
-      printError("");
-    }
-  } catch {
-    // doctor logs unavailable — continue to best-effort cleanup and manual instructions
-  }
-
-  printError("  Cleaning up failed gateway state...");
-  try {
-    cleanupGateway();
-    printError("  Cleanup attempted.");
-  } catch (err) {
-    const message = compactText(err instanceof Error ? err.message : String(err));
-    printError(message ? `  Cleanup attempt failed: ${message}` : "  Cleanup attempt failed.");
-  }
-  printError("");
-  printError("  Diagnostic command attempted before cleanup:");
-  printError(`    openshell doctor logs --name ${GATEWAY_NAME}`);
-  printError("    openshell doctor check");
-  printError("");
-  printError("  If gateway cleanup did not complete, run:");
-  printError(`    openshell gateway remove ${GATEWAY_NAME}`);
-  printError(`    # For OpenShell releases that still expose lifecycle commands:`);
-  printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
-  if (process.platform === "linux") {
-    printError(
-      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-    );
-  }
-  printError(
-    `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
-  );
-  printError(`    nemoclaw onboard --resume`);
-  return exitProcess(1);
-}
+  cleanupGateway: destroyGateway,
+});
 
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName(GATEWAY_NAME);
@@ -2374,6 +2314,7 @@ async function createSandboxWithBaseImageResolution(
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
   const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  const isManagedDcodeAgent = usesManagedDcodeIdentity(agent?.name, fromDockerfile);
   let effectivePort = 0,
     chatUiUrl = "";
   if (manageDashboard) {
@@ -2438,6 +2379,15 @@ async function createSandboxWithBaseImageResolution(
 
   // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
   const { existingEntry, preservedMcpState, liveExists, effectiveToolDisclosure, toolDisclosureMigrationNeeded, toolDisclosureMigrationNote } = toolDisclosureFlow.prepareSandboxToolDisclosure(sandboxName, preparedBuildContext?.rebuildTarget?.fromDockerfile ? preparedBuildContext.stagedDockerfile : fromDockerfile, isRecreateSandbox(createIntent?.recreate), inspectSandboxForCreate, createIntent?.toolDisclosure ?? null);
+  if (liveExists && isManagedDcodeAgent && !existingEntry) {
+    console.error(
+      `  Sandbox '${sandboxName}' is live but missing its NemoClaw registry record; refusing unverified DCode reuse or recreation.`,
+    );
+    console.error(
+      "  Choose a different sandbox name, or remove the orphan explicitly with OpenShell.",
+    );
+    process.exit(1);
+  }
   // #4614: capture default AFTER prune so a stale registry row isn't read as a live sandbox.
   const sandboxWasLiveDefault = liveExists && wasSandboxDefault(registry.getDefault(), sandboxName);
 
@@ -2498,8 +2448,12 @@ async function createSandboxWithBaseImageResolution(
     const needsProviderMigration =
       hasMessagingTokens &&
       messagingTokenDefs.some(({ name, token }) => token && !providerExistsInGateway(name));
-    const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
-    const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
+    const selectionDrift = isManagedDcodeAgent
+      ? getDcodeSelectionDrift(sandboxName, provider, model, preferredInferenceApi, {
+          runCaptureOpenshell,
+        })
+      : getSelectionDrift(sandboxName, provider, model, { runOpenshell });
+    const actionableSelectionDrift = requiresSelectionRecreate(selectionDrift, isManagedDcodeAgent);
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
     const existingSandboxEntry = registry.getSandbox(sandboxName);
     const recordedHermesToolGateways = normalizeHermesToolGatewaySelections(
@@ -2553,7 +2507,7 @@ async function createSandboxWithBaseImageResolution(
 
       if (isNonInteractive()) {
         if (existingSandboxState === "ready") {
-          if (confirmedSelectionDrift) {
+          if (actionableSelectionDrift) {
             note("  [non-interactive] Recreating sandbox due to provider/model drift.");
           } else {
             policyPresetCarry.seedReusedSandboxPolicyPresets(sandboxName, isNonInteractive());
@@ -2601,7 +2555,7 @@ async function createSandboxWithBaseImageResolution(
           pendingStateRestoreBackupPath = outcome.restoreBackupPath;
         }
       } else if (existingSandboxState === "ready") {
-        if (confirmedSelectionDrift) {
+        if (actionableSelectionDrift) {
           const confirmed = await confirmRecreateForSelectionDrift(
             sandboxName,
             selectionDrift,
@@ -2670,8 +2624,10 @@ async function createSandboxWithBaseImageResolution(
     } else if (needsProviderMigration) {
       console.log(`  Sandbox '${sandboxName}' exists but messaging providers are not attached.`);
       console.log("  Recreating to ensure credentials flow through the provider pipeline.");
-    } else if (confirmedSelectionDrift) {
-      note(`  Sandbox '${sandboxName}' exists — recreating to apply model/provider change.`);
+    } else if (actionableSelectionDrift) {
+      note(
+        `  Sandbox '${sandboxName}' exists — recreating because its live model/provider selection is stale or unreadable.`,
+      );
     } else if (sandboxGpuDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply sandbox GPU settings.`);
     } else if (hermesToolGatewayDrift) {
@@ -3005,49 +2961,62 @@ async function createSandboxWithBaseImageResolution(
     hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
 
-  // Register only after confirmed ready — prevents phantom entries
+  // Resolve registry metadata now, but publish it only after restored state is
+  // reconciled and the live agent selection is verified.
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag =
     prebuild.imageRef ?? resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   const inferenceSelection = sandboxRegistration.selection;
-  sandboxRegistration.registerCreatedSandbox({
-    sandboxName,
-    inferenceSelection: inferenceSelection(sandboxName, provider, model, preferredInferenceApi),
-    runtimeFields: sandboxRuntimeFields,
-    agent,
-    agentVersionKnown: !fromDockerfile,
-    imageTag: resolvedImageTag,
-    appliedPolicies: initialSandboxPolicy.appliedPresets,
-    toolDisclosure: effectiveToolDisclosure,
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
-    plannedMessagingState,
-    preservedMcpState,
-    hermesToolGateways,
-    hermesDashboardState: finalHermesDashboardState,
-    dashboardPort: actualDashboardPort,
-    gatewayName: GATEWAY_NAME,
-    gatewayPort: GATEWAY_PORT,
-  });
-  restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
-  if (restoreBackupPath) {
-    note(
-      pendingStateRestoreBackupPath
-        ? "  Restoring workspace state from pre-upgrade backup..."
-        : "  Restoring workspace state from pre-recreate backup...",
-    );
-    const restore = sandboxState.restoreSandboxState(sandboxName, restoreBackupPath);
-    if (restore.success) {
-      note(
-        `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
-      );
-    } else {
-      console.error(`  Warning: partial restore. Manual recovery: ${restoreBackupPath}`);
-    }
-  }
+  finalizeCreatedSandbox(
+    {
+      sandboxName,
+      restoreBackupPath,
+      preUpgradeBackup: pendingStateRestoreBackupPath !== null,
+      validateManagedDcode: isManagedDcodeAgent,
+      provider,
+      model,
+      preferredInferenceApi,
+    },
+    {
+      restoreSandboxState: sandboxState.restoreSandboxState,
+      getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
+        getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
+          runCaptureOpenshell,
+        }),
+      note,
+      error: console.error,
+      exitProcess: (code) => process.exit(code),
+      register: () =>
+        sandboxRegistration.registerCreatedSandbox({
+          sandboxName,
+          inferenceSelection: inferenceSelection(
+            sandboxName,
+            provider,
+            model,
+            preferredInferenceApi,
+          ),
+          runtimeFields: sandboxRuntimeFields,
+          agent,
+          agentVersionKnown: !fromDockerfile,
+          imageTag: resolvedImageTag,
+          appliedPolicies: initialSandboxPolicy.appliedPresets,
+          toolDisclosure: effectiveToolDisclosure,
+          // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+          ...sandboxRegistration.creationFidelity(webSearchConfig, fromDockerfile, normalizeHermesAuthMethod(hermesAuthMethod)),
+          plannedMessagingState,
+          preservedMcpState,
+          hermesToolGateways,
+          hermesDashboardState: finalHermesDashboardState,
+          dashboardPort: actualDashboardPort,
+          gatewayName: GATEWAY_NAME,
+          gatewayPort: GATEWAY_PORT,
+        }),
+    },
+  );
+  restoreDefaultAfterRecreate(registry.setDefault, sandboxName, sandboxWasLiveDefault); // #4614: default deferred to finalization
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
@@ -4565,6 +4534,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           hydrateMessagingChannelConfig,
           messagingChannelConfigsEqual,
           getSandboxReuseState,
+          getDcodeSelectionDrift: (name, selectedProvider, selectedModel, selectedApi) =>
+            getDcodeSelectionDrift(name, selectedProvider, selectedModel, selectedApi, {
+              runCaptureOpenshell,
+            }),
           hasSandboxGpuDrift,
           getSandboxHermesToolGateways: (name) => registry.getSandbox(name)?.hermesToolGateways,
           getSandboxRegistryEntry: registry.getSandbox,

@@ -17,6 +17,7 @@ export interface SandboxResumeSignals {
   readonly hermesToolGatewayConfigChanged: boolean;
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
+  readonly inferenceSelectionChanged: boolean;
 }
 
 interface InferenceRouteResumeInput {
@@ -99,6 +100,7 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
     !signals.resumeAgentChanged &&
     !signals.inferenceRouteConfigChanged &&
+    !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
@@ -131,6 +133,13 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
 }
 
 function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.inferenceSelectionChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Live DCode model/provider selection is stale or unreadable; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
   if (signals.resumeAgentChanged) {
     return {
       kind: "recreate",
@@ -152,9 +161,9 @@ function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResu
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
-  if (canReuseSandbox(signals)) return { kind: "reuse" };
   const compatibilityDecision = compatibilityResumeDecision(signals);
   if (compatibilityDecision) return compatibilityDecision;
+  if (canReuseSandbox(signals)) return { kind: "reuse" };
   if (signals.webSearchConfigChanged) {
     return {
       kind: "recreate",

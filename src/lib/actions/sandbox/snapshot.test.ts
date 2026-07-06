@@ -750,6 +750,19 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("2 snapshot(s). Restore with:");
   });
 
+  it("prints create, list, and restore usage for the bare help branch", async () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "help" });
+
+    const output = consoleLog.mock.calls.flat().join("\n");
+    expect(output).toContain("Usage:");
+    expect(output).toContain("alpha snapshot create");
+    expect(output).toContain("alpha snapshot list");
+    expect(output).toContain("alpha snapshot restore");
+  });
+
   it("restores the latest snapshot into the source sandbox", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     getLatestBackupMock.mockReturnValue({

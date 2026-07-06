@@ -71,26 +71,30 @@ function getRepoDigest(
   imageRef: string,
 ): { digest: string; ref: string } | null {
   const atIndex = imageRef.indexOf("@sha256:");
-  if (atIndex !== -1) {
-    const digest = imageRef.slice(atIndex + 1);
-    return { digest, ref: imageRef };
-  }
+  const pinnedDigest =
+    atIndex !== -1 ? { digest: imageRef.slice(atIndex + 1), ref: imageRef } : null;
 
+  // Docker can normalize a pulled manifest-list digest to the platform manifest
+  // digest in RepoDigests. Prefer that local proof when present, but keep the
+  // caller's exact digest ref as the fallback for offline or sparse metadata.
   const inspectOutput = dockerImageInspectFormat("{{json .RepoDigests}}", imageRef, {
     ignoreError: true,
   });
-  if (!inspectOutput) return null;
+  if (!inspectOutput) return pinnedDigest;
 
   let repoDigests: unknown;
   try {
     repoDigests = JSON.parse(inspectOutput || "[]");
   } catch {
-    return null;
+    addTraceEvent("nemoclaw.sandbox_base_image.repodigest_parse_failed", {
+      digest_pinned: pinnedDigest !== null,
+    });
+    return pinnedDigest;
   }
   const repoDigest = Array.isArray(repoDigests)
     ? repoDigests.find((entry) => String(entry).startsWith(`${imageName}@sha256:`))
     : null;
-  if (!repoDigest) return null;
+  if (!repoDigest) return pinnedDigest;
   const digest = String(repoDigest).slice(String(repoDigest).indexOf("@") + 1);
   return { digest, ref: `${imageName}@${digest}` };
 }
@@ -100,6 +104,7 @@ function resolvePulledCandidate(
   imageRef: string,
   source: SandboxBaseImageResolution["source"],
   options: ResolveBaseImageOptions,
+  pinnedRemoteRef?: string,
 ): SandboxBaseImageResolution | null {
   const inspectResult = dockerImageInspect(imageRef, {
     ignoreError: true,
@@ -145,6 +150,7 @@ function resolvePulledCandidate(
     ref: repoDigest?.ref || imageRef,
     digest: repoDigest?.digest || null,
     source,
+    ...(pinnedRemoteRef ? { pinnedRemoteRef } : {}),
     glibcVersion,
   };
 }
@@ -269,6 +275,7 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
+        options.pinnedRemoteRef,
       );
       if (resolved) return finish(resolved);
     }
@@ -293,6 +300,7 @@ export function resolveSandboxBaseImage(
         options.pinnedRemoteRef,
         "pinned",
         options,
+        options.pinnedRemoteRef,
       );
       if (resolved) return finish(resolved);
     }

@@ -24,11 +24,16 @@ import {
   type ResolveBaseImageOptions,
   resolveSandboxBaseImage,
   SANDBOX_BASE_TAG,
+  type SandboxBaseImageResolution,
   type SandboxBaseImageResolutionMetadata,
 } from "../sandbox-base-image";
 import type { AgentDefinition } from "./defs";
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+// Matches the official Hermes base repository for both Dockerfile manifest-list
+// pins and Docker-normalized platform manifest digests.
+const HERMES_OFFICIAL_BASE_DIGEST_REF =
+  /^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/;
 
 export interface EnsureAgentBaseImageOptions {
   forceBaseImageRebuild?: boolean;
@@ -93,10 +98,7 @@ function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
     (match) => match[1],
   );
   const pinnedRef = declarations.length === 1 ? declarations[0] : null;
-  if (
-    !pinnedRef ||
-    !/^ghcr\.io\/nvidia\/nemoclaw\/hermes-sandbox-base@sha256:[0-9a-f]{64}$/.test(pinnedRef)
-  ) {
+  if (!pinnedRef || !HERMES_OFFICIAL_BASE_DIGEST_REF.test(pinnedRef)) {
     throw new Error(
       "Hermes final Dockerfile must declare exactly one immutable official sandbox base image",
     );
@@ -104,13 +106,30 @@ function getHermesPinnedRemoteBaseRef(agent: AgentDefinition): string | null {
   return pinnedRef;
 }
 
-function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: string): boolean {
+/**
+ * Accept only trusted resolver output here. Pinned platform digests are valid
+ * only when the resolver records the current Dockerfile-pinned ref as their
+ * provenance; string callers and explicit overrides stay exact-match only.
+ */
+function hermesFinalDockerfileAcceptsBase(
+  agent: AgentDefinition,
+  image: string | SandboxBaseImageResolution,
+): boolean {
   if (agent.name !== "hermes") return true;
+  const imageRef = typeof image === "string" ? image : image.ref;
   if (
     imageRef === "nemoclaw-hermes-base-local" ||
     /^nemoclaw-hermes-(?:root-entrypoint-base|sandbox-base-local|secret-boundary-base|stale-openclaw-dir-base|stale-openclaw-link-base):[^\s]+$/.test(
       imageRef,
     )
+  ) {
+    return true;
+  }
+  if (
+    typeof image !== "string" &&
+    image.source === "pinned" &&
+    image.pinnedRemoteRef === getHermesPinnedRemoteBaseRef(agent) &&
+    HERMES_OFFICIAL_BASE_DIGEST_REF.test(imageRef)
   ) {
     return true;
   }
@@ -263,7 +282,7 @@ export function ensureAgentBaseImage(
     ? resolveExactImage(explicitOverride)
     : resolveSandboxBaseImage(resolutionOptions);
   if (resolved) {
-    if (!hermesFinalDockerfileAcceptsBase(agent, resolved.ref)) {
+    if (!hermesFinalDockerfileAcceptsBase(agent, resolved)) {
       throw new Error(
         `Hermes final image does not accept base image ref '${resolved.ref}'; use the tracked official digest or a repository-built local base`,
       );

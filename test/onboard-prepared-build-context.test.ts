@@ -123,6 +123,14 @@ runner.runFile = (file, args = []) => {
 };
 runner.runCapture = (command) => {
   const normalized = normalize(command);
+  if (normalized.includes("sandbox exec -n " + sandboxName + " -- dcode identity")) {
+    return [
+      "Route:    inference",
+      "Provider: nvidia-prod",
+      "Model:    openai:nvidia/nemotron-3-super-120b-a12b",
+      "Endpoint: https://inference.local/v1",
+    ].join("\n");
+  }
   if (normalized.includes("sandbox get")) return "";
   if (normalized.includes("sandbox list")) return sandboxName + " Ready";
   return "";

@@ -15,6 +15,7 @@ const { checkAndRecoverSandboxProcesses } = requireSource(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 function withFakeOpenshellBinary<T>(fn: () => T): T {
@@ -131,6 +132,8 @@ beta  127.0.0.1  18789  12345  running`,
     const childProcess = requireSource("node:child_process");
     let teamsForwardStarted = false;
 
+    // Forward visibility is fixed by mocks, so the production settle window is unnecessary.
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
