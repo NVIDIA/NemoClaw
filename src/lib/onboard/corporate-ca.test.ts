@@ -13,11 +13,35 @@ import {
   CorporateCaValidationError,
   encodeCorporateCaArg,
   MAX_CORPORATE_CA_BYTES,
+  MAX_CORPORATE_CA_CERTS,
   resolveCorporateCaFromEnv,
   validateCorporateCaFile,
 } from "./corporate-ca";
 
-const PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
+// A real (self-signed) X.509 certificate so the structural validation accepts
+// it; the shape-only fixture (BAD_PEM) is used for negative structural cases.
+const PEM = `-----BEGIN CERTIFICATE-----
+MIIDKzCCAhOgAwIBAgIUL3YNpyohvjOEzlwisLKfyiU3dRwwDQYJKoZIhvcNAQEL
+BQAwJTEjMCEGA1UEAwwaTmVtb0NsYXcgVGVzdCBDb3Jwb3JhdGUgQ0EwHhcNMjYw
+NzA2MDQwMjM2WhcNMzYwNzAzMDQwMjM2WjAlMSMwIQYDVQQDDBpOZW1vQ2xhdyBU
+ZXN0IENvcnBvcmF0ZSBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEB
+ALVbV5tyMc65jEH39ejvQvBk7dvI8rz8rSZl+5BWSK2a4TzKm3jD3U+qCDZPicrA
+ETCDcO09bN6YIAgpB6rYg5BIURJWxFuljBIBMCZEdO6AVlbURPaGsw6RKLA3cmhx
+ZekT0qMcoOKm3N+Hb5MHXsWZ8EUf0co2LsWwJgDZrdwY26gF6w+9wr3iGLE92ZbO
+LHhjHUYR1oWXmkXS3YW8MN2h5I+oyL71jBiwLHUi59wogxA/LTAD97/GqwJ6DC4C
+UERbIpGYhZfrbiKmT+ASJuKRXaUp/0My3IzH90RqqY70d1E/pkAsd5M8SQ332qAZ
+OgW4GgO3n7gAlaN/ILwunZ8CAwEAAaNTMFEwHQYDVR0OBBYEFMa5M8bvDm85eFQi
+1D5fNATE/rawMB8GA1UdIwQYMBaAFMa5M8bvDm85eFQi1D5fNATE/rawMA8GA1Ud
+EwEB/wQFMAMBAf8wDQYJKoZIhvcNAQELBQADggEBAB8NR/0HBUH1WbbDOmGNDzge
+o+4Pz0KWR5fPDSx9CrmvUk8ijKpJQcSjQcmrXuhCoRs6aExXLh+wImKkOyMIVXfd
+YFWjCffSJzeBQfDlMVW+wiAjUh7xaIqpA6Z8EmpdfyoNWd30AuHjs9m8dAa8M/lP
+0qhzCbjDiHNHfYSrAuBHlMJ5RsUrNVtSZGpg1dtaSBa+8XFWWNBeJrUANxb8i7Ax
+MAhrfNQcxSkZH2lVY+TA2JO83v12nKXzaW1dC94SlsFf0tVSvM3QTeWVgijpr0q+
+J0N7VBg2CdK6jRjKLQOSOPq3ySCicHhVRI8hxIWotif7mK3jj6D8NRalwmlHgNM=
+-----END CERTIFICATE-----
+`;
+// PEM-shaped but not a parseable certificate.
+const BAD_PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
 const tmpRoots: string[] = [];
 
 function tmpDir(): string {
@@ -81,6 +105,16 @@ describe("validateCorporateCaFile", () => {
   it("rejects a file without a PEM certificate block", () => {
     const p = writeCa(tmpDir(), "not a certificate\n");
     expect(() => validateCorporateCaFile(p)).toThrow(/no PEM CERTIFICATE block/);
+  });
+
+  it("rejects a bundle with more than the certificate cap", () => {
+    const p = writeCa(tmpDir(), PEM.repeat(MAX_CORPORATE_CA_CERTS + 1));
+    expect(() => validateCorporateCaFile(p)).toThrow(/certificates \(max/);
+  });
+
+  it("rejects a PEM-shaped block that is not a parseable X.509 certificate", () => {
+    const p = writeCa(tmpDir(), BAD_PEM);
+    expect(() => validateCorporateCaFile(p)).toThrow(/not a valid X\.509 certificate/);
   });
 });
 

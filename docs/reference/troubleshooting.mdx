@@ -976,14 +976,18 @@ $$nemoclaw <name> rebuild
 
 On networks where a corporate proxy in front of the host re-signs external TLS with its own root CA, external endpoints such as `api.telegram.org` fail certificate verification even when the network policy allows the connection. Logs show the request opening (`NET:OPEN ... api.telegram.org:443`) followed by `NET:FAIL`. OpenShell injects only its own L7-proxy CA into the sandbox, so the separate corporate root is missing from the trust path.
 
-To fix this, point NemoClaw at your corporate CA bundle on the host **before** onboarding, then onboard (or rebuild). NemoClaw validates the bundle, bakes it into the sandbox image, and at startup appends it to the OpenShell trust bundle — it never replaces the OpenShell CA — repointing `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node all trust both roots:
+To fix this, point NemoClaw at your corporate CA bundle on the host **before** onboarding, then onboard (or rebuild). The recommended, explicit way is `NEMOCLAW_CORPORATE_CA_BUNDLE`. NemoClaw validates the bundle, bakes it into the sandbox image, and at startup appends it to the OpenShell trust bundle — it never replaces the OpenShell CA — repointing `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO`, and `NODE_EXTRA_CA_CERTS` at the merged bundle so curl, Python, Git, and Node all trust both roots:
 
 ```bash
 export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
 $$nemoclaw onboard
 ```
 
-`REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `SSL_CERT_FILE` are also honored as fallbacks (in that order) when `NEMOCLAW_CORPORATE_CA_BUNDLE` is unset, so an environment that already exports one of those for the corporate proxy works without extra configuration. The bundle must be a readable, non-symlink, non-world-writable PEM file that contains at least one certificate. To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
+If your corporate CA lives only in the host system trust store, point the same variable at it explicitly (for example `NEMOCLAW_CORPORATE_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt`). NemoClaw does not auto-scan the host trust store, so it never bakes an unrelated bundle without an explicit path.
+
+When `NEMOCLAW_CORPORATE_CA_BUNDLE` is unset, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `SSL_CERT_FILE` are honored as fallbacks (in that order) so an environment that already exports one of those for the corporate proxy works without extra configuration. A fallback variable that points at a missing or invalid file is **skipped silently** (it does not fail onboarding); only the explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` fails loudly when invalid. When a fallback source is baked, onboarding logs which variable and path it used.
+
+The bundle must be a readable, non-symlink, non-world-writable PEM file whose leading block parses as an X.509 certificate, capped at a small corporate chain (not a full OS trust store). To disable the import entirely, set `NEMOCLAW_CORPORATE_CA_IMPORT=0`.
 
 ### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
 

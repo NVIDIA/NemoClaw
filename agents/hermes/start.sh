@@ -1422,15 +1422,30 @@ merge_corporate_proxy_ca() {
     _base_bundle="/etc/ssl/certs/ca-certificates.crt"
   fi
   _merged="/tmp/nemoclaw-ca-bundle.pem"
-  # Remove any stale (0444) bundle first so a re-invocation can rewrite it.
-  rm -f "$_merged" 2>/dev/null || true
-  : >"$_merged" 2>/dev/null || return 0
+  # Build the bundle in a private temp file next to the target, verifying every
+  # write, then atomically rename into place. If any step fails we bail without
+  # exporting anything, leaving the OpenShell-only trust intact rather than
+  # pointing tools at a partial/empty bundle.
+  _tmp="$(mktemp "${_merged}.XXXXXX" 2>/dev/null)" || return 0
   if [ -n "$_base_bundle" ]; then
-    cat "$_base_bundle" >>"$_merged" 2>/dev/null || true
-    printf '\n' >>"$_merged" 2>/dev/null || true
+    cat "$_base_bundle" >>"$_tmp" 2>/dev/null || {
+      rm -f "$_tmp"
+      return 0
+    }
+    printf '\n' >>"$_tmp" 2>/dev/null || {
+      rm -f "$_tmp"
+      return 0
+    }
   fi
-  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_merged" 2>/dev/null || true
-  chmod 0444 "$_merged" 2>/dev/null || true
+  cat "$_NEMOCLAW_CORPORATE_CA_FILE" >>"$_tmp" 2>/dev/null || {
+    rm -f "$_tmp"
+    return 0
+  }
+  chmod 0444 "$_tmp" 2>/dev/null || true
+  mv -f "$_tmp" "$_merged" 2>/dev/null || {
+    rm -f "$_tmp"
+    return 0
+  }
   export SSL_CERT_FILE="$_merged"
   export NODE_EXTRA_CA_CERTS="$_merged"
   export _NEMOCLAW_CORPORATE_CA_MERGED=1

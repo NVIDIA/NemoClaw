@@ -937,7 +937,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
 # hadolint ignore=DL3059,DL4006
 RUN if [ -n "${NEMOCLAW_CORPORATE_CA_B64}" ]; then \
       mkdir -p /usr/local/share/nemoclaw \
-      && printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 -d > /usr/local/share/nemoclaw/corporate-ca.pem \
+      && printf '%s' "${NEMOCLAW_CORPORATE_CA_B64}" | base64 --decode > /usr/local/share/nemoclaw/corporate-ca.pem \
       && chown root:root /usr/local/share/nemoclaw/corporate-ca.pem \
       && chmod 0444 /usr/local/share/nemoclaw/corporate-ca.pem \
       && echo "[nemoclaw] baked host corporate-proxy CA into image trust (#6210)"; \

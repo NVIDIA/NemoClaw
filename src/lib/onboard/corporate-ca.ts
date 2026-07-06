@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { X509Certificate } from "node:crypto";
 import fs from "node:fs";
 
 /**
@@ -38,10 +39,20 @@ export const CORPORATE_CA_FALLBACK_ENV_VARS = [
 /** Opt-out: set to a falsey token to disable corporate CA import entirely. */
 export const CORPORATE_CA_DISABLE_ENV = "NEMOCLAW_CORPORATE_CA_IMPORT";
 
-/** Upper bound on an accepted CA bundle. A PEM trust store is a few KiB. */
-export const MAX_CORPORATE_CA_BYTES = 512 * 1024;
+/**
+ * Upper bound on an accepted CA bundle. A corporate CA chain is a handful of
+ * certificates (a few KiB); this bound rejects an accidental full host
+ * trust-store dump (which would bake broad, unrelated trust into the image).
+ */
+export const MAX_CORPORATE_CA_BYTES = 128 * 1024;
 
-const PEM_CERTIFICATE_RE = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/;
+/**
+ * Upper bound on certificates in an accepted bundle. Keeps the imported trust
+ * anchors scoped to a corporate CA chain rather than an entire OS trust store.
+ */
+export const MAX_CORPORATE_CA_CERTS = 24;
+
+const PEM_CERTIFICATE_RE_GLOBAL = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
 
 export interface ResolvedCorporateCa {
   /** Validated PEM text of the corporate CA bundle. */
@@ -62,43 +73,75 @@ export class CorporateCaValidationError extends Error {
 /**
  * Validate a candidate corporate CA bundle file and return its PEM text.
  *
- * Rejects symlinks, non-regular files, empty/oversized files, and
- * world-writable sources; requires at least one PEM CERTIFICATE block.
+ * Opens the file once with `O_NOFOLLOW` and validates the *opened* descriptor
+ * (via `fstat`, then reads from the same fd) so a symlink/file swap between
+ * check and use cannot slip a different file past validation. Rejects
+ * symlinks, non-regular files, empty/oversized files, world-writable sources,
+ * bundles with no or too many PEM CERTIFICATE blocks, and a leading block that
+ * is not a parseable X.509 certificate.
  */
 export function validateCorporateCaFile(filePath: string): string {
-  let stat: fs.Stats;
+  let fd: number;
   try {
-    stat = fs.lstatSync(filePath);
-  } catch {
-    throw new CorporateCaValidationError(`corporate CA bundle not found: ${filePath}`);
-  }
-  if (stat.isSymbolicLink()) {
-    throw new CorporateCaValidationError(`corporate CA bundle must not be a symlink: ${filePath}`);
-  }
-  if (!stat.isFile()) {
-    throw new CorporateCaValidationError(`corporate CA bundle is not a regular file: ${filePath}`);
-  }
-  if (stat.size === 0) {
-    throw new CorporateCaValidationError(`corporate CA bundle is empty: ${filePath}`);
-  }
-  if (stat.size > MAX_CORPORATE_CA_BYTES) {
+    // O_NOFOLLOW refuses to open through a final-component symlink atomically.
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ELOOP") {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle must not be a symlink: ${filePath}`,
+      );
+    }
     throw new CorporateCaValidationError(
-      `corporate CA bundle exceeds ${MAX_CORPORATE_CA_BYTES} bytes: ${filePath}`,
+      `corporate CA bundle not found or unreadable: ${filePath}`,
     );
   }
-  // Refuse a source any other local user could tamper with before the build.
-  if ((stat.mode & 0o002) !== 0) {
-    throw new CorporateCaValidationError(
-      `corporate CA bundle must not be world-writable: ${filePath}`,
-    );
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile()) {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle is not a regular file: ${filePath}`,
+      );
+    }
+    if (stat.size === 0) {
+      throw new CorporateCaValidationError(`corporate CA bundle is empty: ${filePath}`);
+    }
+    if (stat.size > MAX_CORPORATE_CA_BYTES) {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle exceeds ${MAX_CORPORATE_CA_BYTES} bytes: ${filePath}`,
+      );
+    }
+    // Refuse a source any other local user could tamper with before the build.
+    if ((stat.mode & 0o002) !== 0) {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle must not be world-writable: ${filePath}`,
+      );
+    }
+    const content = fs.readFileSync(fd, "utf8");
+    const blocks = content.match(PEM_CERTIFICATE_RE_GLOBAL);
+    if (!blocks || blocks.length === 0) {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle contains no PEM CERTIFICATE block: ${filePath}`,
+      );
+    }
+    if (blocks.length > MAX_CORPORATE_CA_CERTS) {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle has ${blocks.length} certificates (max ${MAX_CORPORATE_CA_CERTS}): ${filePath}`,
+      );
+    }
+    // Structural check: the first block must parse as a real X.509 certificate,
+    // catching truncated/corrupt PEM at build time rather than at TLS handshake.
+    try {
+      new X509Certificate(blocks[0]);
+    } catch {
+      throw new CorporateCaValidationError(
+        `corporate CA bundle leading block is not a valid X.509 certificate: ${filePath}`,
+      );
+    }
+    return content;
+  } finally {
+    fs.closeSync(fd);
   }
-  const content = fs.readFileSync(filePath, "utf8");
-  if (!PEM_CERTIFICATE_RE.test(content)) {
-    throw new CorporateCaValidationError(
-      `corporate CA bundle contains no PEM CERTIFICATE block: ${filePath}`,
-    );
-  }
-  return content;
 }
 
 function isDisabled(env: NodeJS.ProcessEnv): boolean {

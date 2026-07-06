@@ -18,7 +18,11 @@ import {
   normalizeToolDisclosure,
   type ToolDisclosure,
 } from "../tool-disclosure";
-import { encodeCorporateCaArg, resolveCorporateCaFromEnv } from "./corporate-ca";
+import {
+  CORPORATE_CA_EXPLICIT_ENV,
+  encodeCorporateCaArg,
+  resolveCorporateCaFromEnv,
+} from "./corporate-ca";
 import {
   dockerfileInstructions,
   readDockerfilePatchSnapshot,
@@ -329,10 +333,25 @@ export function patchStagedDockerfile(
   // a silent no-op on custom/legacy Dockerfiles that predate this ARG.
   const corporateCa = resolveCorporateCaFromEnv(process.env);
   if (corporateCa) {
-    dockerfile = dockerfile.replace(
-      /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m,
-      `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
-    );
+    const corporateCaArgPattern = /^ARG NEMOCLAW_CORPORATE_CA_B64=.*$/m;
+    if (corporateCaArgPattern.test(dockerfile)) {
+      dockerfile = dockerfile.replace(
+        corporateCaArgPattern,
+        `ARG NEMOCLAW_CORPORATE_CA_B64=${sanitizeDockerArg(encodeCorporateCaArg(corporateCa.pem))}`,
+      );
+      // Surface which host source is being baked so a fallback import (from a
+      // conventional CA env var rather than the explicit opt-in) is never
+      // silent. The CA is a public certificate, so logging its source is safe.
+      console.error(
+        `[nemoclaw] baking corporate proxy CA from ${corporateCa.sourceEnv} (${corporateCa.sourcePath}) into the sandbox image trust (#6210)`,
+      );
+    } else if (corporateCa.sourceEnv === CORPORATE_CA_EXPLICIT_ENV) {
+      // Explicit opt-in must not silently no-op on a managed Dockerfile.
+      throw new Error(
+        "Dockerfile is missing ARG NEMOCLAW_CORPORATE_CA_B64; cannot bake the corporate CA from NEMOCLAW_CORPORATE_CA_BUNDLE.",
+      );
+    }
+    // Fallback source + a custom Dockerfile without the ARG: leave a no-op.
   }
 
   replaceDockerfilePatchSnapshot(dockerfilePath, patchSnapshot, dockerfile);
