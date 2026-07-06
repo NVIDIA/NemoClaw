@@ -17,7 +17,7 @@ import {
 } from "./provider-inference";
 
 type Gpu = { type: string } | null;
-type Agent = { name: string } | null;
+type Agent = { name: string; inference?: { provider_type?: string } } | null;
 type Host = { cpus?: number };
 
 const baseSelection: ProviderSelectionResult = {
@@ -171,7 +171,7 @@ describe("handleProviderInferenceState", () => {
       "NVIDIA_INFERENCE_API_KEY",
       null,
       [],
-      { allowToolsIncompatible: false },
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-responses" },
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(result).toMatchObject({
@@ -424,6 +424,118 @@ describe("handleProviderInferenceState", () => {
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
   });
 
+  it("coerces a resumed anthropic-messages seed for an OpenAI-only agent (#6294)", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { provider_type: "openai_compatible" },
+      },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "openai-completions",
+    });
+    // Heal: the coerced seed forces inference setup so the gateway provider
+    // registration is refreshed for the OpenAI surface.
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "claude-sonnet-proxy",
+      "compatible-anthropic-endpoint",
+      null,
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    // The coerced value is persisted only after the setup succeeded, with the
+    // inference step record — never with a pre-setup provider_selection write
+    // that would disarm the heal if the first attempt failed.
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+  });
+
+  it("re-arms the heal when the forced inference setup does not complete (#6294)", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const setupInference = vi
+      .fn()
+      .mockResolvedValueOnce({ retry: "selection" as const })
+      .mockResolvedValue({ ok: true as const });
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      setupInference,
+    });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { provider_type: "openai_compatible" },
+      },
+    });
+
+    // The failed heal must not persist the coerced value anywhere, so the
+    // next resume sees the stale seed and forces the heal again.
+    expect(calls.complete).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    // The retry falls back to provider selection (setupNim ran).
+    expect(result.retryStateResults.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a resumed anthropic-messages seed for agents that speak Anthropic natively", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "openclaw", inference: { provider_type: "gateway_managed" } },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    // Unchanged seed keeps the plain-resume shortcut: no re-record, no forced
+    // inference setup.
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
   it("records failed Ollama repair events before propagating resume repair errors", async () => {
     const session = createSession({
       provider: "ollama-local",
@@ -602,6 +714,7 @@ describe("handleProviderInferenceState", () => {
         allowToolsIncompatible: false,
         skipHostInferenceSmoke: true,
         reuseGatewayCredentialWithoutLocalKey: true,
+        preferredInferenceApi: "openai-completions",
       },
     );
     expect(calls.log).toHaveBeenCalledWith(
@@ -880,7 +993,7 @@ describe("handleProviderInferenceState", () => {
       null,
       null,
       [],
-      { allowToolsIncompatible: true },
+      { allowToolsIncompatible: true, preferredInferenceApi: "openai-responses" },
     );
   });
 });

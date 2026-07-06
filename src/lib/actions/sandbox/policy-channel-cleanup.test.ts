@@ -7,26 +7,18 @@
 // strip the stored messaging plan from the registry, `channels pause/resume`
 // should fail closed (no throw, no plan mutation).
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../${p}`);
+import * as defs from "../../agent/defs";
+import * as registry from "../../state/registry";
+import {
+  persistManifestChannelDisabledPlan,
+  persistManifestChannelRemovePlan,
+} from "./policy-channel";
 
-const registry = D("state/registry.js");
-const defs = D("agent/defs.js");
-
-const { persistManifestChannelDisabledPlan, persistManifestChannelRemovePlan } = D(
-  "actions/sandbox/policy-channel.js",
-) as {
-  persistManifestChannelDisabledPlan: (
-    sandboxName: string,
-    channelId: string,
-    disabled: boolean,
-  ) => Promise<unknown>;
-  persistManifestChannelRemovePlan: (sandboxName: string, channelId: string) => Promise<boolean>;
-};
+function agentFixture(name: string): defs.AgentDefinition {
+  return { name } as defs.AgentDefinition;
+}
 
 let getSandboxMock: MockInstance;
 let updateSandboxMock: MockInstance;
@@ -78,9 +70,7 @@ afterEach(() => {
 
 describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", () => {
   it("strips stale messaging state from the registry without throwing", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "custom-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
     getSandboxMock.mockReturnValue(entryWithStalePlan("da-test", "discord"));
 
     const result = await persistManifestChannelRemovePlan("da-test", "discord");
@@ -90,9 +80,7 @@ describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", ()
   });
 
   it("returns true and skips registry update when no stale plan exists", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "custom-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
     getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
 
     const result = await persistManifestChannelRemovePlan("da-test", "discord");
@@ -104,9 +92,7 @@ describe("persistManifestChannelRemovePlan with non-messaging agent (#5729)", ()
 
 describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", () => {
   it("returns null without throwing or mutating the registry when the agent does not support messaging", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "custom-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
     getSandboxMock.mockReturnValue(entryWithStalePlan("da-test", "discord"));
 
     const result = await persistManifestChannelDisabledPlan("da-test", "discord", true);
@@ -116,9 +102,7 @@ describe("persistManifestChannelDisabledPlan with non-messaging agent (#5729)", 
   });
 
   it("returns null without throwing when there is no stored messaging plan", async () => {
-    vi.spyOn(defs, "loadAgent").mockReturnValue({
-      name: "custom-agent",
-    });
+    vi.spyOn(defs, "loadAgent").mockReturnValue(agentFixture("custom-agent"));
     getSandboxMock.mockReturnValue({ name: "da-test", agent: "custom-agent" });
 
     const result = await persistManifestChannelDisabledPlan("da-test", "discord", true);

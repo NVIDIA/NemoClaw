@@ -8,6 +8,13 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { loadAgent } from "../src/lib/agent/defs";
+import {
+  coerceAgentInferenceApi,
+  getSandboxInferenceConfig,
+  INFERENCE_ROUTE_URL,
+} from "../src/lib/inference/config";
+
 const tmpHomes: string[] = [];
 
 afterEach(() => {
@@ -114,5 +121,46 @@ describe("LangChain Deep Agents Code config generator", () => {
     );
     expect(`${result.stdout}\n${result.stderr}`).not.toContain("auto_update = true");
     expect(fs.existsSync(path.join(result.home, ".deepagents", "config.toml"))).toBe(false);
+  });
+
+  it("bakes the /v1 managed route for a fresh Custom Anthropic-compatible onboard (#6294)", () => {
+    // Real manifest: Deep Agents Code declares the OpenAI-only inference contract.
+    const agent = loadAgent("langchain-deepagents-code");
+    expect(agent.inference?.provider_type).toBe("openai_compatible");
+
+    // The Anthropic endpoint probe resolves anthropic-messages on this route.
+    // Pre-fix, that seed reached getSandboxInferenceConfig un-coerced and
+    // produced the /v1-less Anthropic base URL that the egress proxy 403s.
+    const uncoerced = getSandboxInferenceConfig(
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "anthropic-messages",
+    );
+    expect(uncoerced.inferenceBaseUrl).toBe("https://inference.local");
+
+    const coercedApi = coerceAgentInferenceApi(agent, "anthropic-messages");
+    expect(coercedApi).toBe("openai-completions");
+    const route = getSandboxInferenceConfig(
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      coercedApi,
+    );
+    expect(route.inferenceBaseUrl).toBe(INFERENCE_ROUTE_URL);
+
+    // Feed the routed values through the real config generator, mirroring the
+    // patched Dockerfile ARG -> ENV -> generate-config chain at image build.
+    const config = runGenerator({
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3",
+      NEMOCLAW_PROVIDER_KEY: route.providerKey,
+      NEMOCLAW_UPSTREAM_PROVIDER: "compatible-anthropic-endpoint",
+      NEMOCLAW_INFERENCE_BASE_URL: route.inferenceBaseUrl,
+      NEMOCLAW_INFERENCE_API: route.inferenceApi,
+    });
+
+    expect(config).toContain('base_url = "https://inference.local/v1"');
+    expect(config).toContain(
+      "# NemoClaw provider route: inference; upstream provider: compatible-anthropic-endpoint; API: openai-completions.",
+    );
+    expect(config).toContain("[models.providers.openai]");
   });
 });

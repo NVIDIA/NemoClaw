@@ -4145,7 +4145,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
     credentialEnv,
     hermesAuthMethod,
     hermesToolGateways,
-    preferredInferenceApi,
+    preferredInferenceApi: inferenceConfig.coerceAgentInferenceApi(agent, preferredInferenceApi),
     compatibleEndpointReasoning,
     nimContainer,
     allowToolsIncompatible,
