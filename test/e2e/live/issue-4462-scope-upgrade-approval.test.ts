@@ -1351,7 +1351,7 @@ liveTest(
       expect(nextSnapshot.activeOperatorTokenScopes).toEqual(
         freshSnapshot.activeOperatorTokenScopes,
       );
-      expect(nextSnapshot.gatewayCompletedRuns).toBeGreaterThan(freshSnapshot.gatewayCompletedRuns);
+      expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
       freshSnapshot = nextSnapshot;
     }
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Budget constants for the connect-time auto-pair scope-approval pass
+// SOURCE_OF_TRUTH_REVIEW: Budget constants for the connect-time auto-pair scope-approval pass
 // (runConnectAutoPairApprovalPass in ./connect). Kept in a dependency-free leaf
 // module so tests can import and assert the invariant on the real values
 // without pulling in connect.ts's heavy transitive requires (#4504).

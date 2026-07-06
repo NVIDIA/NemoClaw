@@ -2930,6 +2930,9 @@ PROXYEOF
       # OpenClaw CLI clients onto the explicit remote-gateway pairing path.
       printf "export NEMOCLAW_OPENCLAW_GATEWAY_URL='%s'\n" "$_escaped_gateway_url"
       cat <<'GATEWAYURLENVEOF'
+# Equality identifies NemoClaw's inherited private-interface value. A different
+# nonempty raw value was supplied explicitly after this file was generated, so
+# preserve that caller override and its matching insecure-WS marker.
 if [ -z "${OPENCLAW_GATEWAY_URL:-}" ] || [ "${OPENCLAW_GATEWAY_URL}" = "${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" ]; then
   unset OPENCLAW_GATEWAY_URL
   unset OPENCLAW_ALLOW_INSECURE_PRIVATE_WS

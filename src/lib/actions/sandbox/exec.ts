@@ -89,7 +89,10 @@ export function buildOpenshellExecArgs(
 const SANDBOX_RUNTIME_ENV_FILE = "/tmp/nemoclaw-proxy-env.sh";
 const SANDBOX_RUNTIME_ENV_EXEC_SCRIPT = `if [ -r "${SANDBOX_RUNTIME_ENV_FILE}" ]; then builtin source "${SANDBOX_RUNTIME_ENV_FILE}" || exit $?; fi; builtin exec -- "$@"`;
 
-/** Source NemoClaw's trusted runtime env without flattening the caller's argv. */
+/**
+ * Source NemoClaw's trusted runtime env without flattening the caller's argv.
+ * @internal Only NemoClaw-owned exec paths may source the root-generated file.
+ */
 export function wrapExecCommandWithRuntimeEnv(command: readonly string[]): string[] {
   return [
     "/bin/bash",
