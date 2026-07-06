@@ -41,6 +41,7 @@ export async function backupAll(): Promise<void> {
   const readyNames = parseReadySandboxNames(liveList.output || "");
 
   const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
+  const requireAll = process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
   let backed = 0;
   let failed = 0;
   let skipped = 0;
@@ -134,8 +135,17 @@ export async function backupAll(): Promise<void> {
         `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
       );
     }
-    process.exit(1);
   }
+  if (requireAll && skipped > 0) {
+    console.error("");
+    console.error(
+      `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
+    );
+    console.error(
+      "  Restore each sandbox to Ready state and retry. To accept an existing backup instead, prepare the upgrade manually.",
+    );
+  }
+  if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);
 }
 
 export async function garbageCollectImages(

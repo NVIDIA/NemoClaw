@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   listSandboxes: vi.fn(),
@@ -49,11 +49,18 @@ import { backupAll, shouldSkipUnreachableSandboxBackup } from "./maintenance";
 describe("backupAll", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
     mocks.captureSandboxListWithGatewayPreflightOrExit.mockResolvedValue({
       status: 0,
       output: "sb-good\nsb-bad\n",
     });
     mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good", "sb-bad"]));
+  });
+
+  afterEach(() => {
+    delete process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS;
+    delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
+    vi.restoreAllMocks();
   });
 
   it("returns before gateway preflight when no sandboxes are registered", async () => {
@@ -132,6 +139,35 @@ describe("backupAll", () => {
     logSpy.mockRestore();
   });
 
+  it("fails installer-strict backup when a registered sandbox is not Ready (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-good" }, { name: "sb-stopped" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-good"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      failedDirs: [],
+      backedUpFiles: [],
+      failedFiles: [],
+      manifest: { backupPath: "/backups/sb-good/timestamp" },
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain(
+      "requires every registered sandbox to be backed up",
+    );
+  });
+
   it("continues backup loop when backupSandboxState throws for one sandbox", async () => {
     mocks.listSandboxes.mockReturnValue({
       sandboxes: [{ name: "sb-bad" }, { name: "sb-good" }],
@@ -187,6 +223,27 @@ describe("backupAll", () => {
     expect(output).toContain("0 failed");
     expect(output).toContain("1 skipped");
     consoleSpy.mockRestore();
+  });
+
+  it("fails installer-strict backup when an orphan manifest is skipped (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-orphan" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-orphan"]));
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error("Agent 'orphan' not found: /agents/orphan/manifest.yaml");
+    });
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("re-throws non-orphan-manifest errors so the installer aborts the upgrade", async () => {
@@ -299,6 +356,33 @@ describe("backupAll", () => {
     delete process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP;
     logSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  it("does not let the unreachable waiver bypass installer-strict backup (#6114)", async () => {
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.backupSandboxState.mockReturnValue({
+      success: false,
+      unreachable: true,
+      backedUpDirs: [],
+      failedDirs: ["memories"],
+      backedUpFiles: [],
+      failedFiles: [],
+    });
+    process.env.NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP = "1";
+    process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS = "1";
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    await expect(backupAll()).rejects.toThrow("exit:1");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   it("fails with actionable guidance when a running sandbox is unreachable and the skip flag is unset", async () => {

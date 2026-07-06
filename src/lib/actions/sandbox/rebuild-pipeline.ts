@@ -138,6 +138,7 @@ async function rebuildSandboxUnlocked(
         sandboxEntry,
         recoveryManifest,
         recoveryRegistrySnapshot,
+        opts.allowLegacyManagedImageRecovery === true,
         bail,
       );
       recoveryManifest = preDeleteRecovery.manifest;

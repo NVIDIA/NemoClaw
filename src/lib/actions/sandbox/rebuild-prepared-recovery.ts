@@ -13,6 +13,8 @@ export interface RebuildSandboxExecutionOptions {
   throwOnError?: boolean;
   /** Internal installer recovery input; never exposed as a CLI option. */
   recoveryManifest?: sandboxState.RebuildManifest;
+  /** Per-row capability granted only after explicit legacy managed-image confirmation. */
+  allowLegacyManagedImageRecovery?: boolean;
 }
 
 function failPreparedRecoveryPreDelete(
@@ -30,6 +32,7 @@ export function validatePreparedRecoveryManifest(
   sandboxName: string,
   sandboxEntry: RebuildSandboxEntry,
   candidate: sandboxState.RebuildManifest | undefined,
+  allowLegacyManagedImageRecovery: boolean,
   bail: RebuildBail,
 ): sandboxState.RebuildManifest | null {
   if (!candidate) return null;
@@ -45,7 +48,10 @@ export function validatePreparedRecoveryManifest(
     bail(`Invalid recovery manifest: ${validation.reason}`);
     return null;
   }
-  if (!sandboxState.hasPositiveManagedImageEvidence(sandboxEntry)) {
+  if (
+    !sandboxState.hasPositiveManagedImageEvidence(sandboxEntry) &&
+    !(allowLegacyManagedImageRecovery && sandboxEntry.fromDockerfile === undefined)
+  ) {
     console.error("");
     console.error(
       `  ${_RD}Recovery preflight failed:${R} registry has no NemoClaw-managed image fingerprint.`,
@@ -63,6 +69,7 @@ export function revalidatePreparedRecoveryBeforeDelete(
   initialEntry: RebuildSandboxEntry,
   candidate: sandboxState.RebuildManifest | null,
   registrySnapshot: registry.SandboxRegistry | null,
+  allowLegacyManagedImageRecovery: boolean,
   bail: RebuildBail,
 ): {
   manifest: sandboxState.RebuildManifest | null;
@@ -114,7 +121,10 @@ export function revalidatePreparedRecoveryBeforeDelete(
       bail,
     );
   }
-  if (!sandboxState.hasPositiveManagedImageEvidence(currentEntry)) {
+  if (
+    !sandboxState.hasPositiveManagedImageEvidence(currentEntry) &&
+    !allowLegacyManagedImageRecovery
+  ) {
     return failPreparedRecoveryPreDelete(
       "registry no longer has a NemoClaw-managed image fingerprint",
       "Recovery registry entry has no NemoClaw-managed image fingerprint.",

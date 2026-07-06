@@ -83,10 +83,13 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const allowLegacyManagedImageRecovery =
+    opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
     opts.recoveryManifest,
+    allowLegacyManagedImageRecovery,
     bail,
   );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
@@ -140,6 +143,7 @@ export async function runRebuildPreflightPhase(
         // succeeded, matching the previous `skipConfirm || confirmed` contract.
         autoYes: true,
         requestedToolDisclosure,
+        allowLegacyManagedImageRecovery,
         log,
         bail,
       });

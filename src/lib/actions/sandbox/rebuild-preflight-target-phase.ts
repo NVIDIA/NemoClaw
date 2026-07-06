@@ -49,11 +49,20 @@ export async function prepareRebuildTargetPreflights(args: {
   rebuildAgent: string | null;
   autoYes: boolean;
   requestedToolDisclosure?: ToolDisclosure;
+  allowLegacyManagedImageRecovery?: boolean;
   log: RebuildLog;
   bail: RebuildBail;
 }): Promise<RebuildPreparedTarget | null> {
-  const { sandboxName, sandboxEntry, rebuildAgent, autoYes, requestedToolDisclosure, log, bail } =
-    args;
+  const {
+    sandboxName,
+    sandboxEntry,
+    rebuildAgent,
+    autoYes,
+    requestedToolDisclosure,
+    allowLegacyManagedImageRecovery,
+    log,
+    bail,
+  } = args;
   hydrateMessagingConfigForRebuild(sandboxName, log);
   if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sandboxEntry, log, bail)))
     return null;
@@ -65,6 +74,7 @@ export async function prepareRebuildTargetPreflights(args: {
     log,
     bail,
     requestedToolDisclosure,
+    allowLegacyManagedImageRecovery,
   );
   if (!targetConfig) return null;
   const { resumeConfig, durableConfig, credentialEnv, fromDockerfile } = targetConfig;
