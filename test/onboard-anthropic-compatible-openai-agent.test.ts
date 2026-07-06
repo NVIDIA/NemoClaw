@@ -35,11 +35,13 @@ function createInjectedExit() {
   });
 }
 
-/** Route `provider get` to "absent" so the real upsert takes the create path. */
-function providerAbsentRunner(args: string[]): { status: number; stderr?: string } | undefined {
-  if (args[0] === "provider" && args[1] === "get") return { status: 1 };
-  return undefined;
+/** Declarative openshell stub keyed on the first two argv tokens. */
+function commandStubs(routes: Record<string, { status: number; stderr?: string }>) {
+  return (args: string[]) => routes[`${args[0]} ${args[1]}`];
 }
+
+/** Route `provider get` to "absent" so the real upsert takes the create path. */
+const providerAbsentRunner = commandStubs({ "provider get": { status: 1 } });
 
 const staleAnthropicMetadata = () => ({
   name: PROVIDER,
@@ -115,16 +117,13 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     const readGatewayProviderMetadata = vi.fn(staleAnthropicMetadata);
     const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) => {
-        if (args[0] === "provider" && args[1] === "get") return { status: 1 };
-        if (args[0] === "provider" && args[1] === "delete") {
-          return {
-            status: 1,
-            stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
-          };
-        }
-        return undefined;
-      },
+      runOpenshell: commandStubs({
+        "provider get": { status: 1 },
+        "provider delete": {
+          status: 1,
+          stderr: `provider '${PROVIDER}' is attached to sandbox(es): test-box`,
+        },
+      }),
       overrides: { probeOpenAiLikeEndpoint, readGatewayProviderMetadata, deleteGatewayProvider },
     });
 
@@ -146,16 +145,13 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
     const readGatewayProviderMetadata = vi.fn(staleAnthropicMetadata);
     const deleteGatewayProvider = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) => {
-        if (args[0] === "provider" && args[1] === "get") return { status: 1 };
-        if (args[0] === "provider" && args[1] === "delete") {
-          return {
-            status: 1,
-            stderr: `provider '${PROVIDER}' is attached to sandbox(es): other-box, test-box`,
-          };
-        }
-        return undefined;
-      },
+      runOpenshell: commandStubs({
+        "provider get": { status: 1 },
+        "provider delete": {
+          status: 1,
+          stderr: `provider '${PROVIDER}' is attached to sandbox(es): other-box, test-box`,
+        },
+      }),
       overrides: {
         probeOpenAiLikeEndpoint,
         readGatewayProviderMetadata,
@@ -233,8 +229,7 @@ describe("compatible-anthropic-endpoint registration for OpenAI-only agents (#62
   it("skips the surface probe on keyless gateway-credential reuse", async () => {
     const probeOpenAiLikeEndpoint = vi.fn(() => ({ ok: true }));
     const harness = createDirectSetupInferenceHarness({
-      runOpenshell: (args) =>
-        args[0] === "provider" && args[1] === "get" ? { status: 0 } : undefined,
+      runOpenshell: commandStubs({ "provider get": { status: 0 } }),
       overrides: { probeOpenAiLikeEndpoint },
     });
 
