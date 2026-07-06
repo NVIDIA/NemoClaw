@@ -2,10 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { parseGatewayInference } from "../inference/config";
+import {
+  type CurrentGatewayRouteCompatibilityCheck,
+  checkGatewayRouteCompatibility as checkGatewayRouteCompatibilityForRegistry,
+} from "../inference/gateway-route-compatibility";
+import { listSandboxes } from "../state/registry";
 
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
-export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpenshell) {
+export function createInferenceRouteHelpers(
+  runCaptureOpenshell: RunCaptureOpenshell,
+  getGatewayName: () => string = () => "nemoclaw",
+) {
   function verifyInferenceRoute(_provider: string, _model: string): void {
     const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
     if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
@@ -21,5 +29,12 @@ export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpens
     return Boolean(live && live.provider === provider && live.model === model);
   }
 
-  return { verifyInferenceRoute, isInferenceRouteReady };
+  const checkGatewayRouteCompatibility: CurrentGatewayRouteCompatibilityCheck = (request) =>
+    checkGatewayRouteCompatibilityForRegistry({
+      ...request,
+      gatewayName: getGatewayName(),
+      sandboxes: listSandboxes().sandboxes,
+    });
+
+  return { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility };
 }

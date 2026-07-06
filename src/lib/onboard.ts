@@ -353,8 +353,6 @@ const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
 const registry: typeof import("./state/registry") = require("./state/registry");
-const gatewayRouteCompatibility: typeof import("./inference/gateway-route-compatibility") =
-  require("./inference/gateway-route-compatibility");
 const sandboxMutationLock: typeof import("./state/mcp-lifecycle-lock") =
   require("./state/mcp-lifecycle-lock");
 const { resolveSandboxImageTagFromCreateOutput } =
@@ -639,16 +637,6 @@ const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 let GATEWAY_PORT = DEFAULT_GATEWAY_PORT;
 let GATEWAY_NAME = gatewayBinding.resolveGatewayName(GATEWAY_PORT);
-
-function checkCurrentGatewayRouteCompatibility(
-  request: import("./inference/gateway-route-compatibility").CurrentGatewayRouteCompatibilityRequest,
-): import("./inference/gateway-route-compatibility").GatewayRouteCompatibilityResult {
-  return gatewayRouteCompatibility.checkGatewayRouteCompatibility({
-    ...request,
-    gatewayName: GATEWAY_NAME,
-    sandboxes: registry.listSandboxes().sandboxes,
-  });
-}
 const {
   clearDockerDriverGatewayRuntimeFiles,
   getDockerDriverGatewayEnv,
@@ -1020,9 +1008,8 @@ function upsertMessagingProviders(
 const providerExistsInGateway = (name: string) =>
   onboardProviders.providerExistsInGateway(name, runOpenshell);
 
-const { verifyInferenceRoute, isInferenceRouteReady } =
-  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell);
-
+const { verifyInferenceRoute, isInferenceRouteReady, checkGatewayRouteCompatibility } =
+  inferenceRouteHelpers.createInferenceRouteHelpers(runCaptureOpenshell, () => GATEWAY_NAME);
 const {
   inspectSandboxForCreate,
   pruneStaleSandboxEntry,
@@ -4165,12 +4152,11 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
     reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
   };
 }
-
 // ── Step 4: Inference provider ───────────────────────────────────
 
 function getSetupInferenceDeps(): SetupInferenceDeps {
   return {
-    checkGatewayRouteCompatibility: checkCurrentGatewayRouteCompatibility,
+    checkGatewayRouteCompatibility,
     step,
     getGatewayName: () => GATEWAY_NAME,
     runOpenshell,
@@ -4866,7 +4852,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
           hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         },
         providerDeps: {
-          checkGatewayRouteCompatibility: checkCurrentGatewayRouteCompatibility,
+          checkGatewayRouteCompatibility,
           normalizeHermesAuthMethod,
           setupNim: (gpu, sandboxName, agent, recoverProvider) =>
             setupNim(gpu, sandboxName, agent, recoverProvider, opts.rebuildRegistryInferenceRoute),
