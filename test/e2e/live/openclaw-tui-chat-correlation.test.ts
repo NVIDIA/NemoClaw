@@ -550,56 +550,11 @@ test(
         `actual: ${versionResult.stdout}`,
     ).toContain(EXPECTED_OPENCLAW_VERSION);
 
-    // Drive the websocket repro and capture the trace ──────────────
-    const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry(
-      sandbox,
-      instance.sandboxName,
-    );
-
-    await artifacts.writeJson("issue2603-trace.json", {
-      sentRuns: repro.sentRuns,
-      eventCount: repro.events?.length ?? 0,
-      attempts: attempts.length,
-      error: repro.error,
-    });
-
-    if (repro.error) {
-      throw new Error(`live repro failed before assertions: ${repro.error}`);
-    }
-
-    const analysis = analyzeIssue2603Trace(repro);
-    const failureSummary = JSON.stringify(
-      {
-        sentRuns: repro.sentRuns,
-        eventCount: repro.events.length,
-        analysis,
-      },
-      null,
-      2,
-    );
-
-    // #2603 protocol/history subset — every submitted run produces a
-    // non-empty final, every reply correlates to the run that accepted
-    // the prompt, and observed user turns remain in submitted A/B/C order.
-    // TUI rendering indicators and visible tool-call status are covered
-    // outside this websocket-level guard.
-    expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
-    expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
-    expect(analysis.userTurnOrder, failureSummary).toEqual(
-      repro.sentRuns.map((entry) => entry.promptToken),
-    );
-
-    // #3145 contract — no missing replies, no duplicate replies, no
-    // out-of-order final replies, and no history corruption (missing or
-    // duplicated user turns).
-    expect(analysis.missingReplies, failureSummary).toEqual([]);
-    expect(analysis.duplicateReplies, failureSummary).toEqual([]);
-    expect(analysis.finalReplyOrder, failureSummary).toEqual(
-      repro.sentRuns.map((entry) => entry.replyToken),
-    );
-    expect(analysis.missingUserTurns, failureSummary).toEqual([]);
-    expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
-
+    // Drive the #6194 terminal flow before websocket correlation so the
+    // post-idle TUI regression guard is independent of any gateway/session
+    // state created by the #2603/#3145 websocket replay below. Keeping both
+    // flows in this target reuses the same provisioned sandbox and avoids a
+    // second long cloud setup for a tests-only PR.
     const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-tui-"));
     const captureFile = join(captureDir, "openclaw-tui-capture.log");
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
@@ -677,6 +632,56 @@ test(
     } finally {
       rmSync(captureDir, { recursive: true, force: true });
     }
+
+    // Drive the websocket repro and capture the trace ──────────────
+    const { repro, attempts } = await runLiveIssue2603ReproWithEventCaptureRetry(
+      sandbox,
+      instance.sandboxName,
+    );
+
+    await artifacts.writeJson("issue2603-trace.json", {
+      sentRuns: repro.sentRuns,
+      eventCount: repro.events?.length ?? 0,
+      attempts: attempts.length,
+      error: repro.error,
+    });
+
+    if (repro.error) {
+      throw new Error(`live repro failed before assertions: ${repro.error}`);
+    }
+
+    const analysis = analyzeIssue2603Trace(repro);
+    const failureSummary = JSON.stringify(
+      {
+        sentRuns: repro.sentRuns,
+        eventCount: repro.events.length,
+        analysis,
+      },
+      null,
+      2,
+    );
+
+    // #2603 protocol/history subset — every submitted run produces a
+    // non-empty final, every reply correlates to the run that accepted
+    // the prompt, and observed user turns remain in submitted A/B/C order.
+    // TUI rendering indicators and visible tool-call status are covered
+    // outside this websocket-level guard.
+    expect(analysis.emptyFinalsForSubmittedRuns, failureSummary).toEqual([]);
+    expect(analysis.uncorrelatedReplies, failureSummary).toEqual([]);
+    expect(analysis.userTurnOrder, failureSummary).toEqual(
+      repro.sentRuns.map((entry) => entry.promptToken),
+    );
+
+    // #3145 contract — no missing replies, no duplicate replies, no
+    // out-of-order final replies, and no history corruption (missing or
+    // duplicated user turns).
+    expect(analysis.missingReplies, failureSummary).toEqual([]);
+    expect(analysis.duplicateReplies, failureSummary).toEqual([]);
+    expect(analysis.finalReplyOrder, failureSummary).toEqual(
+      repro.sentRuns.map((entry) => entry.replyToken),
+    );
+    expect(analysis.missingUserTurns, failureSummary).toEqual([]);
+    expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
   },
   // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
   // warmup, the 120-second wait-for-replies window, and retry.

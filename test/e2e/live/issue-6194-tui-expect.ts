@@ -31,6 +31,9 @@ expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
 send -- "/nemoclaw status\\r"
 expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
+# Use a stable, policy-relevant HTTPS endpoint to trigger the real OpenClaw
+# network approval UI. The test only needs the approval prompt; it does not
+# depend on a successful third-party response body.
 send -- "Use an available tool to call https://api.atlassian.com/oauth/token/accessible-resources now. Do not describe it.\\r"
 expect {
   -nocase -re {(blocked|denied|rejected)} {

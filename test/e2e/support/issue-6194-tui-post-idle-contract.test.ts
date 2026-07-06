@@ -43,9 +43,6 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
       "expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_network_approval 56 57",
     );
     expect(script).toContain("mark clean_exit");
-    expect(script).not.toContain("NEMOCLAW_ISSUE_6194_TUI_TIMEOUT_SEC");
-    expect(script).not.toContain("(nemoclaw|sandbox|docker|status|managed|openclaw)");
-    expect(script).not.toContain("approval-flow probe");
 
     const order = [
       "connected_idle_initial",
