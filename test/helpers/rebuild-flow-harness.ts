@@ -18,6 +18,41 @@ const rebuildModulePath = "./rebuild.js";
 requireDist(rebuildModulePath);
 delete require.cache[requireDist.resolve(rebuildModulePath)];
 
+// Cache stable dependency modules outside each test's timeout. The rebuild
+// entry itself is still reloaded after these modules receive fresh spies.
+const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+const dockerImage = requireDist("../../adapters/docker/image.js");
+const dockerInspect = requireDist("../../adapters/docker/inspect.js");
+const sandboxList = requireDist("../../openshell-sandbox-list.js");
+const resolve = requireDist("../../adapters/openshell/resolve.js");
+const agentDefs = requireDist("../../agent/defs.js");
+const agentOnboard = requireDist("../../agent/onboard.js");
+const agentRuntime = requireDist("../../agent/runtime.js");
+const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+const gatewayState = requireDist("./gateway-state.js");
+const { rebuildOnboardDependencies } = requireDist("./rebuild-onboard-dependencies.js");
+const onboardCredentialEnv = requireDist("../../onboard/credential-env.js");
+const onboardSession = requireDist("../../state/onboard-session.js");
+const registry = requireDist("../../state/registry.js");
+const sandboxState = requireDist("../../state/sandbox.js");
+const sandboxSession = requireDist("../../state/sandbox-session.js");
+const sandboxVersion = requireDist("../../sandbox/version.js");
+const destroy = requireDist("./destroy.js");
+const rebuildShields = requireDist("./rebuild-shields.js");
+const nim = requireDist("../../inference/nim.js");
+const policies = requireDist("../../policy/index.js");
+const processRecovery = requireDist("./process-recovery.js");
+const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
+const messaging = requireDist("../../messaging/index.js");
+const mcpBridge = requireDist("./mcp-bridge.js");
+const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
+const rebuildInference = requireDist("./rebuild-inference-preflight.js");
+const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
+const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
+const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
+const shields = requireDist("../../shields/index.js");
+
 type RebuildFlowStep = {
   status: string;
   startedAt: string | null;
@@ -219,38 +254,6 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-  const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
-  const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
-  const dockerImage = requireDist("../../adapters/docker/image.js");
-  const dockerInspect = requireDist("../../adapters/docker/inspect.js");
-  const sandboxList = requireDist("../../openshell-sandbox-list.js");
-  const resolve = requireDist("../../adapters/openshell/resolve.js");
-  const agentDefs = requireDist("../../agent/defs.js");
-  const agentOnboard = requireDist("../../agent/onboard.js");
-  const agentRuntime = requireDist("../../agent/runtime.js");
-  const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
-  const gatewayState = requireDist("./gateway-state.js");
-  const onboardMod = requireDist("../../onboard.js");
-  const onboardSession = requireDist("../../state/onboard-session.js");
-  const registry = requireDist("../../state/registry.js");
-  const sandboxState = requireDist("../../state/sandbox.js");
-  const sandboxSession = requireDist("../../state/sandbox-session.js");
-  const sandboxVersion = requireDist("../../sandbox/version.js");
-  const destroy = requireDist("./destroy.js");
-  const rebuildShields = requireDist("./rebuild-shields.js");
-  const nim = requireDist("../../inference/nim.js");
-  const policies = requireDist("../../policy/index.js");
-  const processRecovery = requireDist("./process-recovery.js");
-  const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
-  const messaging = requireDist("../../messaging/index.js");
-  const mcpBridge = requireDist("./mcp-bridge.js");
-  const rebuildCustomImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
-  const rebuildInference = requireDist("./rebuild-inference-preflight.js");
-  const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
-  const rebuildManagedImage = requireDist("./rebuild-managed-image-preflight.js");
-  const rebuildMessagingConflict = requireDist("./rebuild-messaging-conflict-preflight.js");
-  const shields = requireDist("../../shields/index.js");
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -473,10 +476,17 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
-  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
-    await overrides.onboard?.(session);
-  });
-  vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined);
+  const onboardSpy = vi
+    .spyOn(rebuildOnboardDependencies, "onboard")
+    .mockImplementation(async () => {
+      await overrides.onboard?.(session);
+    });
+  vi.spyOn(rebuildOnboardDependencies, "hydrateCredentialEnv").mockImplementation(
+    (...args: unknown[]) => onboardCredentialEnv.hydrateCredentialEnv(String(args[0] ?? "")),
+  );
+  vi.spyOn(rebuildOnboardDependencies, "preflightAuthoritativeRebuildTarget").mockResolvedValue(
+    undefined,
+  );
   const applyPresetSpy = vi
     .spyOn(policies, "applyPreset")
     .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
