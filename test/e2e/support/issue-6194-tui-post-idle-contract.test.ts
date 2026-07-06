@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildIssue6194TuiExpectScript,
-  ISSUE6194_TUI_SESSION,
+  ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "../live/issue-6194-tui-expect.ts";
 
@@ -14,10 +14,11 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     const script = buildIssue6194TuiExpectScript();
 
     expect(ISSUE6194_TUI_TIMEOUT_SEC).toBe(240);
-    expect(ISSUE6194_TUI_SESSION).toBe("test-session");
+    expect(ISSUE6194_TUI_SESSION_PREFIX).toBe("issue-6194-tui");
     expect(script).toContain("log_file -noappend $capture");
+    expect(script).toContain("set session $env(NEMOCLAW_ISSUE_6194_SESSION)");
     expect(script).toContain("spawn openshell sandbox exec --name $sandbox --tty");
-    expect(script).toContain("openclaw tui --session test-session");
+    expect(script).toContain("openclaw tui --session $session");
     expect(script).toContain('puts "ISSUE6194_MARK $name"');
     expect(script).toContain('send_log "ISSUE6194_MARK $name\\n"');
     expect(script).toContain("proc expect_or_exit");

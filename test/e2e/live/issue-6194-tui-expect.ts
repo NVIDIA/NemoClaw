@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
-export const ISSUE6194_TUI_SESSION = "test-session";
+export const ISSUE6194_TUI_SESSION_PREFIX = "issue-6194-tui";
 
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
+set session $env(NEMOCLAW_ISSUE_6194_SESSION)
 log_file -noappend $capture
 proc mark {name} {
   puts "ISSUE6194_MARK $name"
@@ -23,7 +24,7 @@ proc expect_or_exit {pattern markName timeoutExit eofExit} {
     eof { exit $eofExit }
   }
 }
-spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui --session ${ISSUE6194_TUI_SESSION}}
+spawn openshell sandbox exec --name $sandbox --tty -- sh -lc "export TERM=xterm-256color; cd /sandbox; openclaw tui --session $session"
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_initial 10 11
 send -- "Reply with the three fragments joined by underscores: NEMOCLAW6194, CHAT, OK. Put only that joined token on its own line. Do not use tools.\\r"
 expect_or_exit {NEMOCLAW6194_CHAT_OK} chat_reply 20 21
@@ -31,9 +32,10 @@ expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_chat 22 23
 send -- "/nemoclaw status\\r"
 expect_or_exit "Sandbox:[^\\r\\n]*$sandbox" slash_status_output 30 31
 expect_or_exit {connected[^\\r\\n]*idle} connected_idle_after_status 32 33
-# Use a stable, policy-relevant HTTPS endpoint to trigger the real OpenClaw
-# network approval UI. The test only needs the approval prompt; it does not
-# depend on a successful third-party response body.
+# Use the same policy-relevant external HTTPS origin from the historical issue
+# repro to trigger the real OpenClaw network approval UI. A local endpoint can
+# bypass that egress approval boundary; this test only needs the prompt and
+# approval handling, not a successful third-party response body.
 send -- "Use an available tool to call https://api.atlassian.com/oauth/token/accessible-resources now. Do not describe it.\\r"
 expect {
   -nocase -re {(blocked|denied|rejected)} {

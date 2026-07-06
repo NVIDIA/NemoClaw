@@ -29,6 +29,7 @@ import type { NemoClawInstance } from "../fixtures/phases/onboarding.ts";
 import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import {
   buildIssue6194TuiExpectScript,
+  ISSUE6194_TUI_SESSION_PREFIX,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "./issue-6194-tui-expect.ts";
 
@@ -558,6 +559,7 @@ test(
     const captureDir = mkdtempSync(join(tmpdir(), "nemoclaw-issue6194-tui-"));
     const captureFile = join(captureDir, "openclaw-tui-capture.log");
     const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
+    const tuiSession = `${ISSUE6194_TUI_SESSION_PREFIX}-${instance.sandboxName}-${Date.now()}-${randomUUID()}`;
     writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
     try {
       const tui = await host.command("expect", [expectScript], {
@@ -566,6 +568,7 @@ test(
           ...sandboxAccessEnv(),
           NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
           NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
+          NEMOCLAW_ISSUE_6194_SESSION: tuiSession,
           NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
         },
         redactionValues: [apiKey],

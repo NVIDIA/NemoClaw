@@ -229,6 +229,16 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("host client rejects remote sandbox cwd for host commands", () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    expect(() => host.command("node", ["--version"], { cwd: "/sandbox/project" })).toThrow(
+      "HostCliClient.command cannot run with a remote sandbox cwd",
+    );
+    expect(runner.calls).toEqual([]);
+  });
+
   it("gateway client delegates through NemoClaw gateway status", async () => {
     const runner = new FakeRunner();
     const host = new HostCliClient(runner, { cliPath: "nemoclaw" });

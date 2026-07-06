@@ -17,10 +17,21 @@ export interface HostClientOptions {
   cwd?: string;
 }
 
+export type HostCommandRunOptions = ShellProbeRunOptions;
+
 const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 const GATEWAY_REMOVE_UNSUPPORTED =
   /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
+
+function assertTrustedHostCommandOptions(options: HostCommandRunOptions): void {
+  // `/sandbox` is the remote OpenShell working directory, not a trusted host cwd.
+  // Sandbox-derived values can still be valid data, such as a sandbox name passed
+  // to an OpenShell host binary, so callers own that source review at construction.
+  if (options.cwd === "/sandbox" || options.cwd?.startsWith("/sandbox/")) {
+    throw new Error("HostCliClient.command cannot run with a remote sandbox cwd");
+  }
+}
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -40,7 +51,7 @@ export class HostCliClient {
   command(
     command: string,
     args: string[] = [],
-    options: ShellProbeRunOptions = {},
+    options: HostCommandRunOptions = {},
   ): Promise<ShellProbeResult> {
     // Trust boundary: this runs trusted host binaries with test-authored
     // arguments on the CI host. Do not pass sandbox- or user-controlled
@@ -50,6 +61,7 @@ export class HostCliClient {
     if (this.cwd && !merged.cwd) {
       merged.cwd = this.cwd;
     }
+    assertTrustedHostCommandOptions(merged);
     return this.runner.run(
       trustedShellCommand({
         command,
