@@ -1907,6 +1907,9 @@ node_options_has_require() {
   local token
   local tokens=()
   IFS=$' \t\n' read -r -a tokens <<<"${NODE_OPTIONS:-}"
+  # Iterating "${tokens[@]}" on an empty array trips `set -u` on bash 3.2
+  # (macOS default); guard so the local unit harnesses run there too.
+  [ "${#tokens[@]}" -gt 0 ] || return 1
   for token in "${tokens[@]}"; do
     if [ "$previous" = "--require" ] && [ "$token" = "$wanted" ]; then
       return 0
@@ -2014,7 +2017,7 @@ validate_nemoclaw_tmp_permissions() {
     [ -n "$_target" ] && _dynamic_targets+=("$_target")
   done < <(messaging_runtime_preload_targets)
 
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]}"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "${_dynamic_targets[@]+"${_dynamic_targets[@]}"}"
 }
 
 verify_messaging_runtime_secret_scans() {
@@ -2374,7 +2377,7 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]+"${run_prefix[@]}"}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
 import os

@@ -61,6 +61,11 @@ const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/test-title-style.ts"],
   },
+  {
+    name: "no-unit-blocks-in-live-e2e",
+    command: TSX,
+    args: ["scripts/checks/no-unit-blocks-in-live-e2e.ts"],
+  },
 ];
 
 function main(): void {
