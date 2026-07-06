@@ -244,6 +244,21 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     expect(warning).toContain("NEMOCLAW_DOCKER_GPU_PATCH=0");
     expect(warning).toContain("native-only behavior");
     expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ stableReadyPolls: 2 }),
+    );
+  });
+
+  it("keeps native readiness on the single-Ready contract", async () => {
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "native",
+    });
+
+    expect(mocks.waitForCreatedSandboxReadyWithTrace).toHaveBeenCalledWith(
+      expect.objectContaining({ stableReadyPolls: 1 }),
+    );
   });
 
   it("reuses the built image when native CDI injection fails after the build", async () => {

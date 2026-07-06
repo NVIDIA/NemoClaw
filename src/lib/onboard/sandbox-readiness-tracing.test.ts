@@ -82,6 +82,23 @@ describe("createSandboxReadyWaiter", () => {
 });
 
 describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
+  it("preserves single-poll Ready acceptance by default", () => {
+    const { runCaptureOpenshell, sleep } = replay([`${NAME}   Ready   1s ago`]);
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 600,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      sleep,
+    });
+
+    expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
+    expect(runCaptureOpenshell).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("fast-fails on the first Error poll when the debounce is opted out (K=1)", () => {
     const { runCaptureOpenshell, sleep } = replay([
       `${NAME}   Provisioning   1s ago`,
@@ -132,6 +149,32 @@ describe("waitForCreatedSandboxReadyWithTrace terminal-phase handling", () => {
 
     expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+  });
+
+  it("rejects a stale Ready row until compatibility recreation reaches stable Ready", () => {
+    // Exact fallback-run ordering from 28817562371: after a successful
+    // supervisor exec, sandbox-list first retained the old container's Ready
+    // row, then published the recreated supervisor's Error -> Ready sequence.
+    const { runCaptureOpenshell, sleep } = replay([
+      `${NAME}   Ready   old-container`,
+      `${NAME}   Error   replacement-registering`,
+      `${NAME}   Ready   replacement-connected`,
+      `${NAME}   Ready   replacement-stable`,
+    ]);
+
+    const ready = waitForCreatedSandboxReadyWithTrace({
+      sandboxName: NAME,
+      timeoutSecs: 600,
+      runCaptureOpenshell,
+      isSandboxReady,
+      getSandboxFailurePhase,
+      stableReadyPolls: 2,
+      sleep,
+    });
+
+    expect(ready).toEqual({ ready: true, reason: "ready", failurePhase: null });
+    expect(runCaptureOpenshell).toHaveBeenCalledTimes(4);
+    expect(sleep).toHaveBeenCalledTimes(3);
   });
 
   it("resets the debounce counter when a non-Error poll interrupts the Error streak", () => {

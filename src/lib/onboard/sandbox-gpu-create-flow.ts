@@ -30,6 +30,12 @@ type RunOpenshell = NonNullable<DockerGpuPatchDeps["runOpenshell"]>;
 type RunCaptureOpenshell = NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>;
 type Sleep = NonNullable<DockerGpuPatchDeps["sleep"]>;
 
+// After compatibility recreation, OpenShell's sandbox-list cache can expose
+// one stale Ready row from the original container before the replacement
+// supervisor's registration transition arrives. One confirmation poll keeps
+// that stale row from advancing directly into the GPU proof (run 28817562371).
+const COMPATIBILITY_STABLE_READY_POLLS = 2;
+
 export interface SandboxGpuCreateFlowInput {
   sandboxName: string;
   provider: string;
@@ -173,6 +179,7 @@ export async function runSandboxGpuCreateFlow(
       runCaptureOpenshell: deps.runCaptureOpenshell,
       isSandboxReady,
       getSandboxFailurePhase,
+      stableReadyPolls: compatibility ? COMPATIBILITY_STABLE_READY_POLLS : 1,
       sleep: deps.sleep,
     });
     if (!readiness.ready) {

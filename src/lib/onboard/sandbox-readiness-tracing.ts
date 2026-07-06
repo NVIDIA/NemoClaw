@@ -177,6 +177,14 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    */
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   /**
+   * Consecutive Ready polls required before returning success. Defaults to 1.
+   * The Docker GPU compatibility recreate passes 2 because the OpenShell
+   * gateway can briefly retain the pre-recreate Ready row before publishing
+   * the new supervisor's Error -> Ready registration transition. Requiring a
+   * confirmation poll keeps that stale row from reaching the GPU proof.
+   */
+  stableReadyPolls?: number;
+  /**
    * Consecutive Error-phase polls required before the wait treats the phase as
    * terminal. Defaults to {@link getSandboxReadyErrorDebouncePolls} (30 polls /
    * ~60s at the 2s poll interval).
@@ -213,16 +221,37 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       : // Round (not truncate) so a fractional override matches the env-var
         // path's envInt rounding — one consistent rule for both entry points.
         Math.max(1, Math.round(options.errorPhaseDebouncePolls));
+  const stableReadyPolls =
+    options.stableReadyPolls == null || !Number.isFinite(options.stableReadyPolls)
+      ? 1
+      : Math.max(1, Math.round(options.stableReadyPolls));
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
     const readyAttempts = Math.max(1, Math.ceil(timeoutSecs / 2));
+    let consecutiveReadyPolls = 0;
     let consecutiveFailurePolls = 0;
     let lastFailurePhase: string | null = null;
     for (let i = 0; i < readyAttempts; i++) {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) {
-        addTraceEvent("ready", { attempt: i + 1 });
-        return { ready: true, reason: "ready", failurePhase: null };
+        consecutiveReadyPolls += 1;
+        consecutiveFailurePolls = 0;
+        lastFailurePhase = null;
+        if (consecutiveReadyPolls >= stableReadyPolls) {
+          addTraceEvent("ready", {
+            attempt: i + 1,
+            consecutive_polls: consecutiveReadyPolls,
+          });
+          return { ready: true, reason: "ready", failurePhase: null };
+        }
+        addTraceEvent("ready_pending_stability", {
+          attempt: i + 1,
+          consecutive_polls: consecutiveReadyPolls,
+          required_polls: stableReadyPolls,
+        });
+        if (i < readyAttempts - 1) sleep(2);
+        continue;
       }
+      consecutiveReadyPolls = 0;
       const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
       // Only the transient "Error" phase is debounced — it is the phase the
       // gateway briefly reports while re-registering the just-created sandbox
