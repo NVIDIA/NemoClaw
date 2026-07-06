@@ -74,13 +74,13 @@ export function createFinalGatewayStartFailureHandler(deps: FinalGatewayStartFai
     printError("");
 
     try {
-      const logs = redact(collectDiagnostics() || "");
+      const normalizedLogs = String(collectDiagnostics() || "")
+        .replace(/\r/g, "")
+        .replace(ANSI_RE, "");
+      const logs = redact(normalizedLogs);
       if (logs) {
         printError("  Gateway logs:");
-        for (const line of String(logs)
-          .split("\n")
-          .map((entry) => entry.replace(/\r/g, "").replace(ANSI_RE, ""))
-          .filter(Boolean)) {
+        for (const line of logs.split("\n").filter(Boolean)) {
           printError(`    ${line}`);
         }
         printError("");
