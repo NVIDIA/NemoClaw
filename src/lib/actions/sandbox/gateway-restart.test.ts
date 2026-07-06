@@ -23,6 +23,9 @@ describe("gateway restart failure markers", () => {
       [MARKERS.SECRET_BOUNDARY_REFUSED, "secret-boundary refusal"],
       [MARKERS.SECRET_BOUNDARY_VALIDATOR_MISSING, "unsafe config path"],
       [MARKERS.GATEWAY_UNSAFE_CONFIG_PATH, "unsafe config path"],
+      ["mcp-integrity", "MCP reconciliation refusal"],
+      ["mcp-reconcile-required", "MCP reconciliation refusal"],
+      ["HERMES_MCP_CONFIG_DRIFT", "MCP reconciliation refusal"],
       [MARKERS.GATEWAY_CONFIG_HASH_MISMATCH, "config hash mismatch"],
       ["HERMES_UNSAFE_CONFIG_PATH", "unsafe config path"],
       ["HERMES_LOCKED_HASH_MISMATCH", "config hash mismatch"],
@@ -70,6 +73,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       recoverMessagingHostForward: vi.fn(() => null),
       recoverDeclaredAgentForwardPorts: vi.fn(() => null),
       printGatewayWedgeDiagnostics: vi.fn(() => false),
+      inspectHermesMcpReconciliationRefusal: vi.fn(() => null),
       ...overrides,
     };
   }

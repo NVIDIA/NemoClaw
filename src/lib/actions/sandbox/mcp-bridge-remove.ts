@@ -10,6 +10,7 @@ import {
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
+import { assertHermesMcpRuntimeIntent } from "./mcp-bridge-hermes-reconciliation";
 import { assertGeneratedPolicyMutationSafe, removeGeneratedPolicy } from "./mcp-bridge-policy";
 import {
   deleteProvider,
@@ -243,6 +244,14 @@ async function removeMcpBridgeUnlocked(
         throw new McpBridgeError(
           `Could not prove removal of the exact managed adapter entry for MCP server '${entry.server}'. Preserved provider, policy, and registry ownership state.`,
         );
+      }
+      if (adapter === "hermes-config") {
+        assertHermesMcpRuntimeIntent(sandboxName, {
+          entries: Object.values(bridgeState(sandbox)).filter(
+            (candidate) => candidate.server !== server,
+          ),
+          managedServerNames: sandbox.mcp?.managedServerNames,
+        });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

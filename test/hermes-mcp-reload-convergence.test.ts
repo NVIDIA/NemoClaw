@@ -110,6 +110,96 @@ else:
     });
   });
 
+  it("does not probe or accept an unmanaged replacement gateway", () => {
+    const result = runPython(`
+import importlib.util, json, signal, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+module.RELOAD_TIMEOUT_SECONDS = 3
+clock = {"now": 0}
+gateway = {"identity": (4242, 99)}
+signals = []
+health_calls = []
+module._gateway_identity = lambda: gateway["identity"]
+module._gateway_has_managed_parent = lambda pid: False
+module._gateway_health_phase = lambda deadline=None: (
+    health_calls.append(deadline) or (True, "waiting-for-stable-replacement-identity")
+)
+module.time.monotonic = lambda: clock["now"]
+module.time.sleep = lambda seconds: clock.__setitem__("now", clock["now"] + seconds)
+def signal_gateway(pid, sent_signal):
+    signals.append((pid, signal.Signals(sent_signal).name))
+    gateway["identity"] = (4243, 100)
+module.os.kill = signal_gateway
+try:
+    module.reload_gateway()
+except TimeoutError as error:
+    print(json.dumps({"error": str(error), "health_calls": health_calls, "signals": signals}))
+else:
+    raise SystemExit(9)
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      error:
+        "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-replacement-identity; re-kick attempted: no; re-kick sent: no)",
+      health_calls: [],
+      signals: [[4242, "SIGUSR1"]],
+    });
+  });
+
+  it("revalidates the managed parent after replacement health", () => {
+    const result = runPython(`
+import importlib.util, json, signal, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+module.RELOAD_TIMEOUT_SECONDS = 3
+clock = {"now": 0}
+gateway = {"identity": (4242, 99)}
+signals = []
+parent_checks = []
+health_calls = []
+module._gateway_identity = lambda: gateway["identity"]
+def managed_parent(pid):
+    parent_checks.append(pid)
+    return len(parent_checks) == 1
+module._gateway_has_managed_parent = managed_parent
+module._gateway_health_phase = lambda deadline=None: (
+    health_calls.append(deadline) or (True, "waiting-for-stable-replacement-identity")
+)
+module.time.monotonic = lambda: clock["now"]
+module.time.sleep = lambda seconds: clock.__setitem__("now", clock["now"] + seconds)
+def signal_gateway(pid, sent_signal):
+    signals.append((pid, signal.Signals(sent_signal).name))
+    gateway["identity"] = (4243, 100)
+module.os.kill = signal_gateway
+try:
+    module.reload_gateway()
+except TimeoutError as error:
+    print(json.dumps({
+        "error": str(error),
+        "health_calls": len(health_calls),
+        "signals": signals,
+    }))
+else:
+    raise SystemExit(9)
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      error:
+        "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-stable-replacement-identity; re-kick attempted: no; re-kick sent: no)",
+      health_calls: 1,
+      signals: [[4242, "SIGUSR1"]],
+    });
+  });
+
   it("attempts a vanished re-kick target only once", () => {
     const result = runPython(`
 import importlib.util, json, signal, sys
@@ -209,9 +299,7 @@ def health_phase(deadline=None):
     return False, "waiting-for-internal-health-on-18642"
 module._gateway_identity = identity
 module._gateway_health_phase = health_phase
-module._gateway_has_managed_parent = lambda pid: (_ for _ in ()).throw(
-    AssertionError("deadline exhaustion must precede re-kick authority checks")
-)
+module._gateway_has_managed_parent = lambda pid: True
 module.time.monotonic = lambda: clock["now"]
 module.time.sleep = lambda seconds: (_ for _ in ()).throw(
     AssertionError("deadline exhaustion must not sleep")
@@ -304,11 +392,8 @@ print(json.dumps({name: run_case(name) for name in (
       },
       public: {
         error:
-          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health-on-8642; re-kick attempted: yes; re-kick sent: yes)",
-        signals: [
-          [4242, "SIGUSR1"],
-          [4243, "SIGUSR1"],
-        ],
+          "Hermes gateway did not complete its managed MCP reload (last safe phase: waiting-for-public-relay-health-on-8642; re-kick attempted: no; re-kick sent: no)",
+        signals: [[4242, "SIGUSR1"]],
       },
       stable: {
         error:

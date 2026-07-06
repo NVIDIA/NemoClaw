@@ -113,12 +113,73 @@ process.stdout.write(JSON.stringify(markers.map((_, index) => registry.getSandbo
     }>;
     expect(sandboxes[0]?.mcp).toEqual({
       bridges: {},
+      managedServerNames: ["github"],
       destroyPreparedAt: "2026-06-27T01:00:00.000Z",
     });
     expect(sandboxes[1]?.mcp).toEqual({
       bridges: {},
+      managedServerNames: ["github"],
       destroyPendingAt: "2026-06-27T01:00:00.000Z",
     });
+  });
+
+  it("reconciles Hermes removal tombstones when no active bridges remain", () => {
+    const home = createTempHome("nemoclaw-hermes-mcp-tombstone-status-");
+    const script = `
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const globalActions = require("./src/lib/actions/global.js");
+const payloads = [];
+let mismatch = false;
+globalActions.runOpenshellProviderCommand = (args) => {
+  if (args[0] !== "sandbox" || args[1] !== "exec") {
+    throw new Error("Unexpected OpenShell call: " + args.join(" "));
+  }
+  payloads.push(JSON.parse(args[args.length - 1]));
+  return mismatch
+    ? { status: 2, stdout: "", stderr: "managed Hermes MCP entry is still present" }
+    : { status: 0, stdout: '{"ok":true,"state":"matched"}\\n', stderr: "" };
+};
+registry.registerSandbox({
+  name: "hermes-sandbox",
+  agent: "hermes",
+  mcp: { bridges: {}, managedServerNames: ["retired"] },
+});
+const status = require("./src/lib/actions/sandbox/mcp-bridge-status.js");
+(async () => {
+  const matched = await status.statusMcpBridge("hermes-sandbox");
+  mismatch = true;
+  let refusal = "";
+  try {
+    await status.statusMcpBridge("hermes-sandbox");
+  } catch (error) {
+    refusal = error instanceof Error ? error.message : String(error);
+  }
+  process.stdout.write(JSON.stringify({ matched, payloads, refusal }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      matched: unknown[];
+      payloads: Array<{ present: Record<string, unknown>; absent: string[] }>;
+      refusal: string;
+    };
+    expect(payload.matched).toEqual([]);
+    expect(payload.payloads).toEqual([
+      { present: {}, absent: ["retired"] },
+      { present: {}, absent: ["retired"] },
+    ]);
+    expect(payload.refusal).toContain("does not match the persisted managed intent");
+    expect(payload.refusal).toContain("managed Hermes MCP entry is still present");
   });
 
   it("validates requested server names and does not read inherited bridge keys", () => {

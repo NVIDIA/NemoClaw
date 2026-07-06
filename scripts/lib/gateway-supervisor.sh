@@ -88,7 +88,7 @@ gateway_control_fail() {
   local code="$1"
   local old_pid="${2:-0}"
   case "$code" in
-    validator-missing | secret-boundary-refusal | unsafe-config | hash-mismatch | preload-missing | launch-failed | health-timeout | internal) ;;
+    validator-missing | secret-boundary-refusal | unsafe-config | hash-mismatch | preload-missing | launch-failed | health-timeout | mcp-integrity | mcp-reconcile-required | internal) ;;
     *) code=internal ;;
   esac
   gateway_control_atomic_status "$GATEWAY_CONTROL_NONCE" "failed ${code} ${old_pid} 0"

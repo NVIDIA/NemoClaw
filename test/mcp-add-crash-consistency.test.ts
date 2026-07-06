@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+
 type CrashBoundary =
   | "provider"
   | "policy"
@@ -203,7 +205,7 @@ bridge.addMcpBridge("crash-test", {
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
     timeout: 30_000,
   });
 }
@@ -305,7 +307,7 @@ bridge.removeMcpBridge("crash-test", "fake").then(
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
     timeout: 30_000,
   });
 }
@@ -361,7 +363,7 @@ bridge.statusMcpBridge("crash-test", "fake").then(
   return spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
     timeout: 30_000,
   });
 }
@@ -721,7 +723,7 @@ bridge.removeMcpBridge("crash-test", "fake", { force: true }).then(
       const cancelled = spawnSync(process.execPath, ["-e", cancelScript], {
         cwd: process.cwd(),
         encoding: "utf8",
-        env: { ...process.env, HOME: home },
+        env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
         timeout: 30_000,
       });
       expect(cancelled.status, `${cancelled.stdout}\n${cancelled.stderr}`).toBe(0);
@@ -758,8 +760,17 @@ describe("MCP remove crash consistency", () => {
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(0);
       const registry = JSON.parse(
         fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
-      ) as { sandboxes: { "crash-test": { mcp?: unknown } } };
-      expect(registry.sandboxes["crash-test"].mcp).toBeUndefined();
+      ) as {
+        sandboxes: {
+          "crash-test": {
+            mcp?: { bridges: Record<string, unknown>; managedServerNames: string[] };
+          };
+        };
+      };
+      expect(registry.sandboxes["crash-test"].mcp).toEqual({
+        bridges: {},
+        managedServerNames: ["fake"],
+      });
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
