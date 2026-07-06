@@ -21,6 +21,10 @@ import {
 } from "../onboard/gateway-provider-metadata";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+} from "../openshell-gateway-endpoint-guard";
+import {
   type AgentConfigTarget,
   readSandboxConfig,
   recomputeSandboxConfigHash,
@@ -747,6 +751,14 @@ export async function runInferenceSet(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceSetResult> {
+  try {
+    assertNoOpenShellGatewayEndpointOverride();
+  } catch (error) {
+    if (error instanceof OpenShellGatewayEndpointOverrideError) {
+      throw new InferenceSetError(error.message, 2);
+    }
+    throw error;
+  }
   // Resolve once before acquiring so a default-sandbox change cannot make the
   // protected callback mutate a different sandbox from the one whose lock we
   // hold. Prime the default OpenShell runner before acquiring too: its legacy

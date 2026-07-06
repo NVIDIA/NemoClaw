@@ -35,6 +35,46 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     ).toEqual(["sandbox", "exec", "-g", GATEWAY, "-n", "alpha", "--", "true"]);
   });
 
+  it("does not treat gateway-like sandbox payload arguments as OpenShell options", () => {
+    expect(
+      scopeGatewayOpenshellArgs(
+        [
+          "sandbox",
+          "exec",
+          "-n",
+          "alpha",
+          "--",
+          "tool",
+          "--gateway",
+          "payload-gateway",
+          "--gateway-endpoint=https://payload.example.test",
+        ],
+        GATEWAY,
+      ),
+    ).toEqual([
+      "sandbox",
+      "exec",
+      "-g",
+      GATEWAY,
+      "-n",
+      "alpha",
+      "--",
+      "tool",
+      "--gateway",
+      "payload-gateway",
+      "--gateway-endpoint=https://payload.example.test",
+    ]);
+  });
+
+  it.each([
+    ["--gateway-endpoint", "https://other.example.test"],
+    ["--gateway-endpoint=https://other.example.test"],
+  ])("rejects an explicit endpoint override before the payload separator: %j", (...endpointArgs) => {
+    expect(() =>
+      scopeGatewayOpenshellArgs(["provider", "get", ...endpointArgs, "openai-api"], GATEWAY),
+    ).toThrow(/--gateway-endpoint may bypass the gateway recorded/);
+  });
+
   it.each([
     ["-g", GATEWAY],
     ["--gateway", GATEWAY],
@@ -68,6 +108,16 @@ describe("gateway-scoped onboarding OpenShell commands", () => {
     expect(run).toHaveBeenCalledWith(["provider", "delete", "-g", GATEWAY, "openai-api"], {
       ignoreError: true,
     });
+  });
+
+  it("rejects an ambient endpoint override before creating a scoped runner", () => {
+    const run = vi.fn();
+    expect(() =>
+      createGatewayScopedOpenshellRunner(run, GATEWAY, {
+        OPENSHELL_GATEWAY_ENDPOINT: "https://other.example.test",
+      }),
+    ).toThrow(/OPENSHELL_GATEWAY_ENDPOINT is set/);
+    expect(run).not.toHaveBeenCalled();
   });
 
   it("keeps an omitted provider env separate from the bound gateway", () => {

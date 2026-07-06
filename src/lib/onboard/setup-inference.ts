@@ -5,6 +5,11 @@ import {
   type CurrentGatewayRouteCompatibilityCheck,
   formatGatewayRouteConflict,
 } from "../inference/gateway-route-compatibility";
+import {
+  assertNoExplicitOpenShellGatewayEndpoint,
+  assertNoOpenShellGatewayEndpointOverride,
+  type OpenShellGatewayEndpointEnvironment,
+} from "../openshell-gateway-endpoint-guard";
 import type { HermesAuthMethod } from "./hermes-auth";
 import type {
   CommonDeps,
@@ -95,6 +100,7 @@ export type SetupInferenceDeps = ProviderBranchDeps & {
 
 export function scopeGatewayOpenshellArgs(args: string[], gatewayName: string): string[] {
   if (!gatewayName) throw new Error("OpenShell gateway name is required.");
+  assertNoExplicitOpenShellGatewayEndpoint(args);
   if (args[0] === "gateway" && args[1] === "select") {
     throw new Error("Gateway-scoped OpenShell operations must not change the selected gateway.");
   }
@@ -103,7 +109,9 @@ export function scopeGatewayOpenshellArgs(args: string[], gatewayName: string): 
   const sandboxProviderCommand = sandboxCommand && args[1] === "provider";
   if (!providerCommand && !sandboxCommand) return [...args];
   const gatewayFlagIndex = sandboxProviderCommand ? 3 : 2;
-  const gatewayTargets = args.flatMap((value, index) => {
+  const separatorIndex = args.indexOf("--");
+  const optionEnd = separatorIndex === -1 ? args.length : separatorIndex;
+  const gatewayTargets = args.slice(0, optionEnd).flatMap((value, index) => {
     if (index < gatewayFlagIndex) return [];
     if (value === "-g" || value === "--gateway") return [args[index + 1] ?? ""];
     return value.startsWith("--gateway=") ? [value.slice("--gateway=".length)] : [];
@@ -126,7 +134,9 @@ export function scopeGatewayOpenshellArgs(args: string[], gatewayName: string): 
 export function createGatewayScopedOpenshellRunner<Rest extends unknown[], Result>(
   runOpenshell: (args: string[], ...rest: Rest) => Result,
   gatewayName: string,
+  env: OpenShellGatewayEndpointEnvironment = process.env,
 ): (args: string[], ...rest: Rest) => Result {
+  assertNoOpenShellGatewayEndpointOverride(env);
   return (args, ...rest) => runOpenshell(scopeGatewayOpenshellArgs(args, gatewayName), ...rest);
 }
 

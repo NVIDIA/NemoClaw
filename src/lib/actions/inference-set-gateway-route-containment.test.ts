@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import type { SandboxEntry } from "../state/registry";
 import { runInferenceSet } from "./inference-set";
@@ -18,6 +18,39 @@ const entry = (name: string, overrides: Partial<SandboxEntry> = {}): SandboxEntr
 });
 
 describe("runtime shared gateway route containment", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("rejects an ambient gateway endpoint before OpenShell prep or state mutation", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
+    const deps = createDeps({
+      config: {},
+      entries: [entry("alpha")],
+      defaultSandbox: "alpha",
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/model-b", sandboxName: "alpha" },
+        deps,
+      ),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("Unset OPENSHELL_GATEWAY_ENDPOINT"),
+      exitCode: 2,
+    });
+
+    expect(deps.calls.prepareRunOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+    expect(deps.calls.readSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.updateSession).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
   it("rejects a same-gateway conflict before OpenShell, config, or registry mutation (#6315)", async () => {
     const deps = createDeps({
       config: {},

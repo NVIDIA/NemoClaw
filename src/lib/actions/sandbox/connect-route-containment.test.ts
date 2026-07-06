@@ -118,6 +118,37 @@ describe("connect route containment", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it("exits before managed route reads or repairs when an endpoint override is ambient", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY_ENDPOINT", "https://other.example.test");
+    const harness = createConnectHarness({
+      registryEntry: {
+        name: "alpha",
+        agent: "openclaw",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      },
+    });
+
+    await expect(harness.connectSandbox("alpha", { probeOnly: true })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(harness.captureOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).not.toHaveBeenCalled();
+    expect(harness.applyVmDnsMonkeypatchSpy).not.toHaveBeenCalled();
+    expect(harness.runSetupDnsProxySpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith(
+      "openshell",
+      expect.any(Array),
+      expect.any(Object),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Unset OPENSHELL_GATEWAY_ENDPOINT");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   it("exits before repairing a lone incomplete legacy custom route (#6315)", async () => {
     const harness = createConnectHarness({
       inferenceGetOutput:

@@ -27,6 +27,10 @@ import { GatewayRouteConflictError } from "../../inference/gateway-route-compati
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import { ensureOllamaAuthProxy, probeOllamaAuthProxyHealth } from "../../inference/ollama/proxy";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import {
+  assertNoOpenShellGatewayEndpointOverride,
+  OpenShellGatewayEndpointOverrideError,
+} from "../../openshell-gateway-endpoint-guard";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -713,6 +717,7 @@ function ensureSandboxInferenceRoute(
     // This projection is total; the catch below handles only later gateway and repair failures.
     inference = registry.getSandboxEntryInference(sb);
     if (inference.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    assertNoOpenShellGatewayEndpointOverride();
     const { provider, model } = inference;
     const gatewayName = resolveSandboxGatewayName(sb);
     const live = parseGatewayInference(
@@ -768,6 +773,10 @@ function ensureSandboxInferenceRoute(
     return { sandbox: sb, routeHealthy: repairResult.healthy };
   } catch (error) {
     if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    if (error instanceof OpenShellGatewayEndpointOverrideError) {
+      console.error(`  Error: ${error.message}`);
+      process.exit(1);
+    }
     if (error instanceof GatewayRouteConflictError) {
       console.error(`  Error: ${error.message}`);
       process.exit(1);
