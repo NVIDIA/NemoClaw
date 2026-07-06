@@ -126,8 +126,9 @@ function isPreparedBackupRecovery(
 // the selected gateway. Absence alone is insufficient: a sandbox bound to a
 // different recorded gateway may be Ready there, so recovering it would clobber a
 // healthy sandbox. resolveSandboxGatewayName throws on an invalid persisted
-// binding — treat that as ineligible so a corrupted registry row never drives a
-// recreate.
+// binding — report that fixed, sanitized condition and treat it as ineligible so
+// a corrupted registry row never drives a recreate. Remove this guard only when
+// every registry write path validates gateway bindings before persistence.
 function isPreparedRecoveryCandidate(
   sandbox: registry.SandboxEntry,
   liveNames: Set<string>,
@@ -139,6 +140,9 @@ function isPreparedRecoveryCandidate(
   try {
     return resolveSandboxGatewayName(sandbox) === selectedGatewayName;
   } catch {
+    console.warn(
+      `  Warning: sandbox ${JSON.stringify(sandbox.name)} has an invalid persisted gateway binding; skipping prepared-backup recovery.`,
+    );
     return false;
   }
 }
@@ -151,8 +155,10 @@ function isPreparedRecoveryCandidate(
 // the second read is dropped rather than rebuilt from a possibly stale backup.
 // A non-Ready phase on the second read remains eligible because prepared-backup
 // restore intent explicitly targets sandboxes stuck in those phases.
-// Any confirmation preflight or listing failure aborts the command, so recovery
-// fails closed rather than proceeding from uncorroborated absence.
+// Any confirmation preflight or listing failure deliberately aborts the whole
+// command, even when other candidates were already observed. Continuing after
+// target-gateway evidence becomes unavailable could mix stale and current state
+// in one destructive recovery run, so uncorroborated absence always fails closed.
 async function confirmAbsentRecoveryCandidates(
   absentCandidates: registry.SandboxEntry[],
   selectedGatewayName: string,

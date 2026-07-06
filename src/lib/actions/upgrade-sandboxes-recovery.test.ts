@@ -75,6 +75,7 @@ function createRecoveryHarness(
 
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(coreVersion, "getVersion").mockReturnValue("0.0.71");
   const liveListSpy = vi
     .spyOn(sandboxList, "captureSandboxListWithGatewayPreflightOrExit")
@@ -308,6 +309,10 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.liveListSpy).toHaveBeenCalledOnce();
     expect(harness.latestBackupSpy).not.toHaveBeenCalled();
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.warn).toHaveBeenCalledWith(
+      '  Warning: sandbox "tampered-box" has an invalid persisted gateway binding; skipping prepared-backup recovery.',
+    );
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("attacker"));
   });
 
   it("does not recover an absent sandbox when a confirming second listing shows it has become Ready", async () => {
@@ -328,13 +333,16 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it("recovers an absent sandbox when a confirming second listing still does not report it Ready", async () => {
+  it.each([
+    "Provisioning",
+    "Error",
+  ])("recovers an absent sandbox when confirmation reports the %s phase (#6114)", async (phase) => {
     const harness = createRecoveryHarness(["orphaned-box"], {
       liveOutput: "other-box Ready",
     });
     harness.liveListSpy
       .mockResolvedValueOnce({ status: 0, output: "other-box Ready" })
-      .mockResolvedValueOnce({ status: 0, output: "orphaned-box Provisioning" });
+      .mockResolvedValueOnce({ status: 0, output: `orphaned-box ${phase}` });
 
     await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
 
