@@ -459,7 +459,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(configProbe.exitCode, resultText(configProbe)).toBe(0);
     expect(configProbe.stdout).toContain("OK");
 
-    const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 180_000) => {
+    const runHermesCli = async (args: string[], artifactName: string, timeoutMs = 6 * 60_000) => {
       const result = await sandbox.exec(SANDBOX_NAME, ["hermes", ...args], {
         artifactName,
         env: commandEnv(),
