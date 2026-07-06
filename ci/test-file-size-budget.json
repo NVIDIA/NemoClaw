@@ -5,7 +5,6 @@
     "nemoclaw/src/commands/migration-state.test.ts": 1566,
     "src/lib/inference/nim.test.ts": 2068,
     "src/lib/onboard/preflight.test.ts": 1904,
-    "test/channels-add-preset.test.ts": 1871,
     "test/generate-openclaw-config.test.ts": 1941,
     "test/install-preflight.test.ts": 3934,
     "test/nemoclaw-start.test.ts": 4827,
