@@ -12,7 +12,11 @@ function parseResolvConfNameservers(content: string): string[] {
     .filter((ip): ip is string => Boolean(ip));
 }
 
-/** Resolve a non-loopback upstream when the sandbox would inherit systemd-resolved's stub. */
+/**
+ * Resolve a non-loopback upstream when the sandbox would inherit systemd-resolved's stub.
+ * This host-only probe runs during container creation; only the selected address is passed to
+ * Docker via `--dns`, and the sandbox receives no runtime access to either host file.
+ */
 export function detectSandboxFallbackDns(
   deps: { readFile?: (path: string) => string | null } = {},
 ): string | null {
