@@ -20,6 +20,7 @@ function gatewayReachableCompatibleEndpointUrl(
     return endpointUrl;
   }
   const hostname = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hostname.includes("%")) return endpointUrl;
   const port = Number(parsed.port);
   const isLoopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
   if (
@@ -173,6 +174,8 @@ export async function setupRemoteProviderInference(
       // The host-side probe validates the user-provided loopback URL. When the
       // provider route is rewritten to host.openshell.internal, OpenShell's
       // host-side verifier cannot resolve that sandbox-only bridge name.
+      // See ensureLocalProviderReachable in local-inference-topology.ts for the
+      // local-provider counterpart and its removal condition.
       argsv.push("--no-verify");
     }
     argsv.push("--provider", provider, "--model", model);

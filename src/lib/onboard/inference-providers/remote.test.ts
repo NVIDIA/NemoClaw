@@ -35,6 +35,9 @@ function makeDeps(overrides: Partial<RemoteProviderDeps> = {}): RemoteProviderDe
         helpUrl: null,
         modelMode: "input",
         defaultModel: "custom-model",
+        // Mirrors production: compatible endpoints already skip OpenShell's
+        // verifier; these tests focus on which base URL gets registered.
+        skipVerify: true,
       },
       openai: {
         label: "OpenAI API",
@@ -102,6 +105,52 @@ describe("setupRemoteProviderInference", () => {
     );
   });
 
+  it.each([
+    ["IPv6 loopback", "http://[::1]:8000/v1", "http://host.openshell.internal:8000/v1"],
+    [
+      "first unprivileged port",
+      "http://localhost:1024/v1",
+      "http://host.openshell.internal:1024/v1",
+    ],
+  ])("rewrites %s compatible endpoint routes (#5744)", async (_name, endpointUrl, expectedUrl) => {
+    const deps = makeDeps();
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: "dcode-vllm-local",
+          model,
+          provider: "compatible-endpoint",
+          endpointUrl,
+          credentialEnv: "COMPATIBLE_API_KEY",
+        },
+        deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(deps.upsertProvider).toHaveBeenCalledWith(
+      "compatible-endpoint",
+      "openai",
+      "COMPATIBLE_API_KEY",
+      expectedUrl,
+      { COMPATIBLE_API_KEY: "dummy-key" },
+    );
+    expect(deps.runOpenshell).toHaveBeenCalledWith(
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--timeout",
+        "180",
+      ],
+      { ignoreError: true },
+    );
+  });
+
   it("uses the gateway alias when reusing an existing loopback compatible provider (#5744)", async () => {
     const deps = makeDeps();
 
@@ -145,11 +194,55 @@ describe("setupRemoteProviderInference", () => {
     );
   });
 
+  it("keeps the original provider route when reusing an existing non-loopback compatible provider (#5744)", async () => {
+    const deps = makeDeps();
+
+    await expect(
+      setupRemoteProviderInference(
+        {
+          sandboxName: "dcode-vllm-local",
+          model,
+          provider: "compatible-endpoint",
+          endpointUrl: "http://10.0.0.1:8000/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          reuseGatewayCredentialWithoutLocalKey: true,
+        },
+        deps,
+      ),
+    ).resolves.toEqual({ done: false });
+
+    expect(deps.upsertProvider).not.toHaveBeenCalled();
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      1,
+      ["provider", "get", "compatible-endpoint"],
+      {
+        ignoreError: true,
+        suppressOutput: true,
+      },
+    );
+    expect(deps.runOpenshell).toHaveBeenNthCalledWith(
+      2,
+      [
+        "inference",
+        "set",
+        "--no-verify",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        model,
+        "--timeout",
+        "180",
+      ],
+      { ignoreError: true },
+    );
+  });
+
   it.each([
     ["HTTPS loopback", "compatible-endpoint", "https://localhost:8000/v1"],
     ["non-loopback host", "compatible-endpoint", "http://10.0.0.1:8000/v1"],
     ["missing explicit port", "compatible-endpoint", "http://localhost/v1"],
     ["privileged port", "compatible-endpoint", "http://localhost:1023/v1"],
+    ["IPv6 zone ID", "compatible-endpoint", "http://[::1%25eth0]:8000/v1"],
     ["embedded URL credentials", "compatible-endpoint", "http://user:pass@localhost:8000/v1"],
     ["malformed URL", "compatible-endpoint", "not a url"],
     ["non-compatible provider", "openai-api", "http://localhost:8000/v1"],
@@ -182,6 +275,7 @@ describe("setupRemoteProviderInference", () => {
       [
         "inference",
         "set",
+        ...(provider === "compatible-endpoint" ? ["--no-verify"] : []),
         "--provider",
         provider,
         "--model",
