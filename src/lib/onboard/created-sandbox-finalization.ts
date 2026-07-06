@@ -69,7 +69,10 @@ export function finalizeCreatedSandbox(
     );
     if (finalSelection.changed || finalSelection.unknown) {
       deps.error(
-        `  DCode live model/provider validation failed for sandbox '${options.sandboxName}'; registry metadata was not updated.`,
+        `  DCode live model/provider validation failed for sandbox '${options.sandboxName}'. The sandbox still exists, but its live route is unverified and registry metadata was not updated.`,
+      );
+      deps.error(
+        `  To recover, run \`nemoclaw ${options.sandboxName} rebuild\` or repair /sandbox/.deepagents/config.toml before retrying.`,
       );
       if (options.restoreBackupPath) {
         deps.error(`  Manual recovery: ${options.restoreBackupPath}`);

@@ -257,6 +257,7 @@ describe("created DCode sandbox finalization", () => {
 
   it("does not publish registry metadata when live validation fails (#6311)", () => {
     const register = vi.fn();
+    const error = vi.fn();
     expect(() =>
       finalizeCreatedSandbox(
         {
@@ -280,7 +281,7 @@ describe("created DCode sandbox finalization", () => {
           }),
           register,
           note: vi.fn(),
-          error: vi.fn(),
+          error,
           exitProcess: (code): never => {
             throw new Error(`exit ${code}`);
           },
@@ -288,6 +289,8 @@ describe("created DCode sandbox finalization", () => {
       ),
     ).toThrow("exit 1");
     expect(register).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw dcode rebuild"));
   });
 
   it("keeps custom-image restores outside the managed config merge (#6311)", () => {
