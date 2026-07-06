@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe("source-loader Node options", () => {
-  it("removes only the repository source-loader option wherever it appears", () => {
+  it("removes only the repository source-loader option wherever it appears (#6245)", () => {
     const unrelatedRequire = "--require=/tmp/keep-preload.cjs";
     const inspect = "--inspect-port=0";
     const assigned = `--require=${SOURCE_REQUIRE_HOOK}`;
@@ -52,28 +52,36 @@ describe("source-loader Node options", () => {
     ).toBe(inspect);
   });
 
-  it("preserves unrelated options byte-for-byte when the source loader is absent", () => {
+  it("preserves malformed or unrelated options byte-for-byte (#6245)", () => {
     const nodeOptions =
       '--require=/tmp/onboard-script-mocks.cjs.backup --conditions="development mode"';
-    const malformed = '--conditions="development mode --trace-warnings';
+    const malformedOptions = [
+      '--conditions="development mode --trace-warnings',
+      "--conditions='development mode --trace-warnings",
+      "--conditions=trailing\\",
+    ];
 
     expect(nodeOptionsWithoutSourceLoader(nodeOptions)).toBe(nodeOptions);
-    expect(nodeOptionsWithoutSourceLoader(malformed)).toBe(malformed);
+    for (const malformed of malformedOptions) {
+      expect(nodeOptionsWithoutSourceLoader(malformed)).toBe(malformed);
+      const loaderBeforeMalformed = `${sourceLoaderNodeOptions(undefined)} ${malformed}`;
+      expect(nodeOptionsWithoutSourceLoader(loaderBeforeMalformed)).toBe(loaderBeforeMalformed);
+    }
   });
 
-  it("handles mixed quotes and escaped backslashes while removing the source loader", () => {
+  it("handles mixed quotes and escaped backslashes while removing the source loader (#6245)", () => {
     const spacedWindowsHook = String.raw`C:\NemoClaw worktree\onboard-script-mocks.cjs`;
-    const mixedOptions = `--conditions='development mode' ${sourceLoaderNodeOptions(
+    const mixedOptions = `--conditions='development "mode"' ${sourceLoaderNodeOptions(
       undefined,
       spacedWindowsHook,
     )} --trace-warnings`;
 
     expect(nodeOptionsWithoutSourceLoader(mixedOptions, spacedWindowsHook)).toBe(
-      "--conditions='development mode' --trace-warnings",
+      `--conditions='development "mode"' --trace-warnings`,
     );
   });
 
-  it("keeps unrelated preloads active without installing the TypeScript source hook", () => {
+  it("keeps unrelated preloads active without installing the TypeScript source hook (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-node-options-"));
     tempDirs.add(directory);
     const marker = path.join(directory, "preload.json");
@@ -101,7 +109,7 @@ describe("source-loader Node options", () => {
     expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ hasTypeScriptHook: false });
   });
 
-  it("keeps the TypeScript source hook in the default CLI integration child", () => {
+  it("keeps the TypeScript source hook in the default CLI integration child (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-source-options-"));
     tempDirs.add(directory);
     const marker = path.join(directory, "preload.json");
@@ -123,7 +131,7 @@ describe("source-loader Node options", () => {
     expect(JSON.parse(fs.readFileSync(marker, "utf8"))).toEqual({ hasTypeScriptHook: true });
   });
 
-  it("quotes preload paths that contain spaces for Node", () => {
+  it("quotes preload paths that contain spaces for Node (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw node options "));
     tempDirs.add(directory);
     const marker = path.join(directory, "loaded.txt");

@@ -5,7 +5,7 @@ import path from "node:path";
 
 export const SOURCE_REQUIRE_HOOK = path.join(import.meta.dirname, "onboard-script-mocks.cjs");
 
-function splitRawNodeOptions(nodeOptions: string): string[] {
+function splitRawNodeOptions(nodeOptions: string): string[] | null {
   const tokens: string[] = [];
   let index = 0;
   while (index < nodeOptions.length) {
@@ -40,6 +40,7 @@ function splitRawNodeOptions(nodeOptions: string): string[] {
       if (/\s/.test(char)) break;
       index += 1;
     }
+    if (quote || escaped) return null;
     tokens.push(nodeOptions.slice(start, index));
   }
   return tokens;
@@ -88,6 +89,7 @@ export function nodeOptionsWithoutSourceLoader(
 ): string {
   if (!nodeOptions) return "";
   const tokens = splitRawNodeOptions(nodeOptions);
+  if (!tokens) return nodeOptions;
   const retained: string[] = [];
 
   for (let index = 0; index < tokens.length; index += 1) {

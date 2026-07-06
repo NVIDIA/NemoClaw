@@ -89,7 +89,7 @@ export function containsCreateRequireIdentifier(
     sourceText,
     ts.ScriptTarget.Latest,
     true,
-    ts.ScriptKind.TS,
+    fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   let found = false;
 
@@ -116,7 +116,7 @@ export function collectCliCreateRequireTests(root = CLI_TEST_ROOT): string[] {
     .sort();
 }
 
-export function collectProductionCreateRequireSources(root = CLI_TEST_ROOT): string[] {
+function collectNonTestCreateRequireSources(root: string): string[] {
   return [...walkTypeScriptFiles(root)]
     .filter((absolutePath) => !TEST_FILE_PATTERN.test(absolutePath))
     .filter((absolutePath) =>
@@ -126,14 +126,12 @@ export function collectProductionCreateRequireSources(root = CLI_TEST_ROOT): str
     .sort();
 }
 
+export function collectProductionCreateRequireSources(root = CLI_TEST_ROOT): string[] {
+  return collectNonTestCreateRequireSources(root);
+}
+
 export function collectTestSupportCreateRequireSources(root = TEST_SUPPORT_ROOT): string[] {
-  return [...walkTypeScriptFiles(root)]
-    .filter((absolutePath) => !TEST_FILE_PATTERN.test(absolutePath))
-    .filter((absolutePath) =>
-      containsCreateRequireIdentifier(readFileSync(absolutePath, "utf8"), absolutePath),
-    )
-    .map((absolutePath) => path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/"))
-    .sort();
+  return collectNonTestCreateRequireSources(root);
 }
 
 export function createRequireBudgetFailure(

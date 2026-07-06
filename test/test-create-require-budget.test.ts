@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe("CLI createRequire budget", () => {
-  it("detects direct and namespace-qualified createRequire references", () => {
+  it("detects direct and namespace-qualified createRequire references (#6245)", () => {
     expect(
       containsCreateRequireIdentifier(
         'import { createRequire } from "node:module";\ncreateRequire(import.meta.url);',
@@ -35,7 +35,7 @@ describe("CLI createRequire budget", () => {
     ).toBe(true);
   });
 
-  it("ignores comments and string data that only mention createRequire", () => {
+  it("ignores comments and string data that only mention createRequire (#6245)", () => {
     expect(
       containsCreateRequireIdentifier(
         '// createRequire is documentation\nconst fixture = "createRequire(import.meta.url)";',
@@ -46,15 +46,18 @@ describe("CLI createRequire budget", () => {
     ).toBe(false);
   });
 
-  it("conservatively treats arbitrary createRequire properties as boundaries", () => {
+  it("conservatively treats arbitrary createRequire properties as boundaries (#6245)", () => {
+    expect(
+      containsCreateRequireIdentifier("const helper = { createRequire: () => undefined };"),
+    ).toBe(true);
     expect(containsCreateRequireIdentifier("helper.createRequire();")).toBe(true);
   });
 
-  it("treats a production createRequire identifier as a real boundary", () => {
+  it("treats a production createRequire identifier as a real boundary (#6245)", () => {
     expect(containsCreateRequireIdentifier("function createRequire() {}")).toBe(true);
   });
 
-  it("scans TypeScript module variants and non-test support files", () => {
+  it("scans TypeScript module variants and non-test support files (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-require-budget-"));
     tempDirs.add(directory);
     fs.writeFileSync(
@@ -69,16 +72,27 @@ describe("CLI createRequire budget", () => {
       path.join(directory, "excluded.test.tsx"),
       'import { createRequire } from "node:module";',
     );
+    fs.writeFileSync(
+      path.join(directory, "component.tsx"),
+      [
+        'import { createRequire } from "node:module";',
+        "export const fixture = <div>{createRequire(import.meta.url)}</div>;",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(directory, "jsx-text.tsx"),
+      "export const fixture = <div>createRequire</div>;",
+    );
 
     expect(
       collectProductionCreateRequireSources(directory).map((file) => path.basename(file)),
-    ).toEqual(["helper.cts", "production.mts"]);
+    ).toEqual(["component.tsx", "helper.cts", "production.mts"]);
     expect(
       collectTestSupportCreateRequireSources(directory).map((file) => path.basename(file)),
-    ).toEqual(["helper.cts", "production.mts"]);
+    ).toEqual(["component.tsx", "helper.cts", "production.mts"]);
   });
 
-  it("does not follow symlinks outside the configured scan root", () => {
+  it("does not follow symlinks outside the configured scan root (#6245)", () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-require-root-"));
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-require-outside-"));
     tempDirs.add(directory);
@@ -94,14 +108,14 @@ describe("CLI createRequire budget", () => {
     expect(collectTestSupportCreateRequireSources(directory)).toEqual([]);
   });
 
-  it("requires the budget to fall with the remaining file count", () => {
+  it("requires the budget to fall with the remaining file count (#6245)", () => {
     expect(createRequireBudgetFailure(["src/a.test.ts"], ["src/a.test.ts"])).toBeNull();
     expect(
       createRequireBudgetFailure(["src/a.test.ts"], ["src/a.test.ts", "src/b.test.ts"]),
     ).toContain("Remove retired paths from CLI_CREATE_REQUIRE_FILES");
   });
 
-  it("rejects a new path even when it replaces an allowed path one-for-one", () => {
+  it("rejects a new path even when it replaces an allowed path one-for-one (#6245)", () => {
     const failure = createRequireBudgetFailure(
       ["src/allowed.test.ts", "src/new.test.ts"],
       ["src/allowed.test.ts", "src/retired.test.ts"],
