@@ -173,9 +173,6 @@ const os = require("os");
 const path = require("path");
 const pRetry = require("p-retry");
 
-/** Strip ANSI escape sequences before printing process output to the terminal.
- *  Covers CSI (color, erase, cursor), OSC, and C1 two-byte escapes per ECMA-48. */
-const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runCapture, runCaptureEx, runFile, validateName } = runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
@@ -536,7 +533,7 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
-const { printDockerDaemonRecovery, reportLegacyGatewayStartResultFailure } =
+const { createFinalGatewayStartFailureHandler, reportLegacyGatewayStartResultFailure } =
   require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
@@ -1353,80 +1350,15 @@ function destroyGateway(
   });
 }
 
-type FinalGatewayStartFailureOptions = {
-  retries: number;
-  dockerUnreachable?: boolean;
-  collectDiagnostics?: () => string | null | undefined;
-  cleanupGateway?: () => void;
-  exitProcess?: (code: number) => never;
-  printError?: (message?: string) => void;
-};
-
-function handleFinalGatewayStartFailure({
-  retries,
-  dockerUnreachable = false,
-  collectDiagnostics = () =>
+const handleFinalGatewayStartFailure = createFinalGatewayStartFailureHandler({
+  getGatewayName: () => GATEWAY_NAME,
+  collectDiagnostics: () =>
     runCaptureOpenshell(["doctor", "logs", "--name", GATEWAY_NAME], {
       ignoreError: true,
       timeout: 10_000,
     }),
-  cleanupGateway = destroyGateway,
-  exitProcess = (code) => process.exit(code),
-  printError = (message = "") => console.error(message),
-}: FinalGatewayStartFailureOptions): never {
-  if (dockerUnreachable) {
-    printDockerDaemonRecovery(printError);
-    return exitProcess(1);
-  }
-
-  printError(`  Gateway failed to start after ${retries + 1} attempts.`);
-  printError("  Gateway state preserved until diagnostics are collected.");
-  printError("");
-
-  try {
-    const logs = redact(collectDiagnostics() || "");
-    if (logs) {
-      printError("  Gateway logs:");
-      for (const line of String(logs)
-        .split("\n")
-        .map((l) => l.replace(/\r/g, "").replace(ANSI_RE, ""))
-        .filter(Boolean)) {
-        printError(`    ${line}`);
-      }
-      printError("");
-    }
-  } catch {
-    // doctor logs unavailable — continue to best-effort cleanup and manual instructions
-  }
-
-  printError("  Cleaning up failed gateway state...");
-  try {
-    cleanupGateway();
-    printError("  Cleanup attempted.");
-  } catch (err) {
-    const message = compactText(err instanceof Error ? err.message : String(err));
-    printError(message ? `  Cleanup attempt failed: ${message}` : "  Cleanup attempt failed.");
-  }
-  printError("");
-  printError("  Diagnostic command attempted before cleanup:");
-  printError(`    openshell doctor logs --name ${GATEWAY_NAME}`);
-  printError("    openshell doctor check");
-  printError("");
-  printError("  If gateway cleanup did not complete, run:");
-  printError(`    openshell gateway remove ${GATEWAY_NAME}`);
-  printError(`    # For OpenShell releases that still expose lifecycle commands:`);
-  printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
-  if (process.platform === "linux") {
-    printError(
-      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
-    );
-  }
-  printError(
-    `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
-  );
-  printError(`    nemoclaw onboard --resume`);
-  return exitProcess(1);
-}
+  cleanupGateway: destroyGateway,
+});
 
 function getGatewayClusterContainerState(): string {
   const containerName = getGatewayClusterContainerName(GATEWAY_NAME);
