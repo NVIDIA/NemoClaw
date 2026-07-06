@@ -171,7 +171,12 @@ function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: b
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_env_secret_boundary"),
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
@@ -200,7 +205,12 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      '_HERMES_BOUNDARY_TIMEOUT=(); _HERMES_PYTHON="$(command -v python3)"',
+      // A harmless single-element no-op prefix. It must not be an empty array:
+      // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+      // `set -u`, aborting the harness before the validator runs. It also must
+      // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+      // `command` builtin execs the validator unchanged on every platform.
+      '_HERMES_BOUNDARY_TIMEOUT=(command); _HERMES_PYTHON="$(command -v python3)"',
       extractShellFunctionFromSource(src, "validate_hermes_runtime_env_secret_boundary"),
       `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR_SCRIPT)}`,
       "validate_hermes_runtime_env_secret_boundary",

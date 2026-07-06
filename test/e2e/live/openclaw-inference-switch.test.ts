@@ -38,6 +38,12 @@ import {
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  agentReplyContainsToken,
+  MOCK_BASELINE_API_KEY,
+  MOCK_BASELINE_MODEL,
+  mockBaselineInference,
+} from "./openclaw-inference-switch-helpers.ts";
+import {
   PUBLIC_NVIDIA_SWITCH_MODEL,
   PUBLIC_NVIDIA_SWITCH_PROVIDER,
   registerPublicNvidiaSwitchProvider,
@@ -53,8 +59,6 @@ const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? PUBLIC_NVIDIA_SWITCH_M
 const SWITCH_INFERENCE_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = parsePortEnv("NEMOCLAW_SWITCH_MOCK_PORT", 0);
-const MOCK_BASELINE_API_KEY = "openclaw-switch-baseline-credential";
-const MOCK_BASELINE_MODEL = "openclaw-switch-baseline-model";
 const TEST_TIMEOUT_MS = 75 * 60_000;
 const INSTALL_TIMEOUT_MS = 30 * 60_000;
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -127,27 +131,6 @@ interface OnboardSession {
 interface MockAnthropicProvider {
   endpointUrl: string;
   close(): Promise<void>;
-}
-
-interface BaselineInferenceConfig {
-  apiKey: string;
-  endpointUrl: string;
-  env: NodeJS.ProcessEnv;
-}
-
-function mockBaselineInference(endpointUrl: string): BaselineInferenceConfig {
-  return {
-    apiKey: MOCK_BASELINE_API_KEY,
-    endpointUrl,
-    env: {
-      COMPATIBLE_API_KEY: MOCK_BASELINE_API_KEY,
-      NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
-      NEMOCLAW_ENDPOINT_URL: endpointUrl,
-      NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-    },
-  };
 }
 
 function expectMockBaselineAuthentication(
@@ -747,12 +730,6 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
   }
 }
 
-function agentReplyContainsToken(reply: string, expected: string): boolean {
-  const normalizedReply = reply.replace(/\s+/gu, "").toUpperCase();
-  const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
-  return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
-}
-
 function parseOpenClawAgentText(raw: string): string {
   if (!raw.trim()) return "";
   const parts: string[] = [];
@@ -848,30 +825,10 @@ exit "$rc"
   );
 }
 
-test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", () => {
-  expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
-  expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("the answer is PONG", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("PONG because the route works", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
-});
-
-test("openclaw mock-Anthropic switch uses an authenticated local baseline", () => {
-  expect(mockBaselineInference("http://127.0.0.1:34567/v1")).toEqual({
-    apiKey: MOCK_BASELINE_API_KEY,
-    endpointUrl: "http://127.0.0.1:34567/v1",
-    env: {
-      COMPATIBLE_API_KEY: MOCK_BASELINE_API_KEY,
-      NEMOCLAW_COMPAT_MODEL: MOCK_BASELINE_MODEL,
-      NEMOCLAW_ENDPOINT_URL: "http://127.0.0.1:34567/v1",
-      NEMOCLAW_MODEL: MOCK_BASELINE_MODEL,
-      NEMOCLAW_PREFERRED_API: "openai-completions",
-      NEMOCLAW_PROVIDER: "custom",
-    },
-  });
-});
+// The pure reply-matching and mock-baseline-config assertions that previously
+// lived here as test(...) blocks (which only run under the opt-in live lane)
+// are covered in the fast e2e-support project instead:
+// test/e2e/support/openclaw-inference-switch-helpers.test.ts.
 
 function isExternalProviderValidationFailure(text: string): boolean {
   return (
