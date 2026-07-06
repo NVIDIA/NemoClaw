@@ -11,6 +11,7 @@ import { shellQuote } from "../fixtures/clients/command.ts";
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { exportHermesSession, hermesLastActive } from "../fixtures/hermes-session.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
   requireHostedInferenceConfig,
@@ -467,14 +468,18 @@ test.skipIf(!shouldRunLiveE2E())(
       runHermesCli(["sessions", "list"], artifactName, 60_000);
     const listHermesSessions = async (artifactName: string) =>
       hermesSessionIds(await listHermesSessionsText(artifactName));
+    const sessionLastActive = (id: string, artifactName: string) =>
+      hermesLastActive(sandbox, SANDBOX_NAME, id, artifactName);
     const expectNoNewHermesSessions = async (
       before: Set<string>,
+      beforeActivityArtifact: string,
       expectedSessionId: string,
       expectedRowToken: string,
       args: string[],
       runArtifact: string,
       afterArtifact: string,
     ) => {
+      const beforeActivity = await sessionLastActive(expectedSessionId, beforeActivityArtifact);
       await runHermesCli(args, runArtifact);
       const afterText = await listHermesSessionsText(afterArtifact);
       const after = hermesSessionIds(afterText);
@@ -484,6 +489,9 @@ test.skipIf(!shouldRunLiveE2E())(
         .split("\n")
         .find((line) => line.includes(expectedSessionId));
       expect(row, stripAnsi(afterText)).toContain(expectedRowToken);
+      expect(
+        await sessionLastActive(expectedSessionId, `${afterArtifact}-metadata`),
+      ).toBeGreaterThan(beforeActivity);
     };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
@@ -494,37 +502,33 @@ test.skipIf(!shouldRunLiveE2E())(
       beforeSeedSessions,
       await listHermesSessions("phase-4-issue-5254-sessions-after-seed"),
     );
-
     const resumePrompt = `N5254_${Date.now().toString(36)}_RESUME`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
+      "phase-4-issue-5254-session-before-resume-metadata",
       seedSessionId,
       resumePrompt,
       ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
     );
-
     const continuePrompt = `N5254_${Date.now().toString(36)}_CONTINUE`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
+      "phase-4-issue-5254-session-before-continue-metadata",
       seedSessionId,
       continuePrompt,
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
       "phase-4-issue-5254-sessions-after-continue",
     );
-
     const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
-    const exportScript = [
-      `rm -f ${shellQuote(exportPath)}`,
-      `hermes sessions export --session-id ${shellQuote(seedSessionId)} ${shellQuote(exportPath)}`,
-      `python3 -c ${shellQuote("import json,sys\nraw=open(sys.argv[1],encoding='utf-8').read()\ntry:\n    docs=[json.loads(raw)]\nexcept Exception:\n    docs=[json.loads(line) for line in raw.splitlines() if line.strip()]\nmsgs=[]\ndef walk(v):\n    if isinstance(v,dict) and isinstance(v.get('messages'),list):\n        [walk(item) for item in v['messages']]\n    elif isinstance(v,dict) and isinstance(v.get('role'),str) and 'content' in v:\n        content=v['content'] if isinstance(v['content'],str) else json.dumps(v['content'],sort_keys=True)\n        msgs.append((v['role'],content))\n    elif isinstance(v,dict):\n        [walk(item) for item in v.values()]\n    elif isinstance(v,list):\n        [walk(item) for item in v]\n[walk(doc) for doc in docs]\ndef pos(prompt):\n    return next((i for i,(role,content) in enumerate(msgs) if role=='user' and prompt in content),-1)\ns,r,c=[pos(prompt) for prompt in sys.argv[2:5]]\nassert 0 <= s < r < c, msgs\nassert any(role=='assistant' for role,_ in msgs[r+1:c]), msgs\nassert any(role=='assistant' for role,_ in msgs[c+1:]), msgs")} ${shellQuote(exportPath)} ${shellQuote(seedPrompt)} ${shellQuote(resumePrompt)} ${shellQuote(continuePrompt)}`,
-      `cat ${shellQuote(exportPath)}`,
-    ].join(" && ");
-    const exportResult = await sandbox.execShell(
+    await exportHermesSession(
+      sandbox,
       SANDBOX_NAME,
-      trustedSandboxShellScript(exportScript),
+      seedSessionId,
+      exportPath,
+      [seedPrompt, resumePrompt, continuePrompt],
       {
         artifactName: "phase-4-issue-5254-export-session",
         env: commandEnv(),
@@ -532,10 +536,6 @@ test.skipIf(!shouldRunLiveE2E())(
         timeoutMs: 60_000,
       },
     );
-    expect(exportResult.exitCode, resultText(exportResult)).toBe(0);
-    const exportedSession = resultText(exportResult);
-    for (const prompt of [seedPrompt, resumePrompt, continuePrompt])
-      expect(exportedSession).toContain(prompt);
 
     if (hermesDashboardE2eEnabled()) {
       const entry = registryEntry(SANDBOX_NAME);
