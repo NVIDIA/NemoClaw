@@ -66,6 +66,18 @@ describe("agent base image provisioning", () => {
         }),
       );
 
+      const platformDigestRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"1".repeat(64)}`;
+      resolveSandboxBaseImageMock.mockReturnValue({
+        ref: platformDigestRef,
+        digest: `sha256:${"1".repeat(64)}`,
+        source: "pinned",
+        glibcVersion: "2.41",
+      });
+      expect(ensureAgentBaseImage(makeAgent({ dockerfilePath }))).toEqual({
+        imageTag: platformDigestRef,
+        built: false,
+      });
+
       const differentRef = `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:${"0".repeat(64)}`;
       resolveSandboxBaseImageMock.mockReturnValue({
         ref: differentRef,
