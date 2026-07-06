@@ -8,11 +8,20 @@ import {
   snapshotEnv,
 } from "../../../../test/helpers/rebuild-flow-harness";
 
-const restoreSandboxEnv = snapshotEnv(["NEMOCLAW_SANDBOX_NAME"]);
+const restoreSandboxEnv = snapshotEnv([
+  "NEMOCLAW_SANDBOX_NAME",
+  "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+]);
 
 describe("prepared rebuild recovery", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
+    // Set acceptance explicitly rather than inheriting it ambiently: the cli
+    // project runs fileParallelism:false in a single fork, so an earlier file
+    // (e.g. rebuild-usage-notice) that exercises the not-accepted path can
+    // leave this flag unset and make the rebuild preflight bail here. Snapshot
+    // + restore keeps the leak from flowing the other way. (#6210)
+    process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
   });
 
   afterEach(() => {
