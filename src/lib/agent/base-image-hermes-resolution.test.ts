@@ -53,7 +53,7 @@ describe("Hermes base-image resolver integration", () => {
     vi.stubEnv("NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF", "");
     sourceMocks.inputsChanged.mockReturnValue(false);
     sourceMocks.inputsDirty.mockReturnValue(false);
-    dockerMocks.infoFormat.mockReturnValue("linux/amd64\n");
+    dockerMocks.infoFormat.mockReturnValue("linux/aarch64\n");
     dockerMocks.pull.mockReturnValue({ status: 1 });
 
     const dockerfile = fs.readFileSync(makeAgent().dockerfilePath ?? "", "utf8");
@@ -74,7 +74,7 @@ describe("Hermes base-image resolver integration", () => {
       [
         `{{json .}}\0${platformRef}`,
         JSON.stringify({
-          Architecture: "amd64",
+          Architecture: "arm64",
           Id: imageId,
           Os: "linux",
           RepoDigests: [platformRef],
@@ -104,7 +104,7 @@ describe("Hermes base-image resolver integration", () => {
     }
   });
 
-  it("stages Hermes with a Dockerfile-pinned platform digest produced by the resolver path", () => {
+  it("stages Hermes on aarch64 with a Dockerfile-pinned platform digest produced by the resolver path (#6313)", () => {
     const result = createAgentSandbox(makeAgent());
     createdBuildContexts.push(result.buildCtx);
 
@@ -112,6 +112,7 @@ describe("Hermes base-image resolver integration", () => {
       `ARG BASE_IMAGE=${platformRef}`,
     );
     expect(result.baseImageResolutionMetadata).toMatchObject({
+      architecture: "arm64",
       digest: platformDigest,
       pinnedRemoteRef: trackedRef,
       ref: platformRef,
