@@ -264,6 +264,32 @@ export function getSandboxInferenceConfig(
   return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
+/**
+ * OpenAI `/chat/completions`-only agents (manifest `provider_type:
+ * openai_compatible`, e.g. `langchain-deepagents-code` / dcode) cannot speak
+ * the Anthropic Messages API. When such an agent is onboarded against an
+ * Anthropic-compatible endpoint, the endpoint probe resolves the inference API
+ * to `anthropic-messages`, which routes getSandboxInferenceConfig() through the
+ * raw Anthropic branch — dropping the `/v1` suffix the OpenAI client appends to
+ * `/chat/completions` and wiring the sandbox for the wrong contract. The egress
+ * policy then rejects the `/chat/completions` request (no `/v1`) with a 403,
+ * surfaced as PermissionDeniedError. Force the managed OpenAI-compatible route
+ * instead — the same path the Bedrock Runtime custom-Anthropic flow uses — so
+ * the base_url keeps its `/v1` suffix. See #6294.
+ */
+export function coerceAgentInferenceApi(
+  agent: { inference?: { provider_type?: string } } | null | undefined,
+  preferredInferenceApi: string | null,
+): string | null {
+  if (
+    agent?.inference?.provider_type === "openai_compatible" &&
+    preferredInferenceApi === "anthropic-messages"
+  ) {
+    return "openai-completions";
+  }
+  return preferredInferenceApi;
+}
+
 export function parseGatewayInference(output: string | null | undefined): GatewayInference | null {
   if (!output) return null;
   const stripped = output.replace(/\u001b\[[0-9;]*m/g, "");
