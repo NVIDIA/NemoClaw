@@ -983,7 +983,7 @@ export NEMOCLAW_CORPORATE_CA_BUNDLE=/path/to/corporate-ca.pem
 $$nemoclaw onboard
 ```
 
-If your corporate CA lives only in the host system trust store, point the same variable at it explicitly (for example `NEMOCLAW_CORPORATE_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt`). NemoClaw does not auto-scan the host trust store, so it never bakes an unrelated bundle without an explicit path.
+If your corporate CA lives only in the host system trust store, export just your corporate root (and any intermediates) into a small PEM file and point `NEMOCLAW_CORPORATE_CA_BUNDLE` at that file. NemoClaw does not auto-scan the host trust store, and it rejects a full OS trust store (`/etc/ssl/certs/ca-certificates.crt`) — the bundle is capped at a small corporate chain so it never bakes broad, unrelated roots into the image.
 
 When `NEMOCLAW_CORPORATE_CA_BUNDLE` is unset, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, and `SSL_CERT_FILE` are honored as fallbacks (in that order) so an environment that already exports one of those for the corporate proxy works without extra configuration. A fallback variable that points at a missing or invalid file is **skipped silently** (it does not fail onboarding); only the explicit `NEMOCLAW_CORPORATE_CA_BUNDLE` fails loudly when invalid. When a fallback source is baked, onboarding logs which variable and path it used.
 

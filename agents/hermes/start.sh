@@ -1446,7 +1446,13 @@ merge_corporate_proxy_ca() {
     rm -f "$_tmp"
     return 0
   }
+  # Export all CA env vars explicitly (not via the ${VAR:-…} defaulting below,
+  # which would keep an OpenShell-preset CURL/REQUESTS/GIT value pointing at the
+  # OpenShell-only bundle instead of the merged one).
   export SSL_CERT_FILE="$_merged"
+  export CURL_CA_BUNDLE="$_merged"
+  export REQUESTS_CA_BUNDLE="$_merged"
+  export GIT_SSL_CAINFO="$_merged"
   export NODE_EXTRA_CA_CERTS="$_merged"
   export _NEMOCLAW_CORPORATE_CA_MERGED=1
   echo "[nemoclaw] merged corporate proxy CA into sandbox trust bundle (#6210)" >&2

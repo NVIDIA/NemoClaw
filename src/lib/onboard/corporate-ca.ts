@@ -129,14 +129,16 @@ export function validateCorporateCaFile(filePath: string): string {
         `corporate CA bundle has ${blocks.length} certificates (max ${MAX_CORPORATE_CA_CERTS}): ${filePath}`,
       );
     }
-    // Structural check: the first block must parse as a real X.509 certificate,
+    // Structural check: every block must parse as a real X.509 certificate,
     // catching truncated/corrupt PEM at build time rather than at TLS handshake.
-    try {
-      new X509Certificate(blocks[0]);
-    } catch {
-      throw new CorporateCaValidationError(
-        `corporate CA bundle leading block is not a valid X.509 certificate: ${filePath}`,
-      );
+    for (const block of blocks) {
+      try {
+        new X509Certificate(block);
+      } catch {
+        throw new CorporateCaValidationError(
+          `corporate CA bundle contains a block that is not a valid X.509 certificate: ${filePath}`,
+        );
+      }
     }
     return content;
   } finally {

@@ -110,20 +110,57 @@ describe("corporate proxy CA runtime merge (#6210)", () => {
       merged,
     );
 
+    // Simulate OpenShell having pre-set CURL/REQUESTS/GIT to its own bundle;
+    // the merge must override them, not leave them pointing at OpenShell-only.
     const out = runShellLines(dir, [
       `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      `export CURL_CA_BUNDLE=${JSON.stringify(openshell)}`,
+      `export REQUESTS_CA_BUNDLE=${JSON.stringify(openshell)}`,
+      `export GIT_SSL_CAINFO=${JSON.stringify(openshell)}`,
       hermesMerge,
       'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "CURL_CA_BUNDLE=%s\\n" "${CURL_CA_BUNDLE:-}"',
+      'printf "REQUESTS_CA_BUNDLE=%s\\n" "${REQUESTS_CA_BUNDLE:-}"',
+      'printf "GIT_SSL_CAINFO=%s\\n" "${GIT_SSL_CAINFO:-}"',
       'printf "NODE_EXTRA_CA_CERTS=%s\\n" "${NODE_EXTRA_CA_CERTS:-}"',
       'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
     ]);
 
-    expect(out).toContain(`SSL_CERT_FILE=${merged}`);
-    expect(out).toContain(`NODE_EXTRA_CA_CERTS=${merged}`);
+    for (const name of [
+      "SSL_CERT_FILE",
+      "CURL_CA_BUNDLE",
+      "REQUESTS_CA_BUNDLE",
+      "GIT_SSL_CAINFO",
+      "NODE_EXTRA_CA_CERTS",
+    ]) {
+      expect(out).toContain(`${name}=${merged}`);
+    }
     expect(out).toContain("MERGED=1");
     const mergedContent = readFileSync(merged, "utf-8");
     expect(mergedContent).toContain("OPENSHELL-ROOT");
     expect(mergedContent).toContain("CORPORATE-ROOT");
+  });
+
+  it("bails without exporting when the merged bundle cannot be written", () => {
+    const dir = tmpDir("nemoclaw-corp-merge-fail-");
+    const openshell = join(dir, "openshell-ca.pem");
+    const corp = join(dir, "corporate-ca.pem");
+    // A merged path under a non-existent directory makes mktemp fail.
+    const merged = join(dir, "no-such-dir", "merged-ca.pem");
+    writeFileSync(openshell, OPENSHELL_PEM);
+    writeFileSync(corp, CORPORATE_PEM);
+
+    const out = runShellLines(dir, [
+      `export SSL_CERT_FILE=${JSON.stringify(openshell)}`,
+      mergeBlock(OPENCLAW_START, "# Git TLS CA bundle fix (NemoClaw#2270).", corp, merged),
+      'printf "SSL_CERT_FILE=%s\\n" "${SSL_CERT_FILE:-}"',
+      'printf "MERGED=%s\\n" "${_NEMOCLAW_CORPORATE_CA_MERGED:-}"',
+    ]);
+
+    // Merge bailed: OpenShell-only trust intact, no merge marker.
+    expect(out).toContain(`SSL_CERT_FILE=${openshell}`);
+    expect(out).toContain("MERGED=\n");
+    expect(existsSync(merged)).toBe(false);
   });
 
   it("persists the merged CA env into OpenClaw connect sessions only after a merge", () => {

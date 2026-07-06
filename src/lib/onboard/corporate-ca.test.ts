@@ -116,6 +116,11 @@ describe("validateCorporateCaFile", () => {
     const p = writeCa(tmpDir(), BAD_PEM);
     expect(() => validateCorporateCaFile(p)).toThrow(/not a valid X\.509 certificate/);
   });
+
+  it("rejects a bundle whose later block is not a parseable X.509 certificate", () => {
+    const p = writeCa(tmpDir(), PEM + BAD_PEM);
+    expect(() => validateCorporateCaFile(p)).toThrow(/not a valid X\.509 certificate/);
+  });
 });
 
 describe("resolveCorporateCaFromEnv", () => {
