@@ -148,7 +148,7 @@ describe("Hermes managed startup integrity proof", () => {
     );
   });
 
-  it("rejects pending MCP state in the strict anchor", () => {
+  it("rejects pending MCP state in the strict anchor (#6110)", () => {
     const fixture = createFixture();
     fs.chmodSync(fixture.strictHashPath, 0o644);
     const current = fs.readFileSync(fixture.strictHashPath, "utf-8");

@@ -65,7 +65,7 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     roots.push(root);
     const realDir = path.join(root, "real");
     fs.mkdirSync(realDir);
-    const delegateLog = path.join(root, "delegate.log");
+    const delegateMarkerLog = path.join(root, "delegate-markers.log");
     const realOpenshell = path.join(realDir, "openshell");
     writeExecutable(
       realOpenshell,
@@ -80,18 +80,32 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
     const env = {
       ...process.env,
       ...wrapper.componentEnv,
-      E2E_FAKE_DELEGATE_LOG: delegateLog,
+      E2E_FAKE_DELEGATE_LOG: delegateMarkerLog,
     };
-    const secretMarker = "must-not-enter-wrapper-events";
+    const secretMarkers = [
+      "must-not-enter-wrapper-events",
+      "sk-wrapper-api-key",
+      "must-not-enter-wrapper-password",
+    ];
 
     const rejected = spawnSync(
       wrapper.wrapperPath,
-      ["sandbox", "create", "--from", "image", "--gpu", "--", `TOKEN=${secretMarker}`],
+      [
+        "sandbox",
+        "create",
+        "--from",
+        "image",
+        "--gpu",
+        "--",
+        `TOKEN=${secretMarkers[0]}`,
+        `OPENAI_API_KEY=${secretMarkers[1]}`,
+        `PASSWORD=${secretMarkers[2]}`,
+      ],
       { encoding: "utf8", env },
     );
     expect(rejected.status).toBe(2);
     expect(rejected.stderr).toContain("error: unexpected argument '--gpu' found");
-    expect(fs.existsSync(delegateLog)).toBe(false);
+    expect(fs.existsSync(delegateMarkerLog)).toBe(false);
 
     const secondNative = spawnSync(
       wrapper.wrapperPath,
@@ -117,8 +131,19 @@ describe("Hermes GPU startup fallback OpenShell wrapper", () => {
       HERMES_GPU_FALLBACK_EVENTS.delegateNativeCreate,
       HERMES_GPU_FALLBACK_EVENTS.delegateCompatibilityCreate,
     ]);
-    expect(fs.readFileSync(wrapper.eventsPath, "utf8")).not.toContain(secretMarker);
-    expect(fs.readFileSync(delegateLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
+    const wrapperArtifacts = fs
+      .readdirSync(path.dirname(wrapper.eventsPath), { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) =>
+        fs.readFileSync(path.join(path.dirname(wrapper.eventsPath), entry.name), "utf8"),
+      )
+      .join("\n");
+    for (const secretMarker of secretMarkers) {
+      expect(wrapperArtifacts).not.toContain(secretMarker);
+    }
+    expect(wrapperArtifacts).not.toMatch(/(?:TOKEN|API_KEY|PASSWORD)=/u);
+    // The fake delegate records a constant marker only; it never serializes argv.
+    expect(fs.readFileSync(delegateMarkerLog, "utf8").split(/\r?\n/u).filter(Boolean)).toEqual([
       "delegated",
       "delegated",
       "delegated",

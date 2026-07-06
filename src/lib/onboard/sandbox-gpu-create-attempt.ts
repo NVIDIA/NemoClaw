@@ -74,15 +74,42 @@ export function isNativeGpuCreatePreBuildRejection(output: string): boolean {
   );
 }
 
+function isDockerBuildFailureOutput(output: string): boolean {
+  return (
+    /\b(?:docker|image)\s+build\b[^\n]*(?:failed|failure|error)/i.test(output) ||
+    /\bfailed to (?:build|compile|install)\b/i.test(output) ||
+    /\bfailed to solve\b|\breturned a non-zero code\b/i.test(output)
+  );
+}
+
 export function isNativeGpuCreateRoutingFailure(output: string): boolean {
+  const text = String(output ?? "");
+  // The create stream can include nested Docker build output. Keep those
+  // failures on the build path even when a Dockerfile happens to mention the
+  // OpenShell `--gpu` flag; only explicit create/injection evidence may retry.
+  if (isDockerBuildFailureOutput(text)) return false;
   const failure = classifySandboxCreateFailure(output);
   if (failure.kind === "gpu_cdi_injection_failed") return true;
   if (failure.kind !== "unknown") return false;
-  const text = String(output ?? "");
   return (
     isNativeGpuCreatePreBuildRejection(text) ||
     /--gpu\b[^\n]*injection failed/i.test(text) ||
     /(?:native gpu injection|gpu device injection|gpu sandbox create)[^\n]*(?:failed|rejected|unsupported)/i.test(
+      text,
+    )
+  );
+}
+
+/** Require explicit GPU injection/device-init evidence for a readiness retry. */
+export function isNativeGpuReadinessRoutingFailure(output: string): boolean {
+  const text = String(output ?? "");
+  if (isDockerBuildFailureOutput(text)) return false;
+  return (
+    isNativeGpuCreateRoutingFailure(text) ||
+    /(?:cuda|nvidia|gpu)[^\n]*(?:device|driver|injection|initializ(?:e|ation))[^\n]*(?:failed|error|unavailable)/i.test(
+      text,
+    ) ||
+    /(?:failed|error|unavailable)[^\n]*(?:cuda|nvidia|gpu)[^\n]*(?:device|driver|injection|initializ(?:e|ation))/i.test(
       text,
     )
   );

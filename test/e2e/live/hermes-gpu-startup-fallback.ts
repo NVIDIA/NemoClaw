@@ -65,8 +65,9 @@ function quoteShellLiteral(value: string): string {
 /**
  * Create an E2E-only OpenShell CLI wrapper that models a native `--gpu`
  * rejection. The first matching create is rejected atomically; every later
- * invocation delegates to the real CLI. The event log contains fixed labels
- * only, so sandbox-create environment arguments never enter test artifacts.
+ * invocation transparently delegates its original argv to the real CLI. This
+ * test-only wrapper never logs argv: its sole artifact is an event log made of
+ * fixed labels, so sandbox-create environment arguments never enter artifacts.
  */
 export function createHermesGpuFallbackWrapper(
   realOpenshellPath: string,
@@ -120,6 +121,7 @@ export function createHermesGpuFallbackWrapper(
     "  fi",
     "fi",
     "",
+    "# Transparent test-only delegation: argv is never written by this wrapper.",
     'exec "$REAL_OPENSHELL" "$@"',
     "",
   ].join("\n");

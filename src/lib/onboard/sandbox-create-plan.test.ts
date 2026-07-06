@@ -180,7 +180,6 @@ describe("resolveSandboxCreateIntent", () => {
       activeMessagingChannels: ["telegram", "discord", "whatsapp"],
       options: {
         directGpu: true,
-        dockerGpuPatch: false,
         additionalPresets: ["github"],
         agentName: "hermes",
         policyTier: "balanced",
@@ -337,13 +336,11 @@ describe("prepareSandboxCreatePlan", () => {
       events.push("upsert");
       return ["sandbox-telegram-bridge", "sandbox-slack-bridge"];
     });
-    const prepareInitialSandboxCreatePolicy = vi.fn(
-      (_basePolicyPath, _activeMessagingChannels, options) => ({
-        policyPath: options?.dockerGpuPatch ? "/tmp/compatibility-policy.yaml" : "/tmp/policy.yaml",
-        appliedPresets: ["telegram"],
-        cleanup: vi.fn(() => true),
-      }),
-    );
+    const prepareInitialSandboxCreatePolicy = vi.fn(() => ({
+      policyPath: "/tmp/policy.yaml",
+      appliedPresets: ["telegram"],
+      cleanup: vi.fn(() => true),
+    }));
 
     const result = prepareSandboxCreatePlan({
       basePolicyPath: "/repo/policy.yaml",
@@ -373,7 +370,7 @@ describe("prepareSandboxCreatePlan", () => {
       reusableMessagingProviders: ["sandbox-existing-discord"],
       hermesToolGateways: ["github"],
       sandboxGpuConfig,
-      gpuRoutePlan: "native-with-fallback",
+      gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: "gpu note",
       appendResourceFlags,
       runProviderPreDeleteCleanup,
@@ -393,8 +390,7 @@ describe("prepareSandboxCreatePlan", () => {
     });
 
     expect(result.activeMessagingChannels).toEqual(["telegram", "slack", "discord", "whatsapp"]);
-    expect(prepareInitialSandboxCreatePolicy).toHaveBeenNthCalledWith(
-      1,
+    expect(prepareInitialSandboxCreatePolicy).toHaveBeenCalledWith(
       "/repo/policy.yaml",
       ["telegram", "slack", "discord", "whatsapp"],
       {
@@ -432,9 +428,7 @@ describe("prepareSandboxCreatePlan", () => {
       "sandbox-existing-discord",
     ]);
     expect(result.sandboxGpuLogMessage).toBe("gpu note");
-    expect(result.gpuRoutePlan).toBe("native-with-fallback");
-    expect(result.compatibilityPolicyPath).toBe("/tmp/compatibility-policy.yaml");
-    expect(prepareInitialSandboxCreatePolicy).toHaveBeenCalledTimes(2);
+    expect(prepareInitialSandboxCreatePolicy).toHaveBeenCalledTimes(1);
     expect(appendResourceFlags).toHaveBeenCalledTimes(1);
     expect(runProviderPreDeleteCleanup).toHaveBeenCalledTimes(1);
     expect(upsertMessagingProviders).toHaveBeenCalledTimes(1);
@@ -496,7 +490,7 @@ describe("prepareSandboxCreatePlan", () => {
     expect(result.createArgs).not.toContain("sandbox-slack-bridge");
   });
 
-  it("does not activate slack from an app token alone and carries a compatibility-only route", () => {
+  it("does not activate slack from an app token alone or a disabled QR channel", () => {
     const result = prepareSandboxCreatePlan({
       basePolicyPath: "/repo/policy.yaml",
       buildCtx: "/tmp/nemoclaw-build-1",
@@ -515,7 +509,7 @@ describe("prepareSandboxCreatePlan", () => {
       reusableMessagingProviders: [],
       hermesToolGateways: [],
       sandboxGpuConfig,
-      gpuRoutePlan: "compatibility-only",
+      gpuRoutePlan: "native-only",
       sandboxGpuLogMessage: null,
       appendResourceFlags: vi.fn(),
       runProviderPreDeleteCleanup: vi.fn(),
@@ -532,7 +526,6 @@ describe("prepareSandboxCreatePlan", () => {
     });
 
     expect(result.activeMessagingChannels).toEqual([]);
-    expect(result.gpuRoutePlan).toBe("compatibility-only");
     expect(result.createArgs).toEqual([
       "--from",
       "/tmp/nemoclaw-build-1/Dockerfile",

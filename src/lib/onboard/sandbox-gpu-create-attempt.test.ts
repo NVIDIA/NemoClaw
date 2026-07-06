@@ -9,6 +9,7 @@ import {
   executeSandboxGpuCreatePlan,
   isNativeGpuCreatePreBuildRejection,
   isNativeGpuCreateRoutingFailure,
+  isNativeGpuReadinessRoutingFailure,
   type NativeGpuFallbackCleanupResult,
   type SandboxGpuCreateAttemptFailure,
   type SandboxGpuCreateFailureStage,
@@ -28,11 +29,24 @@ describe("native GPU create failure classification", () => {
     expect(isNativeGpuCreatePreBuildRejection(rejection)).toBe(true);
     expect(isNativeGpuCreateRoutingFailure(rejection)).toBe(true);
     expect(
-      isNativeGpuCreateRoutingFailure("Docker build failed while compiling a GPU Python package"),
+      isNativeGpuCreateRoutingFailure(
+        "Docker build failed while compiling a GPU Python package for --gpu support",
+      ),
     ).toBe(false);
     expect(isNativeGpuCreateRoutingFailure("x509: certificate signed by unknown authority")).toBe(
       false,
     );
+  });
+
+  it("requires GPU-specific evidence before treating readiness as a routing failure", () => {
+    expect(isNativeGpuReadinessRoutingFailure("alpha Failed: policy denied startup exec")).toBe(
+      false,
+    );
+    expect(
+      isNativeGpuReadinessRoutingFailure(
+        "alpha Error: NVIDIA GPU device initialization failed during sandbox startup",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -226,6 +240,52 @@ describe("executeSandboxGpuCreatePlan", () => {
     ).resolves.toBe(failure);
     expect(runAttempt).toHaveBeenCalledTimes(1);
     expect(cleanupNativeFailure).not.toHaveBeenCalled();
+  });
+
+  it("isolates cleanup verification across concurrent native fallback plans (#6110)", async () => {
+    const deferred = () => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((resolvePromise) => {
+        resolve = resolvePromise;
+      });
+      return { promise, resolve };
+    };
+    const firstCleanupEntered = deferred();
+    const secondCleanupEntered = deferred();
+    const firstRoutes: SelectedDockerGpuRoute[] = [];
+    const secondRoutes: SelectedDockerGpuRoute[] = [];
+
+    const runPlan = (
+      routes: SelectedDockerGpuRoute[],
+      cleanupNativeFailure: () => Promise<NativeGpuFallbackCleanupResult>,
+    ) =>
+      executeSandboxGpuCreatePlan("native-with-fallback", {
+        runAttempt: vi.fn(async (route: SelectedDockerGpuRoute) => {
+          routes.push(route);
+          return route === "native"
+            ? nativeFailure("create")
+            : { ok: true as const, route, value: "compatibility-ready" };
+        }),
+        cleanupNativeFailure,
+      });
+
+    const first = runPlan(firstRoutes, async () => {
+      firstCleanupEntered.resolve();
+      await secondCleanupEntered.promise;
+      return SAFE_CLEANUP;
+    });
+    const second = runPlan(secondRoutes, async () => {
+      secondCleanupEntered.resolve();
+      await firstCleanupEntered.promise;
+      return SAFE_CLEANUP;
+    });
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: true, route: "compatibility", value: "compatibility-ready" },
+      { ok: true, route: "compatibility", value: "compatibility-ready" },
+    ]);
+    expect(firstRoutes).toEqual(["native", "compatibility"]);
+    expect(secondRoutes).toEqual(["native", "compatibility"]);
   });
 });
 

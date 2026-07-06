@@ -11,7 +11,9 @@ import {
 } from "./docker-gpu-local-inference";
 import {
   canFallbackToDockerGpuCompatibility,
+  type DockerGpuRouteConfig,
   type DockerGpuRouteOptions,
+  type DockerGpuRoutePlan,
   initialDockerGpuRoute,
   isDockerGpuCompatibilityRoute,
   renderCompatibilityFallbackCreateArgs,
@@ -35,35 +37,89 @@ const HOST_NETWORK_ENV = {
 } as NodeJS.ProcessEnv;
 
 describe("resolveDockerGpuRoutePlan", () => {
-  it.each([
-    ["disabled GPU", { sandboxGpuEnabled: false }, LINUX_DOCKER, "none"],
-    [
-      "non-Docker driver",
-      GPU_CONFIG,
-      { ...LINUX_DOCKER, dockerDriverGateway: false },
-      "native-only",
-    ],
-    ["non-Linux host", GPU_CONFIG, { ...LINUX_DOCKER, platform: "darwin" }, "native-only"],
-    ["unset control", GPU_CONFIG, LINUX_DOCKER, "native-with-fallback"],
-    [
-      "auto control",
-      GPU_CONFIG,
-      { ...LINUX_DOCKER, env: { NEMOCLAW_DOCKER_GPU_PATCH: "auto" } },
-      "native-with-fallback",
-    ],
-    [
-      "zero control",
-      GPU_CONFIG,
-      { ...LINUX_DOCKER, env: { NEMOCLAW_DOCKER_GPU_PATCH: "0" } },
-      "native-only",
-    ],
-    [
-      "one control",
-      GPU_CONFIG,
-      { ...LINUX_DOCKER, env: { NEMOCLAW_DOCKER_GPU_PATCH: "1" } },
-      "compatibility-only",
-    ],
-  ] as const)("maps %s to %s", (_name, config, options, expected) => {
+  const controls = [undefined, "auto", "0", "1", "true"] as const;
+  const environments = [
+    {
+      name: "GPU disabled",
+      config: { sandboxGpuEnabled: false },
+      options: LINUX_DOCKER,
+      expected: ["none", "none", "none", "none", "none"],
+    },
+    {
+      name: "non-Docker driver",
+      config: GPU_CONFIG,
+      options: { ...LINUX_DOCKER, dockerDriverGateway: false },
+      expected: ["native-only", "native-only", "native-only", "native-only", "native-only"],
+    },
+    {
+      name: "non-Linux host",
+      config: GPU_CONFIG,
+      options: { ...LINUX_DOCKER, platform: "darwin" as const },
+      expected: ["native-only", "native-only", "native-only", "native-only", "native-only"],
+    },
+    {
+      name: "ordinary Linux Docker",
+      config: GPU_CONFIG,
+      options: LINUX_DOCKER,
+      expected: [
+        "native-with-fallback",
+        "native-with-fallback",
+        "native-only",
+        "compatibility-only",
+        "compatibility-only",
+      ],
+    },
+    {
+      name: "Docker Desktop WSL",
+      config: GPU_CONFIG,
+      options: { ...LINUX_DOCKER, dockerDesktopWsl: true, platform: "win32" as const },
+      expected: [
+        "compatibility-only",
+        "compatibility-only",
+        "compatibility-only",
+        "compatibility-only",
+        "compatibility-only",
+      ],
+    },
+    {
+      name: "Jetson/Tegra",
+      config: { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
+      options: LINUX_DOCKER,
+      expected: [
+        "compatibility-only",
+        "compatibility-only",
+        "native-only",
+        "compatibility-only",
+        "compatibility-only",
+      ],
+    },
+  ] as const;
+
+  const routingMatrix: Array<{
+    name: string;
+    control: string;
+    expected: DockerGpuRoutePlan;
+    config: DockerGpuRouteConfig;
+    options: DockerGpuRouteOptions;
+  }> = environments.flatMap((environment) =>
+    controls.map((control, index) => ({
+      name: environment.name,
+      control: control ?? "unset",
+      expected: environment.expected[index],
+      config: environment.config,
+      options: {
+        ...environment.options,
+        env: control === undefined ? {} : { NEMOCLAW_DOCKER_GPU_PATCH: control },
+        log: vi.fn(),
+      },
+    })),
+  );
+
+  it.each(routingMatrix)("maps $name with control $control to $expected", ({
+    expected,
+    config,
+    options,
+  }) => {
     expect(resolveDockerGpuRoutePlan(config, options)).toBe(expected);
   });
 
@@ -92,23 +148,6 @@ describe("resolveDockerGpuRoutePlan", () => {
     expect(log.mock.calls.map(([message]) => message).join("\n")).toMatch(
       /0 ignored on Docker Desktop WSL.*--no-gpu/s,
     );
-  });
-
-  it.each([
-    [undefined, "compatibility-only"],
-    ["auto", "compatibility-only"],
-    ["1", "compatibility-only"],
-    ["0", "native-only"],
-  ] as const)("maps Jetson control %s to %s", (control, expected) => {
-    const log = vi.fn();
-    const env = control === undefined ? {} : { NEMOCLAW_DOCKER_GPU_PATCH: control };
-    expect(
-      resolveDockerGpuRoutePlan(
-        { sandboxGpuEnabled: true, hostGpuPlatform: "jetson" },
-        { ...LINUX_DOCKER, env, log },
-      ),
-    ).toBe(expected);
-    expect(log).not.toHaveBeenCalled();
   });
 });
 

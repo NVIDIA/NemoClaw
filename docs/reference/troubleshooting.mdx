@@ -1825,8 +1825,9 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 ### Automatic GPU fallback or compatibility patch failed
 
 On ordinary native Linux Docker-driver hosts, automatic GPU onboarding first uses native OpenShell GPU injection.
-If native sandbox creation, readiness, or GPU verification reports a hard failure, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-labeled Docker container remains, and retries exactly once through the compatibility path.
-Before retrying, cleanup must pass two consecutive checks that the sandbox is absent from the OpenShell gateway list and that no Docker container with its OpenShell sandbox label remains.
+If sandbox creation is rejected for native GPU routing, readiness diagnostics identify GPU injection or device initialization as the cause, or the completed CUDA proof returns a hard failure, NemoClaw captures redacted diagnostics, deletes the incomplete sandbox, verifies that no OpenShell-labeled Docker container remains, and retries exactly once through the compatibility path.
+NemoClaw verifies cleanup with two stable checks (sandbox absent from gateway list and no labeled containers) before retrying through the compatibility path.
+Both conditions must pass twice consecutively; otherwise onboarding stops before the retry.
 If deletion or container cleanup cannot be proven safe, onboarding stops before the retry and prints manual cleanup guidance.
 Image build, upload, TLS, provider, policy, dashboard, and inference failures stay on their existing error paths and do not trigger the GPU compatibility fallback.
 On Docker Desktop WSL and Jetson/Tegra, automatic GPU onboarding uses the compatibility path directly, which creates the sandbox first and then recreates the OpenShell-managed Docker container with NVIDIA GPU flags.

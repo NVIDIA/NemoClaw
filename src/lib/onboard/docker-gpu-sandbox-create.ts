@@ -373,6 +373,26 @@ function buildFailureContext(
   };
 }
 
+/**
+ * Source-of-truth and bounded compatibility contract for GPU creates (#6110).
+ *
+ * The invalid state is a single create attempt that combines native OpenShell
+ * `--gpu` injection with compatibility container recreation. This function is
+ * the host/control boundary that selects the route; downstream argument
+ * rendering may suppress native GPU flags, but must not choose another route.
+ *
+ * The older `buildSandboxGpuCreateArgs(..., { suppressGpuFlag: true })` seam is
+ * still exported through `onboard.ts` for already-shipped internal consumers.
+ * Production routing does not consult it, and removing that export in this
+ * behavior-neutral forward fix would turn the routing change into an API
+ * removal. The route matrix in `docker-gpu-sandbox-create.test.ts` and the
+ * suppression case in `sandbox-gpu-create.test.ts` guard this separation.
+ * Remove the seam in a separately versioned cleanup only after downstream
+ * callers are audited and migrated to `renderSandboxCreateArgsForGpuRoute`.
+ * The compatibility route itself can be retired only when Docker Desktop WSL,
+ * Jetson, and the legacy nonzero `NEMOCLAW_DOCKER_GPU_PATCH` contract no longer
+ * require container recreation.
+ */
 export function resolveDockerGpuSandboxCreatePlan(
   config: DockerGpuSandboxConfig,
   options: {

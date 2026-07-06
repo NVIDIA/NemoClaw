@@ -64,6 +64,22 @@ export interface SandboxGpuCreateFlowResult {
 }
 
 /**
+ * Automatic native GPU compatibility fallback source-of-truth boundary:
+ *
+ * - Invalid state: native OpenShell GPU injection is explicitly rejected, a
+ *   readiness diagnostic identifies GPU device initialization as the cause,
+ *   or a completed CUDA proof returns `failed`.
+ * - Source boundary: OpenShell owns native injection; this flow consumes its
+ *   create/readiness evidence and NemoClaw's structured CUDA proof.
+ * - Source-fix constraint: supported OpenShell/Docker combinations cannot be
+ *   upgraded atomically, so the existing compatibility path remains required.
+ * - Regression tests: sandbox-gpu-create-attempt.test.ts covers strict failure
+ *   classification, non-GPU exclusions, safe cleanup, and the one-retry limit;
+ *   the live Hermes GPU workflow proves native success and fallback.
+ * - Removal condition: remove automatic fallback only when the minimum
+ *   supported OpenShell version provides reliable native GPU injection across
+ *   ordinary Linux, Docker Desktop WSL, and Jetson/Tegra hosts.
+ *
  * Create a sandbox through the selected GPU route, with one fail-closed
  * compatibility retry when the native-first plan permits it.
  */
@@ -162,7 +178,17 @@ export async function runSandboxGpuCreateFlow(
         input.sandboxName,
         input.sandboxReadyTimeoutSecs,
       );
-      if (route === "native" && input.gpuRoutePlan === "native-with-fallback") {
+      const canClassifyNativeReadiness =
+        route === "native" && input.gpuRoutePlan === "native-with-fallback";
+      const readinessEvidence = canClassifyNativeReadiness
+        ? deps.runCaptureOpenshell(["sandbox", "list"], { ignoreError: true })
+        : "";
+      if (
+        canClassifyNativeReadiness &&
+        sandboxGpuCreateAttempt.isNativeGpuReadinessRoutingFailure(
+          `${readiness.failurePhase ?? ""}\n${readinessEvidence}`,
+        )
+      ) {
         return {
           ok: false,
           route,
@@ -185,49 +211,39 @@ export async function runSandboxGpuCreateFlow(
       process.exit(1);
     }
     if (input.sandboxGpuConfig.sandboxGpuEnabled) {
-      try {
-        const deferNativeProofFailure =
-          route === "native" && input.gpuRoutePlan === "native-with-fallback";
-        const proof = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
-          input.sandboxGpuConfig,
-          {
-            sandboxName: input.sandboxName,
-            dockerDriverGateway: input.dockerDriverGateway,
-            selectedRoute: route,
-            verifyDirectSandboxGpu: deps.verifyDirectSandboxGpu,
-            verifyGpuOrExit: deferNativeProofFailure
-              ? undefined
-              : dockerGpuCreatePatch.verifyGpuOrExit,
-            reportGpuProofFailure: !deferNativeProofFailure,
-            selectedMode: dockerGpuCreatePatch.selectedMode,
-            runCaptureOpenshell: deps.runCaptureOpenshell,
-            log: console.log,
-          },
-        );
-        if (
-          route === "native" &&
-          input.gpuRoutePlan === "native-with-fallback" &&
-          sandboxGpuCreateAttempt.isHardNativeGpuProofFailure(proof)
-        ) {
-          return {
-            ok: false,
-            route,
-            stage: "gpu-proof",
-            error: new Error("Native OpenShell GPU CUDA proof failed."),
-            fallbackEligible: true,
-          } as const;
-        }
-      } catch (error) {
-        if (route === "native" && input.gpuRoutePlan === "native-with-fallback") {
-          return {
-            ok: false,
-            route,
-            stage: "gpu-proof",
-            error,
-            fallbackEligible: true,
-          } as const;
-        }
-        throw error;
+      const deferNativeProofFailure =
+        route === "native" && input.gpuRoutePlan === "native-with-fallback";
+      const proof = dockerGpuLocalInference.verifyGpuSandboxAccessAfterReady(
+        input.sandboxGpuConfig,
+        {
+          sandboxName: input.sandboxName,
+          dockerDriverGateway: input.dockerDriverGateway,
+          selectedRoute: route,
+          verifyDirectSandboxGpu: deps.verifyDirectSandboxGpu,
+          verifyGpuOrExit: deferNativeProofFailure
+            ? undefined
+            : dockerGpuCreatePatch.verifyGpuOrExit,
+          reportGpuProofFailure: !deferNativeProofFailure,
+          selectedMode: dockerGpuCreatePatch.selectedMode,
+          runCaptureOpenshell: deps.runCaptureOpenshell,
+          log: console.log,
+        },
+      );
+      // A returned `failed` result proves CUDA reached the driver but could not
+      // initialize it. Thrown proof errors mean the exec/policy/runtime path did
+      // not produce a structured GPU result, so they propagate without retry.
+      if (
+        route === "native" &&
+        input.gpuRoutePlan === "native-with-fallback" &&
+        sandboxGpuCreateAttempt.isHardNativeGpuProofFailure(proof)
+      ) {
+        return {
+          ok: false,
+          route,
+          stage: "gpu-proof",
+          error: new Error("Native OpenShell GPU CUDA proof failed."),
+          fallbackEligible: true,
+        } as const;
       }
     }
     return {
