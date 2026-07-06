@@ -7,6 +7,10 @@ import { describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
 
+function restoreRequireCache(modulePath: string, prior: unknown): void {
+  prior === undefined ? delete requireCache[modulePath] : (requireCache[modulePath] = prior);
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
@@ -152,23 +156,12 @@ describe("config set CLI dispatch", () => {
         process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = priorDisableAutoDispatch;
       }
 
-      if (priorCli) requireCache[cliPath] = priorCli;
-      else delete requireCache[cliPath];
-
-      if (priorPublicDispatch) requireCache[publicDispatchPath] = priorPublicDispatch;
-      else delete requireCache[publicDispatchPath];
-
-      if (priorOclifRunner) requireCache[oclifRunnerPath] = priorOclifRunner;
-      else delete requireCache[oclifRunnerPath];
-
-      if (priorRegistry) requireCache[registryPath] = priorRegistry;
-      else delete requireCache[registryPath];
-
-      if (priorSandboxConfig) requireCache[sandboxConfigPath] = priorSandboxConfig;
-      else delete requireCache[sandboxConfigPath];
-
-      if (priorRunner) requireCache[runnerPath] = priorRunner;
-      else delete requireCache[runnerPath];
+      restoreRequireCache(cliPath, priorCli);
+      restoreRequireCache(publicDispatchPath, priorPublicDispatch);
+      restoreRequireCache(oclifRunnerPath, priorOclifRunner);
+      restoreRequireCache(registryPath, priorRegistry);
+      restoreRequireCache(sandboxConfigPath, priorSandboxConfig);
+      restoreRequireCache(runnerPath, priorRunner);
     }
   });
 });
