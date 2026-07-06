@@ -2,15 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { shellQuote } from "../runner.js";
+import type { StateFileRestorePolicy, StateFileRestoreSpec } from "./state-file-restore-policy.js";
 
 const DCODE_AGENT_NAME = "langchain-deepagents-code";
 const DCODE_CONFIG_DIR = "/sandbox/.deepagents";
 const DCODE_CONFIG_FILE = "config.toml";
-
-export interface DcodeConfigStateFileSpec {
-  path: string;
-  strategy: string;
-}
 
 /**
  * Deep Agents Code config restore source-of-truth boundary.
@@ -21,14 +17,12 @@ export interface DcodeConfigStateFileSpec {
  * user-owned settings. Until the agent manifest can express key-level
  * ownership, restore must merge this one canonical file by top-level table.
  */
-export function shouldMergeManagedDcodeConfigStateFile(
-  managedTarget: boolean,
+function shouldMergeManagedDcodeConfigStateFile(
   agentType: string | null | undefined,
   dir: string,
-  spec: DcodeConfigStateFileSpec,
+  spec: StateFileRestoreSpec,
 ): boolean {
   return (
-    managedTarget &&
     agentType === DCODE_AGENT_NAME &&
     dir.replace(/\/+$/, "") === DCODE_CONFIG_DIR &&
     spec.strategy === "copy" &&
@@ -211,3 +205,20 @@ export function buildDcodeConfigMergeRestoreCommand(dir: string): string {
     `/opt/venv/bin/python3 -I -c ${shellQuote(DCODE_CONFIG_MERGE_PYTHON)} "$backup_tmp" "$dst" "$staged_tmp"`,
   ].join("; ");
 }
+
+/**
+ * Restore capability supplied only for a known stock managed DCode target.
+ * Backup provenance and the canonical file boundary are checked again here.
+ */
+export const managedDcodeConfigRestorePolicy: StateFileRestorePolicy = (
+  agentType,
+  dir,
+  spec,
+  backupContents,
+) => {
+  if (!shouldMergeManagedDcodeConfigStateFile(agentType, dir, spec)) return null;
+  return {
+    command: buildDcodeConfigMergeRestoreCommand(dir),
+    input: backupContents,
+  };
+};

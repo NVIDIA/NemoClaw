@@ -35,10 +35,6 @@ import { shellQuote } from "../runner.js";
 import { createTempSshConfig } from "../sandbox/temp-ssh-config.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import {
-  buildDcodeConfigMergeRestoreCommand,
-  shouldMergeManagedDcodeConfigStateFile,
-} from "./dcode-config-restore-input.js";
-import {
   buildOpenClawConfigRestoreInputFromSandbox,
   shouldMergeOpenClawConfigStateFile,
 } from "./openclaw-config-restore-input.js";
@@ -51,6 +47,7 @@ import {
 import type { CustomPolicyEntry } from "./registry.js";
 import * as registry from "./registry.js";
 import { isSshTransportFailure } from "./ssh-transport.js";
+import type { StateFileRestorePolicy } from "./state-file-restore-policy.js";
 import { runTarListing } from "./tar-listing.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
@@ -147,8 +144,8 @@ export interface RestoreResult {
 }
 
 export interface RestoreOptions {
-  /** Enable the mixed-ownership config merge only for a known stock managed DCode target. */
-  mergeManagedDcodeConfig?: boolean;
+  /** Optional file-specific restore capability authorized by the caller. */
+  stateFileRestorePolicy?: StateFileRestorePolicy;
 }
 
 export interface TarValidationResult {
@@ -882,11 +879,9 @@ function buildStateFileRestoreInput(
   sandboxName: string,
   dir: string,
   spec: StateFileSpec,
-  backupPath: string,
+  backupContents: Buffer,
   mergeOpenClawConfig: boolean,
 ): Buffer | null {
-  const localPath = path.join(backupPath, spec.path);
-  const backupContents = readFileSync(localPath);
   if (!mergeOpenClawConfig) return backupContents;
 
   const result = buildOpenClawConfigRestoreInputFromSandbox({
@@ -904,29 +899,30 @@ function buildStateFileRestoreInput(
 function restoreStateFile(
   configFile: string,
   sandboxName: string,
+  agentType: string | null | undefined,
   dir: string,
   spec: StateFileSpec,
   backupPath: string,
   mergeOpenClawConfig = false,
-  mergeDcodeConfig = false,
+  stateFileRestorePolicy?: StateFileRestorePolicy,
 ): boolean {
   const localPath = path.join(backupPath, spec.path);
   if (!existsSync(localPath)) return true;
 
-  const command = mergeDcodeConfig
-    ? buildDcodeConfigMergeRestoreCommand(dir)
-    : buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
+  const backupContents = readFileSync(localPath);
+  const plan = stateFileRestorePolicy?.(agentType, dir, spec, backupContents);
+  const command = plan?.command ?? buildStateFileRestoreCommand(dir, spec, mergeOpenClawConfig);
   _log(`Restoring state file ${spec.path} (${spec.strategy})`);
-  const input = mergeDcodeConfig
-    ? readFileSync(localPath)
-    : buildStateFileRestoreInput(
-        configFile,
-        sandboxName,
-        dir,
-        spec,
-        backupPath,
-        mergeOpenClawConfig,
-      );
+  const input =
+    plan?.input ??
+    buildStateFileRestoreInput(
+      configFile,
+      sandboxName,
+      dir,
+      spec,
+      backupContents,
+      mergeOpenClawConfig,
+    );
   if (input === null) return false;
 
   const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), command], {
@@ -1542,16 +1538,12 @@ export function restoreSandboxState(
         restoreStateFile(
           configFile,
           sandboxName,
+          manifest.agentType,
           dir,
           spec,
           backupPath,
           shouldMergeOpenClawConfigStateFile(manifest.agentType, dir, spec),
-          shouldMergeManagedDcodeConfigStateFile(
-            options.mergeManagedDcodeConfig === true,
-            manifest.agentType,
-            dir,
-            spec,
-          ),
+          options.stateFileRestorePolicy,
         )
       ) {
         restoredFiles.push(spec.path);
