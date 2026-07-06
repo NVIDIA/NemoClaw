@@ -82,6 +82,21 @@ describe("compatible-endpoint context window", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
   });
 
+  it("skips the probe for a sandbox-internal endpoint and leaves auto-detect (#6177)", () => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+    const messages: string[] = [];
+    const env: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow("https://host.openshell.internal/v1", "model-a", {
+      env,
+      fetchModels,
+      logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
+    });
+
+    expect(fetchModels).not.toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+    expect(messages).toEqual([]);
+  });
+
   it("never downgrades an explicit NEMOCLAW_CONTEXT_WINDOW override (#6177)", () => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 8_192 }] }));
     const { env, messages } = apply({ fetchModels }, { NEMOCLAW_CONTEXT_WINDOW: "65536" });

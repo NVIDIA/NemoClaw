@@ -7,6 +7,10 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  applyCompatibleEndpointContextWindow,
+  resetCompatibleEndpointContextWindowAutoState,
+} from "../../../inference/compatible-endpoint-context";
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
 import { patchStagedDockerfile } from "../../dockerfile-patch";
 import { clearCompatibleEndpointReasoning } from "../../reasoning-mode";
@@ -199,6 +203,35 @@ describe("handleProviderInferenceState", () => {
       },
       result.stateResult,
     ]);
+  });
+
+  it("clears a stale auto-detected compatible-endpoint context window before re-selecting (#6177)", async () => {
+    resetCompatibleEndpointContextWindowAutoState();
+    delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+    try {
+      // Simulate an earlier compatible-endpoint pass auto-detecting a window.
+      applyCompatibleEndpointContextWindow("https://endpoint-a.example/v1", "model-a", {
+        env: process.env,
+        fetchModels: () => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }),
+      });
+      expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+
+      // The next fresh provider-selection pass must clear it before selection,
+      // so Dockerfile patching for a different provider never sees the stale value.
+      let contextAtSelection: string | undefined = "sentinel";
+      const setupNim = vi.fn(async () => {
+        contextAtSelection = process.env.NEMOCLAW_CONTEXT_WINDOW;
+        return { ...baseSelection };
+      });
+      const { deps } = createDeps({ setupNim });
+      await handleProviderInferenceState(baseOptions(deps));
+
+      expect(setupNim).toHaveBeenCalledTimes(1);
+      expect(contextAtSelection).toBeUndefined();
+    } finally {
+      delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+      resetCompatibleEndpointContextWindowAutoState();
+    }
   });
 
   describe("compatible endpoint reasoning mode", () => {

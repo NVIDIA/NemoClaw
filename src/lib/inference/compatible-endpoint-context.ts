@@ -7,6 +7,21 @@ import { getCredential } from "../credentials/store";
 import { hasExplicitContextWindow } from "./ollama-runtime-context";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 
+// Hosts that only resolve inside the OpenShell sandbox network (or are the
+// hijacked docker-internal alias), mirroring probeOpenAiLikeEndpoint's
+// SANDBOX_INTERNAL_HOSTS / isHijackedDockerInternalUrl. A host-side GET to these
+// cannot reach the real endpoint, so we skip the probe rather than emit a
+// misleading warning and let Hermes auto-detect / an explicit override stand.
+const NON_HOST_PROBEABLE_HOSTS = new Set(["host.openshell.internal", "host.docker.internal"]);
+
+function isHostProbeableEndpoint(endpointUrl: string): boolean {
+  try {
+    return !NON_HOST_PROBEABLE_HOSTS.has(new URL(endpointUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /** Injectable `/v1/models` fetcher; returns parsed JSON, or null when unavailable. */
 export type CompatibleEndpointModelsFetcher = (
   endpointUrl: string,
@@ -110,9 +125,20 @@ export function clearAutoDetectedCompatibleContextWindow(
  * - An explicit `NEMOCLAW_CONTEXT_WINDOW` always wins and is never downgraded.
  * - A value this probe set on an earlier pass is not treated as an override; it
  *   is recomputed, or cleared when the new endpoint reports nothing usable.
+ * - A sandbox-internal / docker-internal endpoint URL is not host-probeable, so
+ *   the probe is skipped and Hermes auto-detect is left in place.
  * - When the endpoint cannot be probed, warn and keep the default context.
  * - Under the unit-test runner the default curl fetch is skipped (endpoints are
  *   unreachable and curl would hang on DNS); pass `fetchModels` to exercise it.
+ *
+ * Source boundary: `/v1/models` is served by an out-of-repo endpoint the user
+ * configured. Invalid states tolerated — unreachable/timing-out host, non-JSON
+ * or non-vLLM body, missing/malformed/over-ceiling `max_model_len`, and
+ * ambiguous multi-model catalogs — all fall back to Hermes/OpenClaw auto-detect
+ * (never throw, never guess). NemoClaw cannot fix the producer, so it validates
+ * before consuming. Regression coverage: compatible-endpoint-context.test.ts and
+ * the real-server compatible-endpoint-context-probe.test.ts. Remove this probe
+ * only if a typed, validated cross-provider model-catalog fetch subsumes it.
  */
 export function applyCompatibleEndpointContextWindow(
   endpointUrl: string,
@@ -138,6 +164,14 @@ export function applyCompatibleEndpointContextWindow(
 
   if (hasExplicitContextWindow(userContextWindow)) {
     logger.log(`  ℹ Keeping configured context window: ${userContextWindow} tokens`);
+    return;
+  }
+
+  // A sandbox-internal endpoint (e.g. host.openshell.internal) resolves only
+  // inside the sandbox, so a host-side GET cannot reach it; skip cleanly and
+  // leave Hermes auto-detect rather than emit a misleading probe failure.
+  if (!isHostProbeableEndpoint(endpointUrl)) {
+    clearPreviousAuto();
     return;
   }
 
