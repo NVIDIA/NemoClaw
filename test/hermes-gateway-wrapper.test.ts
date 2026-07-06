@@ -76,11 +76,7 @@ function runWrapper(
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
     const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
-    // Write with the source-layout filename so the wrapper's dev fallback
-    // (_resolve_guard() -> _self_dir()/validate-env-secret-boundary.py) picks
-    // it up; the installed-layout tests further down write to the
-    // /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py install
-    // path instead.
+    // Source-layout filename lets the wrapper's dev fallback pick it up.
     fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
       mode: 0o755,
     });
@@ -102,10 +98,7 @@ function runWrapper(
     ].join("\n");
     fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
 
-    // Optionally plant malicious helpers earlier on PATH that would subvert the
-    // wrapper. The wrapper must ignore them and resolve each helper from a
-    // trusted absolute path. `shadowPython` covers the python3 interpreter;
-    // `shadowHelpers` lets a test plant arbitrary scripts (e.g. mktemp / rm).
+    // Plant malicious helpers earlier on PATH; the wrapper must ignore them.
     const planted: Record<string, string> = {
       ...(opts.shadowHelpers ?? {}),
       ...(opts.shadowPython ? { python3: "#!/usr/bin/env bash\nexit 0\n" } : {}),
@@ -283,7 +276,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     ]);
   });
 
-  it("keeps translated resumed one-shot turns on the same fake session (#5254)", () => {
+  it("keeps translated resumed one-shot turns on the same fake session and reports exec failures (#5254)", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-session-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
@@ -315,6 +308,10 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         "seed:resume prompt",
         "seed:continue prompt",
       ]);
+      fs.chmodSync(path.join(dir, "hermes.real"), 0o644);
+      const blocked = invoke(["--resume", "seed", "-z", "after chmod"]);
+      expect(blocked.status).toBe(126);
+      expect(blocked.stderr).toContain("[SECURITY] Refusing to run hermes: failed to exec Hermes");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -847,18 +844,18 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("sk-****");
   });
 
-  it("does not hang when the config masker emits large stderr", () => {
+  it("fails closed when the config masker succeeds with oversized stderr", () => {
     const validatorScript = [
       "#!/usr/bin/env python3",
       "import sys",
-      "sys.stderr.write('x' * 70000)",
-      "raise SystemExit(1)",
+      "sys.stderr.write('x' * (11 * 1024 * 1024))",
+      "raise SystemExit(0)",
       "",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { validatorScript });
 
     expect(run.status).toBe(1);
-    expect(run.stderr).toContain("output masker failed");
+    expect(run.stderr).toContain("output masker stderr exceeded");
     expect(run.stderr).not.toContain("xxxxxxxxxxxxxxxx");
   });
 

@@ -122,6 +122,19 @@ def _resolve_trusted_python3() -> str | None:
 
 
 _MASKER_STDERR_ALLOWED_PREFIX = "[SECURITY]"
+_MASKER_STDERR_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _read_masker_stderr(file_obj, stream_name: str) -> tuple[bytes, bool]:
+    file_obj.seek(0)
+    raw = file_obj.read(_MASKER_STDERR_MAX_BYTES + 1)
+    if len(raw) > _MASKER_STDERR_MAX_BYTES:
+        print(
+            f"[SECURITY] Refusing hermes config show: output masker stderr exceeded {_MASKER_STDERR_MAX_BYTES} bytes ({stream_name})",
+            file=sys.stderr,
+        )
+        return raw[:_MASKER_STDERR_MAX_BYTES], True
+    return raw, False
 
 
 def _forward_sanitised_masker_stderr(raw: bytes, fallback: str) -> None:
@@ -190,10 +203,16 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
         proc.wait()
         masker_stdout.wait()
         masker_stderr.wait()
-        stdout_masker_stderr_file.seek(0)
-        stderr_masker_stderr_file.seek(0)
-        stdout_masker_stderr = stdout_masker_stderr_file.read()
-        stderr_masker_stderr = stderr_masker_stderr_file.read()
+        stdout_masker_stderr, stdout_masker_stderr_too_large = _read_masker_stderr(
+            stdout_masker_stderr_file,
+            "stdout",
+        )
+        stderr_masker_stderr, stderr_masker_stderr_too_large = _read_masker_stderr(
+            stderr_masker_stderr_file,
+            "stderr",
+        )
+    if stdout_masker_stderr_too_large or stderr_masker_stderr_too_large:
+        return 1
     if masker_stdout.returncode != 0:
         _forward_sanitised_masker_stderr(
             stdout_masker_stderr,
@@ -391,9 +410,18 @@ def main(argv: list[str]) -> int:
             return rc
     translated = _translate_resumed_oneshot(argv)
     if translated is not None:
-        os.execv(real_hermes, [real_hermes, *translated])
-    os.execv(real_hermes, [real_hermes, *argv])
-    return 1
+        exec_argv = translated
+    else:
+        exec_argv = argv
+    try:
+        os.execv(real_hermes, [real_hermes, *exec_argv])
+    except OSError as exc:
+        print(
+            f"[SECURITY] Refusing to run hermes: failed to exec Hermes binary at {real_hermes}: {exc}",
+            file=sys.stderr,
+        )
+        return 126
+    return 126
 
 
 if __name__ == "__main__":
