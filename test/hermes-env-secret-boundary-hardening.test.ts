@@ -51,11 +51,13 @@ function runStartEnvValidation(hermesDir: string) {
       [
         "#!/usr/bin/env bash",
         "set -u",
-        // A harmless no-op prefix (not an empty array): macOS bash 3.2 treats
-        // "${empty[@]}" as an unbound variable under `set -u`, which would abort
-        // the harness before the validator ever runs. `env --` just execs the
-        // validator unchanged.
-        "_HERMES_BOUNDARY_TIMEOUT=(env --)",
+        // A harmless single-element no-op prefix. It must not be an empty array:
+        // macOS bash 3.2 treats "${empty[@]}" as an unbound variable under
+        // `set -u`, aborting the harness before the validator runs. It also must
+        // not be `env --`: macOS/BSD `env(1)` does not support `--`. The
+        // `command` builtin execs the validator unchanged on every platform.
+        "_HERMES_BOUNDARY_TIMEOUT=(command)",
+        '_HERMES_PYTHON="$(command -v python3)"',
         `_HERMES_BOUNDARY_VALIDATOR=${JSON.stringify(VALIDATOR)}`,
         `HERMES_DIR=${JSON.stringify(hermesDir)}`,
         extractShellFunction(source, "validate_hermes_env_secret_boundary"),
@@ -395,6 +397,7 @@ wait "$child"
         "#!/usr/bin/env bash",
         "set -u",
         "_HERMES_BOUNDARY_TIMEOUT=(timeout --signal=TERM --kill-after=0.2s 2s)",
+        '_HERMES_PYTHON="$(command -v python3)"',
         `_HERMES_BOUNDARY_VALIDATOR=${JSON.stringify(VALIDATOR)}`,
         `HERMES_DIR=${JSON.stringify(hermes)}`,
         extractShellFunction(source, "validate_hermes_env_secret_boundary"),

@@ -34,12 +34,12 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 const ENVIRONMENT = ubuntuRepoDocker("cloud-openclaw");
 
 const SANDBOX_NAME = "e2e-openclaw-tui-corr";
-// regression-guard version for #2603 + #3145. Historical buggy builds were
-// older; this live guard asserts the fixed protocol/history contract stays
-// stable on the pinned OpenClaw version.
+// OpenClaw 2026.6.10 is the post-fix regression-guard version for #2603 + #3145.
+// Historical buggy builds were older; this live guard asserts the fixed
+// protocol/history contract stays stable on the pinned OpenClaw version.
 // Override via env so future pin bumps do not require a code edit.
 const EXPECTED_OPENCLAW_VERSION =
-  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.5.27";
+  process.env.E2E_OPENCLAW_TUI_CORRELATION_PINNED_VERSION ?? "2026.6.10";
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;
@@ -504,7 +504,7 @@ test(
     });
 
     // Assertion: openclaw-version-pinned. The regression target only
-    // reproduces against the 2026.5.27 build; if the sandbox installed
+    // reproduces against the bundled OpenClaw build; if the sandbox installed
     // a different version, the rest of the test is meaningless.
     //
     // Every sandbox.* call must pass `env: buildAvailabilityProbeEnv()`:

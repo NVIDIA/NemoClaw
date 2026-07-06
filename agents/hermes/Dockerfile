@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:8dad3b989a9ed1e601743310b97be21be5f59f89f7913a47d04f3ec3c40b8ce6
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:d6ce792eb302a73fc7e32e6ade18dcf21aaa425bcecdde8999e90b437fb6186a
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -21,6 +21,14 @@ RUN set -eu; \
     fi; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
+
+# Managed MCP requires the packaged Hermes client surface. A published base can
+# carry the expected Hermes version while still having been built without the
+# optional `mcp` dependency group, in which case Hermes silently disables both
+# MCP discovery and Streamable HTTP support. This is a build-time import guard;
+# the live MCP E2E proves authenticated HTTPS execution through OpenShell.
+RUN /opt/hermes/.venv/bin/python -c \
+    'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 
 # Published base images can lag Dockerfile.base while local feature branches
 # still layer this final image on top. Invalid state: the selected base has
@@ -96,9 +104,11 @@ RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
 COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
 COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+COPY src/lib/tool-disclosure.ts /src/lib/tool-disclosure.ts
 COPY src/lib/messaging/ /src/lib/messaging/
 RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
     && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} + \
+    && chmod 444 /src/lib/tool-disclosure.ts \
     && chmod -R a+rX /src/lib/messaging
 
 # Copy blueprint (shared infrastructure)
@@ -118,6 +128,9 @@ COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+COPY agents/hermes/build-mcp-digest.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py
+COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
+COPY src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 # Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
@@ -125,11 +138,12 @@ COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py \
-    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+    && chown root:root /usr/local/bin/nemoclaw-gateway-control /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py /usr/local/lib/nemoclaw/managed-gateway-control.py \
-    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
+    && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py \
+    && chmod 444 /usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then \
         chown -R 0:0 /usr/local/lib/nemoclaw/preloads \
         && find /usr/local/lib/nemoclaw/preloads -type f -exec chmod 444 {} + \
@@ -160,6 +174,21 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
+# Cryptographic integrity gate for the two security-critical Python entrypoints
+# — the wrapper that enforces the runtime env secret boundary and the validator
+# it delegates to. Any content change to either file MUST be accompanied by an
+# updated hash below; otherwise the build fails. This blocks silent supply-
+# chain tampering of the build context (an attacker rewriting the file has to
+# also rewrite the Dockerfile-committed hash, which reviewers gate). Regenerate
+# with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
+ARG NEMOCLAW_HERMES_WRAPPER_SHA256=03e0afbe00e352d0dfcf14b99ea1821f9fd29f87dad49ce19add2ec96d1941cc
+ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=970d7ff03bc409ff1d5ca46bfdbd2a42ac28a32a810ccc147a508301bff38496
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
+    | sha256sum -c - \
+    || { echo "ERROR: validate-hermes-env-secret-boundary.py hash mismatch (update NEMOCLAW_HERMES_VALIDATOR_SHA256)" >&2; exit 1; }
+
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
 # a direct `docker exec ... hermes gateway run` able to start the gateway with
@@ -167,9 +196,20 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # wrapper in its place; the wrapper reuses the same validator and execs the real
 # binary for every non-gateway subcommand. Re-assert --version through the
 # wrapper so a broken relocation fails the build.
-COPY agents/hermes/hermes-wrapper.sh /usr/local/lib/nemoclaw/hermes-wrapper.sh
+#
+# The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
+# build if that absolute path is missing or non-executable so a base-image
+# upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
+COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
+RUN test -x /usr/bin/python3 \
+    || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+# hadolint ignore=DL4006
+RUN printf '%s  %s\n' \
+        "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
+    | sha256sum -c - \
+    || { echo "ERROR: hermes-wrapper.py hash mismatch (update NEMOCLAW_HERMES_WRAPPER_SHA256)" >&2; exit 1; }
 RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
-    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.sh /usr/local/bin/hermes \
+    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.py /usr/local/bin/hermes \
     && chmod 755 /usr/local/bin/hermes.real \
     && /usr/local/bin/hermes --version
 
@@ -182,11 +222,14 @@ ARG NEMOCLAW_PROVIDER_KEY=custom
 ARG NEMOCLAW_UPSTREAM_PROVIDER=custom
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
+ARG NEMOCLAW_TOOL_DISCLOSURE=progressive
 # CHAT_UI_URL is a legacy name shared with the OpenClaw build arg. For
 # Hermes this URL points at the browser dashboard. The OpenAI-compatible
 # API remains exposed separately on port 8642.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_MESSAGING_PLAN_B64=
+ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=tavily
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
@@ -198,8 +241,11 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
+    NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
@@ -438,16 +484,21 @@ RUN set -eu; \
     && chown sandbox:sandbox /sandbox/.hermes/.hermes_history \
     && chmod 660 /sandbox/.hermes/.hermes_history
 
-# Pin config hash at build time for integrity verification at startup.
+# Pin config hash at build time for integrity verification at startup. Invoke
+# the installed runtime guard's `_canonical_mcp_servers_digest` directly so
+# image sealing and runtime verification cannot drift onto different JSON
+# canonicalization contracts.
 RUN mkdir -p /etc/nemoclaw \
     && sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /etc/nemoclaw/hermes.config-hash \
+    && mcp_digest="$(/opt/hermes/.venv/bin/python -I /usr/local/lib/nemoclaw/build-hermes-mcp-digest.py --guard /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py --config /sandbox/.hermes/config.yaml)" \
+    && printf '# nemoclaw-hermes-mcp-state-v1 intended=%s applied=%s\n' "$mcp_digest" "$mcp_digest" \
+    >> /etc/nemoclaw/hermes.config-hash \
     && chown root:root /etc/nemoclaw/hermes.config-hash \
     && chmod 444 /etc/nemoclaw/hermes.config-hash
 
 # Backward-compatible marker for host-side shields logic on older sandboxes.
-RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
-    > /sandbox/.hermes/.config-hash \
+RUN cp /etc/nemoclaw/hermes.config-hash /sandbox/.hermes/.config-hash \
     && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 

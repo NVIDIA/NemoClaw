@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { Session } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
+import { normalizeToolDisclosure, toolDisclosureOrDefault } from "../../../tool-disclosure";
+
 export interface SandboxResumeSignals {
   readonly resume: boolean;
   readonly resumeAgentChanged: boolean;
@@ -10,6 +14,24 @@ export interface SandboxResumeSignals {
   readonly sandboxGpuConfigChanged: boolean;
   readonly messagingChannelConfigChanged: boolean;
   readonly hermesToolGatewayConfigChanged: boolean;
+  readonly toolDisclosureMigrationNeeded: boolean;
+  readonly toolDisclosureChanged: boolean;
+}
+
+export function resolveToolDisclosureResumeSignals(
+  registryEntry: SandboxEntry | null,
+  session: Session | null,
+): Pick<SandboxResumeSignals, "toolDisclosureMigrationNeeded" | "toolDisclosureChanged"> {
+  const recorded = normalizeToolDisclosure(registryEntry?.toolDisclosure);
+  const migrationNeeded = Boolean(registryEntry && registryEntry.toolDisclosure === undefined);
+  return {
+    toolDisclosureMigrationNeeded: migrationNeeded,
+    toolDisclosureChanged: Boolean(
+      registryEntry &&
+        !migrationNeeded &&
+        recorded !== toolDisclosureOrDefault(session?.toolDisclosure),
+    ),
+  };
 }
 
 export type SandboxResumeDecision =
@@ -43,8 +65,31 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
     !signals.hermesToolGatewayConfigChanged &&
+    !signals.toolDisclosureMigrationNeeded &&
+    !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
   );
+}
+
+function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.toolDisclosureMigrationNeeded) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Tool disclosure metadata is missing; recreating sandbox for one-time migration.",
+      // Preserve registry-only fidelity until createSandbox captures it.
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.toolDisclosureChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Tool disclosure configuration changed; recreating sandbox.",
+      // Keep the row until createSandbox captures registry-only fidelity such
+      // as managed MCP bridge state and can route it through transactional rebuild.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
 }
 
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
@@ -85,6 +130,8 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       removeRegistryEntry: true,
     };
   }
+  const toolDisclosureDecision = toolDisclosureResumeDecision(signals);
+  if (toolDisclosureDecision) return toolDisclosureDecision;
   if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   return {
     kind: "recreate",

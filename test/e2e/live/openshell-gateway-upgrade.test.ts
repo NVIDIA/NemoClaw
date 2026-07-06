@@ -30,6 +30,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  currentGatewayUpgradeInstallerArgs,
+  oldGatewayUpgradeInstallerArgs,
+  upgradeGatewayCleanupScript,
+} from "./openshell-gateway-upgrade-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
@@ -43,7 +48,7 @@ const STATE_DIR = path.join(
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const OLD_NEMOCLAW_REF = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.36";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.71";
+const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.72";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -321,15 +326,16 @@ async function waitForSurvivorAgentReady(host: HostCliClient): Promise<ShellProb
 async function runInstallerPayload(
   host: HostCliClient,
   label: string,
-  installer: string,
+  installerArgs: readonly string[],
   logFile: string,
   env: NodeJS.ProcessEnv,
   redactionValues: string[] = [],
 ): Promise<ShellProbeResult> {
+  const quotedInstallerArgs = installerArgs.map(shellQuote).join(" ");
   const result = await bash(
     host,
     `rm -f ${shellQuote(logFile)}
-bash ${shellQuote(installer)} --non-interactive --yes-i-accept-third-party-software >${shellQuote(logFile)} 2>&1`,
+bash ${quotedInstallerArgs} >${shellQuote(logFile)} 2>&1`,
     {
       artifactName: `${label.replace(/[^a-z0-9_.-]+/gi, "-")}-installer`,
       env,
@@ -343,6 +349,10 @@ bash ${shellQuote(installer)} --non-interactive --yes-i-accept-third-party-softw
   });
   expect(result.exitCode, `${label} NemoClaw installer failed:\n${resultText(tail)}`).toBe(0);
   return result;
+}
+
+async function removeUpgradeGateway(host: HostCliClient, artifactName: string): Promise<void> {
+  await bash(host, upgradeGatewayCleanupScript(PID_FILE), { artifactName, timeoutMs: 120_000 });
 }
 
 async function installOldNemoclawAndClaw(
@@ -385,10 +395,13 @@ chmod 755 ${shellQuote(oldInstaller)}`,
     CHAT_UI_URL: "",
   });
 
+  // A transient gateway import failure leaves the old installer session in a
+  // failed state. Keep Vitest retries independent without applying --fresh to
+  // the later current-version upgrade, which must preserve the survivor.
   await runInstallerPayload(
     host,
     `old-${OLD_NEMOCLAW_REF}`,
-    oldInstaller,
+    oldGatewayUpgradeInstallerArgs(oldInstaller),
     oldInstallLog,
     installEnv,
   );
@@ -526,7 +539,7 @@ async function installCurrentNemoclawUpgrade(
   await runInstallerPayload(
     host,
     `current-${resolvedRef.slice(0, 12)}`,
-    path.join(REPO_ROOT, "scripts", "install.sh"),
+    currentGatewayUpgradeInstallerArgs(path.join(REPO_ROOT, "scripts", "install.sh")),
     currentInstallLog,
     currentEnv,
     redactionValues,
@@ -669,6 +682,9 @@ runLinuxOpenShellGatewayUpgrade(
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 
+    cleanup.add("remove openshell gateway upgrade gateway", async () => {
+      await removeUpgradeGateway(host, "cleanup-gateway");
+    });
     cleanup.add("remove openshell gateway upgrade survivor sandbox", async () => {
       await bash(
         host,
@@ -676,14 +692,11 @@ runLinuxOpenShellGatewayUpgrade(
         { artifactName: "cleanup-survivor-sandbox", timeoutMs: 120_000 },
       );
     });
-    cleanup.add("remove openshell gateway upgrade gateway", async () => {
-      await bash(
-        host,
-        `command -v openshell >/dev/null 2>&1 && openshell gateway remove nemoclaw >/dev/null 2>&1 || true
-rm -f ${shellQuote(PID_FILE)}`,
-        { artifactName: "cleanup-gateway", timeoutMs: 120_000 },
-      );
-    });
+
+    // Vitest retries execute in the same runner process. Tear down any failed
+    // legacy gateway before each attempt so partial containerd layers from a
+    // transient image-import failure cannot consume the next attempt's disk.
+    await removeUpgradeGateway(host, "pre-cleanup-gateway");
 
     const fake = await startFakeOpenAiCompatibleServer({
       apiKey: "dummy",
@@ -758,7 +771,17 @@ runOpenShellGatewayUpgrade(
       fs.mkdirSync(path.dirname(signLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
       writeFakeCurrentOpenshell(fakeBin);
-      writeExecutable(path.join(fakeBin, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openshell-gateway ${CURRENT_OPENSHELL_VERSION}\n'
+  exit 0
+fi
+# allow_all_known_mcp_methods
+exit 0
+`,
+      );
       writeExecutable(path.join(fakeBin, "openshell-driver-vm"), "#!/usr/bin/env bash\nexit 0\n");
       writeExecutable(
         path.join(fakeBin, "codesign"),

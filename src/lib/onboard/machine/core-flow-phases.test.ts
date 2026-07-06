@@ -79,11 +79,12 @@ function createPhases(
     env: {},
     constants: {
       hermesProviderName: "hermes",
-      hermesApiKeyAuthMethod: "api-key",
+      hermesApiKeyAuthMethod: "api_key",
       hermesApiKeyCredentialEnv: "HERMES_API_KEY",
     },
     providerDeps: {
-      normalizeHermesAuthMethod: (value) => value ?? null,
+      normalizeHermesAuthMethod: (value) =>
+        value === "oauth" || value === "api_key" ? value : null,
       setupNim: vi.fn(async () => ({
         model: "nvidia/test",
         provider: "nim",
@@ -150,12 +151,13 @@ function createPhases(
       getSandboxReuseState: () => "missing",
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
+      getSandboxRegistryEntry: () => null,
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
         left.length === right.length && left.every((item) => right.includes(item)),
       removeSandboxFromRegistry: vi.fn(),
       repairRecordedSandbox: vi.fn(),
-      ensureValidatedBraveSearchCredential: vi.fn(async () => null),
+      ensureValidatedWebSearchCredential: vi.fn(async () => null),
       isBackToSelection: () => false,
       configureWebSearch: vi.fn(async () => null),
       startRecordedStep: vi.fn(async () => undefined),
@@ -190,7 +192,10 @@ function createPhases(
 
 describe("core onboard flow phases", () => {
   it("carries provider selection output into sandbox setup", async () => {
-    const [providerPhase, sandboxPhase] = createPhases();
+    const updateSandboxRegistry = vi.fn();
+    const [providerPhase, sandboxPhase] = createPhases({
+      sandboxDeps: { updateSandboxRegistry },
+    });
 
     const providerResult = await providerPhase.run(context());
 
@@ -224,6 +229,13 @@ describe("core onboard flow phases", () => {
       selectedMessagingChannels: ["slack", "discord"],
       webSearchSupported: true,
     });
+    expect(updateSandboxRegistry).toHaveBeenCalledWith(
+      "created-sandbox",
+      expect.objectContaining({
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    );
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {

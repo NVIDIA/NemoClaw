@@ -35,7 +35,8 @@ function hashInputs(fixture: ReconciliationFixture): string {
     timeout: 5000,
   });
   expect(result.status, result.stderr).toBe(0);
-  return result.stdout;
+  const mcpDigest = createHash("sha256").update("{}").digest("hex");
+  return `${result.stdout}# nemoclaw-hermes-mcp-state-v1 intended=${mcpDigest} applied=${mcpDigest}\n`;
 }
 
 function createFixture(hermesMode = 0o3770): ReconciliationFixture {
@@ -384,6 +385,32 @@ print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_m
       fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"4".repeat(64)}\n`);
       refreshCompatOnly(fixture);
       const malformed = mutate(fs.readFileSync(fixture.hashPath, "utf-8"));
+      fs.writeFileSync(fixture.hashPath, malformed);
+      try {
+        const result = runManagedNonrootWrite(
+          fixture,
+          expectedConfigDigest(fixture),
+          "model:\n  default: must-not-apply\n",
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("malformed Hermes config hash");
+        assertCleanRefusal(fixture, malformed);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    it.each([
+      ["config", "configPath"],
+      ["environment", "envPath"],
+    ] as const)("binds non-root strict hash parsing to the live %s path (#2426)", (_label, pathKey) => {
+      const fixture = createFixture();
+      fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"4".repeat(64)}\n`);
+      refreshCompatOnly(fixture);
+      const livePath = fixture[pathKey];
+      const malformed = fs
+        .readFileSync(fixture.hashPath, "utf-8")
+        .replace(`  ${livePath}\n`, `  ${livePath}.stale\n`);
       fs.writeFileSync(fixture.hashPath, malformed);
       try {
         const result = runManagedNonrootWrite(

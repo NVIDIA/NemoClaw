@@ -24,10 +24,16 @@ import * as shields from "../../shields";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import { readTimerMarker } from "../../shields/timer-control";
 import { isSandboxReady } from "../../state/gateway";
+import { withSandboxMutationLock } from "../../state/mcp-lifecycle-lock";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
+import {
+  buildSandboxExecMarkedCommand,
+  createSandboxExecMarker,
+  extractSandboxExecCommandStdoutFromStreams,
+} from "./sandbox-exec-output";
 import {
   probeGatewayRunning,
   selectSandboxGatewayIfRegistered,
@@ -69,7 +75,7 @@ processes="$(ps -eo pid=,args= 2>/dev/null)" || {
   emit_dcode_probe_state no-runtime
 }
 printf '%s\n' "$processes" | awk '
-/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
+/^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?python[0-9.]*[[:space:]]+(-I[[:space:]]+)?-m[[:space:]]+deepagents[_]code([[:space:]]|$)/ {
   found = 1
 }
 /^[[:space:]]*[0-9]+[[:space:]]+([^[:space:]]*\/)?[d]code([[:space:]]|$)/ {
@@ -402,10 +408,11 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
 
 function parseDcodeProbeState(output: string): DcodeProbeState | null {
   const escapedPrefix = DCODE_PROBE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = output.match(
-    new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "m"),
-  );
-  return (match?.[1] as DcodeProbeState | undefined) ?? null;
+  const matches = [
+    ...output.matchAll(new RegExp(`^${escapedPrefix}(active|idle|unverifiable|no-runtime)$`, "gm")),
+  ];
+  if (matches.length !== 1) return null;
+  return (matches[0][1] as DcodeProbeState | undefined) ?? null;
 }
 
 function shouldCheckDcodeActivity(sandboxName: string): boolean {
@@ -425,24 +432,39 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
   // timeouts, and any detected-but-unverifiable runtime. Remove this workaround
   // when dcode exposes a wrapper-owned idle/active lock or equivalent snapshot
   // quiescence signal and the backup path checks that source directly.
+  const execMarker = createSandboxExecMarker();
   const probe = captureOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", DCODE_BUSY_PROBE_SCRIPT],
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "sh",
+      "-c",
+      buildSandboxExecMarkedCommand(DCODE_BUSY_PROBE_SCRIPT, execMarker),
+    ],
     {
       ignoreError: true,
-      includeStderr: true,
+      includeStreams: true,
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     },
   );
-  const probeState = parseDcodeProbeState(probe.output || "");
-  const probeSucceeded = probe.status === 0 && !probe.error && !probe.signal;
+  const probeCompleted = probe.status === 0 && !probe.error && !probe.signal;
+  const commandStdout = probeCompleted
+    ? extractSandboxExecCommandStdoutFromStreams(
+        { stdout: probe.stdout, stderr: probe.stderr },
+        execMarker,
+      )
+    : null;
+  const probeState = commandStdout === null ? null : parseDcodeProbeState(commandStdout);
   if (
-    probeSucceeded &&
-    (probeState === DCODE_PROBE_STATE.idleDcodeRuntime ||
-      probeState === DCODE_PROBE_STATE.noDcodeRuntime)
+    probeState === DCODE_PROBE_STATE.idleDcodeRuntime ||
+    probeState === DCODE_PROBE_STATE.noDcodeRuntime
   ) {
     return true;
   }
-  if (probeSucceeded && probeState === DCODE_PROBE_STATE.active) {
+  if (probeState === DCODE_PROBE_STATE.active) {
     console.error(
       "  Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
@@ -641,6 +663,16 @@ async function runSnapshotRestore(
   const target = request.to ?? sandboxName;
   const targetSandbox =
     target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
+  return withSandboxMutationLock(targetSandbox, () =>
+    runSnapshotRestoreUnlocked(sandboxName, request, targetSandbox),
+  );
+}
+
+async function runSnapshotRestoreUnlocked(
+  sandboxName: string,
+  request: Extract<SnapshotRequest, { kind: "restore" }>,
+  targetSandbox: string,
+): Promise<void> {
   const sourceLiveNames = requireLiveSandboxesOnSandboxGateway(
     sandboxName,
     "  Failed to query live sandbox state from OpenShell.",

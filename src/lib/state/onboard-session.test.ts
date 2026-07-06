@@ -152,6 +152,7 @@ describe("onboard session", () => {
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.toolDisclosure).toBe("progressive");
     expect(saved.machine).toMatchObject({
       version: 1,
       state: "init",
@@ -877,11 +878,45 @@ describe("onboard session", () => {
     });
 
     let loaded = requireLoadedSession(session.loadSession());
-    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true });
+    expect(loaded.webSearchConfig).toEqual({ fetchEnabled: true, provider: "brave" });
 
     session.completeSession({ webSearchConfig: null });
     loaded = requireLoadedSession(session.loadSession());
     expect(loaded.webSearchConfig).toBeNull();
+  });
+
+  it("round-trips an explicit Tavily web search provider", () => {
+    session.saveSession(
+      session.createSession({
+        webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      }),
+    );
+
+    expect(requireLoadedSession(session.loadSession()).webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "tavily",
+    });
+  });
+
+  it("migrates provider-less enabled web search state to Brave when loading", () => {
+    session.saveSession(session.createSession());
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    persisted.webSearchConfig = { fetchEnabled: true };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(persisted));
+
+    expect(requireLoadedSession(session.loadSession()).webSearchConfig).toEqual({
+      fetchEnabled: true,
+      provider: "brave",
+    });
+  });
+
+  it("fails closed for an invalid persisted web search provider", () => {
+    session.saveSession(session.createSession());
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    persisted.webSearchConfig = { fetchEnabled: true, provider: "unexpected" };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(persisted));
+
+    expect(requireLoadedSession(session.loadSession()).webSearchConfig).toBeNull();
   });
 
   it("does not clear existing metadata when updates omit whitelisted metadata fields", () => {

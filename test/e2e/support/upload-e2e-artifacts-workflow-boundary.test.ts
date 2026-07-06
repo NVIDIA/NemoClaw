@@ -146,6 +146,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
 
     uploadStep(workflow.jobs["hermes-slack"]).with!.path = "e2e-artifacts/live/hermes-slack/";
     uploadStep(workflow.jobs["gpu-e2e"]).if = "success()";
+    uploadStep(workflow.jobs["mcp-bridge"]).if = "always()";
     uploadStep(workflow.jobs["docs-validation"]).env = { UNEXPECTED: "1" };
     const orderedJob = workflow.jobs["network-policy"];
     const orderedUpload = uploadStep(orderedJob);
@@ -159,6 +160,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
         "credential-migration default upload caller must declare a valid E2E_TARGET_ID",
         "hermes-slack upload-e2e-artifacts must preserve its explicit name/path contract",
         "gpu-e2e upload-e2e-artifacts invocation must run with always()",
+        "mcp-bridge upload-e2e-artifacts invocation must remain gated by its reviewed pre-upload checks",
         "docs-validation upload-e2e-artifacts invocation must not override its contract",
         "network-policy upload-e2e-artifacts invocation must follow artifact producers and precede only Docker auth cleanup",
       ]),
@@ -176,7 +178,7 @@ describe("upload-e2e-artifacts workflow boundary", () => {
     expect(validateUploadE2eArtifactsInvocations(workflow)).toEqual(
       expect.arrayContaining([
         "upload-e2e-artifacts must cover exactly 73 live and E2E_JOB execution jobs",
-        "upload-e2e-artifacts must keep exactly 64 default callers",
+        "upload-e2e-artifacts must keep exactly 62 default callers",
       ]),
     );
   });

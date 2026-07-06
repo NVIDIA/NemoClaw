@@ -4,9 +4,25 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import OnboardCliCommand from "../../src/commands/onboard";
+import SetupCliCommand from "../../src/commands/setup";
+import SetupSparkCliCommand from "../../src/commands/setup-spark";
+import { runOnboardAction } from "../../src/lib/actions/global";
 
 import { PARSER_EXIT_CODE, run, runWithEnv } from "./helpers";
+
+vi.mock("../../src/lib/agent/defs", () => ({
+  listAgents: vi.fn(() => ["openclaw", "hermes", "langchain-deepagents-code"]),
+}));
+
+vi.mock("../../src/lib/actions/global", () => ({
+  runOnboardAction: vi.fn().mockResolvedValue(undefined),
+}));
+
+const rootDir = process.cwd();
+let previousExitCode: typeof process.exitCode;
 
 function writeOpenShellVersionStub(localBin: string): void {
   fs.writeFileSync(
@@ -65,7 +81,19 @@ function writeIncompleteResumeSession(nemoclawDir: string): void {
 }
 
 describe("CLI onboard compatibility", () => {
+  beforeEach(() => {
+    previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    process.exitCode = previousExitCode;
+  });
+
   it("onboard --help exits 0 and shows usage", () => {
+    // Keep one real executable help contract so command discovery, oclif rendering,
+    // and the CommonJS launcher remain covered together.
     const r = run("onboard --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain("USAGE");
@@ -73,58 +101,94 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).toContain("--from <Dockerfile>");
     expect(r.out).toContain("--yes");
     expect(r.out).toContain("--sandbox-gpu-device=<value>");
+    expect(r.out).toContain(
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
+    );
+    expect(r.out).toContain("aliases: nemohermes → hermes;");
+    expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
+    expect(r.out).toContain("langchain-deepagents-code)");
   });
 
   it("unknown onboard option exits 1", () => {
+    // Keep one real parser-exit contract to pin launcher argv and exit-code propagation.
     const r = run("onboard --non-interactiv");
     expect(r.code).toBe(PARSER_EXIT_CODE);
     expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
-  it("accepts onboard --resume in CLI parsing", () => {
-    const r = run("onboard --resume --non-interactiv");
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
-  });
-
-  it("accepts the third-party software flag in onboard CLI parsing", () => {
-    const r = run("onboard --yes-i-accept-third-party-software --non-interactiv");
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
-  });
-
-  it("accepts install automation --yes in onboard CLI parsing", () => {
-    const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
-    expect(r.code).toBe(1);
-    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
-    expect(r.out).not.toContain("Nonexistent flag: --yes");
-  });
-
-  it("lets oclif reject conflicting sandbox GPU flags", () => {
-    const r = run(
-      "onboard --sandbox-gpu --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+  it("accepts onboard --resume in CLI parsing", async () => {
+    await expect(OnboardCliCommand.run(["--resume", "--non-interactiv"], rootDir)).rejects.toThrow(
+      "Nonexistent flag: --non-interactiv",
     );
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("--no-sandbox-gpu=true cannot also be provided");
-    expect(r.out).toContain("--sandbox-gpu");
+    expect(runOnboardAction).not.toHaveBeenCalled();
   });
 
-  it("lets oclif enforce the sandbox GPU device dependency", () => {
-    const r = run(
-      "onboard --sandbox-gpu-device nvidia.com/gpu=0 --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
+  it("accepts the third-party software flag in onboard CLI parsing", async () => {
+    await expect(
+      OnboardCliCommand.run(["--yes-i-accept-third-party-software", "--non-interactiv"], rootDir),
+    ).rejects.toThrow("Nonexistent flag: --non-interactiv");
+    expect(runOnboardAction).not.toHaveBeenCalled();
+  });
+
+  it("accepts install automation --yes in onboard CLI parsing", async () => {
+    await OnboardCliCommand.run(
+      ["--resume", "--non-interactive", "--yes-i-accept-third-party-software", "--yes"],
+      rootDir,
     );
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("must be provided when using --sandbox-gpu-device");
-    expect(r.out).toContain("--sandbox-gpu");
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "non-interactive": true,
+        resume: true,
+        "yes-i-accept-third-party-software": true,
+        yes: true,
+      }),
+    );
   });
 
-  it("lets oclif reject privileged control UI ports", () => {
-    const r = run("onboard --control-ui-port 80");
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("Expected an integer greater than or equal to 1024 but received: 80");
+  it("lets oclif reject conflicting sandbox GPU flags", async () => {
+    await expect(
+      OnboardCliCommand.run(
+        [
+          "--sandbox-gpu",
+          "--no-sandbox-gpu",
+          "--non-interactive",
+          "--yes-i-accept-third-party-software",
+          "--yes",
+        ],
+        rootDir,
+      ),
+    ).rejects.toThrow(/--no-sandbox-gpu=true cannot also be provided.*--sandbox-gpu/s);
+    expect(runOnboardAction).not.toHaveBeenCalled();
+  });
+
+  it("lets oclif enforce the sandbox GPU device dependency", async () => {
+    await expect(
+      OnboardCliCommand.run(
+        [
+          "--sandbox-gpu-device",
+          "nvidia.com/gpu=0",
+          "--no-sandbox-gpu",
+          "--non-interactive",
+          "--yes-i-accept-third-party-software",
+          "--yes",
+        ],
+        rootDir,
+      ),
+    ).rejects.toThrow(/must be provided when using --sandbox-gpu-device: --sandbox-gpu/);
+    expect(runOnboardAction).not.toHaveBeenCalled();
+  });
+
+  it("lets oclif reject privileged control UI ports", async () => {
+    await expect(OnboardCliCommand.run(["--control-ui-port", "80"], rootDir)).rejects.toThrow(
+      "Expected an integer greater than or equal to 1024 but received: 80",
+    );
+    expect(runOnboardAction).not.toHaveBeenCalled();
   });
 
   it("setup --help exits 0 and shows native deprecated-alias usage", () => {
+    // Keep one real alias-help rendering contract; the other aliases can use their
+    // command metadata and typed action seam directly.
     const r = run("setup --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain("Deprecated: 'nemoclaw setup' is now 'nemoclaw onboard'");
@@ -132,20 +196,31 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).not.toContain("Unknown onboard option");
   });
 
-  it("setup rejects unknown options through oclif", () => {
-    const r = run("setup --non-interactiv");
-    expect(r.code).toBe(PARSER_EXIT_CODE);
-    expect(r.out).toContain("Nonexistent flag: --non-interactiv");
+  it("setup rejects unknown options through oclif", async () => {
+    await expect(SetupCliCommand.run(["--non-interactiv"], rootDir)).rejects.toThrow(
+      "Nonexistent flag: --non-interactiv",
+    );
+    expect(runOnboardAction).not.toHaveBeenCalled();
   });
 
-  it("setup forwards --resume into the shared onboard action", () => {
-    const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software --yes");
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Deprecated: 'nemoclaw setup' is now 'nemoclaw onboard'");
-    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+  it("setup forwards --resume into the shared onboard action", async () => {
+    await SetupCliCommand.run(
+      ["--resume", "--non-interactive", "--yes-i-accept-third-party-software", "--yes"],
+      rootDir,
+    );
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "non-interactive": true,
+        resume: true,
+        "yes-i-accept-third-party-software": true,
+        yes: true,
+      }),
+    );
   });
 
   it("resume rejection clarifies --resume semantics and points to onboard (#2281)", () => {
+    // Keep the real executable/runtime exit contract for the user-facing diagnostic.
     const r = run("onboard --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
@@ -156,31 +231,9 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
   });
 
-  it("refuses non-interactive --resume when the sandbox step never completed and no name is provided (#2753)", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-no-name-"));
-    const localBin = path.join(home, "bin");
-    const nemoclawDir = path.join(home, ".nemoclaw");
-    fs.mkdirSync(localBin, { recursive: true });
-    fs.mkdirSync(nemoclawDir, { recursive: true });
-    // Fake openshell so preflight passes and we reach the resume sandbox-name
-    // init where the new guard lives.
-    writeOpenShellVersionStub(localBin);
-    // Simulates a pre-fix on-disk session that recorded only provider/model
-    // (with #2753's onboard fix, sandboxName is no longer written here either).
-    writeIncompleteResumeSession(nemoclawDir);
-
-    const r = runWithEnv("onboard --resume --non-interactive --yes-i-accept-third-party-software", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-      NEMOCLAW_SANDBOX_NAME: "",
-    });
-
-    expect(r.code).toBe(1);
-    expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
-    expect(r.out.includes("--name <sandbox>")).toBeTruthy();
-  });
-
   it("does not let whitespace-only NEMOCLAW_SANDBOX_NAME satisfy the resume guard (#2753)", () => {
+    // Preserve one full environment-ingest boundary: HOME/session discovery,
+    // whitespace normalization, OpenShell executable lookup, and final exit.
     // The env-var ingest pipeline trims and rejects whitespace-only values
     // before populating requestedSandboxName, so the guard sees no recovered
     // name and fires correctly.
@@ -210,13 +263,20 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).not.toContain("Unknown onboard option");
   });
 
-  it("setup-spark is a deprecated compatibility alias for onboard", () => {
-    const r = run(
-      "setup-spark --resume --non-interactive --yes-i-accept-third-party-software --yes",
+  it("setup-spark is a deprecated compatibility alias for onboard", async () => {
+    await SetupSparkCliCommand.run(
+      ["--resume", "--non-interactive", "--yes-i-accept-third-party-software", "--yes"],
+      rootDir,
     );
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Deprecated: 'nemoclaw setup-spark' is now 'nemoclaw onboard'");
-    expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
+
+    expect(runOnboardAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        "non-interactive": true,
+        resume: true,
+        "yes-i-accept-third-party-software": true,
+        yes: true,
+      }),
+    );
   });
 
   it("deploy --help exits 0 and shows deprecated usage", () => {

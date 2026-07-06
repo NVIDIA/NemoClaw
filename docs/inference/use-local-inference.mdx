@@ -191,6 +191,10 @@ The Ollama runner validates the choice itself.
 In interactive onboarding, registry-known installed tags that do not fit current GPU memory are filtered out of the installed-model menu.
 If none of the installed registry-known tags fit, NemoClaw shows the starter-model choices and warns when even the smallest bootstrap tag may not fit.
 After a selected model fails validation, NemoClaw excludes that tag from the next installed-model menu so pressing Enter cannot select the same failing model repeatedly.
+On Windows on Arm N1X systems with a Snapdragon X processor, NemoClaw treats the integrated GPU as compute-constrained even when its shared-memory total appears large enough for a bigger model.
+Automatic Ollama bootstrap selection omits `qwen3.6:35b` and `nemotron-3-nano:30b` and selects `qwen3.5:9b` instead.
+This is a model-selection safeguard only.
+It does not make 30B or 35B models usable on N1X, add a general refusal for an explicitly selected large model, or resolve the OpenClaw `1006` disconnect, embedded fallback, and model-timeout behavior tracked in [issue #3707](https://github.com/NVIDIA/NemoClaw/issues/3707).
 When Ollama reports a loaded-model context length below `16384` and `NEMOCLAW_CONTEXT_WINDOW` is unset, NemoClaw raises the baked `contextWindow` to `16384` so the agent prompt and tool definitions fit better than the stock daemon default.
 If the initial Ollama validation probe times out during a cold load, NemoClaw retries once with a 300-second probe budget.
 This applies beyond DGX Spark, including tight-VRAM dGPU hosts where warm-up can spill from GPU to CPU.

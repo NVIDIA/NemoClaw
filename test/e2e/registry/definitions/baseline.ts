@@ -81,7 +81,10 @@ const canonicalTargetInputs: CanonicalTargetInput[] = [
   {
     id: "ubuntu-repo-cloud-langchain-deepagents-code",
     manifestName: "langchain-deepagents-code-nvidia",
-    environment: ubuntuRepoDocker("cloud-langchain-deepagents-code"),
+    environment: ubuntuRepoDockerLifecycle(
+      "cloud-langchain-deepagents-code",
+      "dcode-rebuild-invalid-credential",
+    ),
     expectedStateId: "cloud-deepagents-code-ready",
     suiteIds: ["smoke", "inference", "terminal-agent", "deepagents-code-policy"],
     description: "Ubuntu repo checkout with Docker and LangChain Deep Agents Code onboarding.",
