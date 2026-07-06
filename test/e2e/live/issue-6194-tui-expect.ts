@@ -1,28 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
-
 export const ISSUE6194_TUI_TIMEOUT_SEC = 240;
-
-export function readOptionalIssue6194Capture(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (error) {
-    const fileError = error as NodeJS.ErrnoException;
-    if (fileError.code !== "ENOENT") {
-      throw error;
-    }
-    return "";
-  }
-}
+export const ISSUE6194_TUI_SESSION = "test-session";
 
 export function buildIssue6194TuiExpectScript(): string {
   return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
 log_file -a $capture
-spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui}
+	spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui --session ${ISSUE6194_TUI_SESSION}}
 expect {
   -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_initial" }
   timeout {

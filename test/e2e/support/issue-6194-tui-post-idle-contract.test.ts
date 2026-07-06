@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildIssue6194TuiExpectScript,
+  ISSUE6194_TUI_SESSION,
   ISSUE6194_TUI_TIMEOUT_SEC,
 } from "../live/issue-6194-tui-expect.ts";
 
@@ -13,8 +14,9 @@ describe("live TUI post-idle coverage contract (#6194)", () => {
     const script = buildIssue6194TuiExpectScript();
 
     expect(ISSUE6194_TUI_TIMEOUT_SEC).toBe(240);
+    expect(ISSUE6194_TUI_SESSION).toBe("test-session");
     expect(script).toContain("spawn openshell sandbox exec --name $sandbox --tty");
-    expect(script).toContain("openclaw tui");
+    expect(script).toContain("openclaw tui --session test-session");
     expect(script).toContain("ISSUE6194_MARK connected_idle_initial");
     expect(script).toContain("ISSUE6194_MARK chat_reply");
     expect(script).toContain("ISSUE6194_MARK connected_idle_after_chat");

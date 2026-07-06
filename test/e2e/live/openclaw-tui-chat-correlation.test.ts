@@ -26,7 +26,6 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 import {
   buildIssue6194TuiExpectScript,
   ISSUE6194_TUI_TIMEOUT_SEC,
-  readOptionalIssue6194Capture,
 } from "./issue-6194-tui-expect.ts";
 
 // Reuses the standard ubuntu-repo-docker environment with the
@@ -606,7 +605,7 @@ test(
       redactionValues: [apiKey],
       timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
     });
-    const rawCapture = readOptionalIssue6194Capture(captureFile);
+    const rawCapture = readFileSync(captureFile, "utf8");
     const redactedCapture = secrets.redact(rawCapture, [apiKey]);
     writeFileSync(captureFile, redactedCapture, "utf8");
     const plainCapture = stripTerminalControl(redactedCapture);

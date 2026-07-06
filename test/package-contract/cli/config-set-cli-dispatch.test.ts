@@ -20,7 +20,7 @@ function deferred<T>() {
 }
 
 describe("config set CLI dispatch", () => {
-  it("awaits configSet before completing the dispatcher", async () => {
+  it("awaits config set command dispatch before completing the dispatcher", async () => {
     const cliPath = require.resolve("../../../dist/nemoclaw.js");
     const publicDispatchPath = require.resolve("../../../dist/lib/cli/public-dispatch.js");
     const oclifRunnerPath = require.resolve("../../../dist/lib/cli/oclif-runner.js");
@@ -36,11 +36,9 @@ describe("config set CLI dispatch", () => {
     const priorRunner = require.cache[runnerPath];
     const priorDisableAutoDispatch = process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH;
 
-    const configSetDeferred = deferred<void>();
+    const commandDispatchDeferred = deferred<void>();
     const validateName = vi.fn();
-    const configSet = vi.fn((_sandboxName: string, _opts: Record<string, unknown>) => {
-      return configSetDeferred.promise;
-    });
+    const configSet = vi.fn();
     const runOclifArgv = vi.fn(async () => {
       throw new Error("config set should dispatch by command id");
     });
@@ -54,12 +52,7 @@ describe("config set CLI dispatch", () => {
         "HTTP://93.184.216.34/v1",
         "--config-accept-new-path",
       ]);
-      await configSet("test-sandbox", {
-        key: "inference.endpoints",
-        value: "HTTP://93.184.216.34/v1",
-        restart: false,
-        acceptNewPath: true,
-      });
+      return commandDispatchDeferred.promise;
     });
 
     process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
@@ -141,19 +134,15 @@ describe("config set CLI dispatch", () => {
         settled = true;
       });
 
-      await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1), { timeout: 4_000 });
+      await vi.waitFor(() => expect(runOclifCommandById).toHaveBeenCalledTimes(1), {
+        timeout: 4_000,
+      });
       expect(runOclifArgv).not.toHaveBeenCalled();
       expect(runOclifCommandById).toHaveBeenCalledTimes(1);
-      expect(configSet).toHaveBeenCalledTimes(1);
-      expect(configSet).toHaveBeenCalledWith("test-sandbox", {
-        key: "inference.endpoints",
-        value: "HTTP://93.184.216.34/v1",
-        restart: false,
-        acceptNewPath: true,
-      });
+      expect(configSet).not.toHaveBeenCalled();
       expect(settled).toBe(false);
 
-      configSetDeferred.resolve();
+      commandDispatchDeferred.resolve();
       await expect(dispatchPromise).resolves.toBeUndefined();
       expect(settled).toBe(true);
     } finally {
