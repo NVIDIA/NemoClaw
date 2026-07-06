@@ -2554,6 +2554,10 @@ def initial_cli_request_is_allowlisted(request_id):
             return False
         if str(request.get('publicKey', '')).strip() != public_key:
             return False
+        # OpenClaw CLI initial pairing records use clientId/clientMode `cli`
+        # in the observed DGX Spark/Station repros and in the paired-state
+        # fixtures for this PR. The broader policy still handles normal
+        # openclaw-cli scope upgrades through the main pending-list branch.
         if str(request.get('clientId', '')).strip() != 'cli':
             return False
         if str(request.get('clientMode', '')).strip() != 'cli':
@@ -2594,22 +2598,91 @@ def initial_cli_request_is_allowlisted(request_id):
 
 
 def is_pairing_required_list_failure(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list failure detection):
+    # Invalid state: initial `openclaw devices list --json` returns the gateway
+    # pairing-required denial instead of the pending request list.
+    # Source boundary: the compatibility trigger only recognizes the stable
+    # gateway denial text and still requires local pending/identity validation
+    # before approval is delegated to OpenClaw.
+    # Source-fix constraint: OpenClaw should expose a structured bootstrap/list
+    # API for first-run CLI pairing.
+    # Regression test: the non-pairing error fixture must not call approve.
+    # Removal condition: delete with initial_cli_request_is_allowlisted once the
+    # pinned OpenClaw release exposes that bootstrap/list API.
     message = f'{out}\n{err}'.lower()
     return 'pairing required' in message and 'device is not approved yet' in message
 
 
+REQUEST_ID_RE = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+
+
+def _structured_request_ids(text):
+    try:
+        data = json.loads(text)
+    except Exception:
+        return []
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                if key in {'requestId', 'request_id'} and isinstance(item, str):
+                    found.append(item.strip())
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(data)
+    return found
+
+
 def pairing_required_request_id(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (NemoClaw#6113 gated-list requestId extraction):
+    # Invalid state: the requestId needed for canonical `devices approve` is
+    # sometimes only present in the list denial payload.
+    # Source boundary: parse one bounded requestId from structured JSON first,
+    # then from the reviewed error-text forms; ambiguous, overlong, or malformed
+    # output fails closed and never reaches approve.
+    # Source-fix constraint: OpenClaw should return requestId in a stable
+    # structured error field for this first-run bootstrap path.
+    # Regression test: malformed, overlong, whitespace, and multiple requestIds
+    # must not call approve.
+    # Removal condition: delete with initial_cli_request_is_allowlisted once the
+    # pinned OpenClaw release exposes a bootstrap/list API.
     if not is_pairing_required_list_failure(out, err):
         return None
     message = f'{out}\n{err}'
-    match = re.search(r'\brequestId\b["\']?\s*[:=]\s*["\']?([A-Za-z0-9._:-]+)', message)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r'\(requestId:\s*([^)]+)\)', message)
-    return match.group(1).strip() if match else None
+    candidates = []
+    for text in (out, err):
+        candidates.extend(_structured_request_ids(text))
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(r'\brequestId\b["\']?\s*[:=]\s*["\']?([A-Za-z0-9._:-]{1,128})', message)
+    )
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(r'\(requestId:\s*([A-Za-z0-9._:-]{1,128})\)', message)
+    )
+    valid = [candidate for candidate in candidates if REQUEST_ID_RE.fullmatch(candidate)]
+    if not valid or len(set(valid)) != 1 or len(valid) != len(candidates):
+        return None
+    return valid[0]
 
 
 def brief_child_error(out, err):
+    # SOURCE_OF_TRUTH_REVIEW (auto-pair child error summary):
+    # Invalid state: child openclaw failures often include noisy locale/setup
+    # output before the actual error.
+    # Source boundary: logs only the last non-empty child line, capped to 400
+    # characters; decisions never depend on this summary.
+    # Source-fix constraint: OpenClaw should expose structured error codes so
+    # callers do not need stdout/stderr message summaries.
+    # Regression test: approve-failure fixtures assert the actionable child
+    # error remains visible.
+    # Removal condition: retire when OpenClaw CLI returns structured errors for
+    # the watched devices list/approve calls.
     lines = [line.strip() for line in f'{err}\n{out}'.splitlines() if line.strip()]
     return (lines[-1] if lines else '')[:400]
 
@@ -2686,7 +2759,6 @@ while time.time() < DEADLINE:
                 continue
             failure = brief_child_error(aout, aerr)
             if arc != 124 and failure:
-                HANDLED.add(initial_request_id)
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
