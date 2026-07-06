@@ -1629,7 +1629,7 @@ exit 2
   }, 40_000);
 });
 
-describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
+describe("nemoclaw-start auto-pair slow-mode keepalive (#4263, #6194)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   function buildAutoPairScript(): string {
@@ -1639,7 +1639,7 @@ describe("nemoclaw-start auto-pair slow-mode keepalive (#4263)", () => {
   // Shared late-CLI poll timeline:
   //   1-2:  first-time browser pairing request pending.
   //   3-6:  browser paired, nothing pending (watcher converges to slow mode).
-  //   7-10: late CLI scope upgrade arrives.
+  //   7-10: late CLI/TUI scope upgrade arrives after the TUI has reached "connected idle".
   //   11+:  cli paired alongside browser.
   function setupLateCliFixture(prefix: string): {
     tmpDir: string;
@@ -1692,7 +1692,7 @@ exit 2
     return { tmpDir, fakeOpenclaw, approveLog };
   }
 
-  it("approves concurrent late CLI scope upgrades after browser pairing converges and drops back to fast cadence", () => {
+  it("approves concurrent late TUI CLI scope upgrades after browser pairing converges and drops back to fast cadence (#6194)", () => {
     const { tmpDir, fakeOpenclaw, approveLog } = setupLateCliFixture("nemoclaw-auto-pair-slow-");
     try {
       const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
@@ -1716,7 +1716,7 @@ exit 2
       expect(run.stdout).toContain(
         "[auto-pair] browser pairing converged; entering slow-mode approvals=1",
       );
-      // Concurrent late wave — proxy for two sibling sandboxes' upgrades.
+      // Concurrent late wave — proxy for idle TUI interactions requesting CLI scopes.
       expect(run.stdout).toContain(
         "[auto-pair] approved request=late-cli client=openclaw-cli mode=cli",
       );

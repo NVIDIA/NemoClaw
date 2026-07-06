@@ -586,7 +586,7 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
   return { repro, attempts };
 }
 
-describe("OpenClaw TUI chat correlation regression (#2603)", () => {
+describe("OpenClaw TUI chat correlation regression (#2603, #6194)", () => {
   it("classifies the observed gateway trace as broken (#2603)", () => {
     const analysis = analyzeIssue2603Trace(capturedIssue2603Trace);
 
@@ -784,7 +784,7 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
-    "keeps rapid live TUI/webchat sends correlated on a real OpenClaw sandbox",
+    "keeps rapid live TUI/webchat sends correlated after connected idle on a real OpenClaw sandbox (#6194)",
     () => {
       const sandboxName = process.env[LIVE_SANDBOX_ENV] || "hclaw";
       const { repro, attempts } = runLiveIssue2603ReproWithEventCaptureRetry(sandboxName);
