@@ -271,11 +271,17 @@ export function getSandboxInferenceConfig(
  * Anthropic-compatible endpoint, the endpoint probe resolves the inference API
  * to `anthropic-messages`, which routes getSandboxInferenceConfig() through the
  * raw Anthropic branch — dropping the `/v1` suffix the OpenAI client appends to
- * `/chat/completions` and wiring the sandbox for the wrong contract. The egress
- * policy then rejects the `/chat/completions` request (no `/v1`) with a 403,
- * surfaced as PermissionDeniedError. Force the managed OpenAI-compatible route
- * instead — the same path the Bedrock Runtime custom-Anthropic flow uses — so
- * the base_url keeps its `/v1` suffix. See #6294.
+ * `/chat/completions` and wiring the sandbox for the wrong contract. The
+ * OpenShell sandbox L7 inference proxy only recognizes fixed `/v1` API paths,
+ * so the `/chat/completions` call (no `/v1`) is denied with a 403, surfaced as
+ * PermissionDeniedError. Route such agents through the managed
+ * OpenAI-compatible config instead — the same getSandboxInferenceConfig branch
+ * the Bedrock Runtime custom-Anthropic flow uses — so the baked base_url keeps
+ * its `/v1` suffix. Note this fixes the sandbox-side wiring only: the gateway
+ * provider for compatible-anthropic-endpoint is still registered as
+ * type=anthropic, whose route accepts only the anthropic_messages protocol, so
+ * openai_chat_completions traffic needs a gateway-side answer (translation,
+ * type switch, or onboarding rejection) tracked on #6294.
  */
 export function coerceAgentInferenceApi(
   agent: unknown,
