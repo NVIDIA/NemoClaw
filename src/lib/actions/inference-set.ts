@@ -37,14 +37,21 @@ import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
-import {
-  hermesApiMode,
-  readOpenClawPrimaryRouteApi,
-  resolveRuntimeInferenceApi,
-} from "./inference-route-api";
+import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
 import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import {
+  completeInferenceGatewayRestart,
+  defaultInferenceGatewayRestart,
+  finalizeInferenceMutation,
+  type InferenceGatewayRestartDeps,
+  type InferenceMutation,
+  readPreviousOpenClawInferenceApi,
+} from "./inference-set-gateway-restart";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
-import type { GatewayRestartResult } from "./sandbox/gateway-restart";
+import {
+  applyOpenClawAnthropicReplyBudget,
+  readOpenClawPrimaryReplyBudget,
+} from "./inference-set-reply-budget";
 
 export { InferenceSetError };
 
@@ -69,12 +76,7 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-interface InferenceSetMutationResult {
-  result: InferenceSetResult;
-  openClawGatewayRestartRequired: boolean;
-}
-
-export interface InferenceSetDeps {
+export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
@@ -100,15 +102,12 @@ export interface InferenceSetDeps {
       "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
     >,
   ) => CaptureOpenshellResult;
-  appendAuditEntry: typeof appendAuditEntry;
-  log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
   rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
-  restartSandboxGateway: (sandboxName: string) => GatewayRestartResult;
 }
 
 const SUPPORTED_PROVIDER_NAMES = [
@@ -124,12 +123,6 @@ const SUPPORTED_PROVIDER_NAMES = [
   "ollama-local",
   "vllm-local",
 ] as const;
-
-// Keep aligned with the NEMOCLAW_MAX_TOKENS fallback in
-// scripts/generate-openclaw-config.mts. OpenClaw 2026.6.10 rejects an
-// Anthropic Messages model without a positive maxTokens before making the
-// request, so a new provider namespace must never omit this runtime field.
-const DEFAULT_OPENCLAW_MAX_TOKENS = 4096;
 
 function defaultDeps(): InferenceSetDeps {
   return {
@@ -156,10 +149,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
-    restartSandboxGateway: (sandboxName: string) => {
-      const recovery: typeof import("./sandbox/process-recovery") = require("./sandbox/process-recovery");
-      return recovery.restartSandboxGateway(sandboxName, { quiet: true });
-    },
+    restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -271,41 +261,6 @@ function updateAgentPrimary(config: ConfigObject, primaryModelRef: string): void
   model.primary = primaryModelRef;
 }
 
-function positiveOpenClawMaxTokens(value: ConfigValue | undefined): number | undefined {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-}
-
-function readOpenClawPrimaryMaxTokens(config: ConfigObject): number | undefined {
-  const agents = config.agents;
-  if (!isConfigObject(agents)) return undefined;
-  const defaults = agents.defaults;
-  if (!isConfigObject(defaults)) return undefined;
-  const selectedModel = defaults.model;
-  if (!isConfigObject(selectedModel) || typeof selectedModel.primary !== "string") {
-    return undefined;
-  }
-
-  const primary = selectedModel.primary;
-  const separator = primary.indexOf("/");
-  if (separator <= 0 || separator === primary.length - 1) return undefined;
-  const providerKey = primary.slice(0, separator);
-  const modelId = primary.slice(separator + 1);
-  const models = config.models;
-  if (!isConfigObject(models)) return undefined;
-  const providers = models.providers;
-  if (!isConfigObject(providers) || !Object.hasOwn(providers, providerKey)) return undefined;
-  const provider = providers[providerKey];
-  if (!isConfigObject(provider) || !Array.isArray(provider.models)) return undefined;
-
-  for (const entry of provider.models) {
-    if (!isConfigObject(entry)) continue;
-    if (entry.name === primary || entry.id === modelId) {
-      return positiveOpenClawMaxTokens(entry.maxTokens);
-    }
-  }
-  return undefined;
-}
-
 function buildProviderConfig(
   existing: ConfigObject,
   model: string,
@@ -325,10 +280,7 @@ function buildProviderConfig(
     firstExistingModel.contextWindow = contextWindow;
   }
   if (route.inferenceApi === "anthropic-messages") {
-    firstExistingModel.maxTokens =
-      positiveOpenClawMaxTokens(firstExistingModel.maxTokens) ??
-      inheritedMaxTokens ??
-      DEFAULT_OPENCLAW_MAX_TOKENS;
+    applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
@@ -352,7 +304,7 @@ export function patchOpenClawInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
-  const inheritedMaxTokens = readOpenClawPrimaryMaxTokens(config);
+  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -709,7 +661,7 @@ function registryMetadataForProviderSwitch(options: {
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
-): Promise<InferenceSetMutationResult> {
+): Promise<InferenceMutation<InferenceSetResult>> {
   const provider = trimRequired(options.provider, "provider");
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
@@ -850,8 +802,7 @@ async function runInferenceSetWithoutHostLock(
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
-  const previousOpenClawInferenceApi =
-    agentName === "openclaw" ? readOpenClawPrimaryRouteApi(config) : null;
+  const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -933,16 +884,6 @@ async function runInferenceSetWithoutHostLock(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
     );
   }
-  // OpenClaw 2026.6.10 hot reload retains request shaping across API-family
-  // changes. Restart only after a committed, hash-synced family change; remove
-  // this workaround once the minimum OpenClaw hot-reloads that boundary. Unit
-  // and live inference-switch coverage exercise both restart and no-op paths.
-  const openClawGatewayRestartRequired =
-    agentName === "openclaw" &&
-    patched.changed &&
-    inSandboxConfigSynced &&
-    previousOpenClawInferenceApi !== null &&
-    previousOpenClawInferenceApi !== patched.route.inferenceApi;
   const sessionUpdated = updateMatchingOnboardSession(
     sandboxName,
     provider,
@@ -952,47 +893,25 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
-  const auditEntry: Parameters<typeof appendAuditEntry>[0] = {
-    action: "inference_set",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}${
-      !inSandboxConfigSynced
-        ? " (in-sandbox sync incomplete)"
-        : openClawGatewayRestartRequired
-          ? " (gateway restart pending)"
-          : ""
-    }`,
-  };
-  if (openClawGatewayRestartRequired) {
-    appendPostCommitInferenceAudit(deps, auditEntry);
-  } else {
-    deps.appendAuditEntry(auditEntry);
-  }
-
-  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
-  // warning above already described the degraded state.
-  if (inSandboxConfigSynced && !openClawGatewayRestartRequired) {
-    deps.log(
-      agentName === "hermes"
-        ? `  Inference route synced for '${sandboxName}': ${model}`
-        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-    );
-  }
-
-  return {
-    result: {
-      sandboxName,
-      provider,
-      model,
-      primaryModelRef: patched.route.primaryModelRef,
-      providerKey: patched.route.providerKey,
+  return finalizeInferenceMutation(
+    {
+      agentName,
       configChanged: patched.changed,
-      sessionUpdated,
-      inSandboxConfigSynced,
+      nextApi: patched.route.inferenceApi,
+      previousApi: previousOpenClawInferenceApi,
+      result: {
+        sandboxName,
+        provider,
+        model,
+        primaryModelRef: patched.route.primaryModelRef,
+        providerKey: patched.route.providerKey,
+        configChanged: patched.changed,
+        sessionUpdated,
+        inSandboxConfigSynced,
+      },
     },
-    openClawGatewayRestartRequired,
-  };
+    deps,
+  );
 }
 
 export async function runInferenceSet(
@@ -1015,55 +934,7 @@ export async function runInferenceSet(
     // Release the config transition lock before the managed restart reacquires
     // it, but retain the outer sandbox lifecycle lock so another process cannot
     // destroy/recreate this name between the committed write and restart.
-    if (mutation.openClawGatewayRestartRequired) {
-      deps.log(
-        `  Restarting the OpenClaw gateway in '${selected.sandboxName}' to apply the new inference API family...`,
-      );
-      let restartFailure: string | null = null;
-      try {
-        const restart = deps.restartSandboxGateway(selected.sandboxName);
-        if (!restart.ok) restartFailure = restart.failureLayer;
-      } catch {
-        restartFailure = "restart exception";
-      }
-      if (restartFailure) {
-        appendPostCommitInferenceAudit(deps, {
-          action: "inference_set",
-          sandbox: selected.sandboxName,
-          timestamp: new Date().toISOString(),
-          reason: `inference set openclaw:${mutation.result.provider}:${mutation.result.model} (config committed; gateway restart failed: ${restartFailure})`,
-        });
-        throw new InferenceSetError(
-          `Inference route and config were updated for '${selected.sandboxName}', but the managed OpenClaw gateway restart/recovery did not complete successfully. ` +
-            `The committed route was not rolled back. Retry with '${CLI_NAME} ${selected.sandboxName} gateway restart'.`,
-        );
-      }
-      appendPostCommitInferenceAudit(deps, {
-        action: "inference_set",
-        sandbox: selected.sandboxName,
-        timestamp: new Date().toISOString(),
-        reason: `inference set openclaw:${mutation.result.provider}:${mutation.result.model} (gateway restart completed)`,
-      });
-      deps.log(
-        `  Inference route synced for '${selected.sandboxName}': ${mutation.result.primaryModelRef}`,
-      );
-    }
+    completeInferenceGatewayRestart(mutation, deps);
     return mutation.result;
   });
-}
-
-function appendPostCommitInferenceAudit(
-  deps: Pick<InferenceSetDeps, "appendAuditEntry" | "log">,
-  entry: Parameters<typeof appendAuditEntry>[0],
-): void {
-  try {
-    deps.appendAuditEntry(entry);
-  } catch {
-    // Config and possibly the running gateway are already committed. Audit
-    // persistence is best-effort here so it cannot hide the real restart
-    // outcome or the operator recovery command.
-    deps.log(
-      `  Warning: could not record the post-commit inference audit entry for '${entry.sandbox}'.`,
-    );
-  }
 }
