@@ -4,6 +4,7 @@
 import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
+import { isPrivateHostname } from "../private-networks";
 import { hasExplicitContextWindow } from "./ollama-runtime-context";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
 
@@ -17,6 +18,20 @@ const NON_HOST_PROBEABLE_HOSTS = new Set(["host.openshell.internal", "host.docke
 function isHostProbeableEndpoint(endpointUrl: string): boolean {
   try {
     return !NON_HOST_PROBEABLE_HOSTS.has(new URL(endpointUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+// SSRF source boundary: true when the endpoint host is a private/internal
+// address (and not one of the allowed sandbox-internal aliases, which are
+// screened separately by isHostProbeableEndpoint). Reuses the shared
+// isPrivateHostname validator so the /v1/models context probe never issues a
+// host-side GET to an attacker-reachable private address. See PR #6293 PRA-1.
+function isPrivateEndpoint(endpointUrl: string): boolean {
+  try {
+    const { hostname } = new URL(endpointUrl);
+    return isPrivateHostname(hostname);
   } catch {
     return false;
   }
@@ -54,13 +69,13 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * reached — so it adds no egress surface beyond that validation. The credential
  * travels in a curl `--config` temp file (0600), never on the argv.
  *
- * Private/loopback addresses are intentionally NOT blocked: the operator is
- * configuring their own inference endpoint at setup time (not attacker-supplied
- * input on a served request), and the primary target — a self-hosted vLLM on
- * `localhost`/a private LAN — is exactly such an address. Blocking private IPs
- * would break local inference. This matches `probeOpenAiLikeEndpoint`, which
- * likewise does not private-IP-filter. Only sandbox-internal hosts are skipped,
- * because a host-side GET genuinely cannot reach them.
+ * SSRF: private/internal endpoints are rejected by the caller
+ * (`applyCompatibleEndpointContextWindow`) at the source boundary, before this
+ * fetch runs, using the shared `isPrivateHostname` validator — the same guard
+ * `probeOpenAiLikeEndpoint` applies. A self-hosted vLLM is reached through the
+ * sandbox-internal alias (`host.openshell.internal`), which is skipped
+ * separately, not via a raw private-LAN URL. This fetcher therefore only ever
+ * sees an already-validated, routable endpoint URL.
  */
 export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: string): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
@@ -179,6 +194,20 @@ export function applyCompatibleEndpointContextWindow(
   // inside the sandbox, so a host-side GET cannot reach it; skip cleanly and
   // leave Hermes auto-detect rather than emit a misleading probe failure.
   if (!isHostProbeableEndpoint(endpointUrl)) {
+    clearPreviousAuto();
+    return;
+  }
+
+  // SSRF source boundary: refuse to probe /v1/models on a private/internal
+  // endpoint. This path issues its own host-side GET independent of the
+  // chat-completions validation probe, so it must screen the URL itself with
+  // the shared isPrivateHostname validator (defense-in-depth alongside the
+  // DNS-pinning config-write boundary). See PR #6293 PRA-1/PRA-3.
+  if (isPrivateEndpoint(endpointUrl)) {
+    logger.warn(
+      "  ⚠ Endpoint host is a private/internal address; skipping the /v1/models " +
+        "context probe. Use a routable public URL to auto-detect the context window.",
+    );
     clearPreviousAuto();
     return;
   }

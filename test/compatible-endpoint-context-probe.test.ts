@@ -21,7 +21,20 @@ import { testTimeout } from "./helpers/timeouts";
 
 const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
 
+// The fake server binds to loopback (127.0.0.1), which the SSRF source-boundary
+// guard now rejects. To exercise the happy path — real curl against a live
+// /v1/models — we present a routable public hostname to the guard while the
+// injected fetcher still hits the real loopback server. The private-IP block
+// itself is asserted by its own case below and by the unit tests in
+// src/lib/inference/compatible-endpoint-context.test.ts.
+const PUBLIC_ENDPOINT_URL = "https://vllm.public.test/v1";
+
 let server: FakeOpenAiCompatibleServer | null = null;
+
+function fetchFromServer(apiKey: string): () => unknown | null {
+  return () =>
+    fetchCompatibleEndpointModels((server as FakeOpenAiCompatibleServer).baseUrl, apiKey);
+}
 
 afterEach(async () => {
   await server?.close();
@@ -38,9 +51,9 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     expect(models).toMatchObject({ data: [{ id: MODEL, max_model_len: 65_536 }] });
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
-      fetchModels: fetchCompatibleEndpointModels,
+      fetchModels: fetchFromServer(""),
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
@@ -53,10 +66,10 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     });
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       apiKey: "secret-key",
-      fetchModels: fetchCompatibleEndpointModels,
+      fetchModels: fetchFromServer("secret-key"),
     });
 
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
@@ -77,10 +90,10 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
 
     // Wrong/absent credential → the endpoint 401s → no window is set.
     const noKeyEnv: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env: noKeyEnv,
       apiKey: "",
-      fetchModels: fetchCompatibleEndpointModels,
+      fetchModels: fetchFromServer(""),
     });
     expect(noKeyEnv.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
     // Assert the endpoint actually rejected the unauthenticated /v1/models
@@ -91,10 +104,10 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
 
     // Correct credential → authorized → the window is read.
     const keyedEnv: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env: keyedEnv,
       apiKey: "secret-key",
-      fetchModels: fetchCompatibleEndpointModels,
+      fetchModels: fetchFromServer("secret-key"),
     });
     expect(keyedEnv.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
     expect(
@@ -102,13 +115,38 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     ).toBe(true);
   });
 
-  it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
-    server = await startFakeOpenAiCompatibleServer({ model: MODEL });
+  it("refuses to probe a private-IP endpoint before issuing any /v1/models request (SSRF, #6293)", async () => {
+    // The fake server binds to 127.0.0.1 — a real private/loopback address.
+    // The source-boundary guard must reject it before the real curl fetcher
+    // runs, so the server records zero requests and no window is set.
+    server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
+    expect(new URL(server.baseUrl).hostname).toBe("127.0.0.1");
+    // The readiness probe already issued one /v1/models GET; the guard must not
+    // add another, so we compare the count before and after.
+    const modelsRequestsBefore = server
+      .requests()
+      .filter((entry) => entry.path === "/v1/models").length;
 
     const env: NodeJS.ProcessEnv = {};
     applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
       env,
       fetchModels: fetchCompatibleEndpointModels,
+    });
+
+    const modelsRequestsAfter = server
+      .requests()
+      .filter((entry) => entry.path === "/v1/models").length;
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+    expect(modelsRequestsAfter).toBe(modelsRequestsBefore);
+  });
+
+  it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
+    server = await startFakeOpenAiCompatibleServer({ model: MODEL });
+
+    const env: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+      env,
+      fetchModels: fetchFromServer(""),
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
   });

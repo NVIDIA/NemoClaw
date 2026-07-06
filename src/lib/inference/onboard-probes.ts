@@ -33,6 +33,7 @@ const {
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const { isPrivateHostname } = require("../private-networks");
 const {
   executeProbeWithHttpRetry,
   isProbeTimeout,
@@ -628,6 +629,34 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
           httpStatus: 0,
           curlStatus: 0,
           message: "sandbox-internal endpoint cannot be strictly validated from host",
+          body: "",
+        },
+      ],
+    };
+  }
+
+  // SSRF source boundary: reject a private/internal endpoint before any curl.
+  // The two allowed internal hosts (hijacked docker-internal, sandbox-internal)
+  // are handled above; everything else that resolves to a private/reserved
+  // address is attacker-reachable SSRF surface. Reuses the shared
+  // isPrivateHostname validator (defense-in-depth alongside DNS-pinning at the
+  // config-write boundary). See PR #6293 PRA-2.
+  let probeHostname;
+  try {
+    probeHostname = new URL(String(endpointUrl)).hostname;
+  } catch {
+    probeHostname = "";
+  }
+  if (probeHostname && isPrivateHostname(probeHostname)) {
+    return {
+      ok: false,
+      message: `Endpoint host "${probeHostname}" is a private/internal address and cannot be used as a remote inference endpoint. Use a routable public URL and retry onboard.`,
+      failures: [
+        {
+          name: "Private-address endpoint",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: "endpoint resolves to a private/internal address",
           body: "",
         },
       ],

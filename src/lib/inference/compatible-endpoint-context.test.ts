@@ -161,6 +161,49 @@ describe("compatible-endpoint context window", () => {
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
   });
 
+  it.each([
+    "http://10.0.0.1/v1",
+    "http://127.0.0.1/v1",
+    "http://169.254.169.254/v1",
+    "http://172.16.0.1/v1",
+    "http://192.168.1.1/v1",
+  ])("rejects the private-IP endpoint %s before probing /v1/models (SSRF, #6293)", (endpointUrl) => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+    const messages: string[] = [];
+    const env: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
+      env,
+      fetchModels,
+      logger: { log: (m) => messages.push(m), warn: (m) => messages.push(m) },
+    });
+
+    expect(fetchModels).not.toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+    expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
+  });
+
+  it("clears a stale auto value when re-probing a now private-IP endpoint (SSRF, #6293)", () => {
+    const env: NodeJS.ProcessEnv = {};
+    // First endpoint auto-detects a window into the shared env.
+    applyCompatibleEndpointContextWindow("https://public.example/v1", "model-a", {
+      env,
+      fetchModels: () => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }),
+      logger: { log: () => undefined, warn: () => undefined },
+    });
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+
+    // A later pass selects a private-IP endpoint: the probe must be refused and
+    // the stale auto value dropped rather than left as a phantom user override.
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 8_192 }] }));
+    applyCompatibleEndpointContextWindow("http://10.0.0.1/v1", "model-a", {
+      env,
+      fetchModels,
+      logger: { log: () => undefined, warn: () => undefined },
+    });
+    expect(fetchModels).not.toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+  });
+
   it("clearAutoDetectedCompatibleContextWindow drops a stale auto value but keeps a user override (#6177)", () => {
     // Auto-detected value is cleared when retrying away to another provider.
     const autoEnv: NodeJS.ProcessEnv = {};
