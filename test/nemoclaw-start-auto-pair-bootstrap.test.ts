@@ -54,6 +54,7 @@ describe("nemoclaw-start initial CLI auto-pair bootstrap (#6113)", () => {
     const pairedFile = path.join(devicesDir, "paired.json");
     const authFile = path.join(identityDir, "device-auth.json");
     const approveLog = path.join(tmpDir, "approve-env.json");
+    const agentOutput = path.join(tmpDir, "agent-output.txt");
     fs.mkdirSync(devicesDir, { recursive: true });
     fs.mkdirSync(identityDir, { recursive: true });
     const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
@@ -101,6 +102,15 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
   node -e 'const fs=require("fs"); fs.writeFileSync(process.argv[1], JSON.stringify({url:process.env.OPENCLAW_GATEWAY_URL||null, port:process.env.OPENCLAW_GATEWAY_PORT||null, token:process.env.OPENCLAW_GATEWAY_TOKEN||null, args:process.argv.slice(3)})); fs.writeFileSync(process.argv[2], JSON.stringify({${JSON.stringify(deviceId)}:{deviceId:${JSON.stringify(deviceId)},publicKey:${JSON.stringify(publicKey)},clientId:"cli",clientMode:"cli",scopes:["operator.pairing"],approvedScopes:["operator.pairing"]}}));' ${JSON.stringify(approveLog)} ${JSON.stringify(pairedFile)} "$@"
   exit 0
 fi
+if [ "\${1:-}" = "agent" ]; then
+  if [ ! -s ${JSON.stringify(pairedFile)} ]; then
+    echo "EMBEDDED FALLBACK: gateway unavailable"
+    exit 0
+  fi
+  printf 'tool:file-write-ok\\n' > ${JSON.stringify(agentOutput)}
+  echo "gateway agent completed"
+  exit 0
+fi
 echo "unexpected: $*" >&2
 exit 2
 `,
@@ -141,10 +151,109 @@ exit 2
       });
       expect(fs.existsSync(authFile)).toBe(false);
       expect(JSON.parse(fs.readFileSync(pendingFile, "utf-8"))).toHaveProperty("request-1");
+
+      const agent = spawnSync(fakeOpenclaw, ["agent", "run", "write-file"], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_STATE_DIR: stateDir,
+        },
+        timeout: 10_000,
+      });
+      expect(agent.status).toBe(0);
+      expect(`${agent.stdout}\n${agent.stderr}`).not.toContain("EMBEDDED FALLBACK");
+      expect(fs.readFileSync(agentOutput, "utf-8")).toBe("tool:file-write-ok\n");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
+
+  it.each([
+    ["mismatched public key", { publicKey: "wrong" }],
+    ["non-cli client id", { clientId: "browser" }],
+    ["non-cli client mode", { clientMode: "webchat" }],
+    ["non-operator role", { role: "viewer", roles: ["viewer"] }],
+    ["malformed roles", { roles: "operator" }],
+    ["disallowed scope", { scopes: ["operator.pairing", "admin.write"] }],
+    ["missing pairing scope", { scopes: ["operator.write"] }],
+  ])(
+    "rejects %s before initial CLI approve (#6113)",
+    (_name, override) => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-reject-"));
+      const fakeOpenclaw = path.join(tmpDir, "openclaw");
+      const stateDir = path.join(tmpDir, "state");
+      const devicesDir = path.join(stateDir, "devices");
+      const identityDir = path.join(stateDir, "identity");
+      const pendingFile = path.join(devicesDir, "pending.json");
+      const approveLog = path.join(tmpDir, "approve-called");
+      fs.mkdirSync(devicesDir, { recursive: true });
+      fs.mkdirSync(identityDir, { recursive: true });
+      const publicKey = "y3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8";
+      const deviceId = "04a4c561c730435e9f6a2e38d2e7b929bcbec2ea1c37d3dd053f3341ecce4e47";
+      fs.writeFileSync(
+        path.join(identityDir, "device.json"),
+        JSON.stringify({
+          deviceId,
+          publicKeyPem:
+            "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAy3vjb9p8tAecivI1l5f1Hdc9QdZJSt3BmLkJMM7wZD8=\n-----END PUBLIC KEY-----\n",
+        }),
+      );
+      fs.writeFileSync(
+        pendingFile,
+        JSON.stringify({
+          "request-1": {
+            requestId: "request-1",
+            deviceId,
+            publicKey,
+            clientId: "cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
+            scopes: ["operator.pairing"],
+            ts: 100,
+            ...override,
+          },
+        }),
+      );
+      fs.writeFileSync(
+        fakeOpenclaw,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf '%s\\n' '{"ok":false,"error":{"reason":"pairing required: device is not approved yet (requestId: request-1)"}}'
+  exit 1
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  touch ${JSON.stringify(approveLog)}
+  exit 0
+fi
+exit 2
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const run = spawnSync("python3", ["-c", autoPairPythonScript(src, tmpDir)], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            OPENCLAW_BIN: fakeOpenclaw,
+            OPENCLAW_STATE_DIR: stateDir,
+            NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+            NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          },
+          timeout: 30_000,
+        });
+
+        expect(run.status).toBe(0);
+        expect(run.stdout).not.toContain("approved initial CLI pairing");
+        expect(fs.existsSync(approveLog)).toBe(false);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+    40_000,
+  );
 
   it("does not seed when device list fails for a non-pairing error (#6113)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-nonpairing-"));

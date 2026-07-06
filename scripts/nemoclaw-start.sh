@@ -2686,6 +2686,7 @@ while time.time() < DEADLINE:
                 continue
             failure = brief_child_error(aout, aerr)
             if arc != 124 and failure:
+                HANDLED.add(initial_request_id)
                 print(f'[auto-pair] initial CLI approve failed request={initial_request_id}: {failure}')
         sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
