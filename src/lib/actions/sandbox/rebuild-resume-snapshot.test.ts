@@ -174,8 +174,7 @@ describe("rebuild resume snapshot repair", () => {
         .spyOn(rebuildOnboardDependencies, "onboard")
         .mockImplementation(async (options: unknown) => {
           observed.handoffOptions = options as Record<string, unknown>;
-          const reopened = onboardSession.loadSession();
-          if (!reopened) throw new Error("expected rebuild resume session");
+          const reopened = onboardSession.loadSession() as Session;
           observed.preRepairMachineState = reopened.machine.state;
           observed.preRepairPreflightStatus = reopened.steps.preflight.status;
           observed.preRepairGatewayStatus = reopened.steps.gateway.status;
