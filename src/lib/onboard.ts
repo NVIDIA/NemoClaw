@@ -4302,7 +4302,11 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
 
     const recordedSandboxName =
       session?.steps?.sandbox?.status === "complete" ? session?.sandboxName || null : null;
-
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    const onboardGateway = gatewayBinding.resolveCoreOnboardGatewayBinding({ authoritativeGateway, currentGateway: { name: GATEWAY_NAME, port: GATEWAY_PORT }, resume, sandbox: recordedSandboxName ? registry.getSandbox(recordedSandboxName) : null });
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+    ({ name: GATEWAY_NAME, port: GATEWAY_PORT } = onboardGateway);
+    process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
     console.log("");
     console.log(`  ${cliDisplayName()} Onboarding`);
     if (isNonInteractive()) note("  (non-interactive mode)");
@@ -4452,12 +4456,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       gpuPassthrough,
     };
     // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const coreGatewayName = gatewayBinding.resolveCoreOnboardGatewayName({ authoritativeGatewayName: authoritativeGateway?.name, currentGatewayName: GATEWAY_NAME, resume, sandbox: sandboxName ? registry.getSandbox(sandboxName) : null });
-    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-    const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, coreGatewayName);
+    const runCoreGatewayOpenshell = setupInferenceFactory.createGatewayScopedOpenshellRunner(runOpenshell, GATEWAY_NAME);
     const [providerInferencePhase, sandboxPhase] =
       createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
-        gatewayName: coreGatewayName,
+        gatewayName: GATEWAY_NAME,
         forceProviderSelection: forceProviderSelectionForAgentChange,
         authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
         env: process.env,
@@ -4748,12 +4750,10 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
     onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
-    if (authoritativeGateway) {
-      GATEWAY_NAME = previousGatewayBinding.name;
-      GATEWAY_PORT = previousGatewayBinding.port;
-      if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-      else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
-    }
+    GATEWAY_NAME = previousGatewayBinding.name;
+    GATEWAY_PORT = previousGatewayBinding.port;
+    if (previousOpenshellGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
+    else process.env.OPENSHELL_GATEWAY = previousOpenshellGateway;
   }
 }
 

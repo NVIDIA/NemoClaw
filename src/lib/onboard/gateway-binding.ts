@@ -141,16 +141,19 @@ export function resolveSandboxGatewayName(
   throw new Error(`Invalid persisted sandbox gateway binding (${detail.join(", ")})`);
 }
 
-/** Resolve the core onboarding target without overriding an authoritative rebuild handoff. */
-export function resolveCoreOnboardGatewayName(options: {
-  authoritativeGatewayName?: string | null;
-  currentGatewayName: string;
+/** Resolve one attempt-wide onboarding target without overriding an authoritative rebuild. */
+export function resolveCoreOnboardGatewayBinding(options: {
+  authoritativeGateway?: { name: string; port: number } | null;
+  currentGateway: { name: string; port: number };
   resume: boolean;
   sandbox: SandboxGatewayBinding | null | undefined;
-}): string {
-  if (options.authoritativeGatewayName) return options.authoritativeGatewayName;
-  if (!options.resume || !options.sandbox) return options.currentGatewayName;
-  return resolveSandboxGatewayName(options.sandbox);
+}): { name: string; port: number } {
+  if (options.authoritativeGateway) return { ...options.authoritativeGateway };
+  if (!options.resume || !options.sandbox) return { ...options.currentGateway };
+  const name = resolveSandboxGatewayName(options.sandbox);
+  const port = resolveGatewayPortFromName(name);
+  if (port === null) throw new Error(`Invalid resolved onboarding gateway name: ${name}`);
+  return { name, port };
 }
 
 /**

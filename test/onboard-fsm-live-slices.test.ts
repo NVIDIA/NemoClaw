@@ -259,6 +259,7 @@ gatewayHandlers.handleGatewayState = async (options) => {
   if (scenario.mode !== "resume-core-gateway" && scenario.mode !== "authoritative-core-gateway") {
     throw new Error("unexpected gateway compatibility handler");
   }
+  called.push("gateway:" + options.gatewayName + ":" + process.env.OPENSHELL_GATEWAY);
   return {
     gatewayReuseState: "healthy",
     session: options.session,
@@ -426,12 +427,14 @@ describe("live onboard FSM slice boundaries", () => {
 
   it("routes ordinary resume through the sandbox's recorded gateway", () => {
     assert.deepEqual(runSliceProbe({ slice: "core", mode: "resume-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
   });
 
   it("keeps an authoritative rebuild gateway after the registry row is removed", () => {
     assert.deepEqual(runSliceProbe({ slice: "core", mode: "authoritative-core-gateway" }), [
+      "gateway:nemoclaw-9090:nemoclaw-9090",
       "provider-compat:nemoclaw-9090",
     ]);
   });
