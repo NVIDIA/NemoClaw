@@ -89,6 +89,7 @@ describe("probeAnthropicEndpoint", () => {
     });
     const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
       ok: true,
+      httpStatus: 200,
       curlStatus: 0,
       missingEvents: [],
       duplicateEvents: [],
@@ -124,6 +125,7 @@ describe("probeAnthropicEndpoint", () => {
         streamingOpts = opts;
         return {
           ok: true,
+          httpStatus: 200,
           curlStatus: 0,
           missingEvents: [],
           duplicateEvents: [],
@@ -165,6 +167,7 @@ describe("probeAnthropicEndpoint", () => {
     });
     vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
       ok: false,
+      httpStatus: 200,
       curlStatus: 0,
       missingEvents: [],
       duplicateEvents: ["message_start"],
@@ -185,7 +188,7 @@ describe("probeAnthropicEndpoint", () => {
     expect(result.ok).toBe(false);
     expect(result.failures?.[0]).toMatchObject({
       name: "Anthropic Messages API (streaming)",
-      httpStatus: 0,
+      httpStatus: 200,
       curlStatus: 0,
       diagnosticCodes: ["anthropic-streaming-duplicate-message-start"],
     });
@@ -203,6 +206,7 @@ describe("probeAnthropicEndpoint", () => {
     });
     vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
       ok: false,
+      httpStatus: 200,
       curlStatus: 28,
       missingEvents: ["message_stop"],
       duplicateEvents: [],
@@ -219,7 +223,7 @@ describe("probeAnthropicEndpoint", () => {
 
     expect(result.failures?.[0]).toMatchObject({
       name: "Anthropic Messages API (streaming)",
-      httpStatus: 0,
+      httpStatus: 200,
       curlStatus: 28,
     });
     expect(getProbeRecovery(result)).toMatchObject({
@@ -240,6 +244,7 @@ describe("probeAnthropicEndpoint", () => {
     });
     const streamSpy = vi.spyOn(probe, "runAnthropicStreamingEventProbe").mockReturnValue({
       ok: true,
+      httpStatus: 200,
       curlStatus: 0,
       missingEvents: [],
       duplicateEvents: [],

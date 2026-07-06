@@ -447,6 +447,7 @@ export function runStreamingEventProbe(
 
 interface SseEventCaptureResult {
   ok: boolean;
+  httpStatus: number;
   curlStatus: number;
   /** Transport/execution error detail when `ok` is false. */
   detail: string;
@@ -465,13 +466,19 @@ function captureSseEventCounts(
   argv: string[],
   opts: CurlProbeOptions,
   tempPrefix: string,
+  captureHttpStatus = false,
 ): SseEventCaptureResult {
   const bodyFile = secureTempFile(tempPrefix, ".sse");
   try {
     const { args, url } = validateCurlProbeArgs(argv, opts);
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
     const timeout = resolveCurlProcessTimeoutMs(argv, opts);
-    const curlArgs = buildCurlProbeSpawnArgs(args, url, bodyFile, "event-stream");
+    const curlArgs = buildCurlProbeSpawnArgs(
+      args,
+      url,
+      bodyFile,
+      captureHttpStatus ? "event-stream-with-status" : "event-stream",
+    );
     const result = spawnSyncImpl(
       "curl",
       // lgtm[js/file-access-to-http] curlArgs were validated and rebuilt from safe probe fields.
@@ -495,7 +502,32 @@ function captureSseEventCounts(
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
-      return { ok: false, curlStatus, detail, eventCounts: new Map(), eventSequence: [] };
+      return {
+        ok: false,
+        httpStatus: 0,
+        curlStatus,
+        detail,
+        eventCounts: new Map(),
+        eventSequence: [],
+      };
+    }
+
+    const status = captureHttpStatus ? Number(String(result.stdout || "").trim()) : 0;
+    const httpStatus = captureHttpStatus && Number.isFinite(status) ? status : 0;
+    if (captureHttpStatus && (httpStatus < 200 || httpStatus >= 300)) {
+      return {
+        ok: false,
+        httpStatus,
+        curlStatus: result.status ?? 0,
+        detail: summarizeProbeFailure(
+          body,
+          httpStatus,
+          result.status ?? 0,
+          String(result.stderr || ""),
+        ),
+        eventCounts: new Map(),
+        eventSequence: [],
+      };
     }
 
     // Parse SSE event types from the raw output.
@@ -510,7 +542,14 @@ function captureSseEventCounts(
         eventSequence.push(eventType);
       }
     }
-    return { ok: true, curlStatus: result.status ?? 0, detail: "", eventCounts, eventSequence };
+    return {
+      ok: true,
+      httpStatus,
+      curlStatus: result.status ?? 0,
+      detail: "",
+      eventCounts,
+      eventSequence,
+    };
   } finally {
     cleanupTempDir(bodyFile, tempPrefix);
   }
@@ -601,6 +640,8 @@ const SINGLETON_ANTHROPIC_STREAMING_EVENTS = ["message_start", "message_stop"];
 
 export interface AnthropicStreamingProbeResult {
   ok: boolean;
+  /** HTTP response status, or 0 when no HTTP response was received. */
+  httpStatus: number;
   /** curl exit status, including 28 when a bounded stream timed out. */
   curlStatus: number;
   missingEvents: string[];
@@ -672,10 +713,11 @@ function runAnthropicStreamingEventProbeImpl(
   opts: CurlProbeOptions = {},
 ): AnthropicStreamingProbeResult {
   try {
-    const capture = captureSseEventCounts(argv, opts, "nemoclaw-anthropic-streaming-probe");
+    const capture = captureSseEventCounts(argv, opts, "nemoclaw-anthropic-streaming-probe", true);
     if (!capture.ok) {
       emitCurlResultTraceEvent({
         ok: false,
+        http_status: capture.httpStatus,
         missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
         duplicate_events_count: 0,
         sequence_errors_count: 0,
@@ -683,6 +725,7 @@ function runAnthropicStreamingEventProbeImpl(
       });
       return {
         ok: false,
+        httpStatus: capture.httpStatus,
         curlStatus: capture.curlStatus,
         missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
         duplicateEvents: [],
@@ -715,6 +758,7 @@ function runAnthropicStreamingEventProbeImpl(
       }
       emitCurlResultTraceEvent({
         ok: false,
+        http_status: capture.httpStatus,
         missing_events_count: missing.length,
         duplicate_events_count: duplicates.length,
         sequence_errors_count: sequenceErrors.length,
@@ -722,6 +766,7 @@ function runAnthropicStreamingEventProbeImpl(
       });
       return {
         ok: false,
+        httpStatus: capture.httpStatus,
         curlStatus: capture.curlStatus,
         missingEvents: missing,
         duplicateEvents: duplicates,
@@ -734,6 +779,7 @@ function runAnthropicStreamingEventProbeImpl(
 
     emitCurlResultTraceEvent({
       ok: true,
+      http_status: capture.httpStatus,
       missing_events_count: 0,
       duplicate_events_count: 0,
       sequence_errors_count: 0,
@@ -741,6 +787,7 @@ function runAnthropicStreamingEventProbeImpl(
     });
     return {
       ok: true,
+      httpStatus: capture.httpStatus,
       curlStatus: capture.curlStatus,
       missingEvents: [],
       duplicateEvents: [],
@@ -753,6 +800,7 @@ function runAnthropicStreamingEventProbeImpl(
       typeof error === "object" && error && "status" in error ? Number(error.status) || 1 : 1;
     emitCurlResultTraceEvent({
       ok: false,
+      http_status: 0,
       missing_events_count: REQUIRED_ANTHROPIC_STREAMING_EVENTS.length,
       duplicate_events_count: 0,
       sequence_errors_count: 0,
@@ -760,6 +808,7 @@ function runAnthropicStreamingEventProbeImpl(
     });
     return {
       ok: false,
+      httpStatus: 0,
       curlStatus,
       missingEvents: REQUIRED_ANTHROPIC_STREAMING_EVENTS,
       duplicateEvents: [],

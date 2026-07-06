@@ -49,7 +49,7 @@ describe("summarizeProbeForDisplay", () => {
       failures: [
         {
           name: "Anthropic Messages API (streaming)",
-          httpStatus: 0,
+          httpStatus: 200,
           curlStatus: 0,
           message: "raw provider response with secret-key",
           diagnosticCodes: [
@@ -63,6 +63,25 @@ describe("summarizeProbeForDisplay", () => {
     expect(summary).toBe("Anthropic Messages API (streaming): duplicate message_start");
     expect(summary).not.toContain("secret-key");
     expect(summary).not.toContain("provider-controlled-diagnostic");
+  });
+
+  it("preserves streaming timeout recovery when a partial HTTP 200 stream times out", () => {
+    const summary = summarizeProbeForDisplay({
+      message: "partial stream with secret-key",
+      failures: [
+        {
+          name: "Anthropic Messages API (streaming)",
+          httpStatus: 200,
+          curlStatus: 28,
+          message: "partial stream with secret-key",
+          diagnosticCodes: ["anthropic-streaming-missing-message-stop"],
+        },
+      ],
+    });
+
+    expect(summary).toBe("Anthropic Messages API (streaming): curl exit 28");
+    expect(summary).not.toContain("secret-key");
+    expect(summary).not.toContain("partial stream");
   });
 
   it("falls back to coarse message classification", () => {

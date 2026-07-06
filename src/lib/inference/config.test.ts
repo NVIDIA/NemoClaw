@@ -12,6 +12,7 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  getCompatibleAnthropicOpenAiSurfaceBaseUrl,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
@@ -22,6 +23,7 @@ import {
   parseGatewayInference,
   planInferenceRouteReconcile,
   resolveAgentInferenceApi,
+  resolveAgentProviderInferenceApi,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
 } from "./config";
@@ -43,6 +45,35 @@ describe("resolveAgentInferenceApi", () => {
     expect(resolveAgentInferenceApi("hermes", "anthropic-prod", "anthropic-messages")).toBe(
       "anthropic-messages",
     );
+  });
+});
+
+describe("resolveAgentProviderInferenceApi", () => {
+  it("uses Chat Completions for an OpenAI-only DCode agent on a custom Anthropic provider (#6294)", () => {
+    const dcodeAgent = {
+      name: "langchain-deepagents-code",
+      inference: { provider_type: "openai_compatible" },
+    };
+
+    expect(
+      resolveAgentProviderInferenceApi(
+        dcodeAgent.name,
+        dcodeAgent,
+        "compatible-anthropic-endpoint",
+        "anthropic-messages",
+      ),
+    ).toBe("openai-completions");
+  });
+});
+
+describe("getCompatibleAnthropicOpenAiSurfaceBaseUrl", () => {
+  it.each([
+    ["https://proxy.example.com", "https://proxy.example.com/v1"],
+    ["https://proxy.example.com/tenant", "https://proxy.example.com/tenant/v1"],
+    ["https://proxy.example.com/v1", "https://proxy.example.com/v1"],
+    ["https://proxy.example.com/v1/", "https://proxy.example.com/v1"],
+  ])("maps %s to the runtime Chat Completions base", (endpointUrl, expected) => {
+    expect(getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl)).toBe(expected);
   });
 });
 

@@ -295,6 +295,7 @@ describe("createSetupNim", () => {
           recoveredFromSandbox: true,
           recoveredModel: "handoff-model",
           sandboxName: "target-sandbox",
+          intendedInferenceApi: null,
         });
         expect(recoveredRoute).toBe(recoveredRegistryRoute);
         state.model = args.recoveredModel;
@@ -382,5 +383,36 @@ describe("createSetupNim", () => {
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
     });
+  });
+
+  it("validates DCode custom Anthropic selections on the OpenAI surface (#6294)", async () => {
+    const agent = {
+      name: "langchain-deepagents-code",
+      inference: { provider_type: "openai_compatible" },
+    } as AgentDefinition;
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async (args, state) => {
+        expect(args.intendedInferenceApi).toBe("openai-completions");
+        state.model = "custom-model";
+        state.provider = "compatible-anthropic-endpoint";
+        state.endpointUrl = "https://compatible.example";
+        state.credentialEnv = "COMPATIBLE_ANTHROPIC_API_KEY";
+        state.preferredInferenceApi = args.intendedInferenceApi;
+        return "selected";
+      },
+    );
+    const setupNim = createSetupNim(
+      makeDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "anthropicCompatible",
+        getNonInteractiveModel: () => "custom-model",
+        handleRemoteProviderSelection,
+      }),
+    );
+
+    const result = await setupNim(null, null, agent);
+
+    expect(handleRemoteProviderSelection).toHaveBeenCalledOnce();
+    expect(result.preferredInferenceApi).toBe("openai-completions");
   });
 });

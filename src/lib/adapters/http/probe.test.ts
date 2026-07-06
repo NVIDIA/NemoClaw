@@ -804,13 +804,13 @@ describe("runStreamingEventProbe", () => {
 
 describe("runAnthropicStreamingEventProbe", () => {
   /** Helper to build a spawnSyncImpl that writes SSE content to the -o file. */
-  function mockStreaming(sseBody: string, exitCode = 0) {
+  function mockStreaming(sseBody: string, exitCode = 0, httpStatus = "200") {
     return (_command: string, args: readonly string[]) => {
       writeCurlOutputBody(args, sseBody);
       return {
         pid: 1,
         output: [],
-        stdout: "",
+        stdout: httpStatus,
         stderr: "",
         status: exitCode,
         signal: null,
@@ -850,6 +850,17 @@ describe("runAnthropicStreamingEventProbe", () => {
     expect(result.missingEvents).toEqual([]);
     expect(result.duplicateEvents).toEqual([]);
     expect(result.sequenceErrors).toEqual([]);
+  });
+
+  it("rejects a non-2xx response even when its body looks like valid SSE", () => {
+    const result = runAnthropicStreamingEventProbe(
+      ["-sS", "--max-time", "15", "https://example.test/v1/messages"],
+      { spawnSyncImpl: mockStreaming(healthyStream, 0, "503") },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.httpStatus).toBe(503);
+    expect(result.message).toContain("HTTP 503");
   });
 
   it("fails when message_stop is emitted twice for one request", () => {
@@ -1119,7 +1130,7 @@ describe("runAnthropicStreamingEventProbe", () => {
           return {
             pid: 1,
             output: [],
-            stdout: "",
+            stdout: "200",
             stderr: "",
             status: 0,
             signal: null,

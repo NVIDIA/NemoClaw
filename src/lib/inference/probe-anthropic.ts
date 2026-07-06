@@ -176,7 +176,7 @@ export function probeAnthropicEndpoint(
           failures: [
             {
               name: "Anthropic Messages API (streaming)",
-              httpStatus: 0,
+              httpStatus: streamResult.httpStatus,
               curlStatus: streamResult.curlStatus,
               message: streamResult.message,
               diagnosticCodes: anthropicStreamingDiagnosticCodes(streamResult),

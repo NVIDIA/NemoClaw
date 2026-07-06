@@ -87,7 +87,7 @@ describe("inference selection validation", () => {
     }
   });
 
-  it("requests streaming validation for custom Anthropic-compatible endpoints (#6289)", async () => {
+  it("requests streaming validation for OpenClaw custom Anthropic endpoints (#6289)", async () => {
     const probeAnthropicEndpoint = vi.fn(() => ({
       ok: true,
       api: "anthropic-messages",
@@ -96,7 +96,7 @@ describe("inference selection validation", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
-      agentProductName: () => "Hermes",
+      agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
@@ -122,6 +122,57 @@ describe("inference selection validation", () => {
     }
   });
 
+  it("validates Hermes custom Anthropic routes on their intended Chat Completions surface (#6289)", async () => {
+    const probeAnthropicEndpoint = vi.fn(() => ({
+      ok: false,
+      message: "duplicate message_start",
+      failures: [
+        {
+          name: "Anthropic Messages API (streaming)",
+          httpStatus: 200,
+          curlStatus: 0,
+          message: "duplicate message_start",
+        },
+      ],
+    }));
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: true,
+      api: "openai-completions",
+      label: "Chat Completions API",
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "Hermes",
+      getCredential: () => "test-key",
+      probeAnthropicEndpoint,
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery: vi.fn(async () => "selection" as const),
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomAnthropicSelection(
+          "Custom Anthropic endpoint",
+          "https://compatible.example",
+          "nvidia/nemotron-3-super-v3",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+          null,
+          { intendedApi: "openai-completions" },
+        ),
+      ).resolves.toEqual({ ok: true, api: "openai-completions" });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://compatible.example/v1",
+        "nvidia/nemotron-3-super-v3",
+        "test-key",
+        { skipResponsesProbe: true },
+      );
+      expect(probeAnthropicEndpoint).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it("skips Anthropic streaming validation in reasoning mode", async () => {
     vi.stubEnv("NEMOCLAW_REASONING", "yes");
     const probeAnthropicEndpoint = vi.fn(() => ({
@@ -132,7 +183,7 @@ describe("inference selection validation", () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
-      agentProductName: () => "Hermes",
+      agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery: vi.fn(async () => "selection" as const),
@@ -157,7 +208,7 @@ describe("inference selection validation", () => {
     }
   });
 
-  it("routes a malformed-streaming probe failure through validation recovery (#6289)", async () => {
+  it("keeps rejecting malformed native Anthropic streams for OpenClaw (#6289)", async () => {
     const probeAnthropicEndpoint = vi.fn(() => ({
       ok: false,
       message:
@@ -166,7 +217,7 @@ describe("inference selection validation", () => {
       failures: [
         {
           name: "Anthropic Messages API (streaming)",
-          httpStatus: 0,
+          httpStatus: 200,
           curlStatus: 0,
           message: "duplicate message_start",
           diagnosticCodes: ["anthropic-streaming-duplicate-message-start"],
@@ -177,7 +228,7 @@ describe("inference selection validation", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const helpers = createInferenceSelectionValidationHelpers({
       isNonInteractive: () => false,
-      agentProductName: () => "Hermes",
+      agentProductName: () => "OpenClaw",
       getCredential: () => "test-key",
       probeAnthropicEndpoint,
       promptValidationRecovery,

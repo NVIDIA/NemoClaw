@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { getCredential } from "../credentials/store";
+import { getCompatibleAnthropicOpenAiSurfaceBaseUrl } from "../inference/config";
 
 const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
   require("../inference/onboard-probes") as {
@@ -80,6 +81,9 @@ export interface InferenceSelectionValidationHelpers {
     model: string,
     credentialEnv: string,
     helpUrl?: string | null,
+    options?: {
+      intendedApi?: "anthropic-messages" | "openai-completions";
+    },
   ): Promise<EndpointValidationResult>;
 }
 
@@ -228,21 +232,39 @@ export function createInferenceSelectionValidationHelpers(
     model: string,
     credentialEnv: string,
     helpUrl: string | null = null,
+    options: {
+      intendedApi?: "anthropic-messages" | "openai-completions";
+    } = {},
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
-    // Streaming validation catches Anthropic-compatible gateways whose
-    // non-streaming responses are valid but whose SSE streams are malformed
-    // (duplicate message_start, missing content deltas) — the agent runtime
-    // only uses the streaming path, so onboarding must exercise it (#6289).
-    // Reasoning-only compatible endpoints often reject streaming probes, so
-    // mirror the custom OpenAI-compatible path and skip streaming for them.
-    const probe = runAnthropicProbe(endpointUrl, model, apiKey, {
-      probeStreaming: !reasoningEnabled,
-    });
+    const intendedApi = options.intendedApi ?? "anthropic-messages";
+    // Validate the protocol surface that the selected agent will actually use.
+    // Hermes routes custom Anthropic providers through the managed OpenAI
+    // frontend, while native Anthropic consumers require strict SSE validation
+    // for duplicate/missing/out-of-order events (#6289).
+    const probe =
+      intendedApi === "openai-completions"
+        ? runOpenAiLikeProbe(
+            getCompatibleAnthropicOpenAiSurfaceBaseUrl(endpointUrl),
+            model,
+            apiKey,
+            { skipResponsesProbe: true },
+          )
+        : runAnthropicProbe(endpointUrl, model, apiKey, {
+            // Reasoning-only compatible endpoints often reject streaming probes,
+            // so mirror the custom OpenAI-compatible path and skip streaming.
+            probeStreaming: !reasoningEnabled,
+          });
     if (probe.ok) {
-      console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
-      return { ok: true, api: probe.api };
+      if (probe.note) {
+        console.log(`  ℹ ${probe.note}`);
+      } else {
+        console.log(
+          `  ${probe.label} available — ${deps.agentProductName()} will use ${intendedApi}.`,
+        );
+      }
+      return { ok: true, api: intendedApi };
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
