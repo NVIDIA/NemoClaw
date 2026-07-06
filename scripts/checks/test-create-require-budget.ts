@@ -93,6 +93,8 @@ export function containsCreateRequireIdentifier(
   );
   let found = false;
 
+  // Count identifiers in executable syntax, including property access, because
+  // either can introduce a loader seam. Literal text cannot invoke createRequire.
   function visit(node: ts.Node): void {
     if (found) return;
     if (ts.isIdentifier(node) && node.text === "createRequire") {

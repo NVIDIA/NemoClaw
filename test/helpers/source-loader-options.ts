@@ -89,6 +89,8 @@ export function nodeOptionsWithoutSourceLoader(
 ): string {
   if (!nodeOptions) return "";
   const tokens = splitRawNodeOptions(nodeOptions);
+  // Preserve malformed external input as one opaque value. Partially rewriting
+  // it could corrupt unrelated flags; Node remains responsible for rejecting it.
   if (!tokens) return nodeOptions;
   const retained: string[] = [];
 

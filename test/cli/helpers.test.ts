@@ -69,6 +69,26 @@ describe("source-loader Node options", () => {
     }
   });
 
+  it("preserves malformed source-loader assignments byte-for-byte (#6245)", () => {
+    const hook = "hook";
+    const malformedAssignments = ["--require='hook", '--require="hook', '--require=foo"bar'];
+
+    for (const malformed of malformedAssignments) {
+      expect(nodeOptionsWithoutSourceLoader(malformed, hook)).toBe(malformed);
+    }
+  });
+
+  it("removes an unquoted source-loader assignment with escaped backslashes (#6245)", () => {
+    const escapedWindowsHook = String.raw`C:\\path\\hook`;
+
+    expect(
+      nodeOptionsWithoutSourceLoader(
+        `--require=${escapedWindowsHook} --trace-warnings`,
+        escapedWindowsHook,
+      ),
+    ).toBe("--trace-warnings");
+  });
+
   it("handles mixed quotes and escaped backslashes while removing the source loader (#6245)", () => {
     const spacedWindowsHook = String.raw`C:\NemoClaw worktree\onboard-script-mocks.cjs`;
     const mixedOptions = `--conditions='development "mode"' ${sourceLoaderNodeOptions(
