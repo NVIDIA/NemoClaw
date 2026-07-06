@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { clearAutoDetectedCompatibleContextWindow } from "../../../inference/compatible-endpoint-context";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -336,6 +337,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
     } else {
       await deps.startRecordedStep("provider_selection");
+      // Drop a context window auto-detected by a prior compatible-endpoint pass
+      // before re-selecting, so retrying to a different provider cannot inherit
+      // endpoint A's probed max_model_len as a bogus user override (#6177).
+      clearAutoDetectedCompatibleContextWindow(process.env);
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,

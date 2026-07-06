@@ -13,6 +13,12 @@ const portFile = process.env.NEMOCLAW_FAKE_OPENAI_PORT_FILE || "";
 const logFile = process.env.NEMOCLAW_FAKE_OPENAI_LOG_FILE || "";
 const requestsFile = process.env.NEMOCLAW_FAKE_OPENAI_REQUESTS_FILE || "";
 const model = process.env.NEMOCLAW_FAKE_OPENAI_MODEL || "test-model";
+// Optional runtime context window advertised on /v1/models, mirroring vLLM's
+// max_model_len so onboarding can probe a real endpoint's context (#6177).
+const maxModelLen = (() => {
+  const raw = (process.env.NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN || "").trim();
+  return /^[1-9][0-9]*$/.test(raw) ? Number(raw) : null;
+})();
 const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
@@ -129,7 +135,9 @@ const server = createServer(async (req, res) => {
       bodyBytes: 0,
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
     });
-    sendJson(res, 200, { object: "list", data: [{ id: model, object: "model" }] });
+    const modelEntry: JsonObject = { id: model, object: "model" };
+    if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
+    sendJson(res, 200, { object: "list", data: [modelEntry] });
     return;
   }
 

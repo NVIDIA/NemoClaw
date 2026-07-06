@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { applyCompatibleEndpointContextWindow } from "../inference/compatible-endpoint-context";
 import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
 
 export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
@@ -202,6 +203,14 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           remoteConfig.helpUrl,
         );
         if (validation.ok) {
+          // Probe the endpoint's runtime max_model_len so a custom vLLM endpoint
+          // gets its real context window baked in instead of a small
+          // architecture default; an explicit override always wins (#6177).
+          applyCompatibleEndpointContextWindow(
+            state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
+            selectedModel,
+            { credentialEnv: selectedCredentialEnv },
+          );
           const explicitApi = (process.env.NEMOCLAW_PREFERRED_API || "").trim().toLowerCase();
           if (
             explicitApi &&

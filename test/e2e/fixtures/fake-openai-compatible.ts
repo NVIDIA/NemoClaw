@@ -33,6 +33,7 @@ export interface FakeOpenAiCompatibleServerOptions {
   readonly chatContent?: string;
   readonly forbiddenMarkers?: readonly string[];
   readonly host?: string;
+  readonly maxModelLen?: number;
   readonly model?: string;
   readonly port?: number;
   readonly publicHost?: string;
@@ -129,6 +130,8 @@ export async function startFakeOpenAiCompatibleServer(
       NEMOCLAW_FAKE_OPENAI_FORBIDDEN_MARKERS: JSON.stringify(options.forbiddenMarkers ?? []),
       NEMOCLAW_FAKE_OPENAI_HOST: host,
       NEMOCLAW_FAKE_OPENAI_LOG_FILE: logFile,
+      NEMOCLAW_FAKE_OPENAI_MAX_MODEL_LEN:
+        options.maxModelLen !== undefined ? String(options.maxModelLen) : "",
       NEMOCLAW_FAKE_OPENAI_MODEL: options.model ?? "test-model",
       NEMOCLAW_FAKE_OPENAI_PORT: String(options.port ?? 0),
       NEMOCLAW_FAKE_OPENAI_PORT_FILE: portFile,

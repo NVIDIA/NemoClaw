@@ -507,6 +507,29 @@ describe("agents/hermes/generate-config.ts", () => {
     ]);
   });
 
+  it("bakes NEMOCLAW_CONTEXT_WINDOW as model.context_length so Hermes cannot downgrade it (#6177)", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_MODEL: "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4",
+      NEMOCLAW_CONTEXT_WINDOW: "65536",
+    });
+
+    expect(config.model.context_length).toBe(65536);
+    // context_window is silently ignored by Hermes; we must not emit it.
+    expect(config.model.context_window).toBeUndefined();
+  });
+
+  it("omits context_length when no context window is configured so Hermes auto-detects (#6177)", () => {
+    const { config } = runConfigScript();
+
+    expect(config.model.context_length).toBeUndefined();
+  });
+
+  it("ignores a malformed NEMOCLAW_CONTEXT_WINDOW and lets Hermes auto-detect (#6177)", () => {
+    const { config } = runConfigScript({ NEMOCLAW_CONTEXT_WINDOW: "not-a-number" });
+
+    expect(config.model.context_length).toBeUndefined();
+  });
+
   it("falls back to a stable picker provider name when no upstream is named", () => {
     const { config } = runConfigScript();
 
