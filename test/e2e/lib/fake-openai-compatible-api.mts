@@ -21,6 +21,10 @@ const maxModelLen = (() => {
 })();
 const apiKey = process.env.NEMOCLAW_FAKE_OPENAI_API_KEY || "";
 const requireAuth = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH === "1";
+// Opt-in auth enforcement on GET /v1/models specifically (real vLLM launched
+// with --api-key gates it). Separate from requireAuth so existing tests, whose
+// readiness probe hits /v1/models unauthenticated, keep working. See #6177.
+const requireAuthModels = process.env.NEMOCLAW_FAKE_OPENAI_REQUIRE_AUTH_MODELS === "1";
 const chatContent = process.env.NEMOCLAW_FAKE_OPENAI_CHAT_CONTENT || "ok";
 const responseText = process.env.NEMOCLAW_FAKE_OPENAI_RESPONSE_TEXT || chatContent;
 const forbiddenMarkers = (() => {
@@ -128,16 +132,22 @@ const server = createServer(async (req, res) => {
   const path = requestPath(req);
 
   if (req.method === "GET" && ["/v1/models", "/models"].includes(path)) {
-    log(`GET ${path}`);
+    const modelsAuthOk = !requireAuthModels || req.headers.authorization === `Bearer ${apiKey}`;
+    log(`GET ${path} auth=${modelsAuthOk ? "ok" : "missing"}`);
     recordRequest({
       method: "GET",
       path,
       bodyBytes: 0,
+      auth: modelsAuthOk ? "ok" : "missing",
       // Presence only (never the token) so callers can prove a probe sent its
       // credential without leaking it into the requests log (#6177).
       authorizationSent: Boolean(req.headers.authorization),
       forbiddenMarkerMatches: forbiddenMarkerMatches(req, Buffer.alloc(0)),
     });
+    if (!modelsAuthOk) {
+      sendJson(res, 401, { error: { message: "missing bearer credential" } });
+      return;
+    }
     const modelEntry: JsonObject = { id: model, object: "model" };
     if (maxModelLen !== null) modelEntry.max_model_len = maxModelLen;
     sendJson(res, 200, { object: "list", data: [modelEntry] });

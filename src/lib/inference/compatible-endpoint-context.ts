@@ -53,6 +53,14 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
  * URL the immediately-preceding chat-completions validation probe already
  * reached — so it adds no egress surface beyond that validation. The credential
  * travels in a curl `--config` temp file (0600), never on the argv.
+ *
+ * Private/loopback addresses are intentionally NOT blocked: the operator is
+ * configuring their own inference endpoint at setup time (not attacker-supplied
+ * input on a served request), and the primary target — a self-hosted vLLM on
+ * `localhost`/a private LAN — is exactly such an address. Blocking private IPs
+ * would break local inference. This matches `probeOpenAiLikeEndpoint`, which
+ * likewise does not private-IP-filter. Only sandbox-internal hosts are skipped,
+ * because a host-side GET genuinely cannot reach them.
  */
 export function fetchCompatibleEndpointModels(endpointUrl: string, apiKey: string): unknown | null {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");

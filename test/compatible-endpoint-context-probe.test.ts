@@ -31,7 +31,7 @@ afterEach(async () => {
 describe("compatible-endpoint context probe against a real server (#6177)", {
   timeout: testTimeout(60_000),
 }, () => {
-  it("reads max_model_len from a live /v1/models endpoint into NEMOCLAW_CONTEXT_WINDOW", async () => {
+  it("reads max_model_len from a live /v1/models endpoint into NEMOCLAW_CONTEXT_WINDOW (#6177)", async () => {
     server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
 
     const models = fetchCompatibleEndpointModels(server.baseUrl, "");
@@ -65,6 +65,33 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     expect(
       server.requests().some((entry) => entry.path === "/v1/models" && entry.authorizationSent),
     ).toBe(true);
+  });
+
+  it("enforces auth on /v1/models: sets the window with the key, skips it without (#6177)", async () => {
+    server = await startFakeOpenAiCompatibleServer({
+      model: MODEL,
+      maxModelLen: 65_536,
+      apiKey: "secret-key",
+      requireAuthModels: true,
+    });
+
+    // Wrong/absent credential → the endpoint 401s → no window is set.
+    const noKeyEnv: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+      env: noKeyEnv,
+      apiKey: "",
+      fetchModels: fetchCompatibleEndpointModels,
+    });
+    expect(noKeyEnv.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+
+    // Correct credential → authorized → the window is read.
+    const keyedEnv: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+      env: keyedEnv,
+      apiKey: "secret-key",
+      fetchModels: fetchCompatibleEndpointModels,
+    });
+    expect(keyedEnv.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
 
   it("keeps the default context window when the endpoint omits max_model_len", async () => {
