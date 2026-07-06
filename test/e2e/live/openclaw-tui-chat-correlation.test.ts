@@ -2,18 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Live E2E: OpenClaw TUI/chat correlation regression guard (#2603 + #3145).
+ * Live E2E: OpenClaw TUI/chat correlation regression guards (#2603 + #3145 + #6194).
  *
  * Focused coverage slice for the protocol/history assertions migrated from
  * entrypoint now hands off to this live target.
  *
  * Covered here: ordered, non-empty, correlated replies plus ordered,
- * non-duplicated user turns against a real cloud OpenClaw sandbox. TUI
- * rendering indicators and visible tool-call status stay out of scope.
+ * non-duplicated user turns against a real cloud OpenClaw sandbox, then
+ * terminal TUI input after the visible `connected idle` state.
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -43,6 +43,10 @@ const EXPECTED_OPENCLAW_VERSION =
 
 const LIVE_SCRIPT_NAME = "openclaw-issue2603-chat-correlation.cjs";
 const SANDBOX_GATEWAY_PORT = 18789;
+const ISSUE6194_TUI_TIMEOUT_SEC = Number.parseInt(
+  process.env.NEMOCLAW_ISSUE_6194_TUI_TIMEOUT_SEC ?? "240",
+  10,
+);
 
 // ─── Trace analyzer types + helpers (mirrored from
 //     test/openclaw-tui-chat-correlation.test.ts so the live test is
@@ -94,6 +98,18 @@ type Issue2603Analysis = {
   duplicateUserTurns: DuplicateUserTurn[];
 };
 type LiveIssue2603Trace = Issue2603Trace & { error?: string };
+
+type CommandResultText = { stdout: string; stderr: string };
+
+function resultText(result: CommandResultText): string {
+  return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+function stripTerminalControl(value: string): string {
+  return value
+    .replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/gu, "")
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, "");
+}
 
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -215,6 +231,68 @@ function analyzeIssue2603Trace({
     missingUserTurns,
     duplicateUserTurns,
   };
+}
+
+function buildIssue6194TuiExpectScript(): string {
+  return `set timeout $env(NEMOCLAW_ISSUE_6194_TUI_TIMEOUT)
+set sandbox $env(NEMOCLAW_ISSUE_6194_SANDBOX)
+set capture $env(NEMOCLAW_ISSUE_6194_CAPTURE)
+log_file -a $capture
+spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui}
+expect {
+  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_initial" }
+  timeout {
+    send "\\003"
+    exit 10
+  }
+  eof { exit 11 }
+}
+send -- "Reply exactly NEMOCLAW6194_CHAT_OK and nothing else. Do not use tools.\\r"
+expect {
+  -nocase -re {NEMOCLAW6194_CHAT_OK} { puts "ISSUE6194_MARK chat_reply" }
+  timeout {
+    send "\\003"
+    exit 20
+  }
+  eof { exit 21 }
+}
+expect {
+  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_chat" }
+  timeout { puts "ISSUE6194_MARK connected_idle_after_chat_missing" }
+  eof { exit 22 }
+}
+send -- "/nemoclaw status\\r"
+expect {
+  -nocase -re {(nemoclaw|sandbox|docker|status|managed|openclaw)} { puts "ISSUE6194_MARK slash_status_output" }
+  timeout {
+    send "\\003"
+    exit 30
+  }
+  eof { exit 31 }
+}
+expect {
+  -nocase -re {connected[^\\r\\n]*idle} { puts "ISSUE6194_MARK connected_idle_after_status" }
+  timeout { puts "ISSUE6194_MARK connected_idle_after_status_missing" }
+  eof { exit 32 }
+}
+send "\\003"
+expect {
+  eof {
+    puts "ISSUE6194_MARK clean_exit"
+    exit 0
+  }
+  timeout {
+    send "\\003"
+    expect {
+      eof {
+        puts "ISSUE6194_MARK clean_exit"
+        exit 0
+      }
+      timeout { exit 40 }
+    }
+  }
+}
+`;
 }
 
 // The zero-chat-events failure is an observability race at the live
@@ -484,15 +562,15 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 // ─── The live regression guard ─────────────────────────────────────
 
 test(
-  "openclaw-tui-chat-correlation keeps rapid TUI and webchat sends correlated on a real OpenClaw sandbox (#2603, #3145)",
-  async ({ artifacts, environment, onboard, sandbox, secrets }) => {
+  "openclaw-tui-chat-correlation keeps rapid sends correlated and accepts terminal input after connected idle (#2603, #3145, #6194)",
+  async ({ artifacts, environment, host, onboard, sandbox, secrets }) => {
     secrets.required("NVIDIA_INFERENCE_API_KEY");
 
     await artifacts.writeJson("target.json", {
       id: "openclaw-tui-chat-correlation",
       runner: "vitest",
-      boundary: "openclaw-gateway-websocket",
-      issues: ["#2603", "#3145"],
+      boundary: ["openclaw-gateway-websocket", "openclaw-tui-terminal-after-connected-idle"],
+      issues: ["#2603", "#3145", "#6194"],
       ownerIssue: "#4347",
       pinnedOpenClawVersion: EXPECTED_OPENCLAW_VERSION,
     });
@@ -574,6 +652,45 @@ test(
     );
     expect(analysis.missingUserTurns, failureSummary).toEqual([]);
     expect(analysis.duplicateUserTurns, failureSummary).toEqual([]);
+
+    const captureFile = artifacts.pathFor("issue6194-openclaw-tui-capture.log");
+    const expectScript = artifacts.pathFor("issue6194-openclaw-tui.expect");
+    writeFileSync(expectScript, buildIssue6194TuiExpectScript(), { mode: 0o700 });
+    const tui = await host.command("expect", [expectScript], {
+      artifactName: "issue6194-openclaw-tui-post-idle",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_ISSUE_6194_SANDBOX: instance.sandboxName,
+        NEMOCLAW_ISSUE_6194_CAPTURE: captureFile,
+        NEMOCLAW_ISSUE_6194_TUI_TIMEOUT: String(ISSUE6194_TUI_TIMEOUT_SEC),
+      },
+      timeoutMs: (ISSUE6194_TUI_TIMEOUT_SEC + 30) * 1000,
+    });
+    const plainCapture = stripTerminalControl(readFileSync(captureFile, "utf8"));
+    const combined = `${resultText(tui)}\n${plainCapture}`;
+    await artifacts.writeText("issue6194-openclaw-tui-capture.plain.log", plainCapture);
+    await artifacts.writeJson("issue6194-target-result.json", {
+      id: "issue-6194-tui-post-connected-idle",
+      expectExitCode: tui.exitCode,
+      connectedIdleInitial: combined.includes("ISSUE6194_MARK connected_idle_initial"),
+      chatReply: combined.includes("ISSUE6194_MARK chat_reply"),
+      slashStatusOutput: combined.includes("ISSUE6194_MARK slash_status_output"),
+      cleanExit: combined.includes("ISSUE6194_MARK clean_exit"),
+    });
+
+    expect(tui.exitCode, combined).toBe(0);
+    expect(combined, "TUI must reach connected idle before post-idle input").toContain(
+      "ISSUE6194_MARK connected_idle_initial",
+    );
+    expect(combined, "post-idle chat must return a visible reply before timeout").toContain(
+      "ISSUE6194_MARK chat_reply",
+    );
+    expect(combined, "post-idle slash command must render status output before timeout").toContain(
+      "ISSUE6194_MARK slash_status_output",
+    );
+    expect(combined, "post-idle Ctrl+C must close the TUI session").toContain(
+      "ISSUE6194_MARK clean_exit",
+    );
   },
   // 75-minute budget covers cloud onboarding, sandbox provisioning, gateway
   // warmup, the 120-second wait-for-replies window, and retry.

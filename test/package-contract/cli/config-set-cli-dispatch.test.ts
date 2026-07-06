@@ -18,11 +18,15 @@ function deferred<T>() {
 describe("config set CLI dispatch", () => {
   it("awaits configSet before completing the dispatcher", async () => {
     const cliPath = require.resolve("../../../dist/nemoclaw.js");
+    const publicDispatchPath = require.resolve("../../../dist/lib/cli/public-dispatch.js");
+    const oclifRunnerPath = require.resolve("../../../dist/lib/cli/oclif-runner.js");
     const registryPath = require.resolve("../../../dist/lib/state/registry.js");
     const sandboxConfigPath = require.resolve("../../../dist/lib/sandbox/config.js");
     const runnerPath = require.resolve("../../../dist/lib/runner.js");
 
     const priorCli = require.cache[cliPath];
+    const priorPublicDispatch = require.cache[publicDispatchPath];
+    const priorOclifRunner = require.cache[oclifRunnerPath];
     const priorRegistry = require.cache[registryPath];
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorRunner = require.cache[runnerPath];
@@ -30,7 +34,29 @@ describe("config set CLI dispatch", () => {
 
     const configSetDeferred = deferred<void>();
     const validateName = vi.fn();
-    const configSet = vi.fn(() => configSetDeferred.promise);
+    const configSet = vi.fn((_sandboxName: string, _opts: Record<string, unknown>) => {
+      return configSetDeferred.promise;
+    });
+    const runOclifArgv = vi.fn(async () => {
+      throw new Error("config set should dispatch by command id");
+    });
+    const runOclifCommandById = vi.fn(async (commandId: string, args: string[]) => {
+      expect(commandId).toBe("sandbox:config:set");
+      expect(args).toEqual([
+        "test-sandbox",
+        "--key",
+        "inference.endpoints",
+        "--value",
+        "HTTP://93.184.216.34/v1",
+        "--config-accept-new-path",
+      ]);
+      await configSet("test-sandbox", {
+        key: "inference.endpoints",
+        value: "HTTP://93.184.216.34/v1",
+        restart: false,
+        acceptNewPath: true,
+      });
+    });
 
     process.env.NEMOCLAW_DISABLE_AUTO_DISPATCH = "1";
 
@@ -50,6 +76,16 @@ describe("config set CLI dispatch", () => {
           },
         },
       ),
+    } as any;
+
+    requireCache[oclifRunnerPath] = {
+      id: oclifRunnerPath,
+      filename: oclifRunnerPath,
+      loaded: true,
+      exports: {
+        runOclifArgv,
+        runOclifCommandById,
+      },
     } as any;
 
     requireCache[registryPath] = {
@@ -75,6 +111,7 @@ describe("config set CLI dispatch", () => {
 
     try {
       delete require.cache[cliPath];
+      delete require.cache[publicDispatchPath];
       const { dispatchCli } = require(cliPath);
 
       const dispatchPromise = dispatchCli([
@@ -94,6 +131,8 @@ describe("config set CLI dispatch", () => {
       });
 
       await vi.waitFor(() => expect(configSet).toHaveBeenCalledTimes(1));
+      expect(runOclifArgv).not.toHaveBeenCalled();
+      expect(runOclifCommandById).toHaveBeenCalledTimes(1);
       expect(configSet).toHaveBeenCalledTimes(1);
       expect(configSet).toHaveBeenCalledWith("test-sandbox", {
         key: "inference.endpoints",
@@ -115,6 +154,12 @@ describe("config set CLI dispatch", () => {
 
       if (priorCli) requireCache[cliPath] = priorCli;
       else delete requireCache[cliPath];
+
+      if (priorPublicDispatch) requireCache[publicDispatchPath] = priorPublicDispatch;
+      else delete requireCache[publicDispatchPath];
+
+      if (priorOclifRunner) requireCache[oclifRunnerPath] = priorOclifRunner;
+      else delete requireCache[oclifRunnerPath];
 
       if (priorRegistry) requireCache[registryPath] = priorRegistry;
       else delete requireCache[registryPath];
