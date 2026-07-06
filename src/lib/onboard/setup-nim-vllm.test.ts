@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { requireValue } from "../core/require-value";
 import type { SetupNimSelectionState } from "./setup-nim-flow";
 import { createSetupNimVllmHandler, type SetupNimVllmDeps } from "./setup-nim-vllm";
 
@@ -26,10 +27,7 @@ function deps(overrides: Partial<SetupNimVllmDeps> = {}): SetupNimVllmDeps {
     getLocalProviderBaseUrl: () => "http://host.openshell.internal:8000/v1",
     getLocalProviderValidationBaseUrl: () => "http://127.0.0.1:8000/v1",
     isSafeModelId: () => true,
-    requireValue: (value) => {
-      if (value == null) throw new Error("missing value");
-      return value;
-    },
+    requireValue,
     validateOpenAiLikeSelection: async () => ({ ok: true, api: "openai-completions" }),
     applyVllmRuntimeContextWindow: vi.fn(),
     exitProcess: (code) => {
