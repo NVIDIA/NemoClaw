@@ -475,16 +475,16 @@ test.skipIf(!shouldRunLiveE2E())(
       hermesSessionIds(await listHermesSessionsText(artifactName));
     const expectNoNewHermesSessions = async (
       before: Set<string>,
+      expectedSessionId: string,
       args: string[],
       runArtifact: string,
       afterArtifact: string,
-      listNeedle: string,
     ) => {
       await runHermesCli(args, runArtifact);
       const afterText = await listHermesSessionsText(afterArtifact);
       const after = hermesSessionIds(afterText);
       expect([...after].filter((id) => !before.has(id))).toEqual([]);
-      expect(stripAnsi(afterText)).toContain(listNeedle);
+      expect(after.has(expectedSessionId), stripAnsi(afterText)).toBe(true);
     };
 
     const issue5254Marker = `NEMOCLAW_5254_${Date.now()}`;
@@ -499,19 +499,19 @@ test.skipIf(!shouldRunLiveE2E())(
     const resumePrompt = `Repeat this exact token: ${issue5254Marker}_RESUME.`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-resume"),
+      seedSessionId,
       ["--resume", seedSessionId, "-z", resumePrompt, "--pass-session-id", "--ignore-rules"],
       "phase-4-issue-5254-resume-oneshot",
       "phase-4-issue-5254-sessions-after-resume",
-      issue5254Marker.slice(0, 24),
     );
 
     const continuePrompt = `Confirm this exact token again: ${issue5254Marker}_CONTINUE.`;
     await expectNoNewHermesSessions(
       await listHermesSessions("phase-4-issue-5254-sessions-before-continue"),
+      seedSessionId,
       ["-c", seedSessionId, "-z", continuePrompt],
       "phase-4-issue-5254-continue-oneshot",
       "phase-4-issue-5254-sessions-after-continue",
-      issue5254Marker.slice(0, 24),
     );
 
     const exportPath = `/tmp/nemoclaw-issue-5254-${issue5254Marker}.jsonl`;
