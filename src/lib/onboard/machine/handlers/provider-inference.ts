@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { coerceAgentInferenceApi } from "../../../inference/config";
+import { coerceAgentInferenceApi, resolveAgentInferenceApi } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -95,6 +95,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    isResumeProviderSurfaceReady(
+      provider: string | null | undefined,
+      preferredInferenceApi: string | null | undefined,
+      credentialEnv: string | null | undefined,
+      endpointUrl: string | null | undefined,
+    ): boolean;
     recordStateSkipped(
       state: "provider_selection" | "inference",
       metadata?: Record<string, unknown> | null,
@@ -249,12 +255,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       ? constants.hermesApiKeyAuthMethod
       : null);
   let hermesToolGateways = initial.hermesToolGateways;
-  // A session persisted before the #6294 fix can carry anthropic-messages for
-  // an OpenAI-/chat/completions-only agent (provider_type: openai_compatible).
-  // The resume shortcut below skips setupNim — the fresh-onboard coercion
-  // point — so coerce the persisted seed here too, or a resume/rebuild would
-  // re-bake the sandbox base_url without its /v1 suffix.
-  let preferredInferenceApi = coerceAgentInferenceApi(agent, initial.preferredInferenceApi);
+  // Sessions persisted before #6294/#6289 can carry an API family that the
+  // selected agent cannot safely use. Normalize the seed before the resume
+  // shortcut so the gateway provider is revalidated and, when necessary,
+  // re-registered on the matching protocol surface before sandbox creation.
+  let preferredInferenceApi = resolveAgentInferenceApi(
+    agentName(agent),
+    provider,
+    coerceAgentInferenceApi(agent, initial.preferredInferenceApi),
+  );
   let compatibleEndpointReasoning = initial.compatibleEndpointReasoning;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
@@ -286,14 +295,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       // default provider selection if the recreate fails after this point.
       shouldRecordProviderSelection = authoritativeResumeConfig;
       if (preferredInferenceApi !== initial.preferredInferenceApi) {
-        // #6294 heal: the pre-fix session left the gateway provider
-        // registered for the Anthropic Messages surface. Re-run inference
-        // setup so the registration is refreshed for the coerced OpenAI
-        // route. The coerced value is persisted only after that setup
-        // succeeds (below, with the inference step record) — persisting it
-        // here would disarm the heal permanently if the first attempt fails
-        // (e.g. keyless resume), stranding the sandbox on a stale route.
+        // #6294/#6289 heal: the pre-fix session can leave the gateway provider
+        // registered for a protocol that no longer matches the agent route.
+        // Re-run inference setup so the provider surface is revalidated and
+        // refreshed. Persist the adjusted value only after setup succeeds.
         forceInferenceSetup = true;
+      }
+      if (
+        !deps.isResumeProviderSurfaceReady(
+          provider,
+          preferredInferenceApi,
+          credentialEnv,
+          endpointUrl,
+        )
+      ) {
+        forceInferenceSetup = true;
+        deps.log(
+          "  [resume] Refreshing the gateway provider to match the required inference surface.",
+        );
       }
       const hydratedCredential = deps.hydrateCredentialEnv(credentialEnv);
       // A rebuild recreate may leave `openshell inference get` reporting the
@@ -380,16 +399,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       shouldRecordProviderSelection = true;
     }
 
-    // #6294: persist the coerced inference API only together with a
-    // successful inference-step record further below — a failed heal must
-    // leave the stale persisted seed in place so the next resume re-arms.
-    const healCoercedInferenceApi =
+    // Persist a repaired API family only together with a successful inference
+    // step. A failed heal must leave the stale seed in place so resume re-arms.
+    const healAdjustedInferenceApi =
       resumeProviderSelection && preferredInferenceApi !== initial.preferredInferenceApi;
     const selected = requireSelection(provider, model, deps);
     const selectedProvider = selected.provider;
     const selectedModel = selected.model;
     provider = selectedProvider;
     model = selectedModel;
+    preferredInferenceApi = resolveAgentInferenceApi(
+      agentName(agent),
+      provider,
+      preferredInferenceApi,
+    );
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -400,7 +423,12 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           credentialEnv,
           hermesAuthMethod,
           hermesToolGateways,
-          preferredInferenceApi,
+          // An authoritative rebuild records route fidelity before inference
+          // setup. Keep the stale marker until the provider surface heal
+          // succeeds so a failed attempt remains armed on the next resume.
+          preferredInferenceApi: healAdjustedInferenceApi
+            ? initial.preferredInferenceApi
+            : preferredInferenceApi,
           compatibleEndpointReasoning,
           nimContainer,
         }),
@@ -595,10 +623,9 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         compatibleEndpointReasoning,
         nimContainer,
         hermesToolGateways,
-        // The forced #6294 heal succeeded: the gateway registration now
-        // matches the coerced route, so the session may safely stop carrying
-        // the stale anthropic-messages seed.
-        ...(healCoercedInferenceApi ? { preferredInferenceApi } : {}),
+        // The forced #6294/#6289 heal succeeded: the gateway registration now
+        // matches the adjusted route, so the stale session seed can be replaced.
+        ...(healAdjustedInferenceApi ? { preferredInferenceApi } : {}),
       }),
     );
     break;
