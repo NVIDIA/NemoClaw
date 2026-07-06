@@ -43,6 +43,28 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     expect(result.stdout).not.toContain("super-secret-gateway-token");
   });
 
+  it("preserves required non-credential proxy and gateway routing metadata", () => {
+    const wrapped = wrapExecCommandWithRuntimeEnv([
+      "/bin/sh",
+      "-c",
+      'printf "%s|%s|%s" "$HTTP_PROXY" "$NEMOCLAW_OPENCLAW_GATEWAY_URL" "$NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS"',
+    ]);
+    const result = spawnSync(wrapped[0], wrapped.slice(1), {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HTTP_PROXY: "http://10.200.0.1:3128",
+        NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1",
+        NEMOCLAW_OPENCLAW_GATEWAY_URL: "ws://10.200.0.2:18789",
+        OPENCLAW_GATEWAY_TOKEN: "super-secret-gateway-token",
+      },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("http://10.200.0.1:3128|ws://10.200.0.2:18789|1");
+    expect(result.stdout).not.toContain("super-secret-gateway-token");
+  });
+
   it("ignores ambient BASH_ENV before sourcing the trusted runtime env (#4504)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
     const bashEnv = path.join(root, "bash-env.sh");
