@@ -178,12 +178,13 @@ NemoClaw can export Deep Agents Code traces to an OTLP/HTTP collector that you o
 Start a collector that accepts protobuf trace requests on a host interface reachable through `host.openshell.internal:4318`, then opt in while onboarding the Deep Agents Code sandbox.
 
 ```bash
-nemoclaw onboard --agent langchain-deepagents-code --observability
+nemo-deepagents onboard --observability
 ```
 
 Observability is off when you omit `--observability`.
 NemoClaw records the opt-in with the onboarding session and sandbox, so resume and rebuild operations preserve it without requiring the flag again.
-The Restricted policy tier suppresses the required egress preset even when the opt-in is recorded.
+The `restricted` policy tier suppresses the required egress preset even when the opt-in is recorded.
+In non-interactive onboarding, `NEMOCLAW_POLICY_MODE=skip` still skips all policy changes; on a new sandbox that leaves the collector unreachable, and the exporter continues fail-open without delivering traces.
 
 The sandbox always sends headerless OTLP/HTTP protobuf traces to `http://host.openshell.internal:4318/v1/traces`.
 The managed exporter reports `service.name=nemoclaw-langchain-deepagents-code` for routing convenience.

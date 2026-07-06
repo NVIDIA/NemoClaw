@@ -1,0 +1,596 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Validate managed observability against the pinned real NeMo Relay runtime."""
+
+from __future__ import annotations
+
+import asyncio
+import http.server
+import importlib
+import importlib.metadata
+import importlib.util
+import os
+import re
+import sys
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+from typing import cast
+
+import nemo_relay
+from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.callbacks import CallbackManager
+from langchain_core.runnables.config import get_async_callback_manager_for_config
+from langchain_core.runnables.config import get_callback_manager_for_config
+from langgraph._internal._config import ensure_config as ensure_langgraph_config
+
+_EXPECTED_RELAY_VERSION = "0.4.0"
+_EXPECTED_LANGGRAPH_VERSION = "1.2.6"
+_EXPECTED_PRODUCTION_ENDPOINT = "http://host.openshell.internal:4318/v1/traces"
+_EXPECTED_REQUEST_COUNT = 7
+_EXPECTED_WIRE_HEADERS = {
+    "accept",
+    "content-length",
+    "content-type",
+    "host",
+    "user-agent",
+}
+_MAX_REQUEST_BODY_BYTES = 1_048_576
+_SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:/-]+")
+
+_PROMPT_SECRET = "NEMOCLAW_PROMPT_SECRET"
+_MODEL_OUTPUT_SECRET = "NEMOCLAW_MODEL_OUTPUT_SECRET"
+_TOOL_ARGUMENT_SECRET = "NEMOCLAW_TOOL_ARGUMENT_SECRET"
+_TOOL_RESULT_SECRET = "NEMOCLAW_TOOL_RESULT_SECRET"
+_EXCEPTION_SECRET = "NEMOCLAW_EXCEPTION_SECRET"
+_AMBIENT_EXPORTER_SECRET = "NEMOCLAW_AMBIENT_EXPORTER_SECRET"
+_TRUNCATION_SENTINEL = "MUST_NOT_REACH_RELAY"
+_STABLE_ERROR_CODE = "NEMOCLAW_DCODE_OPERATION_FAILED"
+_CONTROL_CHARACTERS = "\r\n\t\x00\u202e"
+_OVERLONG_IDENTIFIER = "x" * 200
+
+
+@dataclass(frozen=True)
+class _CapturedRequest:
+    method: str
+    path: str
+    headers: dict[str, str]
+    body: bytes
+
+
+class _HostileCallback(BaseCallbackHandler):
+    """Invocation callback that must never enter the managed graph."""
+
+
+class _CollectorServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _CollectorHandler)
+        self._capture_lock = threading.Lock()
+        self._requests: list[_CapturedRequest] = []
+        self._failures: list[str] = []
+
+    def capture(self, request: _CapturedRequest) -> None:
+        with self._capture_lock:
+            self._requests.append(request)
+
+    def fail(self, message: str) -> None:
+        with self._capture_lock:
+            self._failures.append(message)
+
+    def snapshot(self) -> tuple[list[_CapturedRequest], list[str]]:
+        with self._capture_lock:
+            return list(self._requests), list(self._failures)
+
+
+class _CollectorHandler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self) -> None:
+        collector = cast(_CollectorServer, self.server)
+        try:
+            content_length = int(self.headers.get("content-length", ""))
+        except ValueError:
+            collector.fail("OTLP request had an invalid content-length")
+            self.send_error(400)
+            return
+        if not 0 < content_length <= _MAX_REQUEST_BODY_BYTES:
+            collector.fail("OTLP request body exceeded the validation bound")
+            self.send_error(413)
+            return
+
+        body = self.rfile.read(content_length)
+        if len(body) != content_length:
+            collector.fail("OTLP request body was truncated")
+            self.send_error(400)
+            return
+        collector.capture(
+            _CapturedRequest(
+                method="POST",
+                path=self.path,
+                headers={key.lower(): value for key, value in self.headers.items()},
+                body=body,
+            )
+        )
+        self.send_response(200)
+        self.send_header("content-length", "0")
+        self.end_headers()
+
+    def log_message(self, _format: str, *args: Any) -> None:
+        del args
+
+
+def _load_observability_module() -> ModuleType:
+    """Import the patched package module, or an explicit source path for local checks."""
+    if len(sys.argv) == 1:
+        return importlib.import_module("deepagents_code.nemoclaw_observability")
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: validate-observability.py [nemoclaw_observability.py]")
+
+    path = Path(sys.argv[1]).resolve(strict=True)
+    spec = importlib.util.spec_from_file_location(
+        "nemoclaw_observability_validation", path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load observability module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _raw_identifier(prefix: str) -> str:
+    return (
+        f"{prefix}{_CONTROL_CHARACTERS}{_OVERLONG_IDENTIFIER}"
+        f"-{_TRUNCATION_SENTINEL}"
+    )
+
+
+def _tool_request(name: str) -> ToolCallRequest:
+    return ToolCallRequest(
+        tool_call={
+            "name": name,
+            "args": {"secret": _TOOL_ARGUMENT_SECRET},
+            "id": "managed-observability-validation",
+        },
+        tool=None,
+        state={},
+        runtime=None,
+    )
+
+
+def _assert_original_exception(
+    caught: BaseException,
+    expected: BaseException,
+    handler_name: str,
+) -> None:
+    if caught is not expected:
+        raise AssertionError(f"Relay changed the {handler_name} exception identity")
+    traceback = caught.__traceback__
+    frame_names: list[str] = []
+    while traceback is not None:
+        frame_names.append(traceback.tb_frame.f_code.co_name)
+        traceback = traceback.tb_next
+    if handler_name not in frame_names:
+        raise AssertionError(f"Relay removed the {handler_name} traceback frame")
+
+
+async def _exercise_async_boundaries(
+    observability: ModuleType,
+    middleware: Any,
+    raw_names: dict[str, str],
+) -> None:
+    request = nemo_relay.LLMRequest(
+        {"authorization": _PROMPT_SECRET},
+        {
+            "model": raw_names["model"],
+            "messages": [{"role": "user", "content": _PROMPT_SECRET}],
+        },
+    )
+
+    async def successful_model(inner_request: Any) -> dict[str, str]:
+        if inner_request.headers != {"authorization": _PROMPT_SECRET}:
+            raise AssertionError("model telemetry changed execution headers")
+        if inner_request.content["messages"][0]["content"] != _PROMPT_SECRET:
+            raise AssertionError("model telemetry changed the execution prompt")
+        return {"content": _MODEL_OUTPUT_SECRET}
+
+    model_result = await middleware._llm_execute(
+        raw_names["model"],
+        request,
+        None,
+        None,
+        successful_model,
+    )
+    if model_result != {"content": _MODEL_OUTPUT_SECRET}:
+        raise AssertionError("model telemetry changed the callback result")
+
+    async_model_error = RuntimeError(f"async-model:{_EXCEPTION_SECRET}")
+
+    async def failing_async_model(_request: Any) -> Any:
+        raise async_model_error
+
+    try:
+        await middleware._llm_execute(
+            "failure-model", request, None, None, failing_async_model
+        )
+    except RuntimeError as caught:
+        _assert_original_exception(caught, async_model_error, "failing_async_model")
+    else:
+        raise AssertionError("Relay swallowed the async model exception")
+
+    async_request = _tool_request(raw_names["async_tool"])
+
+    async def successful_async_tool(inner_request: Any) -> dict[str, str]:
+        if inner_request.tool_call["args"] != {"secret": _TOOL_ARGUMENT_SECRET}:
+            raise AssertionError("tool telemetry changed execution arguments")
+        return {"result": _TOOL_RESULT_SECRET}
+
+    tool_result = await middleware.awrap_tool_call(
+        async_request, successful_async_tool
+    )
+    if tool_result != {"result": _TOOL_RESULT_SECRET}:
+        raise AssertionError("tool telemetry changed the callback result")
+
+    async_tool_error = RuntimeError(f"async-tool:{_EXCEPTION_SECRET}")
+
+    async def failing_async_tool(_request: Any) -> Any:
+        raise async_tool_error
+
+    try:
+        await middleware.awrap_tool_call(async_request, failing_async_tool)
+    except RuntimeError as caught:
+        _assert_original_exception(caught, async_tool_error, "failing_async_tool")
+    else:
+        raise AssertionError("Relay swallowed the async tool exception")
+
+    control_flow_error = KeyboardInterrupt(f"control-flow:{_EXCEPTION_SECRET}")
+
+    async def interrupted_model(_request: Any) -> Any:
+        raise control_flow_error
+
+    try:
+        await middleware._llm_execute(
+            "interrupt-model", request, None, None, interrupted_model
+        )
+    except KeyboardInterrupt as caught:
+        _assert_original_exception(caught, control_flow_error, "interrupted_model")
+    else:
+        raise AssertionError("Relay swallowed the control-flow exception")
+
+    if not observability._active:
+        raise AssertionError("observability deactivated while handling callbacks")
+
+
+def _exercise_sync_tool(middleware: Any, raw_tool_name: str) -> None:
+    request = _tool_request(raw_tool_name)
+    sync_tool_error = RuntimeError(f"sync-tool:{_EXCEPTION_SECRET}")
+
+    def failing_sync_tool(inner_request: Any) -> Any:
+        if inner_request.tool_call["args"] != {"secret": _TOOL_ARGUMENT_SECRET}:
+            raise AssertionError("tool telemetry changed sync execution arguments")
+        raise sync_tool_error
+
+    try:
+        middleware.wrap_tool_call(request, failing_sync_tool)
+    except RuntimeError as caught:
+        _assert_original_exception(caught, sync_tool_error, "failing_sync_tool")
+    else:
+        raise AssertionError("Relay swallowed the sync tool exception")
+
+
+def _exercise_graph(observability: ModuleType, raw_graph_name: str) -> None:
+    callback = observability.new_metadata_only_callback_handler()
+    callback.on_chain_start(
+        None,
+        {},
+        run_id="managed-observability-validation",
+        name=raw_graph_name,
+    )
+    callback.on_chain_error(
+        RuntimeError(f"graph:{_EXCEPTION_SECRET}"),
+        run_id="managed-observability-validation",
+    )
+
+
+def _safe_names(
+    observability: ModuleType, raw_names: dict[str, str]
+) -> dict[str, str]:
+    fallbacks = {
+        "model": "unknown",
+        "sync_tool": "unknown",
+        "async_tool": "unknown",
+        "graph": "LangGraph",
+    }
+    safe_names = {
+        name: observability._safe_identifier(value, fallbacks[name])
+        for name, value in raw_names.items()
+    }
+    for name, value in safe_names.items():
+        if len(value) > 128:
+            raise AssertionError(f"{name} identifier exceeds the 128-character cap")
+        if _SAFE_IDENTIFIER.fullmatch(value) is None:
+            raise AssertionError(f"{name} identifier contains an unsafe character")
+        if _TRUNCATION_SENTINEL in value:
+            raise AssertionError(f"{name} identifier was not truncated")
+    return safe_names
+
+
+def _assert_only_managed_handler(manager: Any, managed_handler: Any) -> None:
+    if manager.handlers != [managed_handler]:
+        raise AssertionError("an invocation callback entered the managed handler set")
+    if manager.inheritable_handlers != [managed_handler]:
+        raise AssertionError("an invocation callback became inheritable")
+
+
+def _assert_callback_manager_boundary(observability: ModuleType) -> None:
+    bound_manager = observability.new_metadata_only_callback_manager()
+    managed_handler = bound_manager.handlers[0]
+    hostile_handler = _HostileCallback()
+
+    bound_manager.add_handler(hostile_handler)
+    bound_manager.set_handler(hostile_handler)
+    bound_manager.set_handlers([hostile_handler])
+    bound_manager.remove_handler(managed_handler)
+    _assert_only_managed_handler(bound_manager, managed_handler)
+    _assert_only_managed_handler(bound_manager.copy(), managed_handler)
+
+    hostile_manager = CallbackManager(
+        handlers=[hostile_handler],
+        inheritable_handlers=[hostile_handler],
+        tags=["invocation-manager-tag"],
+        inheritable_tags=["invocation-manager-inheritable-tag"],
+        metadata={"invocation_manager": "preserved"},
+        inheritable_metadata={"invocation_manager_inheritable": "preserved"},
+    )
+    merged_manager = bound_manager.merge(hostile_manager)
+    _assert_only_managed_handler(merged_manager, managed_handler)
+    if merged_manager.tags != ["invocation-manager-tag"]:
+        raise AssertionError("callback-manager tags were not preserved")
+    if merged_manager.metadata != {"invocation_manager": "preserved"}:
+        raise AssertionError("callback-manager metadata was not preserved")
+
+    # Pregel 1.2.6 invokes this as ensure_config(self.config, input_config).
+    list_config = ensure_langgraph_config(
+        {
+            "callbacks": bound_manager,
+            "tags": ["managed-tag"],
+            "metadata": {"managed": "preserved"},
+        },
+        {
+            "callbacks": [hostile_handler],
+            "tags": ["invocation-list-tag"],
+            "metadata": {"invocation_list": "preserved"},
+        },
+    )
+    manager_config = ensure_langgraph_config(
+        {"callbacks": bound_manager},
+        {"callbacks": hostile_manager},
+    )
+    configured_cases = (
+        (
+            list_config,
+            {"managed-tag", "invocation-list-tag"},
+            {"managed": "preserved", "invocation_list": "preserved"},
+        ),
+        (
+            manager_config,
+            {"invocation-manager-tag"},
+            {"invocation_manager": "preserved"},
+        ),
+    )
+    for config, expected_tags, expected_metadata in configured_cases:
+        _assert_only_managed_handler(config["callbacks"], managed_handler)
+        sync_manager = get_callback_manager_for_config(config)
+        async_manager = get_async_callback_manager_for_config(config)
+        for configured_manager in (sync_manager, async_manager):
+            _assert_only_managed_handler(configured_manager, managed_handler)
+            if set(configured_manager.tags) != expected_tags:
+                raise AssertionError("configured callback tags were not preserved")
+            if configured_manager.metadata != expected_metadata:
+                raise AssertionError("configured callback metadata was not preserved")
+
+    if set(list_config["tags"]) != {"managed-tag", "invocation-list-tag"}:
+        raise AssertionError("runnable tags were not preserved")
+    if list_config["metadata"] != {
+        "managed": "preserved",
+        "invocation_list": "preserved",
+    }:
+        raise AssertionError("runnable metadata was not preserved")
+
+
+def _assert_wire_requests(
+    requests: list[_CapturedRequest],
+    failures: list[str],
+    observability: ModuleType,
+    raw_names: dict[str, str],
+) -> int:
+    if failures:
+        raise AssertionError(f"loopback collector failures: {failures}")
+    if len(requests) != _EXPECTED_REQUEST_COUNT:
+        raise AssertionError(
+            f"expected {_EXPECTED_REQUEST_COUNT} OTLP requests, received {len(requests)}"
+        )
+
+    for request in requests:
+        if request.method != "POST" or request.path != "/v1/traces":
+            raise AssertionError(
+                f"unexpected OTLP route: {request.method} {request.path}"
+            )
+        header_names = set(request.headers)
+        if header_names != _EXPECTED_WIRE_HEADERS:
+            raise AssertionError(
+                f"unexpected OTLP wire headers: {sorted(header_names)}"
+            )
+        if request.headers["content-type"] != "application/x-protobuf":
+            raise AssertionError("OTLP request is not binary protobuf")
+        if int(request.headers["content-length"]) != len(request.body):
+            raise AssertionError("OTLP content-length does not match its body")
+
+    bodies = b"".join(request.body for request in requests)
+    header_values = "\n".join(
+        value for request in requests for value in request.headers.values()
+    ).encode()
+    sentinels = (
+        _PROMPT_SECRET,
+        _MODEL_OUTPUT_SECRET,
+        _TOOL_ARGUMENT_SECRET,
+        _TOOL_RESULT_SECRET,
+        _EXCEPTION_SECRET,
+        _AMBIENT_EXPORTER_SECRET,
+        _TRUNCATION_SENTINEL,
+    )
+    for sentinel in sentinels:
+        encoded = sentinel.encode()
+        if encoded in bodies or encoded in header_values:
+            raise AssertionError(f"sensitive {sentinel} reached the OTLP request")
+
+    stable_message = observability._REDACTED_EXCEPTION_MESSAGE.encode()
+    if stable_message not in bodies or _STABLE_ERROR_CODE.encode() not in bodies:
+        raise AssertionError("stable redacted error code is absent from OTLP")
+    if observability._SERVICE_NAME.encode() not in bodies:
+        raise AssertionError("managed service name is absent from OTLP")
+
+    for name, safe_value in _safe_names(observability, raw_names).items():
+        if safe_value.encode() not in bodies:
+            raise AssertionError(f"sanitized {name} identifier is absent from OTLP")
+        if raw_names[name].encode() in bodies:
+            raise AssertionError(f"raw {name} identifier reached OTLP")
+
+    return len(bodies)
+
+
+def _set_validation_environment(canary_endpoint: str) -> dict[str, str | None]:
+    values = {
+        "NEMOCLAW_OBSERVABILITY": "1",
+        "LANGCHAIN_TRACING": "false",
+        "LANGCHAIN_TRACING_V2": "false",
+        "LANGSMITH_TRACING": "false",
+        "LANGSMITH_TRACING_V2": "false",
+        "OTEL_ENABLED": "true",
+        "OTEL_SDK_DISABLED": "true",
+        "OTEL_SERVICE_NAME": _AMBIENT_EXPORTER_SECRET,
+        "OTEL_RESOURCE_ATTRIBUTES": (
+            f"service.name={_AMBIENT_EXPORTER_SECRET},ambient.secret="
+            f"{_AMBIENT_EXPORTER_SECRET}"
+        ),
+        "OTEL_TRACES_SAMPLER": "always_off",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": canary_endpoint,
+        "OTEL_EXPORTER_OTLP_HEADERS": (
+            f"authorization={_AMBIENT_EXPORTER_SECRET}"
+        ),
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": canary_endpoint,
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": (
+            f"x-api-key={_AMBIENT_EXPORTER_SECRET}"
+        ),
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "gzip",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "999999",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": (
+            f"/nonexistent/{_AMBIENT_EXPORTER_SECRET}/ca.pem"
+        ),
+        "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE": (
+            f"/nonexistent/{_AMBIENT_EXPORTER_SECRET}/client.pem"
+        ),
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY": (
+            f"/nonexistent/{_AMBIENT_EXPORTER_SECRET}/client.key"
+        ),
+    }
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    return previous
+
+
+def _restore_environment(previous: dict[str, str | None]) -> None:
+    for name, value in previous.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+def main() -> None:
+    observability = _load_observability_module()
+    relay_version = importlib.metadata.version("nemo-relay")
+    if relay_version != _EXPECTED_RELAY_VERSION:
+        raise AssertionError(
+            f"expected nemo-relay {_EXPECTED_RELAY_VERSION}, found {relay_version}"
+        )
+    langgraph_version = importlib.metadata.version("langgraph")
+    if langgraph_version != _EXPECTED_LANGGRAPH_VERSION:
+        raise AssertionError(
+            f"expected langgraph {_EXPECTED_LANGGRAPH_VERSION}, found {langgraph_version}"
+        )
+    if observability._OTLP_ENDPOINT != _EXPECTED_PRODUCTION_ENDPOINT:
+        raise AssertionError(
+            f"unexpected production OTLP endpoint: {observability._OTLP_ENDPOINT}"
+        )
+
+    raw_names = {
+        "model": _raw_identifier("model"),
+        "sync_tool": _raw_identifier("sync-tool"),
+        "async_tool": _raw_identifier("async-tool"),
+        "graph": _raw_identifier("graph"),
+    }
+    _safe_names(observability, raw_names)
+
+    collector = _CollectorServer()
+    canary = _CollectorServer()
+    collector_thread = threading.Thread(target=collector.serve_forever, daemon=True)
+    canary_thread = threading.Thread(target=canary.serve_forever, daemon=True)
+    collector_thread.start()
+    canary_thread.start()
+    original_endpoint = observability._OTLP_ENDPOINT
+    previous_environment = _set_validation_environment(
+        f"http://127.0.0.1:{canary.server_port}/v1/traces"
+    )
+    initialized = False
+    try:
+        observability._OTLP_ENDPOINT = (
+            f"http://127.0.0.1:{collector.server_port}/v1/traces"
+        )
+        initialized = observability.initialize_observability()
+        if not initialized or observability._subscriber is None:
+            raise AssertionError("real Relay observability failed to initialize")
+
+        _assert_callback_manager_boundary(observability)
+        middleware = observability.new_relay_middleware()
+        asyncio.run(
+            _exercise_async_boundaries(observability, middleware, raw_names)
+        )
+        _exercise_sync_tool(middleware, raw_names["sync_tool"])
+        _exercise_graph(observability, raw_names["graph"])
+
+        nemo_relay.subscribers.flush()
+        observability._subscriber.force_flush()
+        requests, failures = collector.snapshot()
+        canary_requests, canary_failures = canary.snapshot()
+        if canary_requests or canary_failures:
+            raise AssertionError("ambient OTLP canary received managed telemetry")
+        total_bytes = _assert_wire_requests(
+            requests, failures, observability, raw_names
+        )
+        print(
+            "Validated real NeMo Relay observability: "
+            f"relay={relay_version} langgraph={langgraph_version} "
+            f"requests={len(requests)} bytes={total_bytes}"
+        )
+    finally:
+        if initialized:
+            observability.shutdown_observability()
+        observability._OTLP_ENDPOINT = original_endpoint
+        _restore_environment(previous_environment)
+        collector.shutdown()
+        collector.server_close()
+        canary.shutdown()
+        canary.server_close()
+        collector_thread.join(timeout=5)
+        canary_thread.join(timeout=5)
+        if collector_thread.is_alive() or canary_thread.is_alive():
+            raise RuntimeError("loopback OTLP collectors did not stop")
+
+
+if __name__ == "__main__":
+    main()

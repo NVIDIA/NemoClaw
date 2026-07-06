@@ -276,26 +276,6 @@ describe("handlePoliciesState", () => {
     );
   });
 
-  it("threads durable observability intent into policy reconciliation", async () => {
-    const session = createSession({ observabilityEnabled: true });
-    const { deps, calls, setSession } = createDeps();
-    setSession(session);
-
-    await handlePoliciesState({
-      ...baseOptions(deps),
-      agent: { name: "langchain-deepagents-code" },
-    });
-
-    expect(calls.prepareResume).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ observabilityEnabled: true }),
-    );
-    expect(calls.setupPolicies).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({ observabilityEnabled: true }),
-    );
-  });
-
   it("treats whitespace-only agent.name as default OpenClaw", async () => {
     const { deps, calls } = createDeps();
 

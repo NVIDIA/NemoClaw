@@ -23,6 +23,7 @@ const MAIN_ANCHOR = "    args = parser.parse_args()\n";
 const ENTRYPOINT_ANCHOR = "from deepagents_code.main import cli_main\n";
 const HARDENING_MARKER = "NemoClaw-managed Deep Agents Code hardening v2.";
 const DISCLOSURE_MARKER = "NemoClaw-managed progressive tool disclosure.";
+const OBSERVABILITY_MARKER = "NemoClaw-managed backend-neutral observability.";
 
 const PACKAGE_SOURCES: Record<string, string> = {
   "__init__.py": `"""Deep Agents Code 0.1.30 test package."""`,
@@ -93,10 +94,32 @@ class FakeGraph:
     def __init__(self, main, subagents):
         self.main = main
         self.subagents = subagents
-        self.bound_config = {}
+        self.config = {
+            "tags": ["managed-tag"],
+            "metadata": {"managed": "preserved"},
+        }
 
     def with_config(self, config):
-        self.bound_config = {**self.bound_config, **config}
+        merged = {**self.config, **config}
+        existing_callbacks = self.config.get("callbacks")
+        incoming_callbacks = config.get("callbacks")
+        if existing_callbacks is not None and incoming_callbacks is not None:
+            if isinstance(incoming_callbacks, list):
+                if isinstance(existing_callbacks, list):
+                    merged["callbacks"] = existing_callbacks + incoming_callbacks
+                else:
+                    manager = existing_callbacks.copy()
+                    for callback in incoming_callbacks:
+                        manager.add_handler(callback)
+                    merged["callbacks"] = manager
+            elif isinstance(existing_callbacks, list):
+                manager = incoming_callbacks.copy()
+                for callback in existing_callbacks:
+                    manager.add_handler(callback)
+                merged["callbacks"] = manager
+            else:
+                merged["callbacks"] = existing_callbacks.merge(incoming_callbacks)
+        self.config = merged
         return self
 
 def create_deep_agent(*args, **kwargs):
@@ -116,14 +139,15 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     kwargs.pop("mcp_server_info", None)
     kwargs.pop("rubric_model", None)
     kwargs.pop("async_subagents", None)
-    return (
-        create_deep_agent(
-            middleware=[],
-            subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
-            **kwargs,
-        ),
-        "fixture-backend",
+    graph_config = kwargs.pop("graph_config", None)
+    graph = create_deep_agent(
+        middleware=[],
+        subagents=[{"name": "first", "middleware": []}, {"name": "second", "middleware": []}],
+        **kwargs,
     )
+    if graph_config is not None:
+        graph.config = {**graph.config, **graph_config}
+    return graph, "fixture-backend"
 `,
   "update_check.py": `from __future__ import annotations
 
@@ -307,9 +331,39 @@ class RelayMiddleware:
 class MetadataOnlyCallback:
     pass
 
+class MetadataOnlyCallbackManager:
+    def __init__(self):
+        self.handlers = [MetadataOnlyCallback()]
+
+    def copy(self):
+        return self
+
+    def add_handler(self, handler):
+        del handler
+
+    def merge(self, other):
+        del other
+        return self
+
+class HostileCallback:
+    pass
+
+class NormalCallbackManager:
+    def __init__(self, handlers):
+        self.handlers = handlers
+
+    def copy(self):
+        return NormalCallbackManager(list(self.handlers))
+
+    def add_handler(self, handler):
+        self.handlers.append(handler)
+
+    def merge(self, other):
+        return NormalCallbackManager([*self.handlers, *other.handlers])
+
 observability.initialize_observability = lambda: os.environ.get("NEMOCLAW_OBSERVABILITY") == "1"
 observability.new_relay_middleware = RelayMiddleware
-observability.new_metadata_only_callback_handler = MetadataOnlyCallback
+observability.new_metadata_only_callback_manager = MetadataOnlyCallbackManager
 sys.modules["deepagents_code.nemoclaw_observability"] = observability
 
 agent = importlib.import_module("deepagents_code.agent")
@@ -345,14 +399,20 @@ def observability_counts(result):
         for item in stack
         if isinstance(item, RelayMiddleware)
     )
-    callbacks = graph.bound_config.get("callbacks", [])
+    callback_manager = graph.config.get("callbacks")
+    callbacks = callback_manager.handlers if callback_manager is not None else []
     return {
         "instances": len(instances),
         "distinct": len({id(item) for item in instances}),
         "callbacks": len(callbacks),
+        "callback_manager": isinstance(
+            callback_manager, MetadataOnlyCallbackManager
+        ) if callback_manager is not None else False,
         "metadata_only_callback": all(
             isinstance(callback, MetadataOnlyCallback) for callback in callbacks
         ),
+        "tags": graph.config.get("tags"),
+        "metadata": graph.config.get("metadata"),
     }
 
 os.environ.pop("NEMOCLAW_TOOL_DISCLOSURE", None)
@@ -369,6 +429,20 @@ observability_noncanonical = observability_counts(
 os.environ["NEMOCLAW_OBSERVABILITY"] = "1"
 observability_active = observability_counts(
     agent.create_cli_agent(None, "assistant")
+)
+observability_prebound_list = observability_counts(
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        graph_config={"callbacks": [HostileCallback()]},
+    )
+)
+observability_prebound_manager = observability_counts(
+    agent.create_cli_agent(
+        None,
+        "assistant",
+        graph_config={"callbacks": NormalCallbackManager([HostileCallback()])},
+    )
 )
 os.environ.pop("NEMOCLAW_OBSERVABILITY", None)
 
@@ -440,6 +514,8 @@ print(json.dumps({
     "direct": direct,
     "observability_noncanonical": observability_noncanonical,
     "observability_active": observability_active,
+    "observability_prebound_list": observability_prebound_list,
+    "observability_prebound_manager": observability_prebound_manager,
     "invalid": invalid,
 }))
 `;
@@ -563,6 +639,13 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(firstBytes[fixture.observabilityModulePath]).toBe(
       fs.readFileSync(observabilityPath, "utf8"),
     );
+    expect(firstBytes[fixture.agentPath]).toContain(
+      '"callbacks": new_metadata_only_callback_manager()',
+    );
+    expect(firstBytes[fixture.agentPath]).toContain("agent.config = {");
+    expect(firstBytes[fixture.agentPath]).not.toContain(
+      'with_config({"callbacks": new_metadata_only_callback_manager()})',
+    );
 
     const wiring = runWiring(fixture);
     expect(wiring).toMatchObject({
@@ -577,14 +660,22 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
       instances: 0,
       distinct: 0,
       callbacks: 0,
+      callback_manager: false,
       metadata_only_callback: true,
+      tags: ["managed-tag"],
+      metadata: { managed: "preserved" },
     });
     expect(wiring.observability_active).toEqual({
       instances: 3,
       distinct: 3,
       callbacks: 1,
+      callback_manager: true,
       metadata_only_callback: true,
+      tags: ["managed-tag"],
+      metadata: { managed: "preserved" },
     });
+    expect(wiring.observability_prebound_list).toEqual(wiring.observability_active);
+    expect(wiring.observability_prebound_manager).toEqual(wiring.observability_active);
     expect(wiring.progressive_collisions).toEqual({
       regular_regular: expect.stringContaining("multiple registered implementations"),
       regular_mcp: expect.stringContaining("MCP metadata owners"),
@@ -662,6 +753,38 @@ describe("Deep Agents 0.1.30 progressive-disclosure build patch", () => {
     expect(result.stderr).toContain("progressive-disclosure patch is partial");
     expect(snapshot(fixture.sourcePaths)).toEqual(before);
     expect(fs.existsSync(fixture.modulePath)).toBe(false);
+  });
+
+  it.each([
+    ["progressive-disclosure", DISCLOSURE_MARKER],
+    ["observability", OBSERVABILITY_MARKER],
+  ])("rejects a fully installed package missing its %s marker", (boundary, marker) => {
+    const fixture = makePatchFixture();
+    const first = runPatcher(fixture);
+    expect(first.status, first.stderr).toBe(0);
+    fs.writeFileSync(
+      fixture.agentPath,
+      fs.readFileSync(fixture.agentPath, "utf8").replace(`# ${marker}`, "# marker removed"),
+      "utf8",
+    );
+    const before = snapshot([
+      ...fixture.sourcePaths,
+      fixture.modulePath,
+      fixture.observabilityModulePath,
+      fixture.helperPath,
+    ]);
+
+    const result = runPatcher(fixture);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(`Managed package ${boundary} patch is partial`);
+    expect(
+      snapshot([
+        ...fixture.sourcePaths,
+        fixture.modulePath,
+        fixture.observabilityModulePath,
+        fixture.helperPath,
+      ]),
+    ).toEqual(before);
   });
 
   it("rejects a partial package install with the middleware missing", () => {

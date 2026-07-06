@@ -400,13 +400,15 @@ def _nemoclaw_get_class_path(self, provider_name: str):
 ModelConfig.get_class_path = _nemoclaw_get_class_path
 '''
 
-# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 has no
-# supported managed progressive-disclosure middleware hook in its agent factory
-# API, and this repository cannot change that third-party package source.
-# Patcher/unit guards plus validate-progressive-tool-disclosure.py cover this
-# fail-closed integration. Remove it once upstream provides a supported hook
-# preserving managed MCP, credentials, approvals, executor, sandbox, and private
-# checkpoint-state boundaries.
+# Source-of-truth boundary: pinned upstream deepagents-code==0.1.30 cannot inject
+# managed progressive-disclosure or Relay middleware into both main and subagent
+# graphs, nor attach a metadata-only callback to the compiled graph. Without this
+# root-owned image patch, those graphs omit NemoClaw's runtime controls; this repo
+# cannot change the third-party package source. Patcher shape guards, direct-patch
+# tests, progressive-disclosure tests, and observability conformance tests fail
+# closed on upstream drift. Remove each injection once an upstream agent-factory
+# API can preserve the managed MCP, credential, approval, executor, sandbox,
+# private checkpoint-state, and metadata-only trace boundaries end to end.
 AGENT_PATCH = r'''
 
 # NemoClaw-managed Deep Agents Code hardening v2.
@@ -493,7 +495,7 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
         raise RuntimeError("Deep Agents Code create_deep_agent boundary is unavailable")
     from deepagents_code.nemoclaw_observability import (
         initialize_observability,
-        new_metadata_only_callback_handler,
+        new_metadata_only_callback_manager,
     )
 
     observability_active = initialize_observability()
@@ -513,7 +515,15 @@ def create_cli_agent(model, assistant_id, *args, **kwargs):
     if not observability_active:
         return result
     agent, backend = result
-    agent = agent.with_config({"callbacks": [new_metadata_only_callback_handler()]})
+    # Copy the graph, then replace callbacks directly. with_config would merge a
+    # pre-bound manager first and retain its handlers. Invocation safety then
+    # relies on pinned LangGraph 1.2.6 calling ensure_config(self.config,
+    # input_config); validate-observability.py locks that merge path.
+    agent = agent.with_config({})
+    agent.config = {
+        **agent.config,
+        "callbacks": new_metadata_only_callback_manager(),
+    }
     return agent, backend
 
 
@@ -953,6 +963,33 @@ def _package_root() -> Path:
     return Path(roots[0])
 
 
+def _load_managed_module(
+    root: Path,
+    module_name: str,
+    source_boundary_name: str,
+    installed_boundary_name: str | None = None,
+) -> tuple[Path, str]:
+    source_path = Path(__file__).with_name(module_name)
+    destination_path = root / module_name
+    if not source_path.is_file():
+        raise RuntimeError(
+            f"NemoClaw {source_boundary_name} source not found at {source_path}"
+        )
+    source = source_path.read_text(encoding="utf-8")
+    compile(source, str(destination_path), "exec")
+    if destination_path.exists() or destination_path.is_symlink():
+        if (
+            not destination_path.is_file()
+            or destination_path.is_symlink()
+            or destination_path.read_text(encoding="utf-8") != source
+        ):
+            raise RuntimeError(
+                "Refusing to overwrite unexpected "
+                f"{installed_boundary_name or source_boundary_name} at {destination_path}"
+            )
+    return destination_path, source
+
+
 def main() -> None:
     actual_version = importlib.metadata.version("deepagents-code")
     if actual_version != EXPECTED_DCODE_VERSION:
@@ -997,50 +1034,12 @@ def main() -> None:
     }
     texts = {name: path.read_text(encoding="utf-8") for name, path in paths.items()}
 
-    module_source_path = Path(__file__).with_name(MIDDLEWARE_MODULE)
-    module_destination_path = root / MIDDLEWARE_MODULE
-    if not module_source_path.is_file():
-        raise RuntimeError(
-            f"NemoClaw middleware source not found at {module_source_path}"
-        )
-    module_source = module_source_path.read_text(encoding="utf-8")
-    compile(module_source, str(module_destination_path), "exec")
-    if module_destination_path.exists() or module_destination_path.is_symlink():
-        if (
-            not module_destination_path.is_file()
-            or module_destination_path.is_symlink()
-            or module_destination_path.read_text(encoding="utf-8") != module_source
-        ):
-            raise RuntimeError(
-                f"Refusing to overwrite unexpected middleware at {module_destination_path}"
-            )
-
-    observability_source_path = Path(__file__).with_name(OBSERVABILITY_MODULE)
-    observability_destination_path = root / OBSERVABILITY_MODULE
-    if not observability_source_path.is_file():
-        raise RuntimeError(
-            f"NemoClaw observability source not found at {observability_source_path}"
-        )
-    observability_source = observability_source_path.read_text(encoding="utf-8")
-    compile(
-        observability_source,
-        str(observability_destination_path),
-        "exec",
+    module_destination_path, module_source = _load_managed_module(
+        root, MIDDLEWARE_MODULE, "middleware"
     )
-    if (
-        observability_destination_path.exists()
-        or observability_destination_path.is_symlink()
-    ):
-        if (
-            not observability_destination_path.is_file()
-            or observability_destination_path.is_symlink()
-            or observability_destination_path.read_text(encoding="utf-8")
-            != observability_source
-        ):
-            raise RuntimeError(
-                "Refusing to overwrite unexpected observability module at "
-                f"{observability_destination_path}"
-            )
+    observability_destination_path, observability_source = _load_managed_module(
+        root, OBSERVABILITY_MODULE, "observability", "observability module"
+    )
 
     marker_states = {PATCH_MARKER in text for text in texts.values()}
     helper_path = root / "_nemoclaw_managed.py"
@@ -1055,6 +1054,14 @@ def main() -> None:
             raise RuntimeError(
                 "Managed package patch is partial: observability module is missing"
             )
+        for marker, boundary in (
+            (TOOL_DISCLOSURE_PATCH_MARKER, "progressive-disclosure"),
+            (OBSERVABILITY_PATCH_MARKER, "observability"),
+        ):
+            if texts["agent"].count(marker) != 1:
+                raise RuntimeError(
+                    f"Managed package {boundary} patch is partial in {paths['agent']}"
+                )
         if texts["agent"].count(AGENT_PATCH.lstrip()) != 1:
             raise RuntimeError(
                 f"Managed package progressive-disclosure patch is incomplete in {paths['agent']}"

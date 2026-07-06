@@ -36,6 +36,7 @@ describe("managed Deep Agents Code observability", () => {
     });
     expect(result.initialized).toBe(true);
     expect(result.initialized_again).toBe(true);
+    expect(result.ambient_environment_restored).toBe(true);
     expect(result.subscriber_count).toBe(1);
     expect(result.config).toEqual({
       transport: "http_binary",
@@ -80,6 +81,24 @@ describe("managed Deep Agents Code observability", () => {
     });
     expect(result.middleware_distinct).toBe(true);
     expect(result.middleware_name).toBe("NemoClawObservabilityMiddleware");
+    expect(result.callback_manager_boundary).toEqual({
+      bound_handlers: 1,
+      bound_metadata_only: true,
+      copy_handlers: 1,
+      copy_metadata_only: true,
+      merged_handlers: 1,
+      merged_metadata_only: true,
+      merged_tags: ["invocation-tag"],
+      merged_inheritable_tags: ["invocation-inheritable-tag"],
+      merged_metadata: { invocation: "preserved" },
+      merged_inheritable_metadata: { inheritable: "preserved" },
+    });
+    expect(result.identifier_boundaries).toEqual({
+      model: `model_${"x".repeat(118)}`,
+      sync_tool: `tool_${"x".repeat(119)}`,
+      async_tool: `async-tool_${"x".repeat(113)}`,
+      graph: `graph_${"x".repeat(118)}`,
+    });
     expect(result.error_boundary).toEqual({
       control_flow: {
         same_instance: true,
@@ -109,7 +128,7 @@ describe("managed Deep Agents Code observability", () => {
       },
       relay_observed: Array.from({ length: 5 }, () => ({
         type: "RuntimeError",
-        message: "NemoClaw managed operation failed (details redacted)",
+        message: "NEMOCLAW_DCODE_OPERATION_FAILED: managed operation failed (details redacted)",
         context_is_none: true,
         cause_is_none: true,
       })),

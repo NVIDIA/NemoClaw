@@ -12,10 +12,15 @@ readonly MANAGED_OBSERVABILITY_MARKER="/tmp/nemoclaw-observability-enabled"
 export HOME=/sandbox
 export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Raw OpenShell exec processes do not inherit the sandbox entrypoint's
-# environment. Recover only the credential-free enable bit materialized by
-# start.sh. This marker is convenience state, not an authorization boundary;
-# the host-selected network policy controls whether local OTLP egress exists.
+# Invalid state: raw OpenShell exec processes do not inherit the sandbox
+# entrypoint's environment, so an opted-in direct dcode exec can lose tracing.
+# Source boundary: start.sh materializes only the credential-free enable bit;
+# this launcher recovers it only from a regular, non-symlink marker.
+# Source-fix constraint: NemoClaw cannot make OpenShell preserve entrypoint env.
+# Regression: the proxy-launcher tests cover exact values and unsafe file types.
+# Removal condition: OpenShell propagates the bit to every exec/login process.
+# The marker is convenience state, not an authorization boundary; the
+# host-selected network policy controls whether local OTLP egress exists.
 unset NEMOCLAW_OBSERVABILITY
 if [ -f "$MANAGED_OBSERVABILITY_MARKER" ] \
   && [ ! -L "$MANAGED_OBSERVABILITY_MARKER" ] \

@@ -20,9 +20,12 @@ _SUBSCRIBER_NAME = "nemoclaw-dcode-openinference"
 _GUARDRAIL_NAME = "nemoclaw-dcode-metadata-only"
 _EXPORT_TIMEOUT_MILLIS = 1_000
 _LANGCHAIN_MODEL_RESPONSE_KEY = "__nemo_relay_integrations_langchain_model_response"
-_REDACTED_EXCEPTION_MESSAGE = "NemoClaw managed operation failed (details redacted)"
+_REDACTED_EXCEPTION_MESSAGE = (
+    "NEMOCLAW_DCODE_OPERATION_FAILED: managed operation failed (details redacted)"
+)
 _SCOPE_NAME_UNSAFE = re.compile(r"[^A-Za-z0-9_.:/-]+")
 _MAX_SCOPE_NAME_CHARS = 128
+_AMBIENT_OTEL_PREFIX = "OTEL_"
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ def observability_requested(env: dict[str, str] | None = None) -> bool:
 
 
 def _safe_identifier(value: Any, fallback: str) -> str:
+    """Sanitize and cap identifiers at 128 characters before Relay receives them."""
     if not isinstance(value, str):
         return fallback
     normalized = _SCOPE_NAME_UNSAFE.sub("_", value[:_MAX_SCOPE_NAME_CHARS]).strip("_")
@@ -180,6 +184,93 @@ def new_metadata_only_callback_handler() -> Any:
     return MetadataOnlyGraphCallbackHandler()
 
 
+def new_metadata_only_callback_manager() -> Any:
+    """Create the locked base manager for pinned self-config-first graph merges."""
+    from langchain_core.callbacks import CallbackManager
+
+    class MetadataOnlyCallbackManager(CallbackManager):
+        """Keep exactly one managed handler while preserving config context."""
+
+        def __init__(
+            self,
+            handlers: list[Any],
+            inheritable_handlers: list[Any] | None = None,
+            parent_run_id: Any | None = None,
+            *,
+            tags: list[str] | None = None,
+            inheritable_tags: list[str] | None = None,
+            metadata: dict[str, Any] | None = None,
+            inheritable_metadata: dict[str, Any] | None = None,
+        ) -> None:
+            candidates = [*handlers, *(inheritable_handlers or ())]
+            managed_handlers: list[Any] = []
+            for handler in candidates:
+                if isinstance(handler, _MetadataOnlyGraphCallbacks) and not any(
+                    existing is handler for existing in managed_handlers
+                ):
+                    managed_handlers.append(handler)
+            if len(managed_handlers) != 1:
+                raise RuntimeError(
+                    "managed observability callback manager requires exactly one handler"
+                )
+            managed_handler = managed_handlers[0]
+            super().__init__(
+                handlers=[managed_handler],
+                inheritable_handlers=[managed_handler],
+                parent_run_id=parent_run_id,
+                tags=list(tags or ()),
+                inheritable_tags=list(inheritable_tags or ()),
+                metadata=dict(metadata or {}),
+                inheritable_metadata=dict(inheritable_metadata or {}),
+            )
+
+        def copy(self) -> MetadataOnlyCallbackManager:
+            return self.__class__(
+                handlers=self.handlers.copy(),
+                inheritable_handlers=self.inheritable_handlers.copy(),
+                parent_run_id=self.parent_run_id,
+                tags=self.tags.copy(),
+                inheritable_tags=self.inheritable_tags.copy(),
+                metadata=self.metadata.copy(),
+                inheritable_metadata=self.inheritable_metadata.copy(),
+            )
+
+        def merge(self, other: Any) -> MetadataOnlyCallbackManager:
+            """Merge tags and metadata while discarding external handlers."""
+            # LangGraph 1.2.6 calls this locked manager as the base manager.
+            return self.__class__(
+                handlers=self.handlers.copy(),
+                inheritable_handlers=self.inheritable_handlers.copy(),
+                parent_run_id=self.parent_run_id or other.parent_run_id,
+                tags=list(dict.fromkeys([*self.tags, *other.tags])),
+                inheritable_tags=list(
+                    dict.fromkeys([*self.inheritable_tags, *other.inheritable_tags])
+                ),
+                metadata={**self.metadata, **other.metadata},
+                inheritable_metadata={
+                    **self.inheritable_metadata,
+                    **other.inheritable_metadata,
+                },
+            )
+
+        def add_handler(self, _handler: Any, inherit: bool = True) -> None:
+            """Reject handler additions performed while runnable configs merge."""
+            del inherit
+
+        def remove_handler(self, _handler: Any) -> None:
+            """Keep the managed handler installed for the graph lifetime."""
+
+        def set_handler(self, _handler: Any, inherit: bool = True) -> None:
+            """Reject attempts to replace the managed handler."""
+            del inherit
+
+        def set_handlers(self, _handlers: list[Any], inherit: bool = True) -> None:
+            """Reject attempts to replace the managed handler set."""
+            del inherit
+
+    return MetadataOnlyCallbackManager(handlers=[new_metadata_only_callback_handler()])
+
+
 class _CaptureCallbackException:
     def __init__(self, boundary: _RelayExceptionBoundary) -> None:
         self._boundary = boundary
@@ -268,14 +359,17 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             async def redacted_call(*args: Any, **kwargs: Any) -> Any:
+                callback_result: Any = None
                 with boundary.capture_callback_exception():
-                    return await func(*args, **kwargs)
-                boundary.raise_redacted()
+                    callback_result = await func(*args, **kwargs)
+                if boundary.has_original:
+                    boundary.raise_redacted()
+                return callback_result
 
             result: Any = None
             with boundary.suppress_relay_exception():
                 result = await super()._llm_execute(
-                    model_name=model_name,
+                    model_name=_safe_identifier(model_name, "unknown"),
                     request=request,
                     codec=codec,
                     response_codec=response_codec,
@@ -290,17 +384,20 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             def redacted_call(args: Any) -> Any:
+                callback_result: Any = None
                 with boundary.capture_callback_exception():
-                    return handler(
+                    callback_result = handler(
                         request.override(tool_call={**request.tool_call, "args": args})
                     )
-                boundary.raise_redacted()
+                if boundary.has_original:
+                    boundary.raise_redacted()
+                return callback_result
 
             result: Any = None
             with boundary.suppress_relay_exception():
                 result = run_sync(
                     nemo_relay.typed.tool_execute(
-                        name=tool_name,
+                        name=_safe_identifier(tool_name, "unknown"),
                         args=tool_args,
                         func=redacted_call,
                         args_codec=codec,
@@ -317,16 +414,19 @@ def new_relay_middleware() -> Any:
             boundary = _RelayExceptionBoundary()
 
             async def redacted_call(args: Any) -> Any:
+                callback_result: Any = None
                 with boundary.capture_callback_exception():
-                    return await handler(
+                    callback_result = await handler(
                         request.override(tool_call={**request.tool_call, "args": args})
                     )
-                boundary.raise_redacted()
+                if boundary.has_original:
+                    boundary.raise_redacted()
+                return callback_result
 
             result: Any = None
             with boundary.suppress_relay_exception():
                 result = await nemo_relay.typed.tool_execute(
-                    name=tool_name,
+                    name=_safe_identifier(tool_name, "unknown"),
                     args=tool_args,
                     func=redacted_call,
                     args_codec=codec,
@@ -350,6 +450,31 @@ def _deregister_guardrails() -> None:
         nemo_relay.guardrails.deregister_tool_sanitize_response(_GUARDRAIL_NAME)
     except Exception:  # noqa: BLE001 - best-effort cleanup
         logger.debug("NeMo Relay guardrail cleanup failed", exc_info=True)
+
+
+def _new_managed_subscriber(nemo_relay: Any) -> Any:
+    """Construct Relay without inheriting ambient OpenTelemetry configuration."""
+    # Relay 0.4's native exporter reads OTEL_* independently of config.headers,
+    # so an empty managed header map alone does not clear ambient credentials.
+    ambient = {
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith(_AMBIENT_OTEL_PREFIX)
+    }
+    for name in ambient:
+        os.environ.pop(name, None)
+    try:
+        config = nemo_relay.OpenInferenceConfig()
+        config.transport = "http_binary"
+        config.endpoint = _OTLP_ENDPOINT
+        config.headers = {}
+        config.service_name = _SERVICE_NAME
+        config.timeout_millis = _EXPORT_TIMEOUT_MILLIS
+        return nemo_relay.OpenInferenceSubscriber(config)
+    finally:
+        for name, value in ambient.items():
+            if value is not None:
+                os.environ[name] = value
 
 
 def shutdown_observability() -> None:
@@ -412,13 +537,7 @@ def initialize_observability() -> bool:
                 _GUARDRAIL_NAME, 0, _metadata_only_tool_response
             )
 
-            config = nemo_relay.OpenInferenceConfig()
-            config.transport = "http_binary"
-            config.endpoint = _OTLP_ENDPOINT
-            config.headers = {}
-            config.service_name = _SERVICE_NAME
-            config.timeout_millis = _EXPORT_TIMEOUT_MILLIS
-            subscriber = nemo_relay.OpenInferenceSubscriber(config)
+            subscriber = _new_managed_subscriber(nemo_relay)
             subscriber.register(_SUBSCRIBER_NAME)
         except Exception:  # noqa: BLE001 - tracing setup must not stop the agent
             logger.warning(

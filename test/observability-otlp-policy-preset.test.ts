@@ -7,6 +7,31 @@ import YAML from "yaml";
 import { filterSetupPolicyPresetsForAgent } from "../src/lib/onboard/agent-policy-presets";
 import * as policies from "../src/lib/policy";
 
+type RestRule = { allow?: { method?: string; path?: string } };
+type RestEndpoint = {
+  host?: string;
+  port?: number;
+  rules?: RestRule[];
+};
+type ObservabilityPreset = {
+  network_policies?: Record<
+    string,
+    { endpoints?: RestEndpoint[]; binaries?: Array<{ path: string }> }
+  >;
+};
+
+function loadObservabilityPreset(): ObservabilityPreset {
+  return YAML.parse(String(policies.loadPreset("observability-otlp-local")));
+}
+
+function allows(endpoint: RestEndpoint, host: string, method: string, path: string): boolean {
+  return (
+    endpoint.host === host &&
+    endpoint.rules?.some((rule) => rule.allow?.method === method && rule.allow.path === path) ===
+      true
+  );
+}
+
 describe("backend-neutral OTLP observability policy preset", () => {
   it("keeps the built-in preset catalog complete", () => {
     expect(
@@ -55,15 +80,7 @@ describe("backend-neutral OTLP observability policy preset", () => {
   });
 
   it("permits only trace POSTs from managed Python", () => {
-    const parsed = YAML.parse(String(policies.loadPreset("observability-otlp-local"))) as {
-      network_policies?: Record<
-        string,
-        {
-          endpoints?: Array<Record<string, unknown>>;
-          binaries?: Array<{ path: string }>;
-        }
-      >;
-    };
+    const parsed = loadObservabilityPreset();
     const policy = parsed.network_policies?.["observability-otlp-local"];
 
     expect(policy?.endpoints).toEqual([
@@ -77,5 +94,28 @@ describe("backend-neutral OTLP observability policy preset", () => {
       },
     ]);
     expect(policy?.binaries).toEqual([{ path: "/opt/venv/bin/python3*" }]);
+  });
+
+  it.each([
+    ["non-POST method", "host.openshell.internal", "GET", "/v1/traces"],
+    ["alternate path", "host.openshell.internal", "POST", "/v1/logs"],
+    ["path suffix", "host.openshell.internal", "POST", "/v1/traces/extra"],
+    ["alternate host", "collector.example", "POST", "/v1/traces"],
+  ])("denies %s", (_label, host, method, path) => {
+    const parsed = loadObservabilityPreset();
+    const endpoint = parsed.network_policies?.["observability-otlp-local"]?.endpoints?.[0];
+
+    expect(endpoint).toBeDefined();
+    expect(allows(endpoint ?? {}, host, method, path)).toBe(false);
+  });
+
+  it("contains no exporter credential or header configuration", () => {
+    const parsed = loadObservabilityPreset();
+    const endpoint = parsed.network_policies?.["observability-otlp-local"]?.endpoints?.[0];
+
+    expect(allows(endpoint ?? {}, "host.openshell.internal", "POST", "/v1/traces")).toBe(true);
+    expect(JSON.stringify(parsed)).not.toMatch(
+      /authorization|cookie|credential|headers?|langsmith|secret|token/i,
+    );
   });
 });

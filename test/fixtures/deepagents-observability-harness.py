@@ -14,9 +14,12 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from typing import NoReturn
 
 SECRET = "NEMOCLAW-OBSERVABILITY-SECRET-SENTINEL"
 _RELAY_OBSERVED_ERRORS: list[dict[str, Any]] = []
+_RELAY_OBSERVED_MODEL_NAMES: list[str] = []
+_RELAY_OBSERVED_TOOL_NAMES: list[str] = []
 
 
 class _Guardrails:
@@ -151,11 +154,49 @@ class _GraphCallbackHandler:
         self.base_initialized = True
 
 
+class _CallbackManager:
+    def __init__(
+        self,
+        handlers: list[Any],
+        inheritable_handlers: list[Any] | None = None,
+        parent_run_id: Any | None = None,
+        *,
+        tags: list[str] | None = None,
+        inheritable_tags: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        inheritable_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.handlers = list(handlers)
+        self.inheritable_handlers = list(inheritable_handlers or ())
+        self.parent_run_id = parent_run_id
+        self.tags = list(tags or ())
+        self.inheritable_tags = list(inheritable_tags or ())
+        self.metadata = dict(metadata or {})
+        self.inheritable_metadata = dict(inheritable_metadata or {})
+
+    def copy(self) -> _CallbackManager:
+        return self.__class__(
+            handlers=self.handlers.copy(),
+            inheritable_handlers=self.inheritable_handlers.copy(),
+            parent_run_id=self.parent_run_id,
+            tags=self.tags.copy(),
+            inheritable_tags=self.inheritable_tags.copy(),
+            metadata=self.metadata.copy(),
+            inheritable_metadata=self.inheritable_metadata.copy(),
+        )
+
+    def add_handler(self, handler: Any, inherit: bool = True) -> None:
+        if handler not in self.handlers:
+            self.handlers.append(handler)
+        if inherit and handler not in self.inheritable_handlers:
+            self.inheritable_handlers.append(handler)
+
+
 class _RelayWrappedError(RuntimeError):
     pass
 
 
-def _raise_relay_wrapped(error: Exception) -> None:
+def _raise_relay_wrapped(error: Exception) -> NoReturn:
     _RELAY_OBSERVED_ERRORS.append(
         {
             "type": type(error).__name__,
@@ -167,7 +208,8 @@ def _raise_relay_wrapped(error: Exception) -> None:
     raise _RelayWrappedError("relay wrapped callback failure") from error
 
 
-async def _tool_execute(*, args: Any, func: Any, **_kwargs: Any) -> Any:
+async def _tool_execute(*, name: str, args: Any, func: Any, **_kwargs: Any) -> Any:
+    _RELAY_OBSERVED_TOOL_NAMES.append(name)
     try:
         result = func(args)
         return await result if inspect.isawaitable(result) else result
@@ -192,7 +234,8 @@ class _NemoRelayMiddleware:
         func: Any,
         **_kwargs: Any,
     ) -> Any:
-        del model_name, codec, response_codec
+        _RELAY_OBSERVED_MODEL_NAMES.append(model_name)
+        del codec, response_codec
         try:
             return await func(request)
         except Exception as error:
@@ -242,6 +285,8 @@ def _install_stubs(
     fail_construct: bool = False,
 ) -> tuple[types.ModuleType, _Guardrails, _SubscriberCollection, _Scope]:
     _RELAY_OBSERVED_ERRORS.clear()
+    _RELAY_OBSERVED_MODEL_NAMES.clear()
+    _RELAY_OBSERVED_TOOL_NAMES.clear()
     guardrails = _Guardrails()
     subscribers = _SubscriberCollection(fail_flush=fail_flush)
     scope = _Scope()
@@ -271,6 +316,8 @@ def _install_stubs(
     langgraph_callbacks.GraphCallbackHandler = _GraphCallbackHandler
 
     langchain_core = types.ModuleType("langchain_core")
+    langchain_callbacks = types.ModuleType("langchain_core.callbacks")
+    langchain_callbacks.CallbackManager = _CallbackManager
     langchain_messages = types.ModuleType("langchain_core.messages")
     langchain_messages.AIMessage = _AIMessage
     langchain_messages.messages_to_dict = _messages_to_dict
@@ -284,6 +331,7 @@ def _install_stubs(
             "langgraph": langgraph,
             "langgraph.callbacks": langgraph_callbacks,
             "langchain_core": langchain_core,
+            "langchain_core.callbacks": langchain_callbacks,
             "langchain_core.messages": langchain_messages,
         }
     )
@@ -397,13 +445,121 @@ def _exercise_middleware_errors(module: types.ModuleType) -> dict[str, Any]:
     }
 
 
-def _privacy_scenario(path: Path) -> dict[str, Any]:
-    os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = f"https://attacker.invalid/{SECRET}"
-    os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"authorization={SECRET}"
-    os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = (
-        f"https://traces.attacker.invalid/{SECRET}"
+def _exercise_identifier_boundaries(
+    module: types.ModuleType, scope: _Scope
+) -> dict[str, Any]:
+    controls = "\r\n\t\x00\u202e"
+    overlong = "x" * 200
+    truncation_sentinel = "-MUST-NOT-REACH-RELAY"
+    middleware = module.new_relay_middleware()
+
+    async def model_call(request: Any) -> Any:
+        return request
+
+    asyncio.run(
+        middleware._llm_execute(
+            f"model{controls}{overlong}{truncation_sentinel}",
+            object(),
+            None,
+            None,
+            model_call,
+        )
     )
-    os.environ["OTEL_EXPORTER_OTLP_TRACES_HEADERS"] = f"x-api-key={SECRET}"
+
+    sync_tool_request = _ToolCallRequest(
+        {
+            "name": f"tool{controls}{overlong}{truncation_sentinel}",
+            "args": {},
+        }
+    )
+    middleware.wrap_tool_call(sync_tool_request, lambda _request: None)
+
+    async_tool_request = _ToolCallRequest(
+        {
+            "name": f"async-tool{controls}{overlong}{truncation_sentinel}",
+            "args": {},
+        }
+    )
+
+    async def async_tool_handler(_request: Any) -> None:
+        return None
+
+    asyncio.run(middleware.awrap_tool_call(async_tool_request, async_tool_handler))
+
+    callback = module.new_metadata_only_callback_handler()
+    scope_record_offset = len(scope.records)
+    callback.on_chain_start(
+        None,
+        {},
+        run_id="hostile-name-run",
+        name=f"graph{controls}{overlong}{truncation_sentinel}",
+    )
+    callback.on_chain_end({}, run_id="hostile-name-run")
+    graph_records = scope.records[scope_record_offset:]
+    graph_name = next(
+        record["name"]
+        for record in graph_records
+        if record["operation"] == "push"
+    )
+
+    return {
+        "model": _RELAY_OBSERVED_MODEL_NAMES[-1],
+        "sync_tool": _RELAY_OBSERVED_TOOL_NAMES[-2],
+        "async_tool": _RELAY_OBSERVED_TOOL_NAMES[-1],
+        "graph": graph_name,
+    }
+
+
+def _exercise_callback_manager_boundary(module: types.ModuleType) -> dict[str, Any]:
+    class _HostileCallback:
+        pass
+
+    hostile = _HostileCallback()
+    manager = module.new_metadata_only_callback_manager()
+    managed_handler = manager.handlers[0]
+    manager.add_handler(hostile)
+    copied = manager.copy()
+    manager.set_handler(hostile)
+    manager.set_handlers([hostile])
+    manager.remove_handler(managed_handler)
+
+    hostile_manager = _CallbackManager(
+        handlers=[hostile],
+        inheritable_handlers=[hostile],
+        tags=["invocation-tag"],
+        inheritable_tags=["invocation-inheritable-tag"],
+        metadata={"invocation": "preserved"},
+        inheritable_metadata={"inheritable": "preserved"},
+    )
+    merged = manager.merge(hostile_manager)
+    merged.add_handler(hostile)
+
+    return {
+        "bound_handlers": len(manager.handlers),
+        "bound_metadata_only": manager.handlers == [managed_handler],
+        "copy_handlers": len(copied.handlers),
+        "copy_metadata_only": copied.handlers == [managed_handler],
+        "merged_handlers": len(merged.handlers),
+        "merged_metadata_only": merged.handlers == [managed_handler],
+        "merged_tags": merged.tags,
+        "merged_inheritable_tags": merged.inheritable_tags,
+        "merged_metadata": merged.metadata,
+        "merged_inheritable_metadata": merged.inheritable_metadata,
+    }
+
+
+def _privacy_scenario(path: Path) -> dict[str, Any]:
+    ambient_otel = {
+        "OTEL_EXPORTER_OTLP_ENDPOINT": f"https://attacker.invalid/{SECRET}",
+        "OTEL_EXPORTER_OTLP_HEADERS": f"authorization={SECRET}",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": (
+            f"https://traces.attacker.invalid/{SECRET}"
+        ),
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": f"x-api-key={SECRET}",
+        "OTEL_RESOURCE_ATTRIBUTES": f"service.name={SECRET}",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": f"/nonexistent/{SECRET}/ca.pem",
+    }
+    os.environ.update(ambient_otel)
     _, guardrails, subscribers, scope = _install_stubs()
     module = _load_module(path)
 
@@ -414,6 +570,9 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
     os.environ["NEMOCLAW_OBSERVABILITY"] = "1"
     initialized = module.initialize_observability()
     initialized_again = module.initialize_observability()
+    ambient_environment_restored = all(
+        os.environ.get(name) == value for name, value in ambient_otel.items()
+    )
     subscriber = _OpenInferenceSubscriber.instances[0]
 
     request_guardrail = guardrails.registered["llm_request"]["callback"]
@@ -461,14 +620,16 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
 
     first_middleware = module.new_relay_middleware()
     second_middleware = module.new_relay_middleware()
+    callback_manager_boundary = _exercise_callback_manager_boundary(module)
     error_boundary = _exercise_middleware_errors(module)
     emitted = {
         "request": {"headers": request.headers, "content": request.content},
         "response": response,
         "tool_request": tool_request,
         "tool_response": tool_response,
-        "callback_records": scope.records,
+        "callback_records": list(scope.records),
     }
+    identifier_boundaries = _exercise_identifier_boundaries(module, scope)
     module.shutdown_observability()
     module.shutdown_observability()
 
@@ -476,6 +637,7 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
         "exact_opt_in": exact_opt_in,
         "initialized": initialized,
         "initialized_again": initialized_again,
+        "ambient_environment_restored": ambient_environment_restored,
         "subscriber_count": len(_OpenInferenceSubscriber.instances),
         "config": {
             "transport": subscriber.config.transport,
@@ -492,7 +654,9 @@ def _privacy_scenario(path: Path) -> dict[str, Any]:
         "secret_present": SECRET in json.dumps(emitted, sort_keys=True),
         "middleware_distinct": first_middleware is not second_middleware,
         "middleware_name": first_middleware.name,
+        "callback_manager_boundary": callback_manager_boundary,
         "error_boundary": error_boundary,
+        "identifier_boundaries": identifier_boundaries,
         "flush_calls": subscribers.flush_calls,
         "force_flush_calls": subscriber.force_flush_calls,
         "deregistered": subscriber.deregistered,

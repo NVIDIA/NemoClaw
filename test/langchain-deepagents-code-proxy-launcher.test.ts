@@ -242,14 +242,27 @@ describe("Deep Agents Code direct-exec proxy launcher", () => {
     expect(fs.statSync(markerFile).mode & 0o777).toBe(0o444);
     expect(enabledLaunch.status, enabledLaunch.stderr).toBe(0);
     expect(enabledLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=1");
+  });
 
-    fs.chmodSync(markerFile, 0o644);
-    fs.writeFileSync(markerFile, "true\n", "utf8");
+  it("ignores tampered and non-regular observability markers", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-observability-"));
+    const launcherPath = makeLauncherProxyProbeFixture(tempDir);
+    const markerFile = path.join(tempDir, "observability-enabled");
+
+    fs.writeFileSync(markerFile, "true\n", { encoding: "utf8", mode: 0o644 });
     const tamperedLaunch = runLauncher(launcherPath, [], {
       NEMOCLAW_OBSERVABILITY: "1",
     });
     expect(tamperedLaunch.status, tamperedLaunch.stderr).toBe(0);
     expect(tamperedLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
+
+    fs.rmSync(markerFile);
+    fs.mkdirSync(markerFile);
+    const nonRegularLaunch = runLauncher(launcherPath, [], {
+      NEMOCLAW_OBSERVABILITY: "1",
+    });
+    expect(nonRegularLaunch.status, nonRegularLaunch.stderr).toBe(0);
+    expect(nonRegularLaunch.stdout).toContain("LAUNCHER_NEMOCLAW_OBSERVABILITY=__unset__");
   });
 
   it("pins validated proxy overrides into direct dcode execution paths (#6191)", () => {

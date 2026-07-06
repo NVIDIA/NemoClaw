@@ -14,6 +14,10 @@ network_policies:
         port: 4318
         protocol: rest
         enforcement: enforce
+        # Docker/Podman bridge gateway addresses vary by host and network.
+        # OpenShell's SSRF guard rejects their private resolutions unless the
+        # policy allowlists them. The exact hostname, port, method, path, and
+        # managed-Python binary remain independently enforced below.
         allowed_ips:
           - 10.0.0.0/8
           - 172.16.0.0/12

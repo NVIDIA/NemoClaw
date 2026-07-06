@@ -351,6 +351,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain(
       "rm -f /opt/nemoclaw-deepagents-code/validate-progressive-tool-disclosure.py",
     );
+    expect(dockerfile).toContain("COPY agents/langchain-deepagents-code/validate-observability.py");
+    expect(dockerfile).toContain(
+      "/opt/venv/bin/python3 -I /opt/nemoclaw-deepagents-code/validate-observability.py",
+    );
+    expect(dockerfile).toContain("rm -f /opt/nemoclaw-deepagents-code/validate-observability.py");
     expect(dockerfile).toContain("ARG NEMOCLAW_TOOL_DISCLOSURE=progressive");
     expect(dockerfile).toContain("NEMOCLAW_TOOL_DISCLOSURE=${NEMOCLAW_TOOL_DISCLOSURE}");
     expect(dockerfile).toContain("progressive|direct)");
