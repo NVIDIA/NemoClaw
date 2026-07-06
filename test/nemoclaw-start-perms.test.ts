@@ -42,7 +42,7 @@ function mode(filePath: string): number {
 const oneShotFunction = extractShellFunction("run_oneshot_command");
 
 describe("nemoclaw-start one-shot command lifecycle", () => {
-  it("sources the trusted runtime env before preserving one-shot argv", () => {
+  it("sources the trusted runtime env before preserving one-shot argv (#4504)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-oneshot-env-"));
     const runtimeEnv = path.join(root, "runtime-env.sh");
     fs.writeFileSync(runtimeEnv, 'export NEMOCLAW_ONESHOT_ENV_MARKER="runtime-loaded"\n');
@@ -63,7 +63,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     }
   });
 
-  it("does not reinterpret a command-leading exec option", () => {
+  it("does not reinterpret a command-leading exec option (#4504)", () => {
     const script = [
       "set -euo pipefail",
       "normalize_mutable_config_perms() { :; }",

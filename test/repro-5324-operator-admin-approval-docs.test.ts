@@ -13,7 +13,7 @@ const sectionEnd = text.indexOf("</AgentOnly>", sectionStart);
 const section = text.slice(sectionStart, sectionEnd);
 
 describe("operator.admin manual approval documentation (#5324)", () => {
-  it("limits automatic approval to pairing, read, and write scopes", () => {
+  it("limits automatic approval to pairing, read, and write scopes (#5324)", () => {
     expect(sectionStart).toBeGreaterThanOrEqual(0);
     expect(sectionEnd).toBeGreaterThan(sectionStart);
     expect(section).toContain("`operator.pairing`, `operator.read`, and `operator.write`");
@@ -21,7 +21,7 @@ describe("operator.admin manual approval documentation (#5324)", () => {
     expect(section).toMatch(/cron/i);
   });
 
-  it("documents the bounded manual approval flow in order", () => {
+  it("documents the bounded manual approval flow in order (#5324)", () => {
     const connect = section.indexOf("$$nemoclaw <name> connect");
     const list = section.indexOf("openclaw devices list --json");
     const approve = section.indexOf("openclaw devices approve <requestId>");

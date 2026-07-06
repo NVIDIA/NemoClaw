@@ -153,7 +153,7 @@ describe("gateway websocket url host derivation", () => {
     expect(out).toContain("INSECURE=1");
   });
 
-  it("keeps the injected private gateway under a NemoClaw alias for ordinary commands", () => {
+  it("keeps the injected private gateway under a NemoClaw alias for ordinary commands (#4504)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gwenv-"));
     try {
       const envFilePath = path.join(tmpDir, "nemoclaw-proxy-env.sh");
@@ -247,7 +247,7 @@ describe("gateway websocket url host derivation", () => {
     }
   });
 
-  it("sources the trusted runtime env for the auto-pair watcher child only", () => {
+  it("sources the trusted runtime env for the auto-pair watcher child only (#4504)", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-autopair-env-"));
     try {
       const runtimeEnv = writeRuntimeShellEnv(tmpDir);

@@ -313,7 +313,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).not.toContain("FAKE_OPENCLAW_ARGS");
   });
 
-  it("refuses to pair when no public or private gateway URL is available", () => {
+  it("refuses to pair when no public or private gateway URL is available (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       preloadPresent: true,
     });
@@ -350,7 +350,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
-  it("reinjects the NemoClaw-private gateway URL and private-WS flag for WhatsApp", () => {
+  it("reinjects the NemoClaw-private gateway URL and private-WS flag for WhatsApp (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       privateGatewayUrl: "ws://10.200.0.2:18790",
       insecurePrivateWs: "1",
@@ -362,7 +362,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 
-  it("preserves an explicit public gateway override without borrowing the private opt-in", () => {
+  it("preserves an explicit public gateway override without borrowing the private opt-in (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: "wss://explicit.example.test:443",
       privateGatewayUrl: "ws://10.200.0.2:18790",
@@ -373,7 +373,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
     expect(r.stdout).toContain("FAKE_OPENCLAW_INSECURE_WS=unset");
   });
 
-  it("preserves the insecure-WS marker explicitly coupled to a public override", () => {
+  it("preserves the insecure-WS marker explicitly coupled to a public override (#4504)", () => {
     const r = runGuard(["channels", "login", "--channel", "whatsapp"], {
       gatewayUrl: "ws://explicit.example.test:18790",
       insecurePublicWs: "explicit-marker",

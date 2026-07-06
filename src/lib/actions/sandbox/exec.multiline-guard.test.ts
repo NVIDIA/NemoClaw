@@ -62,7 +62,7 @@ describe("findMultilineExecArg", () => {
 });
 
 describe("wrapExecCommandWithRuntimeEnv", () => {
-  it("sources the trusted runtime env and preserves each original argv element", () => {
+  it("sources the trusted runtime env and preserves each original argv element (#4504)", () => {
     const command = ["openclaw", "agent", "-m", "hello world", "quote'and\"double"];
     const wrapped = wrapExecCommandWithRuntimeEnv(command);
 
@@ -79,7 +79,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     expect(wrapped[5]).not.toMatch(/[\r\n]/);
   });
 
-  it("ignores ambient BASH_ENV before sourcing the trusted runtime env", () => {
+  it("ignores ambient BASH_ENV before sourcing the trusted runtime env (#4504)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-exec-bash-env-"));
     const bashEnv = path.join(root, "bash-env.sh");
     fs.writeFileSync(bashEnv, 'printf "BASH_ENV_RAN"\n');
@@ -97,7 +97,7 @@ describe("wrapExecCommandWithRuntimeEnv", () => {
     }
   });
 
-  it("does not reinterpret a command-leading exec option", () => {
+  it("does not reinterpret a command-leading exec option (#4504)", () => {
     const wrapped = wrapExecCommandWithRuntimeEnv([
       "-a",
       "spoofed-argv-zero",

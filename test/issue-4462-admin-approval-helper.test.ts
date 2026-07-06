@@ -64,7 +64,7 @@ function runSelector(state: Record<string, unknown>, requestId = EXPECTED_REQUES
 }
 
 describe("prepared connect-shell administrative approval", () => {
-  it("is valid shell and keeps admin approval explicit", () => {
+  it("is valid shell and keeps admin approval explicit (#5324)", () => {
     const script = adminApprovalConnectScript(
       "/path with spaces/nemoclaw",
       "e2e-issue-4462",
@@ -87,7 +87,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(script).not.toContain("paired.json");
   });
 
-  it("extracts one exact requestId even when the gateway repeats it", () => {
+  it("extracts one exact requestId even when the gateway repeats it (#5324)", () => {
     expect(
       extractPendingRequestId(
         `scope upgrade pending (requestId: ${EXPECTED_REQUEST_ID})\npairing required requestId=${EXPECTED_REQUEST_ID}`,
@@ -101,7 +101,7 @@ describe("prepared connect-shell administrative approval", () => {
     ).toThrow("found 2");
   });
 
-  it("ignores a truncated diagnostic copy of the same canonical request UUID", () => {
+  it("ignores a truncated diagnostic copy of the same canonical request UUID (#5324)", () => {
     expect(
       extractPendingRequestId(
         `scope upgrade pending (requestId: ${EXPECTED_REQUEST_ID})\n` +
@@ -111,7 +111,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(() => extractPendingRequestId("requestId: not-a-canonical-uuid")).toThrow("found 0");
   });
 
-  it("selects only the cron requestId on its exact paired CLI device and bounded scopes", () => {
+  it("selects only the cron requestId on its exact paired CLI device and bounded scopes (#5324)", () => {
     for (const tokenShape of ["array", "object"] as const) {
       const result = runSelector(adminState(tokenShape));
       expect(result.status, result.stderr).toBe(0);
@@ -119,7 +119,7 @@ describe("prepared connect-shell administrative approval", () => {
     }
   });
 
-  it("accepts compact device grants when the active token includes implied read scope", () => {
+  it("accepts compact device grants when the active token includes implied read scope (#5324)", () => {
     const state = adminState("object");
     const device = (
       state.paired as Array<{
@@ -141,7 +141,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stdout.trim()).toBe(EXPECTED_REQUEST_ID);
   });
 
-  it("does not infer the distinct pairing scope while comparing approved views", () => {
+  it("does not infer the distinct pairing scope while comparing approved views (#5324)", () => {
     const state = adminState("object");
     const device = (
       state.paired as Array<{
@@ -158,7 +158,7 @@ describe("prepared connect-shell administrative approval", () => {
     expect(result.stderr).toContain("approved scope arrays disagree");
   });
 
-  it("rejects unrelated IDs, contradictory roles, unrequested admin, broad scopes, or pre-approved admin", () => {
+  it("rejects unrelated IDs, contradictory roles, unrequested admin, broad scopes, or pre-approved admin (#5324)", () => {
     const unrelated = runSelector(adminState(), "87654321-4321-4321-8321-cba987654321");
     expect(unrelated.status).not.toBe(0);
 
