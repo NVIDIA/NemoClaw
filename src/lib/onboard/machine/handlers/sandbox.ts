@@ -22,6 +22,7 @@ import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sa
 import {
   applySandboxResumeDecision,
   decideSandboxResume,
+  hasHermesCompatibleAnthropicInferenceRouteDrift,
   resolveToolDisclosureResumeSignals,
   type SandboxResumeDecision,
 } from "./sandbox-resume";
@@ -390,6 +391,13 @@ class SandboxStateFlow<
       resumeAgentChanged: this.options.resumeAgentChanged,
       sandboxStepComplete: state.session?.steps?.sandbox?.status === "complete",
       sandboxReuseState,
+      inferenceRouteConfigChanged: hasHermesCompatibleAnthropicInferenceRouteDrift({
+        agentName: (this.options.agent as { name?: string } | null)?.name,
+        provider: this.options.provider,
+        model: this.options.model,
+        preferredInferenceApi: this.options.preferredInferenceApi,
+        registryEntry,
+      }),
       webSearchConfigChanged: state.webSearchSupportDropped || state.webSearchConfigChanged,
       sandboxGpuConfigChanged: state.sandboxName
         ? this.deps.hasSandboxGpuDrift(state.sandboxName, this.options.sandboxGpuConfig)

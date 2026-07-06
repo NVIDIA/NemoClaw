@@ -17,7 +17,7 @@ import {
 } from "./provider-inference";
 
 type Gpu = { type: string } | null;
-type Agent = { name: string } | null;
+type Agent = { name: string; inference?: { provider_type?: string } } | null;
 type Host = { cpus?: number };
 
 const baseSelection: ProviderSelectionResult = {
@@ -47,6 +47,7 @@ function createDeps(
         credentialEnv: credentialEnv ?? null,
       }),
     ),
+    surfaceReady: vi.fn(() => true),
     recordSkip: vi.fn(async () => createSession()),
     repairEvent: vi.fn(async () => createSession()),
     hydrate: vi.fn(),
@@ -81,6 +82,7 @@ function createDeps(
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
       ensureResumeProviderReady: calls.recoverProvider,
+      isResumeProviderSurfaceReady: calls.surfaceReady,
       recordStateSkipped: calls.recordSkip,
       recordRepairEvent: calls.repairEvent,
       hydrateCredentialEnv: calls.hydrate,
@@ -171,7 +173,7 @@ describe("handleProviderInferenceState", () => {
       "NVIDIA_INFERENCE_API_KEY",
       null,
       [],
-      { allowToolsIncompatible: false },
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-responses" },
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_INFERENCE_API_KEY");
     expect(result).toMatchObject({
@@ -199,6 +201,125 @@ describe("handleProviderInferenceState", () => {
       },
       result.stateResult,
     ]);
+  });
+
+  it("uses the managed OpenAI frontend for fresh Hermes custom Anthropic routes (#6289)", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps),
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        endpointUrl: "https://inference-api.nvidia.com",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
+    expect(result.preferredInferenceApi).toBe("openai-completions");
+  });
+
+  it("repairs recovered Hermes custom Anthropic API metadata during rebuild (#6289)", async () => {
+    const session = createSession({
+      agent: "hermes",
+      sandboxName: "hermes-custom",
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({ preferredInferenceApi: "anthropic-messages" }),
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    expect(result.preferredInferenceApi).toBe("openai-completions");
+  });
+
+  it("repairs a stale live provider even when Hermes metadata already says OpenAI (#6289)", async () => {
+    const session = createSession({
+      agent: "hermes",
+      sandboxName: "hermes-custom",
+      provider: "compatible-anthropic-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference-api.nvidia.com",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      isResumeProviderSurfaceReady: vi.fn(() => false),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      agent: { name: "hermes" },
+      sandboxName: "hermes-custom",
+    });
+
+    expect(calls.log).toHaveBeenCalledWith(
+      "  [resume] Refreshing the gateway provider to match the required inference surface.",
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "hermes-custom",
+      "nvidia/nvidia/nemotron-3-super-v3",
+      "compatible-anthropic-endpoint",
+      "https://inference-api.nvidia.com",
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, preferredInferenceApi: "openai-completions" },
+    );
   });
 
   describe("compatible endpoint reasoning mode", () => {
@@ -424,6 +545,118 @@ describe("handleProviderInferenceState", () => {
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
   });
 
+  it("coerces a resumed anthropic-messages seed for an OpenAI-only agent (#6294)", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { provider_type: "openai_compatible" },
+      },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "openai-completions",
+    });
+    // Heal: the coerced seed forces inference setup so the gateway provider
+    // registration is refreshed for the OpenAI surface.
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "claude-sonnet-proxy",
+      "compatible-anthropic-endpoint",
+      null,
+      "COMPATIBLE_ANTHROPIC_API_KEY",
+      null,
+      [],
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    // The coerced value is persisted only after the setup succeeded, with the
+    // inference step record — never with a pre-setup provider_selection write
+    // that would disarm the heal if the first attempt failed.
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.complete).toHaveBeenCalledWith(
+      "inference",
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+  });
+
+  it("re-arms the heal when the forced inference setup does not complete (#6294)", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const setupInference = vi
+      .fn()
+      .mockResolvedValueOnce({ retry: "selection" as const })
+      .mockResolvedValue({ ok: true as const });
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      setupInference,
+    });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: {
+        name: "langchain-deepagents-code",
+        inference: { provider_type: "openai_compatible" },
+      },
+    });
+
+    // The failed heal must not persist the coerced value anywhere, so the
+    // next resume sees the stale seed and forces the heal again.
+    expect(calls.complete).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ preferredInferenceApi: "openai-completions" }),
+    );
+    // The retry falls back to provider selection (setupNim ran).
+    expect(result.retryStateResults.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a resumed anthropic-messages seed for agents that speak Anthropic natively", async () => {
+    const session = createSession({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "openclaw", inference: { provider_type: "gateway_managed" } },
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    // Unchanged seed keeps the plain-resume shortcut: no re-record, no forced
+    // inference setup.
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
   it("records failed Ollama repair events before propagating resume repair errors", async () => {
     const session = createSession({
       provider: "ollama-local",
@@ -602,6 +835,7 @@ describe("handleProviderInferenceState", () => {
         allowToolsIncompatible: false,
         skipHostInferenceSmoke: true,
         reuseGatewayCredentialWithoutLocalKey: true,
+        preferredInferenceApi: "openai-completions",
       },
     );
     expect(calls.log).toHaveBeenCalledWith(
@@ -880,7 +1114,7 @@ describe("handleProviderInferenceState", () => {
       null,
       null,
       [],
-      { allowToolsIncompatible: true },
+      { allowToolsIncompatible: true, preferredInferenceApi: "openai-responses" },
     );
   });
 });

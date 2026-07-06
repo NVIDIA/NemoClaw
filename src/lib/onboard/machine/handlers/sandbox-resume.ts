@@ -10,6 +10,7 @@ export interface SandboxResumeSignals {
   readonly resumeAgentChanged: boolean;
   readonly sandboxStepComplete: boolean;
   readonly sandboxReuseState: string;
+  readonly inferenceRouteConfigChanged: boolean;
   readonly webSearchConfigChanged: boolean;
   readonly sandboxGpuConfigChanged: boolean;
   readonly messagingChannelConfigChanged: boolean;
@@ -17,6 +18,42 @@ export interface SandboxResumeSignals {
   readonly toolDisclosureMigrationNeeded: boolean;
   readonly toolDisclosureChanged: boolean;
   readonly inferenceSelectionChanged: boolean;
+}
+
+interface InferenceRouteResumeInput {
+  readonly agentName: string | null | undefined;
+  readonly provider: string | null | undefined;
+  readonly model: string | null | undefined;
+  readonly preferredInferenceApi: string | null;
+  readonly registryEntry: SandboxEntry | null;
+}
+
+export function hasHermesCompatibleAnthropicInferenceRouteDrift({
+  agentName,
+  provider,
+  model,
+  preferredInferenceApi,
+  registryEntry,
+}: InferenceRouteResumeInput): boolean {
+  if (
+    agentName !== "hermes" ||
+    provider !== "compatible-anthropic-endpoint" ||
+    preferredInferenceApi !== "openai-completions" ||
+    !model
+  ) {
+    return false;
+  }
+
+  // The registry records what was baked into the existing sandbox. Do not
+  // fall back to the session: provider setup repairs that session before the
+  // sandbox decision runs, which could make a stale sandbox look migrated.
+  // Missing legacy metadata is therefore drift and triggers a one-time rebuild.
+  if (!registryEntry) return true;
+  return (
+    registryEntry.provider !== provider ||
+    registryEntry.model !== model ||
+    registryEntry.preferredInferenceApi !== preferredInferenceApi
+  );
 }
 
 export function resolveToolDisclosureResumeSignals(
@@ -61,6 +98,9 @@ export interface SandboxResumeDeps {
 
 function canReuseSandbox(signals: SandboxResumeSignals): boolean {
   return (
+    !signals.resumeAgentChanged &&
+    !signals.inferenceRouteConfigChanged &&
+    !signals.inferenceSelectionChanged &&
     !signals.webSearchConfigChanged &&
     !signals.sandboxGpuConfigChanged &&
     !signals.messagingChannelConfigChanged &&
@@ -69,24 +109,6 @@ function canReuseSandbox(signals: SandboxResumeSignals): boolean {
     !signals.toolDisclosureChanged &&
     signals.sandboxReuseState === "ready"
   );
-}
-
-function selectionResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
-  if (signals.inferenceSelectionChanged) {
-    return {
-      kind: "recreate",
-      note: "  [resume] Live DCode model/provider selection is stale or unreadable; recreating sandbox.",
-      removeRegistryEntry: false,
-    };
-  }
-  if (signals.resumeAgentChanged) {
-    return {
-      kind: "recreate",
-      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
-      removeRegistryEntry: false,
-    };
-  }
-  return null;
 }
 
 function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
@@ -110,10 +132,37 @@ function toolDisclosureResumeDecision(signals: SandboxResumeSignals): SandboxRes
   return null;
 }
 
+function compatibilityResumeDecision(signals: SandboxResumeSignals): SandboxResumeDecision | null {
+  if (signals.inferenceSelectionChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Live DCode model/provider selection is stale or unreadable; recreating sandbox.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.resumeAgentChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Agent selection changed; revalidating sandbox compatibility.",
+      removeRegistryEntry: false,
+    };
+  }
+  if (signals.inferenceRouteConfigChanged) {
+    return {
+      kind: "recreate",
+      note: "  [resume] Hermes inference route configuration changed; recreating sandbox.",
+      // Preserve registry-only fidelity until createSandbox captures it for
+      // the guarded recreate path.
+      removeRegistryEntry: false,
+    };
+  }
+  return null;
+}
+
 export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResumeDecision {
   if (!signals.resume || !signals.sandboxStepComplete) return { kind: "create" };
-  const selectionDecision = selectionResumeDecision(signals);
-  if (selectionDecision) return selectionDecision;
+  const compatibilityDecision = compatibilityResumeDecision(signals);
+  if (compatibilityDecision) return compatibilityDecision;
   if (canReuseSandbox(signals)) return { kind: "reuse" };
   if (signals.webSearchConfigChanged) {
     return {

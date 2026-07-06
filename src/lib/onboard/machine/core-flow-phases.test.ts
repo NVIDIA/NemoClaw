@@ -107,6 +107,7 @@ function createPhases(
         forceInferenceSetup: false,
         credentialEnv: null,
       })),
+      isResumeProviderSurfaceReady: vi.fn(() => true),
       recordStateSkipped: vi.fn(async () => createSession()),
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
