@@ -139,7 +139,13 @@ PY
 [ -n "${COMPATIBLE_API_KEY:-}" ] || fail "COMPATIBLE_API_KEY is required"
 [ -x "$CLI" ] || fail "NemoClaw CLI is not executable at $CLI"
 
-identity_before="$(dcode_identity)" || fail "could not read initial dcode identity"
+if ! identity_before="$(dcode_identity)"; then
+  # Surface the captured stdout+stderr (dcode_identity redirects 2>&1) before
+  # failing. Without this the real reason `dcode identity` exits non-zero is
+  # discarded and CI/result.json only show the generic message with stdout "".
+  printf '%s: diagnostic: initial dcode identity output:\n%s\n' "$PREFIX" "${identity_before:-<no output captured>}"
+  fail "could not read initial dcode identity"
+fi
 model_a="$(identity_field "$identity_before" Model)"
 model_a="${model_a#openai:}"
 [ -n "$model_a" ] || fail "initial dcode identity did not report a model"
@@ -184,7 +190,10 @@ pass "same-name --fresh re-onboard crossed backup and restore boundaries"
 sandbox_list="$(openshell sandbox list 2>&1)" || fail "could not list sandbox after re-onboard"
 printf '%s\n' "$sandbox_list" | awk -v name="$SANDBOX_NAME" '$1 == name && /Ready/ { found = 1 } END { exit(found ? 0 : 1) }' || fail "same-name sandbox is not Ready after re-onboard"
 
-identity_after="$(dcode_identity)" || fail "could not read dcode identity after re-onboard"
+if ! identity_after="$(dcode_identity)"; then
+  printf '%s: diagnostic: dcode identity output after re-onboard:\n%s\n' "$PREFIX" "${identity_after:-<no output captured>}"
+  fail "could not read dcode identity after re-onboard"
+fi
 assert_identity "$identity_after" "$model_b" "fresh"
 printf '%s\n' "$identity_after" | grep -Fq "$model_a" && fail "fresh identity still contains model A"
 pass "live dcode identity reports model B"
