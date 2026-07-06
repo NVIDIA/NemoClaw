@@ -206,7 +206,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           // Probe the endpoint's runtime max_model_len so a custom vLLM endpoint
           // gets its real context window baked in instead of a small
           // architecture default; an explicit override always wins (#6177).
-          applyCompatibleEndpointContextWindow(
+          await applyCompatibleEndpointContextWindow(
             state.endpointUrl || deps.OPENAI_ENDPOINT_URL,
             selectedModel,
             { credentialEnv: selectedCredentialEnv },

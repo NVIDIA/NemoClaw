@@ -5,6 +5,7 @@ import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
 import { isLoopbackHostname, isPrivateHostname } from "../private-networks";
+import { assertEndpointResolvesPublic, type EndpointDnsLookupFn } from "./endpoint-ssrf-preflight";
 import {
   hasExplicitContextWindow,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -71,6 +72,13 @@ export interface ApplyCompatibleEndpointContextWindowOptions {
   fetchModels?: CompatibleEndpointModelsFetcher;
   /** Override credential resolution (unit tests inject a fake). */
   resolveCredential?: (credentialEnv: string) => string | null | undefined;
+  /**
+   * Injectable DNS resolver for the SSRF preflight run before the host-side
+   * `/v1/models` curl. When omitted under the unit-test runner the DNS
+   * preflight is skipped (the string-level private check still applies);
+   * production uses the real `dns/promises` resolver.
+   */
+  resolveHost?: EndpointDnsLookupFn;
 }
 
 /**
@@ -180,11 +188,11 @@ export function clearAutoDetectedCompatibleContextWindow(
  * the real-server compatible-endpoint-context-probe.test.ts. Remove this probe
  * only if a typed, validated cross-provider model-catalog fetch subsumes it.
  */
-export function applyCompatibleEndpointContextWindow(
+export async function applyCompatibleEndpointContextWindow(
   endpointUrl: string,
   model: string | null | undefined,
   options: ApplyCompatibleEndpointContextWindowOptions = {},
-): void {
+): Promise<void> {
   const env = options.env ?? process.env;
   const logger = options.logger ?? console;
 
@@ -248,6 +256,26 @@ export function applyCompatibleEndpointContextWindow(
 
   const fetchModels = options.fetchModels;
   if (!fetchModels && env.VITEST === "true") return;
+
+  // DNS-backed SSRF: the string-level isPrivateEndpoint check above only sees
+  // literal IPs and reserved names. This host-side GET is its own curl boundary
+  // (independent of the chat-completions validation probe), so pin the resolver
+  // preflight here — a public-looking name that resolves to loopback/link-local/
+  // RFC1918 is refused before the fetch. Skipped when a fake fetcher is injected
+  // without a resolver (unit tests), so it never issues real DNS there; runs in
+  // production (no injected fetcher) and whenever a resolver is injected.
+  // See PR #6293 PRA-3 (GPT-5.5).
+  if (options.resolveHost || !fetchModels) {
+    const preflight = await assertEndpointResolvesPublic(endpointUrl, options.resolveHost);
+    if (!preflight.ok) {
+      logger.warn(
+        `  ⚠ ${preflight.reason}; skipping the /v1/models context probe. ` +
+          "Use a routable public URL to auto-detect the context window.",
+      );
+      clearPreviousAuto();
+      return;
+    }
+  }
 
   const resolveCredential = options.resolveCredential ?? getCredential;
   const apiKey =

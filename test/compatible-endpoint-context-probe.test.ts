@@ -52,7 +52,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     expect(models).toMatchObject({ data: [{ id: MODEL, max_model_len: 65_536 }] });
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+    await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       fetchModels: fetchFromServer(""),
     });
@@ -67,7 +67,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     });
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+    await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       apiKey: "secret-key",
       fetchModels: fetchFromServer("secret-key"),
@@ -91,7 +91,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
 
     // Wrong/absent credential → the endpoint 401s → no window is set.
     const noKeyEnv: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+    await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env: noKeyEnv,
       apiKey: "",
       fetchModels: fetchFromServer(""),
@@ -105,7 +105,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
 
     // Correct credential → authorized → the window is read.
     const keyedEnv: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+    await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env: keyedEnv,
       apiKey: "secret-key",
       fetchModels: fetchFromServer("secret-key"),
@@ -129,7 +129,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
       .filter((entry) => entry.path === "/v1/models").length;
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
+    await applyCompatibleEndpointContextWindow(server.baseUrl, MODEL, {
       env,
       fetchModels: fetchCompatibleEndpointModels,
     });
@@ -145,7 +145,7 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     server = await startFakeOpenAiCompatibleServer({ model: MODEL });
 
     const env: NodeJS.ProcessEnv = {};
-    applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
+    await applyCompatibleEndpointContextWindow(PUBLIC_ENDPOINT_URL, MODEL, {
       env,
       fetchModels: fetchFromServer(""),
     });

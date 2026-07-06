@@ -647,6 +647,17 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // (LAN ranges, link-local metadata) is attacker-reachable SSRF surface and is
   // refused. Reuses the shared validators (defense-in-depth alongside
   // DNS-pinning at the config-write boundary). See PR #6293 PRA-2.
+  //
+  // DNS-backed SSRF (a public name resolving to a private address) is closed
+  // one layer up, before this synchronous shared probe is reached: the only
+  // untrusted-endpoint caller path (validateCustomOpenAiLikeSelection /
+  // validateCustomAnthropicSelection) runs assertEndpointResolvesPublic — a
+  // resolver-based preflight that fails closed — before invoking this probe,
+  // and the independent /v1/models context curl resolves inline in
+  // applyCompatibleEndpointContextWindow. This function stays synchronous (it
+  // has many callers and no async boundary), so the resolve step is not
+  // duplicated here; the literal string check below remains as the local
+  // belt-and-suspenders layer. See PR #6293 PRA-3.
   let probeHostname;
   try {
     probeHostname = new URL(String(endpointUrl)).hostname;
