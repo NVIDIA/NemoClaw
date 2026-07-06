@@ -43,12 +43,24 @@ import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
 import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
+import {
+  completeInferenceGatewayRestart,
+  defaultInferenceGatewayRestart,
+  finalizeInferenceMutation,
+  type InferenceGatewayRestartDeps,
+  type InferenceMutation,
+  readPreviousOpenClawInferenceApi,
+} from "./inference-set-gateway-restart";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 import {
   finalizeInferenceSetRoute,
   prepareInferenceSetRoute,
   type RegistryInferenceMetadata,
 } from "./inference-set-route-containment";
+import {
+  applyOpenClawAnthropicReplyBudget,
+  readOpenClawPrimaryReplyBudget,
+} from "./inference-set-reply-budget";
 
 export { normalizeCustomEndpointUrl } from "./inference-set-route-containment";
 export { InferenceSetError };
@@ -74,7 +86,7 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-export interface InferenceSetDeps {
+export interface InferenceSetDeps extends InferenceGatewayRestartDeps {
   getDefaultSandbox: () => string | null;
   getSandbox: (name: string) => SandboxEntry | null;
   listSandboxes: () => { sandboxes: SandboxEntry[]; defaultSandbox: string | null };
@@ -100,8 +112,6 @@ export interface InferenceSetDeps {
       "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
     >,
   ) => CaptureOpenshellResult;
-  appendAuditEntry: typeof appendAuditEntry;
-  log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
@@ -149,6 +159,7 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
     rewriteConfigUrlsWithDnsPinning,
+    restartSandboxGateway: defaultInferenceGatewayRestart,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -265,6 +276,7 @@ function buildProviderConfig(
   model: string,
   route: SandboxInferenceConfig,
   contextWindow?: number,
+  inheritedMaxTokens?: number,
 ): ConfigObject {
   const firstExistingModel = Array.isArray(existing.models)
     ? cloneConfigObject(existing.models[0])
@@ -276,6 +288,9 @@ function buildProviderConfig(
   // Omitted (undefined) → keep whatever the existing entry had.
   if (typeof contextWindow === "number") {
     firstExistingModel.contextWindow = contextWindow;
+  }
+  if (route.inferenceApi === "anthropic-messages") {
+    applyOpenClawAnthropicReplyBudget(firstExistingModel, inheritedMaxTokens);
   }
   if (route.inferenceCompat) {
     firstExistingModel.compat = asConfigObject(route.inferenceCompat);
@@ -299,6 +314,7 @@ export function patchOpenClawInferenceConfig(
 ): { changed: boolean; route: SandboxInferenceConfig } {
   const before = JSON.stringify(config);
   const route = getSandboxInferenceConfig(model, provider, preferredInferenceApi);
+  const inheritedMaxTokens = readOpenClawPrimaryReplyBudget(config);
 
   updateAgentPrimary(config, route.primaryModelRef);
 
@@ -306,7 +322,13 @@ export function patchOpenClawInferenceConfig(
   models.mode = "merge";
   const providers = ensureObject(models, "providers");
   const existingProvider = cloneConfigObject(providers[route.providerKey]);
-  providers[route.providerKey] = buildProviderConfig(existingProvider, model, route, contextWindow);
+  providers[route.providerKey] = buildProviderConfig(
+    existingProvider,
+    model,
+    route,
+    contextWindow,
+    inheritedMaxTokens,
+  );
 
   return { changed: before !== JSON.stringify(config), route };
 }
@@ -440,7 +462,7 @@ function assertHermesCompatibleAnthropicOpenAiProvider(
 async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
-): Promise<InferenceSetResult> {
+): Promise<InferenceMutation<InferenceSetResult>> {
   const provider = trimRequired(options.provider, "provider");
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
@@ -626,6 +648,7 @@ async function runInferenceSetWithoutHostLock(
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
+  const previousOpenClawInferenceApi = readPreviousOpenClawInferenceApi(agentName, config);
   const preferredInferenceApi =
     explicitPreferredInferenceApi ??
     resolveRuntimeInferenceApi({
@@ -716,35 +739,25 @@ async function runInferenceSetWithoutHostLock(
     deps,
   );
 
-  deps.appendAuditEntry({
-    action: "inference_set",
-    sandbox: sandboxName,
-    timestamp: new Date().toISOString(),
-    reason: `inference set ${agentName}:${provider}:${model}${
-      inSandboxConfigSynced ? "" : " (in-sandbox sync incomplete)"
-    }`,
-  });
-
-  // Only claim "synced" when the in-sandbox layer actually synced; otherwise the
-  // warning above already described the degraded state.
-  if (inSandboxConfigSynced) {
-    deps.log(
-      agentName === "hermes"
-        ? `  Inference route synced for '${sandboxName}': ${model}`
-        : `  Inference route synced for '${sandboxName}': ${patched.route.primaryModelRef}`,
-    );
-  }
-
-  return {
-    sandboxName,
-    provider,
-    model,
-    primaryModelRef: patched.route.primaryModelRef,
-    providerKey: patched.route.providerKey,
-    configChanged: patched.changed,
-    sessionUpdated,
-    inSandboxConfigSynced,
-  };
+  return finalizeInferenceMutation(
+    {
+      agentName,
+      configChanged: patched.changed,
+      nextApi: patched.route.inferenceApi,
+      previousApi: previousOpenClawInferenceApi,
+      result: {
+        sandboxName,
+        provider,
+        model,
+        primaryModelRef: patched.route.primaryModelRef,
+        providerKey: patched.route.providerKey,
+        configChanged: patched.changed,
+        sessionUpdated,
+        inSandboxConfigSynced,
+      },
+    },
+    deps,
+  );
 }
 
 export async function runInferenceSet(
@@ -766,9 +779,16 @@ export async function runInferenceSet(
   // an async lock. The inner resolution still validates the live registry entry.
   const selected = resolveTargetSandbox(options.sandboxName, deps);
   deps.prepareRunOpenshell();
-  return withSandboxMutationLock(selected.sandboxName, () =>
-    withTimerBoundShieldsMutationLockAsync(selected.sandboxName, "inference set", () =>
-      runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
-    ),
-  );
+  return withSandboxMutationLock(selected.sandboxName, async () => {
+    const mutation = await withTimerBoundShieldsMutationLockAsync(
+      selected.sandboxName,
+      "inference set",
+      () => runInferenceSetWithoutHostLock({ ...options, sandboxName: selected.sandboxName }, deps),
+    );
+    // Release the config transition lock before the managed restart reacquires
+    // it, but retain the outer sandbox lifecycle lock so another process cannot
+    // destroy/recreate this name between the committed write and restart.
+    completeInferenceGatewayRestart(mutation, deps);
+    return mutation.result;
+  });
 }

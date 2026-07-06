@@ -102,6 +102,7 @@ describe("runInferenceSet Hermes routing", () => {
       configChanged: true,
       sessionUpdated: true,
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("keeps Hermes custom Anthropic switches off the managed Anthropic SSE frontend (#6289)", async () => {
@@ -185,6 +186,7 @@ describe("runInferenceSet Hermes routing", () => {
       providerKey: "inference",
       primaryModelRef: "inference/claude-sonnet-proxy",
     });
+    expect(deps.calls.restartSandboxGateway).not.toHaveBeenCalled();
   });
 
   it("rejects inference set before mutating a legacy Anthropic provider (#6289)", async () => {

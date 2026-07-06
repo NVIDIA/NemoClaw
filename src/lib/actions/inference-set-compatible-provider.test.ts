@@ -235,6 +235,7 @@ describe("runInferenceSet compatible providers", () => {
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-responses",
     });
+    expect(deps.calls.restartSandboxGateway).toHaveBeenCalledWith("alpha");
   });
 
   it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -11,6 +12,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { ISSUE_4462_PAIRING_SEED_PY } from "../fixtures/issue-4462-pairing-seed.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  adminApprovalConnectScript,
+  extractPendingRequestId,
+} from "./issue-4462-admin-approval-helper.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -42,6 +47,29 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
+
+interface FreshAgentGatewaySnapshot {
+  activeOperatorTokenCount: number;
+  activeOperatorTokenScopes: string[];
+  approvedScopes: string[];
+  deviceId: string;
+  deviceScopes: string[];
+  gatewayCompletedRuns: number;
+  matchingPairedCount: number;
+  pairedCliCount: number;
+  pendingCount: number;
+  publicKey: string;
+  sameDevicePendingCount: number;
+}
+
+const FRESH_AGENT_GATEWAY_SNAPSHOT_PY = fs.readFileSync(
+  path.join(import.meta.dirname, "..", "lib", "issue-4462-fresh-agent-gateway-snapshot.py"),
+  "utf8",
+);
+const FRESH_AGENT_GATEWAY_SNAPSHOT_B64 = Buffer.from(
+  FRESH_AGENT_GATEWAY_SNAPSHOT_PY,
+  "utf8",
+).toString("base64");
 
 async function cleanup(host: HostCliClient, sandbox: SandboxClient): Promise<void> {
   await host
@@ -78,20 +106,28 @@ if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
   echo "MISSING_PROXY_ENV" >&2
   exit 2
 fi
-if ! grep -F "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null; then
-  echo "MISSING_APPROVE_GUARD" >&2
+. /tmp/nemoclaw-proxy-env.sh
+if [ -n "\${OPENCLAW_GATEWAY_URL:-}" ]; then
+  echo "PUBLIC_GATEWAY_URL_LEAK" >&2
   exit 3
 fi
-. /tmp/nemoclaw-proxy-env.sh
-case "\${OPENCLAW_GATEWAY_URL:-}" in
+if [ -n "\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" ]; then
+  echo "PUBLIC_INSECURE_WS_LEAK" >&2
+  exit 4
+fi
+if [ -z "\${OPENCLAW_GATEWAY_PORT:-}" ] || [ -z "\${OPENCLAW_GATEWAY_TOKEN:-}" ]; then
+  echo "GATEWAY_PORT_OR_TOKEN_MISSING" >&2
+  exit 4
+fi
+case "\${NEMOCLAW_OPENCLAW_GATEWAY_URL:-}" in
   ws://127.0.0.1:*|ws://localhost:*) ;;
   ws://10.*:*|ws://192.168.*:*|ws://172.1[6-9].*:*|ws://172.2[0-9].*:*|ws://172.3[0-1].*:*)
-    if [ "\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" != "1" ]; then
-      echo "MISSING_INSECURE_PRIVATE_WS_MARKER=\${OPENCLAW_GATEWAY_URL:-unset}" >&2
+    if [ "\${NEMOCLAW_OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" != "1" ]; then
+      echo "MISSING_PRIVATE_INSECURE_WS_MARKER" >&2
       exit 4
     fi
     ;;
-  *) echo "BAD_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL:-unset}" >&2; exit 4 ;;
+  *) echo "BAD_PRIVATE_GATEWAY_ALIAS" >&2; exit 4 ;;
 esac
 seed_token_proof=/tmp/issue4462-seed-token.sha256
 trap 'rm -f -- "$seed_token_proof"' EXIT
@@ -175,21 +211,28 @@ for dev in sorted([e for e in state.get('paired') or [] if isinstance(e, dict)],
     tokens=dev.get('tokens') if isinstance(dev.get('tokens'), dict) else {}
     operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
     token_scopes={norm(scope) for scope in (operator.get('scopes') or []) if norm(scope)}
+    # Fresh #4504 turns establish the compact write grant before this recovery
+    # proof; the seeded legacy path can still arrive pairing-only.
+    canonical_non_admin_scope_state=(
+        'pairing' if (device_scopes == {'operator.pairing'} and token_scopes == {'operator.pairing'})
+        else 'write' if (device_scopes == {'operator.pairing','operator.write'}
+            and token_scopes == {'operator.pairing','operator.read','operator.write'})
+        else ''
+    )
     if (
         norm(dev.get('deviceId')) == identity_id
         and norm(dev.get('publicKey')) == identity_key
         and dev.get('clientId') == 'cli'
         and dev.get('clientMode') == 'cli'
         and roles(dev) == {'operator'}
-        and device_scopes == {'operator.pairing'}
-        and approved_scopes == {'operator.pairing'}
+        and approved_scopes == device_scopes
+        and canonical_non_admin_scope_state
         and set(tokens) == {'operator'}
         and norm(operator.get('role')) == 'operator'
-        and token_scopes == {'operator.pairing'}
         and norm(operator.get('token'))
         and norm(operator.get('token')) != norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN'))
     ):
-        print(identity_id)
+        print(f'{identity_id} {canonical_non_admin_scope_state}')
         raise SystemExit(0)
 raise SystemExit(1)
 PY
@@ -201,6 +244,38 @@ seed_initial_pairing_request() {
 ${ISSUE_4462_PAIRING_SEED_PY}
 run_cli()
 PY
+}
+
+rebootstrap_write_cli_to_pairing() {
+  local expected_device_id="$1" remove_rc=0 attempt state paired_record
+  set +e
+  (
+    unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+    command openclaw devices remove "$expected_device_id" --json >/dev/null 2>&1
+  )
+  remove_rc=$?
+  set -e
+  if [ "$remove_rc" -ne 0 ]; then
+    echo "CANONICAL_DEVICE_REMOVE_FAILED rc=$remove_rc" >&2
+    return 1
+  fi
+  attempt=0
+  while [ "$attempt" -lt 10 ]; do
+    (
+      unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+      command openclaw devices list --json >/dev/null 2>&1
+    ) || true
+    state="$(state_json)"
+    paired_record="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
+    if [ "$paired_record" = "$expected_device_id pairing" ]; then
+      printf '%s\n' "$paired_record"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] && sleep 1
+  done
+  echo "CANONICAL_PAIRING_REBOOTSTRAP_FAILED" >&2
+  return 1
 }
 
 rotate_cli_to_pairing_scope() {
@@ -1074,13 +1149,26 @@ initial_request_id="$(printf '%s' "$state" | select_initial_pairing_request 2>/d
 if [ -n "$initial_request_id" ]; then
   echo "ISSUE_4462_STAGE=seed-initial-pairing request=$initial_request_id"
   paired_device_id="$(seed_initial_pairing_request "$initial_request_id")"
+  paired_device_scope=pairing
   seeded_initial=1
 else
-  paired_device_id="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
+  paired_device_record="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
+  paired_device_id="\${paired_device_record%% *}"
+  paired_device_scope="\${paired_device_record#* }"
 fi
-if [ -z "$paired_device_id" ]; then
+if [ -z "$paired_device_id" ] || { [ "$paired_device_scope" != pairing ] && [ "$paired_device_scope" != write ]; }; then
   echo "NO_INITIAL_PAIRED_CLI_DEVICE rc=$initial_list_rc" >&2
   exit 5
+fi
+if [ "$paired_device_scope" = write ]; then
+  echo "ISSUE_4462_STAGE=rebootstrap-write-cli-to-pairing"
+  paired_device_record="$(rebootstrap_write_cli_to_pairing "$paired_device_id")"
+  paired_device_id="\${paired_device_record%% *}"
+  paired_device_scope="\${paired_device_record#* }"
+  if [ -z "$paired_device_id" ] || [ "$paired_device_scope" != pairing ]; then
+    echo "PAIRING_REBOOTSTRAP_DID_NOT_CONVERGE" >&2
+    exit 5
+  fi
 fi
 echo "ISSUE_4462_STAGE=rotate-cli-to-pairing"
 rotate_cli_to_pairing_scope "$paired_device_id" "$seeded_initial" >/tmp/issue4462-initial-pairing.log
@@ -1134,7 +1222,10 @@ liveTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
-        "proxy env exposes a loopback gateway and contains the devices approve guard",
+        "the exact first three host-side nemoclaw sandbox exec openclaw agent turns from issue 4504 stay on the gateway path",
+        "the issue 5324 nemoclaw <name> exec transport reaches the local OpenClaw CLI pairing path",
+        "the prepared connect shell keeps the injected gateway URL private while retaining port and token",
+        "operator.admin remains pending until a reviewed devices approve, cron add retry, and cron run enqueue",
         "CLI scope upgrade is approved without operator.admin",
         "final openclaw agent turn stays on the gateway path and answers 42",
       ],
@@ -1166,6 +1257,107 @@ liveTest(
     );
     expect(install.exitCode, resultText(install)).toBe(0);
 
+    const captureFreshAgentGatewaySnapshot = async (
+      phase: string,
+      minimumGatewayRuns: number,
+    ): Promise<FreshAgentGatewaySnapshot> => {
+      const result = await sandbox.exec(
+        SANDBOX_NAME,
+        [
+          "sh",
+          "-lc",
+          'printf \'%s\' "$1" | base64 -d | python3 - "$2"',
+          "fresh-agent-gateway-snapshot",
+          FRESH_AGENT_GATEWAY_SNAPSHOT_B64,
+          String(minimumGatewayRuns),
+        ],
+        {
+          artifactName: phase,
+          env: env(),
+          redactionValues: [apiKey],
+          timeoutMs: 30_000,
+        },
+      );
+      expect(result.exitCode, resultText(result)).toBe(0);
+      const snapshot = JSON.parse(result.stdout.trim()) as FreshAgentGatewaySnapshot;
+      await artifacts.writeJson(`${phase}.json`, snapshot);
+      return snapshot;
+    };
+
+    let freshSnapshot = await captureFreshAgentGatewaySnapshot("phase-2-fresh-state-0", 0);
+    expect(freshSnapshot.deviceId).not.toBe("");
+    expect(freshSnapshot.publicKey).not.toBe("");
+    expect(freshSnapshot.pairedCliCount).toBe(1);
+    expect(freshSnapshot.matchingPairedCount).toBe(1);
+    expect(freshSnapshot.pendingCount).toBe(0);
+    expect(freshSnapshot.sameDevicePendingCount).toBe(0);
+    expect(freshSnapshot.activeOperatorTokenCount).toBe(1);
+    expect(freshSnapshot.deviceScopes).toEqual(["operator.pairing", "operator.write"]);
+    expect(freshSnapshot.approvedScopes).toEqual(["operator.pairing", "operator.write"]);
+    expect(freshSnapshot.activeOperatorTokenScopes).toEqual([
+      "operator.pairing",
+      "operator.read",
+      "operator.write",
+    ]);
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const sessionId = `gpu-${attempt}-${Math.floor(Date.now() / 1000)}`;
+      const freshAgent = await host.command(
+        process.execPath,
+        [
+          CLI_ENTRYPOINT,
+          "sandbox",
+          "exec",
+          SANDBOX_NAME,
+          "--timeout",
+          "60",
+          "--",
+          "openclaw",
+          "agent",
+          "--agent",
+          "main",
+          "-m",
+          `hi #${attempt}`,
+          "--session-id",
+          sessionId,
+        ],
+        {
+          artifactName: `phase-2-fresh-agent-${attempt}`,
+          env: env(),
+          redactionValues: [apiKey],
+          timeoutMs: 90_000,
+        },
+      );
+      const freshAgentOutput = resultText(freshAgent);
+      await artifacts.writeText(`phase-2-fresh-agent-${attempt}.txt`, freshAgentOutput);
+      expect(freshAgent.exitCode, freshAgentOutput).toBe(0);
+      expect(freshAgentOutput).not.toMatch(
+        /EMBEDDED FALLBACK|gateway connect failed|scope upgrade pending approval|device pairing required|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded/i,
+      );
+      expect(freshAgent.stdout.trim(), freshAgentOutput).not.toBe("");
+
+      const nextSnapshot = await captureFreshAgentGatewaySnapshot(
+        `phase-2-fresh-state-${attempt}`,
+        freshSnapshot.gatewayCompletedRuns + 1,
+      );
+      expect(nextSnapshot.deviceId).toBe(freshSnapshot.deviceId);
+      expect(nextSnapshot.publicKey).toBe(freshSnapshot.publicKey);
+      expect(nextSnapshot.pairedCliCount).toBe(1);
+      expect(nextSnapshot.matchingPairedCount).toBe(1);
+      expect(nextSnapshot.pendingCount).toBe(0);
+      expect(nextSnapshot.sameDevicePendingCount).toBe(0);
+      expect(nextSnapshot.activeOperatorTokenCount).toBe(1);
+      expect(nextSnapshot.deviceScopes).toEqual(freshSnapshot.deviceScopes);
+      expect(nextSnapshot.approvedScopes).toEqual(freshSnapshot.approvedScopes);
+      expect(nextSnapshot.activeOperatorTokenScopes).toEqual(
+        freshSnapshot.activeOperatorTokenScopes,
+      );
+      expect(nextSnapshot.gatewayCompletedRuns).toBe(freshSnapshot.gatewayCompletedRuns + 1);
+      freshSnapshot = nextSnapshot;
+    }
+
+    // Preserve the transactional read/write upgrade proof before deliberately
+    // broadening this same CLI device with the manual admin approval below.
     const encodedScopeUpgradeScript = Buffer.from(
       scopeUpgradeScript().replaceAll("\\${", "${"),
       "utf8",
@@ -1182,7 +1374,7 @@ liveTest(
         ...scopeUpgradeScriptChunks,
       ],
       {
-        artifactName: "phase-2-scope-upgrade-approval",
+        artifactName: "phase-3-scope-upgrade-approval",
         env: env(),
         redactionValues: [apiKey],
         timeoutMs: 12 * 60_000,
@@ -1190,6 +1382,98 @@ liveTest(
     );
     expect(probe.exitCode, resultText(probe)).toBe(0);
     expect(resultText(probe)).toContain("ISSUE_4462_SCOPE_UPGRADE_OK");
+
+    // #5324 command coverage (PRA-3): the operator scope-upgrade / approval
+    // boundary is scope-keyed and command-agnostic, not per-command. Automatic
+    // approval is bounded to {operator.pairing, operator.read, operator.write}
+    // (scripts/lib/openclaw_device_approval_policy.py `ALLOWED_SCOPES`), while
+    // operator.admin always requires a reviewed `devices approve`. The pending
+    // request is selected by its requested scope + CLI/operator role, never by
+    // command name (ADMIN_REQUEST_SELECTOR_PY in issue-4462-admin-approval-helper.ts).
+    // Every non-TUI OpenClaw command (`agent`, `cron add`, `cron run`, `exec`)
+    // reaches the gateway through the same device-token operator client and is
+    // gated purely by the scope it requests. This test exercises both tiers on
+    // that single shared boundary: operator.write via the gateway-backed `agent`
+    // turns above, and operator.admin via the `cron add` trigger + manual
+    // approval below. `cron run` and `exec` cannot follow a different approval
+    // path — whichever tier they request is one of the two already proven here,
+    // so no separate per-command evidence is required to close #5324.
+    const cronName = `issue-5324-admin-${Date.now()}-${process.pid}`;
+    // #5324's `exec` is NemoClaw's host transport, not an OpenClaw CLI
+    // subcommand (the pinned OpenClaw 2026.6.10 command catalog has none).
+    // Use the issue's documented `nemoclaw <name> exec -- openclaw ...` form
+    // for its cron reproduction while preserving #4504's exact command above.
+    const cronTrigger = await host.command(
+      process.execPath,
+      [
+        CLI_ENTRYPOINT,
+        SANDBOX_NAME,
+        "exec",
+        "--timeout",
+        "60",
+        "--",
+        "openclaw",
+        "cron",
+        "add",
+        "--name",
+        cronName,
+        "--every",
+        "2h",
+        "--agent",
+        "main",
+        "--session",
+        "isolated",
+        "--message",
+        "hello",
+      ],
+      {
+        artifactName: "phase-4-trigger-admin-cron",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 90_000,
+      },
+    );
+    const cronTriggerOutput = resultText(cronTrigger);
+    expect(cronTrigger.exitCode, cronTriggerOutput).not.toBe(0);
+    expect(cronTriggerOutput).toMatch(
+      /operator\.admin|scope upgrade pending approval|device pairing required|pairing required|requestId/i,
+    );
+    const adminRequestId = extractPendingRequestId(cronTriggerOutput);
+
+    const connectProbe = await host.command(
+      process.execPath,
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "connect", "--probe-only"],
+      {
+        artifactName: "phase-5-connect-auto-pair-probe",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 90_000,
+      },
+    );
+    expect(connectProbe.exitCode, resultText(connectProbe)).toBe(0);
+
+    const adminConnect = await host.command(
+      "bash",
+      [
+        "-lc",
+        adminApprovalConnectScript(
+          host.commandPath,
+          SANDBOX_NAME,
+          adminRequestId,
+          cronName,
+          `issue-5324-connect-${Date.now()}-${process.pid}`,
+        ),
+      ],
+      {
+        artifactName: "phase-6-connect-admin-approval",
+        env: env(),
+        redactionValues: [apiKey],
+        timeoutMs: 4 * 60_000,
+      },
+    );
+    const adminConnectOutput = resultText(adminConnect);
+    expect(adminConnect.exitCode, adminConnectOutput).toBe(0);
+    expect(adminConnectOutput).toContain("ISSUE_5324_ADMIN_APPROVAL_OK");
 
     await cleanup(host, sandbox);
     await artifacts.writeJson("target-result.json", {
