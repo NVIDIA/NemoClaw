@@ -6,6 +6,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
+
+const dockerAdapterMocks = vi.hoisted(() => ({
+  dockerCapture: vi.fn((args: readonly string[]) =>
+    args[0] === "ps" ? "default-container-id\n" : "",
+  ),
+}));
+
+vi.mock("../adapters/docker", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../adapters/docker")>()),
+  dockerCapture: dockerAdapterMocks.dockerCapture,
+}));
+
 import { getSandboxFailurePhase } from "../state/gateway";
 import {
   buildDockerGpuMode,
@@ -299,8 +311,8 @@ describe("Docker GPU patch diagnostics", () => {
   it("preserves the default Docker capture when callers omit dockerCapture from deps", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-docker-gpu-default-"));
     try {
-      const dockerCapture = vi.fn((_args: readonly string[]) => "");
-      collectDockerGpuPatchDiagnostics(
+      dockerAdapterMocks.dockerCapture.mockClear();
+      const diagnostics = collectDockerGpuPatchDiagnostics(
         "alpha",
         {
           context: {
@@ -310,14 +322,20 @@ describe("Docker GPU patch diagnostics", () => {
           },
         },
         {
-          dockerCapture,
           dockerLogs: vi.fn(() => ""),
           homedir: () => tmpDir,
           now: () => new Date("2026-05-12T00:00:00Z"),
         },
       );
 
-      expect(dockerCapture.mock.calls.some(([args]) => args?.[0] === "ps")).toBe(true);
+      expect(diagnostics?.dir).toBeTruthy();
+      expect(
+        fs.readFileSync(path.join(diagnostics?.dir || "", "docker-ps.txt"), "utf-8"),
+      ).toContain("default-container-id");
+      expect(dockerAdapterMocks.dockerCapture).toHaveBeenCalledWith(
+        expect.arrayContaining(["ps"]),
+        expect.objectContaining({ ignoreError: true }),
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
