@@ -8,6 +8,28 @@
 
 import type { RemoteProviderDeps, SetupInferenceResult } from "./types";
 
+function gatewayReachableCompatibleEndpointUrl(
+  provider: string,
+  endpointUrl: string | null | undefined,
+): string | null | undefined {
+  if (provider !== "compatible-endpoint" || !endpointUrl) return endpointUrl;
+  let parsed: URL;
+  try {
+    parsed = new URL(endpointUrl);
+  } catch {
+    return endpointUrl;
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  const isLoopback =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname === "[::1]";
+  if (parsed.protocol !== "http:" || !isLoopback || !parsed.port) return endpointUrl;
+  parsed.hostname = "host.openshell.internal";
+  return parsed.toString().replace(/\/$/, parsed.pathname === "/" ? "/" : "");
+}
+
 /**
  * Returns `{ done: true, result }` when the flow handled the request
  * (e.g. Bedrock short-circuit or a retry-to-selection); returns
@@ -82,6 +104,7 @@ export async function setupRemoteProviderInference(
     const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
     let providerResult;
+    let gatewayEndpointUrl: string | null | undefined = resolvedEndpointUrl;
     if (reuseGatewayCredentialWithoutLocalKey) {
       // This is only a last-moment existence probe. The primary authorization
       // of the provider's non-secret credential/config binding identity is
@@ -104,12 +127,13 @@ export async function setupRemoteProviderInference(
         resolvedCredentialEnv && credentialValue
           ? { [resolvedCredentialEnv]: credentialValue }
           : {};
+      gatewayEndpointUrl = gatewayReachableCompatibleEndpointUrl(provider, resolvedEndpointUrl);
       providerResult = credentialValue
         ? upsertProvider(
             provider,
             config.providerType,
             resolvedCredentialEnv,
-            resolvedEndpointUrl,
+            gatewayEndpointUrl,
             env,
           )
         : {
@@ -138,7 +162,7 @@ export async function setupRemoteProviderInference(
       return exitProcess(providerResult.status || 1);
     }
     const argsv = ["inference", "set"];
-    if (config.skipVerify) {
+    if (config.skipVerify || gatewayEndpointUrl !== resolvedEndpointUrl) {
       argsv.push("--no-verify");
     }
     argsv.push("--provider", provider, "--model", model);

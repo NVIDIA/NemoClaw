@@ -245,6 +245,8 @@ NEMOCLAW_PROVIDER=custom \
 ```
 
 Use the model id reported by the server's `/v1/models` response.
+For loopback HTTP endpoints such as `http://localhost:8000/v1`, NemoClaw validates the endpoint from the host and registers the OpenShell gateway route through `host.openshell.internal:<port>` so sandbox traffic can leave the container namespace.
+Make sure the local server listens on an address reachable from containers, such as `0.0.0.0`; a server bound only to `127.0.0.1` can still be unreachable from the sandbox route.
 If your setup uses the legacy containerized OpenShell gateway path instead of the default host-process gateway, the reachable host-service URL can differ; `http://host.openshell.internal:8000/v1` is the usual legacy host-gateway route and port `8000` is included in NemoClaw's `local-inference` policy preset.
 After onboarding, run `$$nemoclaw <name> status` and check the `Inference` row before starting long agent work.
 
