@@ -23,6 +23,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  assertHermesConfig,
+  assertHermesInspectionRejectsUnmanagedFields,
+  assertHermesRemovalSurvivesGatewayRestart,
+} from "./mcp-bridge-hermes-lifecycle.ts";
+import {
   buildMcpDnsRebindingProbeScript,
   hostAddressForSandbox,
   isExpectedMcpCurlPolicyDenial,
@@ -667,32 +672,6 @@ async function assertAdapterRequestDeniedAfterRemove(
   ).toBe(true);
   expect(fakeMcp.requests).toHaveLength(requestCount);
 }
-async function assertHermesConfig(
-  sandbox: SandboxClient,
-  sandboxName: string,
-  mcpUrl: string,
-): Promise<void> {
-  const script = [
-    "set -eu",
-    "/opt/hermes/.venv/bin/python - <<'PY'",
-    "import pathlib, yaml",
-    "path = pathlib.Path('/sandbox/.hermes/config.yaml')",
-    "text = path.read_text(encoding='utf-8')",
-    "data = yaml.safe_load(text) or {}",
-    `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
-    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
-    `assert ${JSON.stringify(HOST_SECRET)} not in text`,
-    "PY",
-  ].join("\n");
-  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
-    artifactName: "hermes-mcp-config-assertions",
-    env: buildAvailabilityProbeEnv(),
-    redactionValues: [HOST_SECRET, Buffer.from(script, "utf8").toString("base64")],
-    timeoutMs: 60_000,
-  });
-  expectExitZero(result, "Hermes MCP config contains placeholder and no raw host secret");
-}
 async function assertDeepAgentsConfig(
   sandbox: SandboxClient,
   sandboxName: string,
@@ -1290,6 +1269,7 @@ liveAgentMatrixTest(
       mcpUrl,
     });
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
+    await assertHermesInspectionRejectsUnmanagedFields(sandbox, HERMES_SANDBOX_NAME);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
     await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
       adapter: "hermes-config",
@@ -1363,6 +1343,20 @@ liveAgentMatrixTest(
       mcpUrl,
       artifactPrefix: "hermes",
     });
+    await assertHermesRemovalSurvivesGatewayRestart(host, sandbox, HERMES_SANDBOX_NAME);
+    await assertAdapterRequestDeniedAfterRemove(sandbox, fakeMcp, {
+      adapter: "hermes-config",
+      sandboxName: HERMES_SANDBOX_NAME,
+      mcpUrl,
+      artifactPrefix: "hermes-after-removal-gateway-restart",
+    });
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      ["/sandbox/.hermes", "/tmp/nemoclaw-start.log"],
+      [HOST_SECRET, ROTATED_HOST_SECRET],
+      "hermes-assert-secrets-absent-after-removal-gateway-restart",
+    );
   },
 );
 

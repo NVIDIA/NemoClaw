@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+
 describe("MCP restart policy ordering", () => {
   it("rejects a foreign attached credential key before policy or provider mutation", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-restart-order-"));
@@ -110,7 +112,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
       timeout: 30_000,
     });
     fs.rmSync(home, { recursive: true, force: true });
@@ -231,7 +233,7 @@ bridge.restartMcpBridge("alpha", "example").then(
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: process.cwd(),
       encoding: "utf8",
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
       timeout: 30_000,
     });
     fs.rmSync(home, { recursive: true, force: true });

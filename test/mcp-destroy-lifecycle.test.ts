@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+const MATCHING_OPENSHELL = path.resolve("test/fixtures/openshell-v0.0.72");
+
 function runDestroyLifecycleScenario(body: string) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-destroy-"));
   const script = `
@@ -181,7 +183,7 @@ ${body}
   const result = spawnSync(process.execPath, ["-e", script], {
     cwd: process.cwd(),
     encoding: "utf8",
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, NEMOCLAW_OPENSHELL_BIN: MATCHING_OPENSHELL },
   });
   fs.rmSync(home, { recursive: true, force: true });
   return result;
@@ -390,7 +392,10 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
-  mcp: { bridges: { github: bridgeEntries.github } },
+  mcp: {
+    bridges: { github: bridgeEntries.github },
+    managedServerNames: ["github", "retired"],
+  },
 });
 registry.addCustomPolicy("alpha", ownedPolicy("github"));
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
@@ -429,7 +434,10 @@ process.env.GITHUB_TOKEN = "ambient-value-that-must-not-rotate";
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
-  mcp: { bridges: { github: bridgeEntries.github } },
+  mcp: {
+    bridges: { github: bridgeEntries.github },
+    managedServerNames: ["github", "retired"],
+  },
 });
 registry.addCustomPolicy("alpha", ownedPolicy("github"));
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
@@ -452,6 +460,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       sandbox: {
         mcp: {
           bridges: Record<string, unknown>;
+          managedServerNames?: string[];
           destroyPreparedAt?: string;
           destroyPendingAt?: string;
         };
@@ -474,6 +483,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       payload.adapterCalls.some((call) => call.includes("openshell:resolve:env:GITHUB_TOKEN")),
     ).toBe(true);
     expect(payload.sandbox.mcp.bridges).toHaveProperty("github");
+    expect(payload.sandbox.mcp.managedServerNames).toEqual(["github", "retired"]);
     expect(payload.sandbox.mcp.destroyPreparedAt).toBeUndefined();
     expect(payload.sandbox.mcp.destroyPendingAt).toBeUndefined();
   });
@@ -483,7 +493,10 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
-  mcp: { bridges: { github: bridgeEntries.github } },
+  mcp: {
+    bridges: { github: bridgeEntries.github },
+    managedServerNames: ["github", "retired"],
+  },
 });
 registry.addCustomPolicy("alpha", ownedPolicy("github"));
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
@@ -509,13 +522,18 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     const payload = JSON.parse(result.stdout) as {
       error: string;
       sandbox: {
-        mcp: { bridges: Record<string, unknown>; destroyPreparedAt?: string };
+        mcp: {
+          bridges: Record<string, unknown>;
+          managedServerNames?: string[];
+          destroyPreparedAt?: string;
+        };
       };
       attached: string[];
       adapterRegistered: boolean;
     };
     expect(payload.error).toMatch(/failed to activate generated MCP policy/i);
     expect(payload.sandbox.mcp.bridges).toHaveProperty("github");
+    expect(payload.sandbox.mcp.managedServerNames).toEqual(["github", "retired"]);
     expect(payload.sandbox.mcp.destroyPreparedAt).toBeTruthy();
     expect(payload.attached).not.toContain("alpha-mcp-github");
     expect(payload.adapterRegistered).toBe(false);
@@ -722,7 +740,10 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
-  mcp: { bridges: bridgeEntries },
+  mcp: {
+    bridges: bridgeEntries,
+    managedServerNames: ["github", "retired", "slack"],
+  },
 });
 registry.addCustomPolicy("alpha", ownedPolicy("github"));
 registry.addCustomPolicy("alpha", ownedPolicy("slack"));
@@ -757,6 +778,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       afterFailure: {
         mcp: {
           bridges: Record<string, unknown>;
+          managedServerNames?: string[];
           destroyPreparedAt?: string;
           destroyPendingAt?: string;
         };
@@ -770,6 +792,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.firstError).toContain("provider delete failed");
     expect(payload.afterFailure.mcp.destroyPendingAt).toBeTruthy();
     expect(payload.afterFailure.mcp.destroyPreparedAt).toBeUndefined();
+    expect(payload.afterFailure.mcp.managedServerNames).toEqual(["github", "retired", "slack"]);
     expect(Object.keys(payload.afterFailure.mcp.bridges)).toEqual(["github", "slack"]);
     expect(payload.afterFailure.customPolicies).toHaveLength(2);
     expect(payload.retry.destroyAlreadyPending).toBe(true);

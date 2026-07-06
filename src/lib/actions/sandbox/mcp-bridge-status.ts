@@ -8,7 +8,11 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
 } from "./mcp-bridge-adapters";
-import { isAgentMcpAdapter, type McpBridgeStatus } from "./mcp-bridge-contracts";
+import { isAgentMcpAdapter, McpBridgeError, type McpBridgeStatus } from "./mcp-bridge-contracts";
+import {
+  type HermesMcpReconciliationResult,
+  inspectHermesMcpRuntimeIntent,
+} from "./mcp-bridge-hermes-reconciliation";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
@@ -80,9 +84,15 @@ function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
+  hermesReconciliation?: HermesMcpReconciliationResult,
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
+  if (adapter === "hermes-config" && hermesReconciliation) {
+    return hermesReconciliation.ok
+      ? { registered: true }
+      : { registered: false, detail: hermesReconciliation.detail };
+  }
   const command =
     adapter === "mcporter"
       ? buildOpenClawMcporterInspectCommand(entry, false)
@@ -146,6 +156,18 @@ export async function statusMcpBridge(
         adapter: { registered: null },
       },
     ];
+  }
+
+  const hermesReconciliation =
+    agent.name === "hermes" &&
+    (entries.length > 0 || (sandbox.mcp?.managedServerNames?.length ?? 0) > 0) &&
+    entries.every(([, entry]) => !entry || storedCredentialWarning(entry) === undefined)
+      ? inspectHermesMcpRuntimeIntent(sandboxName)
+      : undefined;
+  if (entries.length === 0 && hermesReconciliation && !hermesReconciliation.ok) {
+    throw new McpBridgeError(
+      `Hermes MCP runtime does not match the persisted managed intent for sandbox '${sandboxName}': ${hermesReconciliation.detail}.`,
+    );
   }
 
   return entries.map(([name, entry]) => {
@@ -220,7 +242,7 @@ export async function statusMcpBridge(
             detail:
               "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
           }
-        : getAdapterRegistration(sandboxName, support.adapter, entry),
+        : getAdapterRegistration(sandboxName, support.adapter, entry, hermesReconciliation),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),
     };
