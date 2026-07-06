@@ -96,7 +96,10 @@ export async function runSandboxGpuCreateFlow(
     const compatibility = route === "compatibility";
     if (compatibility && input.initialGpuRoute === "native") {
       console.warn(
-        "  Native OpenShell GPU onboarding did not complete; retrying once with the compatibility path...",
+        "  Native OpenShell GPU onboarding did not complete; retrying once by recreating the OpenShell-managed Docker container with the legacy GPU compatibility envelope.",
+      );
+      console.warn(
+        "  This compatibility container swap may relax container confinement compared with native injection. Set NEMOCLAW_DOCKER_GPU_PATCH=0 for native-only behavior.",
       );
     }
     const dockerGpuCreatePatch = createDockerGpuSandboxCreatePatch({

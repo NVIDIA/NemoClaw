@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   verifyGpuSandboxAccessAfterReady: vi.fn(),
   createDockerGpuSandboxCreatePatch: vi.fn(),
   printSandboxCreateFailureDiagnostics: vi.fn(),
+  collectDockerGpuPatchDiagnostics: vi.fn(),
+  queryOpenShellDockerSandboxContainers: vi.fn(),
+  queryOpenShellDockerSandboxImage: vi.fn(),
 }));
 
 vi.mock("../sandbox/create-stream", () => ({
@@ -32,6 +35,16 @@ vi.mock("./docker-gpu-sandbox-create", () => ({
 
 vi.mock("./sandbox-create-failure", () => ({
   printSandboxCreateFailureDiagnostics: mocks.printSandboxCreateFailureDiagnostics,
+}));
+
+vi.mock("./docker-gpu-patch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./docker-gpu-patch")>()),
+  collectDockerGpuPatchDiagnostics: mocks.collectDockerGpuPatchDiagnostics,
+}));
+
+vi.mock("./openshell-docker-sandbox-containers", () => ({
+  queryOpenShellDockerSandboxContainers: mocks.queryOpenShellDockerSandboxContainers,
+  queryOpenShellDockerSandboxImage: mocks.queryOpenShellDockerSandboxImage,
 }));
 
 import type { SandboxGpuProofResult } from "../state/registry";
@@ -118,6 +131,12 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
     mocks.verifyGpuSandboxAccessAfterReady.mockImplementation((_config, options) =>
       options.verifyDirectSandboxGpu(options.sandboxName),
     );
+    mocks.collectDockerGpuPatchDiagnostics.mockReturnValue(null);
+    mocks.queryOpenShellDockerSandboxContainers.mockReturnValue({ ok: true, ids: [] });
+    mocks.queryOpenShellDockerSandboxImage.mockReturnValue({
+      ok: true,
+      imageRef: "openshell/sandbox-from:test",
+    });
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -204,5 +223,26 @@ describe("runSandboxGpuCreateFlow fallback eligibility", () => {
       ["sandbox", "delete", "alpha"],
       expect.anything(),
     );
+  });
+
+  it("discloses the compatibility container-swap confinement tradeoff and native-only opt-out", async () => {
+    mocks.streamSandboxCreate.mockResolvedValueOnce({
+      status: 1,
+      output: "error: unexpected argument '--gpu' found",
+      sawProgress: false,
+    });
+    const deps = createDeps();
+
+    await expect(runSandboxGpuCreateFlow(createInput(), deps)).resolves.toMatchObject({
+      route: "compatibility",
+    });
+
+    const warning = vi.mocked(console.warn).mock.calls.flat().join("\n");
+    expect(warning).toContain("recreating the OpenShell-managed Docker container");
+    expect(warning).toContain("legacy GPU compatibility envelope");
+    expect(warning).toContain("may relax container confinement");
+    expect(warning).toContain("NEMOCLAW_DOCKER_GPU_PATCH=0");
+    expect(warning).toContain("native-only behavior");
+    expect(mocks.streamSandboxCreate).toHaveBeenCalledTimes(2);
   });
 });

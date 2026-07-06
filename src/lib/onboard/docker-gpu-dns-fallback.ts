@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 
-function parseResolvConfNameservers(content: string): string[] {
+export function parseResolvConfNameservers(content: string): string[] {
   return content
     .split("\n")
     .map((line) => line.trim())
@@ -13,7 +13,20 @@ function parseResolvConfNameservers(content: string): string[] {
 }
 
 /**
- * Resolve a non-loopback upstream when the sandbox would inherit systemd-resolved's stub.
+ * Source-of-truth boundary for the compatibility container's DNS fallback:
+ *
+ * - Invalid state: a recreated container inherits a host-only systemd-resolved loopback stub and
+ *   cannot resolve names from its own network namespace.
+ * - Source boundary: the host resolver owns the upstream address and Docker owns the recreated
+ *   container's `--dns` setting; the sandbox cannot repair either side after creation.
+ * - Source-fix constraint: the compatibility path must recreate the OpenShell-managed container
+ *   atomically, so it cannot reconfigure the host resolver or upgrade OpenShell/Docker in place.
+ * - Regression coverage: docker-gpu-dns-fallback.test.ts validates resolver parsing and host-file
+ *   failures; docker-gpu-patch-recreate-dns.test.ts validates the create-command envelope.
+ * - Removal condition: remove this probe only when the compatibility recreation path is retired
+ *   for every supported host, or the minimum supported OpenShell/Docker pair always supplies a
+ *   non-loopback resolver to recreated containers.
+ *
  * This host-only probe runs during container creation; only the selected address is passed to
  * Docker via `--dns`, and the sandbox receives no runtime access to either host file.
  */

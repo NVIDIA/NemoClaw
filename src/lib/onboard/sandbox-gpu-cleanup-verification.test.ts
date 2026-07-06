@@ -91,6 +91,28 @@ describe("cleanupNativeGpuAttemptForFallback", () => {
     expect(result.reason).toBeNull();
   });
 
+  it("permits fallback after a transient gateway list failure recovers to stable absence", () => {
+    const runOpenshell = vi
+      .fn()
+      .mockReturnValueOnce({ status: 0 })
+      .mockReturnValueOnce({ status: 1, stderr: "gateway unavailable" })
+      .mockReturnValueOnce({ status: 0, stdout: "" })
+      .mockReturnValueOnce({ status: 0, stdout: "" });
+    const queryContainers = vi.fn(() => ({ ok: true as const, ids: [] }));
+    const sleep = vi.fn();
+
+    const result = cleanupNativeGpuAttemptForFallback(
+      "alpha",
+      { runOpenshell, queryContainers, sleep },
+      { maxAttempts: 3, stableAbsenceChecks: 2 },
+    );
+
+    expect(result).toEqual(SAFE_CLEANUP);
+    expect(runOpenshell).toHaveBeenCalledTimes(4);
+    expect(queryContainers).toHaveBeenCalledTimes(3);
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
   it("refuses fallback when the OpenShell sandbox query fails", () => {
     const result = cleanupNativeGpuAttemptForFallback(
       "alpha",
