@@ -290,56 +290,56 @@ describe("created DCode sandbox finalization", () => {
     ).toThrow("exit 1");
     expect(register).not.toHaveBeenCalled();
     expect(error).toHaveBeenCalledWith(expect.stringContaining("sandbox still exists"));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("rebuild is unsafe"));
     expect(error).toHaveBeenCalledWith(expect.stringContaining('openshell sandbox delete "dcode"'));
     expect(error).toHaveBeenCalledWith(expect.stringContaining("nemoclaw onboard"));
   });
 
   it("warns but verifies and registers after a partial workspace restore (#6311)", () => {
-    const restoreSandboxState = vi.fn(() => ({
-      success: false,
-      restoredDirs: ["workspace"],
-      failedDirs: ["skills"],
-      restoredFiles: [],
-      failedFiles: ["config.toml"],
-    }));
-    const getDcodeSelectionDrift = vi.fn(() => ({
-      changed: false,
-      providerChanged: false,
-      modelChanged: false,
-      existingProvider: "nvidia-prod",
-      existingModel: "openai:new-model",
-      unknown: false,
-    }));
-    const register = vi.fn();
+    const fixture = makeRestoreFixture();
+    const registeredConfigs: string[] = [];
     const error = vi.fn();
-
-    finalizeCreatedSandbox(
-      {
-        sandboxName: "dcode",
-        restoreBackupPath: "/tmp/dcode-backup",
-        preUpgradeBackup: false,
-        validateManagedDcode: true,
-        provider: "nvidia-prod",
-        model: "new-model",
-        preferredInferenceApi: null,
-      },
-      {
-        restoreSandboxState,
-        getDcodeSelectionDrift,
-        register,
-        note: vi.fn(),
-        error,
-        exitProcess: (code): never => {
-          throw new Error(`exit ${code}`);
+    try {
+      finalizeCreatedSandbox(
+        {
+          sandboxName: "dcode",
+          restoreBackupPath: fixture.backupPath,
+          preUpgradeBackup: false,
+          validateManagedDcode: true,
+          provider: "nvidia-prod",
+          model: "new-model",
+          preferredInferenceApi: null,
         },
-      },
-    );
+        {
+          restoreSandboxState: (name, backup, options) => {
+            const restored = sandboxState.restoreSandboxState(name, backup, options);
+            return { ...restored, success: false, failedDirs: ["skills"] };
+          },
+          getDcodeSelectionDrift: (name, provider, model, api) =>
+            getDcodeSelectionDrift(name, provider, model, api, {
+              runCaptureOpenshell: () =>
+                identityFromConfig(fs.readFileSync(fixture.currentPath, "utf8")),
+            }),
+          register: () => {
+            registeredConfigs.push(fs.readFileSync(fixture.currentPath, "utf8"));
+          },
+          note: vi.fn(),
+          error,
+          exitProcess: (code): never => {
+            throw new Error(`exit ${code}`);
+          },
+        },
+      );
 
-    expect(error).toHaveBeenCalledWith(
-      "  Warning: partial restore. Manual recovery: /tmp/dcode-backup",
-    );
-    expect(getDcodeSelectionDrift).toHaveBeenCalledOnce();
-    expect(register).toHaveBeenCalledOnce();
+      expect(error).toHaveBeenCalledWith(
+        `  Warning: partial restore. Manual recovery: ${fixture.backupPath}`,
+      );
+      expect(registeredConfigs).toHaveLength(1);
+      expect(registeredConfigs[0]).toContain('default = "openai:new-model"');
+      expect(registeredConfigs[0]).not.toContain("old-model");
+    } finally {
+      process.env.PATH = fixture.oldPath;
+    }
   });
 
   it("keeps custom-image restores outside the managed config merge (#6311)", () => {

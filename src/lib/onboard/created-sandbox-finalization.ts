@@ -56,11 +56,12 @@ export function finalizeCreatedSandbox(
         `  ✓ State restored (${restore.restoredDirs.length} directories, ${restore.restoredFiles.length} files)`,
       );
     } else {
-      // Source-of-truth review: restore.success owns workspace-copy completeness;
-      // live validation below owns route integrity. External copy failures cannot
-      // be atomic with sandbox creation, so keep a valid fresh sandbox registered
-      // and leave failed paths recoverable from the backup. Remove this fallback
-      // when restore can transactionally roll back sandbox creation.
+      // Source-of-truth review:
+      // - Invalid state: a fresh sandbox exists after an external workspace copy fails.
+      // - Boundary: restore.success owns copy completeness; live validation owns route integrity.
+      // - Source-fix constraint: rollback must span sandbox creation and external copies.
+      // - Regression: the partial-workspace-restore test validates fresh config before registration.
+      // - Removal: drop this fallback when restore failure can roll back sandbox creation atomically.
       deps.error(`  Warning: partial restore. Manual recovery: ${options.restoreBackupPath}`);
     }
   }
@@ -76,7 +77,9 @@ export function finalizeCreatedSandbox(
       deps.error(
         `  DCode live model/provider validation failed for sandbox '${options.sandboxName}'. The sandbox still exists, but its live route is unverified and registry metadata was not updated.`,
       );
-      // Without a registry row, the NemoClaw rebuild command cannot target this sandbox.
+      deps.error(
+        "  A NemoClaw rebuild is unsafe here because no verified registry metadata exists.",
+      );
       deps.error("  Remove the unregistered sandbox before retrying:");
       deps.error(`    openshell sandbox delete ${JSON.stringify(options.sandboxName)}`);
       deps.error("  Then rerun the original `nemoclaw onboard` command.");

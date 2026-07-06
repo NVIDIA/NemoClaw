@@ -32,8 +32,8 @@ export function requiresSelectionRecreate(
   drift: Pick<SelectionDrift, "changed" | "unknown">,
   managedDcode: boolean,
 ): boolean {
-  // Managed DCode also fails closed when its live identity is unreadable;
-  // ordinary agents retain their legacy behavior for unknown selection state.
+  // Managed DCode fails closed on any confirmed or unreadable selection drift
+  // to enforce routing integrity; ordinary agents recreate only on confirmed drift.
   return drift.changed && (!drift.unknown || managedDcode);
 }
 
