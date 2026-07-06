@@ -4,9 +4,17 @@
 import { createOpenAiLikeAuthConfig } from "../adapters/http/auth-config";
 import { runCurlProbe } from "../adapters/http/probe";
 import { getCredential } from "../credentials/store";
-import { isPrivateHostname } from "../private-networks";
-import { hasExplicitContextWindow } from "./ollama-runtime-context";
+import { isLoopbackHostname, isPrivateHostname } from "../private-networks";
+import {
+  hasExplicitContextWindow,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+} from "./ollama-runtime-context";
 import { resolveVllmContextWindowFromModels } from "./vllm-runtime-context";
+
+// Explicit NEMOCLAW_CONTEXT_WINDOW overrides share the auto-detect ceiling so a
+// user-supplied window can't bake an implausible value the probed path rejects.
+const MAX_COMPATIBLE_CONTEXT_WINDOW = MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW;
 
 // Hosts that only resolve inside the OpenShell sandbox network (or are the
 // hijacked docker-internal alias), mirroring probeOpenAiLikeEndpoint's
@@ -27,11 +35,20 @@ function isHostProbeableEndpoint(endpointUrl: string): boolean {
 // address (and not one of the allowed sandbox-internal aliases, which are
 // screened separately by isHostProbeableEndpoint). Reuses the shared
 // isPrivateHostname validator so the /v1/models context probe never issues a
-// host-side GET to an attacker-reachable private address. See PR #6293 PRA-1.
+// host-side GET to an attacker-reachable private address.
+//
+// Loopback (127.0.0.0/8, ::1, localhost) is exempt, mirroring the same
+// exemption in probeOpenAiLikeEndpoint: a locally-run vLLM/Ollama custom
+// endpoint is reached host-side on loopback, and loopback only targets the
+// probing host itself, not a pivot to other internal infrastructure. Without
+// this the two probes disagreed — the chat-completions validation probe
+// allowed the localhost endpoint but this context probe skipped it, so a
+// localhost vLLM never propagated its max_model_len (#6177). See PR #6293
+// PRA-5 / PRA-19.
 function isPrivateEndpoint(endpointUrl: string): boolean {
   try {
     const { hostname } = new URL(endpointUrl);
-    return isPrivateHostname(hostname);
+    return isPrivateHostname(hostname) && !isLoopbackHostname(hostname);
   } catch {
     return false;
   }
@@ -186,8 +203,25 @@ export function applyCompatibleEndpointContextWindow(
   };
 
   if (hasExplicitContextWindow(userContextWindow)) {
-    logger.log(`  ℹ Keeping configured context window: ${userContextWindow} tokens`);
-    return;
+    // hasExplicitContextWindow only checks non-emptiness, so a malformed value
+    // ("0", "abc", or one above the auto-detect ceiling) would otherwise be
+    // kept verbatim and baked into config. Validate it the same way the probed
+    // path validates a discovered max_model_len; on an invalid override, warn
+    // and fall through to auto-detect instead of honoring an unusable value.
+    // See PR #6293 PRA-4 / PRA-7 (Nemotron).
+    const parsedOverride = parsePositiveInteger(userContextWindow);
+    if (parsedOverride && parsedOverride <= MAX_COMPATIBLE_CONTEXT_WINDOW) {
+      logger.log(`  ℹ Keeping configured context window: ${parsedOverride} tokens`);
+      return;
+    }
+    logger.warn(
+      `  ⚠ Ignoring invalid NEMOCLAW_CONTEXT_WINDOW="${userContextWindow}"; it must be a ` +
+        `positive integer ≤ ${MAX_COMPATIBLE_CONTEXT_WINDOW}. Auto-detecting from the endpoint.`,
+    );
+    // Drop the unusable override so a failed/skipped probe can't leave it to be
+    // baked downstream; auto-detect below re-populates it when the endpoint
+    // reports a valid max_model_len.
+    delete env.NEMOCLAW_CONTEXT_WINDOW;
   }
 
   // A sandbox-internal endpoint (e.g. host.openshell.internal) resolves only

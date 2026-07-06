@@ -106,6 +106,28 @@ describe("compatible-endpoint context window", () => {
     expect(messages.some((m) => m.includes("Keeping configured context window"))).toBe(true);
   });
 
+  it.each([
+    "0",
+    "abc",
+    "-5",
+    "9999999999",
+  ])("ignores the invalid NEMOCLAW_CONTEXT_WINDOW override %j and auto-detects instead (#6293)", (badValue) => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 32_768 }] }));
+    const { env, messages } = apply({ fetchModels }, { NEMOCLAW_CONTEXT_WINDOW: badValue });
+
+    expect(fetchModels).toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("32768");
+    expect(messages.some((m) => m.includes("Ignoring invalid NEMOCLAW_CONTEXT_WINDOW"))).toBe(true);
+  });
+
+  it("clears an invalid explicit override when the endpoint also cannot be probed (#6293)", () => {
+    const fetchModels = vi.fn(() => null);
+    const { env } = apply({ fetchModels }, { NEMOCLAW_CONTEXT_WINDOW: "0" });
+
+    expect(fetchModels).toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
+  });
+
   it("warns and keeps the default context window when the endpoint cannot be probed", () => {
     const fetchModels = vi.fn(() => null);
     const { env, messages } = apply({ fetchModels });
@@ -163,11 +185,10 @@ describe("compatible-endpoint context window", () => {
 
   it.each([
     "http://10.0.0.1/v1",
-    "http://127.0.0.1/v1",
     "http://169.254.169.254/v1",
     "http://172.16.0.1/v1",
     "http://192.168.1.1/v1",
-  ])("rejects the private-IP endpoint %s before probing /v1/models SSRF (#6293)", (endpointUrl) => {
+  ])("rejects the non-loopback private-IP endpoint %s before probing /v1/models SSRF (#6293)", (endpointUrl) => {
     const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
     const messages: string[] = [];
     const env: NodeJS.ProcessEnv = {};
@@ -180,6 +201,23 @@ describe("compatible-endpoint context window", () => {
     expect(fetchModels).not.toHaveBeenCalled();
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
     expect(messages.some((m) => m.includes("private/internal address"))).toBe(true);
+  });
+
+  it.each([
+    "http://127.0.0.1:8000/v1",
+    "http://localhost:8000/v1",
+    "http://[::1]:8000/v1",
+  ])("probes a loopback endpoint %s and propagates its max_model_len (#6293)", (endpointUrl) => {
+    const fetchModels = vi.fn(() => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }));
+    const env: NodeJS.ProcessEnv = {};
+    applyCompatibleEndpointContextWindow(endpointUrl, "model-a", {
+      env,
+      fetchModels,
+      logger: { log: () => undefined, warn: () => undefined },
+    });
+
+    expect(fetchModels).toHaveBeenCalled();
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
   });
 
   it("clears a stale auto value when re-probing a now private-IP endpoint SSRF (#6293)", () => {

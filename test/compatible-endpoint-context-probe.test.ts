@@ -21,12 +21,13 @@ import { testTimeout } from "./helpers/timeouts";
 
 const MODEL = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
 
-// The fake server binds to loopback (127.0.0.1), which the SSRF source-boundary
-// guard now rejects. To exercise the happy path — real curl against a live
-// /v1/models — we present a routable public hostname to the guard while the
-// injected fetcher still hits the real loopback server. The private-IP block
-// itself is asserted by its own case below and by the unit tests in
-// src/lib/inference/compatible-endpoint-context.test.ts.
+// The fake server binds to loopback (127.0.0.1). Loopback is an allowed
+// host-side probe target (a locally-run vLLM/Ollama endpoint), so these
+// happy-path cases could use its URL directly; they present a routable public
+// hostname to the guard and inject a fetcher to the loopback server to keep the
+// remote-endpoint path exercised. Loopback probing against the real server is
+// asserted by its own case below; non-loopback private-IP rejection is covered
+// by the unit tests in src/lib/inference/compatible-endpoint-context.test.ts.
 const PUBLIC_ENDPOINT_URL = "https://vllm.public.test/v1";
 
 let server: FakeOpenAiCompatibleServer | null = null;
@@ -115,14 +116,14 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     ).toBe(true);
   });
 
-  it("refuses to probe a private-IP endpoint before issuing any /v1/models request SSRF (#6293)", async () => {
-    // The fake server binds to 127.0.0.1 — a real private/loopback address.
-    // The source-boundary guard must reject it before the real curl fetcher
-    // runs, so the server records zero requests and no window is set.
+  it("probes a real loopback endpoint and propagates its max_model_len (#6293)", async () => {
+    // The fake server binds to 127.0.0.1 — a loopback address. A locally-run
+    // vLLM/Ollama custom endpoint is legitimately reached host-side on loopback,
+    // so the source-boundary guard exempts loopback (mirroring the chat probe)
+    // and the real curl fetcher must run and propagate the window. Non-loopback
+    // private targets stay blocked — see the unit-test rejection cases.
     server = await startFakeOpenAiCompatibleServer({ model: MODEL, maxModelLen: 65_536 });
     expect(new URL(server.baseUrl).hostname).toBe("127.0.0.1");
-    // The readiness probe already issued one /v1/models GET; the guard must not
-    // add another, so we compare the count before and after.
     const modelsRequestsBefore = server
       .requests()
       .filter((entry) => entry.path === "/v1/models").length;
@@ -136,8 +137,8 @@ describe("compatible-endpoint context probe against a real server (#6177)", {
     const modelsRequestsAfter = server
       .requests()
       .filter((entry) => entry.path === "/v1/models").length;
-    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBeUndefined();
-    expect(modelsRequestsAfter).toBe(modelsRequestsBefore);
+    expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
+    expect(modelsRequestsAfter).toBeGreaterThan(modelsRequestsBefore);
   });
 
   it("keeps the default context window when the endpoint omits max_model_len (#6177)", async () => {
