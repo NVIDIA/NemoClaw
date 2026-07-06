@@ -122,7 +122,6 @@ let promptSpy: MockInstance;
 let getCredentialSpy: MockInstance;
 let saveCredentialSpy: MockInstance;
 let deleteCredentialSpy: MockInstance;
-let getSandboxSpy: MockInstance;
 let updateSandboxSpy: MockInstance;
 let applyPresetSpy: MockInstance;
 let removePresetSpy: MockInstance;
@@ -147,7 +146,6 @@ let slackBotProbe: ProbeResult;
 let slackAppProbe: ProbeResult;
 let testConfig: Record<string, unknown>;
 let testLog: string;
-let execCalls: Array<{ name: string; command: string }>;
 let testHome: string;
 
 const originalBuildPlan = MessagingWorkflowPlanner.prototype.buildPlan;
@@ -194,7 +192,6 @@ beforeEach(() => {
   slackAppProbe = successfulProbe('{"ok":true,"url":"wss://wss-primary.slack.com/link"}');
   testConfig = {};
   testLog = "";
-  execCalls = [];
 
   logSpy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
     callOrder.push(
@@ -206,7 +203,7 @@ beforeEach(() => {
     throw new ExitError(code);
   }) as never);
 
-  getSandboxSpy = vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
+  vi.spyOn(registry, "getSandbox").mockImplementation(() => registryEntry);
   vi.spyOn(registry, "listSandboxes").mockImplementation(() => ({
     sandboxes: [registryEntry],
     defaultSandbox: "test-sb",
@@ -301,8 +298,7 @@ beforeEach(() => {
 
   execSpy = vi
     .spyOn(processRecovery, "executeSandboxExecCommand")
-    .mockImplementation((name, command) => {
-      execCalls.push({ name, command });
+    .mockImplementation((_name, command) => {
       return command.includes("/sandbox/.openclaw/openclaw.json")
         ? { status: 0, stdout: JSON.stringify(testConfig), stderr: "" }
         : command.includes("tail -n 400") && command.includes("/tmp/gateway.log")
