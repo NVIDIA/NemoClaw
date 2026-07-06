@@ -15,13 +15,15 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 
-import { describe, it } from "vitest";
-
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  COMPAT_AGENT_PROMPT,
+  COMPAT_AGENT_REPLY,
+} from "../support/messaging-endpoint-classifiers.ts";
 import {
   cleanupMessagingState,
   commandEnv,
@@ -55,10 +57,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
-const COMPAT_AGENT_PROMPT =
-  "Call the configured model and report the compatible endpoint route token.";
-
 function nodeEvalArg(source: string): string {
   const encoded = Buffer.from(source, "utf8").toString("base64");
   return `eval(Buffer.from(${JSON.stringify(encoded)}, "base64").toString("utf8"))`;
@@ -607,18 +605,6 @@ async function assertOpenClawAgentTurn(
   const leaked = newHopHeaderLogs.flat().filter((name) => name.length > 0);
   expect(leaked, `Proxy hop headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
 }
-
-describe("messaging-compatible-endpoint live test local classifiers", () => {
-  it("does not satisfy the agent reply assertion with echoed prompt text", () => {
-    expect(COMPAT_AGENT_PROMPT).not.toContain(COMPAT_AGENT_REPLY);
-    expect(
-      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_PROMPT } })),
-    ).not.toContain(COMPAT_AGENT_REPLY);
-    expect(
-      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_REPLY } })),
-    ).toContain(COMPAT_AGENT_REPLY);
-  });
-});
 
 liveTest(
   "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
