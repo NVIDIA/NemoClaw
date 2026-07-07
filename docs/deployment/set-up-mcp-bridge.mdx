@@ -207,6 +207,20 @@ The `env.missing` field is an array of recorded host variable names that are cur
 An existing valid provider can remain ready when that host variable is unset because OpenShell retains the credential.
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.
 
+Provider presence, attachment, and credential-key checks read OpenShell metadata only; they cannot prove that OpenShell actually rewrites the `openshell:resolve:env:KEY` placeholder when a request leaves the sandbox.
+`mcp status <server>` therefore requests a differential wire-level credential-resolution probe by default.
+Before sending probe traffic, NemoClaw verifies that the exact generated `protocol: mcp` policy matches the effective gateway policy, the expected provider is attached, and the live provider has the recorded ID, generic type, a valid resource version, and exactly one credential key matching the recorded key; otherwise it reports `ok: null` with a `probe skipped` detail and sends no request.
+When those readiness checks pass, the probe sends the same idempotent MCP `initialize` request twice from inside the sandbox, wrapped in the adapter runtime so the generated policy applies — once with the placeholder authorization header exactly as agent traffic carries it, and once with a deliberately-unresolvable literal control bearer that no gateway rewrite can touch.
+A working rewrite makes the two requests reach the endpoint with different bearers; a dead rewrite forwards both literally.
+Only a placeholder HTTP 2xx paired with a rejected control verifies resolution — an accepted request proves a valid credential was on the wire.
+Every non-2xx placeholder outcome is inconclusive with the hypotheses named: identical rejections cannot separate "placeholder forwarded verbatim" from "resolved but expired or revoked credential" (or, for HTTP 400, endpoint request validation), and differing rejections cannot either, because an endpoint may reject two different literal bearer strings differently.
+For identical HTTP 400, 401, or 403 rejections, the warning tells you to verify the stored credential first; for HTTP 401 or 403, a confirmed-valid credential means the host is not rewriting placeholders, while HTTP 400 remains inconclusive because the endpoint may reject the probe request itself.
+The verdict appears as `provider.credentialResolution` in JSON (`ok` true or null with a `detail`; `httpStatus` and `controlHttpStatus` are present only when the relevant requests ran) and as a `credential resolution:` line in text output.
+The probe never captures or prints endpoint response bodies — classification uses HTTP status and curl exit codes only — and it refuses to run against a persisted URL that no longer satisfies the current authenticated-endpoint boundary, so a legacy, private-alias, or plain-HTTP URL is never sent a header the gateway could rewrite into a live credential.
+After `mcp add` commits, NemoClaw performs a fresh status inspection and either runs the same gated probe once or reports an inconclusive readiness skip, without failing the add.
+Pass `--no-probe` to skip the probe, or `--probe` to request it for every server in the multi-server status form; readiness failures still skip traffic, and the bare `mcp list` and `mcp status` forms never probe so they stay fast.
+Endpoints that accept both probes without enforcing authentication, differing non-auth rejections, endpoint outages, policy denials, timeouts, and unreachable sandboxes all report `ok: null` with the evidence in `detail`, so an endpoint problem is never blamed on the host's credential rewrite.
+
 ### Rotate a Credential
 
 Export the replacement value under the same host environment name used by `mcp add`, then restart that managed server:
@@ -258,6 +272,12 @@ Removing a server blocks new requests and reconnects, but it does not terminate 
 For immediate revocation, revoke the upstream credential first, then run `$$nemoclaw <sandbox> rebuild --yes` or destroy the sandbox to terminate an already-open response or SSE stream.
 
 ## Troubleshooting
+
+If `mcp status <server>` warns that credential resolution could not be verified because the placeholder probe and the unresolvable control probe were rejected identically, first confirm the stored credential is valid (rotate it with `mcp restart` if in doubt).
+For an identical HTTP 401 or 403, a confirmed-valid credential settles it: the OpenShell gateway on this host is not rewriting the `openshell:resolve:env:KEY` placeholder on egress, and every agent request to that MCP server receives the same authentication failure even while provider presence, attachment, credential readiness, and adapter registration all report healthy.
+An identical HTTP 400 stays inconclusive even with a valid credential, because the endpoint may reject the probe's `initialize` request itself; compare `mcp status` for the same server on a known-good host — if that host verifies, suspect this host's placeholder rewrite.
+That is a host-side OpenShell defect rather than a NemoClaw registration problem: verify the OpenShell installation on the host (tracked upstream as OpenShell issue 2161).
+A `credential resolution: unknown` verdict with an endpoint or policy detail means the probe could not reach a judgment; fix the reported endpoint or policy condition and rerun `mcp status <server>`.
 
 If `restart` reports a missing provider and the original credential is not registered in OpenShell, export the same variable name used during `add` and retry.
 

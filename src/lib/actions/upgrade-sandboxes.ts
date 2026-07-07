@@ -22,7 +22,23 @@ import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-reco
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
-import { rebuildSandbox } from "./sandbox/rebuild";
+
+type RebuildModule = typeof import("./sandbox/rebuild");
+
+export const upgradeSandboxesDependencies = {
+  getGatewayPort(): number {
+    return GATEWAY_PORT;
+  },
+  async loadRebuildModule(): Promise<RebuildModule> {
+    return import("./sandbox/rebuild");
+  },
+  async rebuildSandbox(
+    ...args: Parameters<RebuildModule["rebuildSandbox"]>
+  ): ReturnType<RebuildModule["rebuildSandbox"]> {
+    const { rebuildSandbox } = await upgradeSandboxesDependencies.loadRebuildModule();
+    return rebuildSandbox(...args);
+  },
+};
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
@@ -212,7 +228,7 @@ export async function upgradeSandboxes(
   // initial list, the confirmation list, and persisted-binding eligibility must
   // share this source; OpenShell's mutable current selection may be a sibling
   // gateway where the same sandbox name has different state.
-  const selectedGatewayName = resolveGatewayName(GATEWAY_PORT);
+  const selectedGatewayName = resolveGatewayName(upgradeSandboxesDependencies.getGatewayPort());
   const liveResult = await captureSandboxListWithGatewayPreflightOrExit(
     {
       action: "checking sandbox upgrade state",
@@ -400,7 +416,7 @@ export async function upgradeSandboxes(
       }
     }
     try {
-      await rebuildSandbox(sandbox.name, ["--yes"], {
+      await upgradeSandboxesDependencies.rebuildSandbox(sandbox.name, ["--yes"], {
         throwOnError: true,
         recoveryManifest: manifest ?? undefined,
         ...("allowLegacyManagedImageRecovery" in item
