@@ -519,6 +519,35 @@ export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 # restores the setgid + group-writable contract. Host-side, `nemoclaw <name>
 # doctor --fix` and the rebuild post-upgrade repair step apply the same
 # normalization without requiring a restart.
+resolve_mutable_config_normalizer() {
+  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  # A privileged repair may execute only the immutable helper installed in the
+  # image. The environment and checkout fallbacks below exist solely for
+  # non-root developer/test harnesses, where they cannot change ownership.
+  if [ "$(id -u)" -eq 0 ]; then
+    return 1
+  fi
+  if [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
+    && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
+    printf '%s\n' "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
+    return 0
+  fi
+  if [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
+    printf '%s\n' "scripts/lib/normalize_mutable_config_perms.py"
+    return 0
+  fi
+  normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
+  if [ -f "$normalizer" ]; then
+    printf '%s\n' "$normalizer"
+    return 0
+  fi
+  return 1
+}
+
 normalize_mutable_config_perms() {
   local config_dir="/sandbox/.openclaw"
   local operation="${1:-normalize}"
@@ -551,8 +580,20 @@ PY_CLASSIFY_MUTABLE_CONFIG
     return 1
   fi
   [ "$config_dir_uid" = "missing" ] && return 0
-  # Shields up: the root-owned config tree is intentionally locked.
-  [ "$config_dir_uid" = "0" ] && return 0
+  if [ "$config_dir_uid" = "0" ]; then
+    [ "$operation" = "normalize" ] || return 0
+    # Dockerfile and policy sources establish sandbox:sandbox 2770/660 as the
+    # mutable default. #6300 establishes the root-ownership/write regression,
+    # but not a broader safe-to-repair state; no in-repo producer has been
+    # identified. This compatibility path therefore accepts only the narrow
+    # root:root 0700/0600 fixture, under a sandbox:sandbox 0755 parent. That is
+    # distinct from #6047's sandbox-owned mode collapse, which the owner-UID
+    # normalizer below repairs. Every other root-owned state fails closed.
+    # Remove this path once the runtime preserves the declared ownership and
+    # the live shields-config regression proves that boundary.
+    reclaim_collapsed_mutable_config "$config_dir" || return 1
+    return 0
+  fi
 
   local expected_config_dir_uid expected_config_dir_gid
   if [ "$(id -u)" -eq 0 ]; then
@@ -571,23 +612,8 @@ PY_CLASSIFY_MUTABLE_CONFIG
     return 1
   fi
 
-  # The installed helper wins in production. Repository-relative resolution is
-  # only for source-tree tests and ad-hoc development runs.
-  local normalizer="/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py"
-  if [ ! -f "$normalizer" ]; then
-    if [ "$(id -u)" -eq 0 ]; then
-      printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
-      return 1
-    elif [ -n "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER:-}" ] \
-      && [ -f "${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}" ]; then
-      normalizer="${NEMOCLAW_MUTABLE_CONFIG_NORMALIZER}"
-    elif [ -f "scripts/lib/normalize_mutable_config_perms.py" ]; then
-      normalizer="scripts/lib/normalize_mutable_config_perms.py"
-    else
-      normalizer="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/normalize_mutable_config_perms.py"
-    fi
-  fi
-  if [ ! -f "$normalizer" ]; then
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
     printf '[SECURITY] Refusing mutable config permission normalization — trusted normalizer is missing\n' >&2
     return 1
   fi
@@ -618,6 +644,51 @@ PY_CLASSIFY_MUTABLE_CONFIG
 
   if ! python3 -I "$normalizer" "${normalizer_args[@]}"; then
     printf '[SECURITY] Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state\n' >&2
+    return 1
+  fi
+}
+
+classify_openclaw_config_seal() {
+  local config_dir="$1"
+  local sandbox_uid sandbox_gid
+  if [ "$(id -u)" -eq 0 ]; then
+    sandbox_uid="$(id -u sandbox)" || return 2
+    sandbox_gid="$(id -g sandbox)" || return 2
+  else
+    sandbox_uid="$(id -u)"
+    sandbox_gid="$(id -g)"
+  fi
+  local normalizer
+  normalizer="$(resolve_mutable_config_normalizer)" || return 2
+  python3 -I "$normalizer" classify-seal \
+    "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null
+}
+
+reclaim_collapsed_mutable_config() {
+  local config_dir="$1"
+
+  if [ "$(id -u)" -ne 0 ]; then
+    if classify_openclaw_config_seal "$config_dir"; then
+      return 0
+    fi
+    printf '[SECURITY] Refusing mutable config reclaim — root privileges are required\n' >&2
+    return 1
+  fi
+
+  local sandbox_uid sandbox_gid
+  if ! sandbox_uid="$(id -u sandbox)" || ! sandbox_gid="$(id -g sandbox)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — sandbox identity lookup failed\n' >&2
+    return 1
+  fi
+
+  local normalizer
+  if ! normalizer="$(resolve_mutable_config_normalizer)"; then
+    printf '[SECURITY] Refusing mutable config reclaim — trusted normalizer is missing\n' >&2
+    return 1
+  fi
+
+  if ! python3 -I "$normalizer" reclaim-if-unsealed "$config_dir" "$sandbox_uid" "$sandbox_gid" >/dev/null; then
+    printf '[SECURITY] Refusing mutable config reclaim — descriptor-safe reclaim detected an unsafe link, race, owner, or metadata state\n' >&2
     return 1
   fi
 }
@@ -703,6 +774,36 @@ openclaw_locked_parent_is_protected() {
     "root:sandbox 1775" | "root:sandbox 01775") return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prepare_openclaw_config_startup() {
+  run_openclaw_config_guard revoke-startup-ready --startup-owner || return 1
+
+  # A persisted #6300 root:root 0700/0600 mutable tree overlaps one broad
+  # orphan-freeze discriminator in the transaction guard. Repair only that
+  # exact signature before recovery; sealed and indeterminate states remain
+  # untouched for the guard to verify or recover under its mutation mutex.
+  if [ "$(openclaw_config_dir_owner /sandbox/.openclaw)" = "root" ]; then
+    local seal_state=0
+    classify_openclaw_config_seal /sandbox/.openclaw || seal_state=$?
+    case "$seal_state" in
+      0 | 2) ;;
+      1) reclaim_collapsed_mutable_config /sandbox/.openclaw || return 1 ;;
+      *)
+        printf '[SECURITY] Refusing mutable config startup — invalid seal classification %s\n' \
+          "$seal_state" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  run_openclaw_config_guard recover --startup-owner || return 1
+  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
+    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
+    timeout --signal=TERM --kill-after=5s 12m \
+      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
+      --config-dir /sandbox/.openclaw || return 1
+  fi
 }
 
 prepare_openclaw_config_for_write() {
@@ -4633,14 +4734,7 @@ handle_openclaw_gateway_control_request() {
 # OpenClaw config. Recovery runs before the locked-parent discriminator so a
 # crash in a prior config write/restart/handoff can complete deterministically.
 if [ "$(id -u)" -eq 0 ]; then
-  run_openclaw_config_guard revoke-startup-ready --startup-owner || exit 1
-  run_openclaw_config_guard recover --startup-owner || exit 1
-  if [ "$(stat -c '%a %U:%G' /sandbox/.openclaw 2>/dev/null || true)" = "500 root:root" ]; then
-    echo "[config-guard] resuming interrupted recursive OpenClaw state lock" >&2
-    timeout --signal=TERM --kill-after=5s 12m \
-      python3 -I "$_OPENCLAW_STATE_DIR_GUARD" lock \
-      --config-dir /sandbox/.openclaw || exit 1
-  fi
+  prepare_openclaw_config_startup || exit 1
 fi
 
 # A root-owned config directory is the shields-up discriminator. Its parent

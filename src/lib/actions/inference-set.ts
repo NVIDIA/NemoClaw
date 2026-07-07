@@ -4,6 +4,7 @@
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { shellQuote } from "../core/shell-quote";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -123,6 +124,60 @@ const SUPPORTED_PROVIDER_NAMES = [
   "ollama-local",
   "vllm-local",
 ] as const;
+
+// #6321: `nemoclaw onboard` accepts installer-style provider keys
+// (`anthropicCompatible`, `build`, `openai`, …) while `inference set` only
+// accepted the OpenShell provider names (`compatible-anthropic-endpoint`,
+// `nvidia-prod`, `openai-api`, …). A user who onboarded with
+// `NEMOCLAW_PROVIDER=anthropicCompatible` could not switch the same sandbox
+// with `inference set --provider anthropicCompatible` — the two commands used
+// different vocabularies for the same provider. Normalize the installer alias
+// to its OpenShell provider name before validation so both commands accept the
+// same names. Keys are lowercased; values must each be a SUPPORTED_PROVIDER_NAMES
+// entry (asserted by the sync test in inference-set-provider-alias.test.ts).
+// This mirrors REMOTE_PROVIDER_CONFIG[key].providerName and
+// getEffectiveProviderName() in src/lib/onboard/providers.ts; kept as a small
+// local map rather than importing that @ts-nocheck onboard module into this
+// hot action path.
+const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
+  anthropiccompatible: "compatible-anthropic-endpoint",
+  build: "nvidia-prod",
+  cloud: "nvidia-prod",
+  openai: "openai-api",
+  anthropic: "anthropic-prod",
+  gemini: "gemini-api",
+  // Hermes Provider (Nous portal) is reachable under several onboard synonyms;
+  // accept the same set here so a sandbox onboarded with any of them can be
+  // switched under the same name. (`hermes-provider` is already an OpenShell
+  // provider name and passes through without an entry, but is listed for
+  // parity clarity.)
+  hermesprovider: "hermes-provider",
+  hermes: "hermes-provider",
+  nous: "hermes-provider",
+  "nous-portal": "hermes-provider",
+  custom: "compatible-endpoint",
+  ollama: "ollama-local",
+  vllm: "vllm-local",
+  nim: "nvidia-nim",
+  "nim-local": "nvidia-nim",
+  routed: "nvidia-router",
+};
+
+/**
+ * Map an installer-style provider key (the vocabulary `nemoclaw onboard`
+ * accepts) to its OpenShell provider name (the vocabulary `inference set`
+ * validates against). Inputs that are already OpenShell provider names — or
+ * any unrecognized value — pass through unchanged so validation still rejects
+ * genuinely unsupported providers. See #6321.
+ */
+export function normalizeInferenceSetProvider(provider: string): string {
+  const trimmed = provider.trim();
+  return INSTALLER_PROVIDER_ALIASES[trimmed.toLowerCase()] ?? trimmed;
+}
+
+/** Exposed for the alias-sync regression test. */
+export const INFERENCE_SET_SUPPORTED_PROVIDER_NAMES = SUPPORTED_PROVIDER_NAMES;
+export const INFERENCE_SET_INSTALLER_PROVIDER_ALIASES = INSTALLER_PROVIDER_ALIASES;
 
 function defaultDeps(): InferenceSetDeps {
   return {
@@ -494,6 +549,13 @@ function normalizeEndpointUrlShape(value: string): { url: URL; normalized: strin
   };
 }
 
+// Canonical equality of an operator-supplied endpoint URL against the trusted,
+
+// Message prefix for the SSRF/DNS-pinning rejection thrown below. Kept as a
+// shared constant so the catch in explicitCustomProviderMetadata can recognise
+// exactly this case (and only this case) when it appends switch-model guidance.
+export const ENDPOINT_URL_NOT_ALLOWED_PREFIX = "endpoint-url is not allowed:";
+
 export async function normalizeCustomEndpointUrl(
   value: string | null | undefined,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
@@ -533,7 +595,7 @@ export async function normalizeCustomEndpointUrl(
     return normalizeEndpointUrlShape(validated).normalized;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
+    throw new InferenceSetError(`${ENDPOINT_URL_NOT_ALLOWED_PREFIX} ${message}`, 2);
   }
 }
 
@@ -578,6 +640,7 @@ async function explicitCustomProviderMetadata(
   provider: string,
   options: InferenceSetOptions,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
+  sandboxAlreadyOnProvider: boolean,
 ): Promise<RegistryInferenceMetadata | null> {
   if (!hasExplicitCustomMetadata(options)) return null;
   if (!isCustomCompatibleProvider(provider)) {
@@ -592,8 +655,45 @@ async function explicitCustomProviderMetadata(
   // trust guarantee. Treat these explicit flags as the durable metadata source
   // for this switch, after URL and credential-env validation, instead of
   // borrowing from an unrelated onboard session or global OpenShell provider.
+  //
+  // #6321 facet 2: a supplied --endpoint-url ALWAYS goes through the host
+  // DNS-pinning SSRF guard, even when it equals the endpoint onboarding recorded
+  // for this sandbox. We deliberately do NOT trust the recorded registry value
+  // to skip the guard: `endpointUrl` is not exclusively onboarding-provenanced —
+  // this same `inference set` action persists it (see registryFields below) — so
+  // a string-equality bypass would let a value this command wrote earlier
+  // authorize a later switch to an internal-resolving endpoint. To change only
+  // the model on the established route, omit --endpoint-url (the guard's
+  // rejection is turned into that guidance below). See PR #6378 review.
+  let endpointUrl: string;
+  try {
+    endpointUrl = await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning);
+  } catch (error) {
+    // The supplied endpoint is NOT the one onboarding established for this
+    // sandbox (or none is recorded). Keep the SSRF guard authoritative; when
+    // the sandbox is already on this provider, turn the dead-end into guidance:
+    // omit --endpoint-url to reuse the established endpoint for a model-only
+    // switch. Only augment the SSRF/DNS-pinning rejection (the `endpoint-url is
+    // not allowed: ...` case); a missing URL ("endpoint-url is required ...") or
+    // a malformed one would read as contradictory advice, so leave those alone.
+    if (
+      sandboxAlreadyOnProvider &&
+      error instanceof InferenceSetError &&
+      error.message.startsWith(ENDPOINT_URL_NOT_ALLOWED_PREFIX)
+    ) {
+      throw new InferenceSetError(
+        `${error.message} This sandbox is already configured for '${provider}'. ` +
+          `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
+          `onboarding already established (the gateway route is not changed by inference set). ` +
+          `To point the sandbox at a different endpoint, re-run onboarding with the new endpoint ` +
+          `(rebuild reuses the recorded endpoint and cannot change it).`,
+        error.exitCode,
+      );
+    }
+    throw error;
+  }
   return {
-    endpointUrl: await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning),
+    endpointUrl,
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
     preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
@@ -662,7 +762,10 @@ async function runInferenceSetWithoutHostLock(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
 ): Promise<InferenceMutation<InferenceSetResult>> {
-  const provider = trimRequired(options.provider, "provider");
+  // #6321: accept the installer-style provider name onboard uses (e.g.
+  // `anthropicCompatible`) as well as the OpenShell provider name, by
+  // normalizing to the OpenShell name before validation and all downstream use.
+  const provider = normalizeInferenceSetProvider(trimRequired(options.provider, "provider"));
   const model = trimRequired(options.model, "model");
   assertSupportedProvider(provider, model);
   if (!isSafeModelId(model)) {
@@ -674,8 +777,19 @@ async function runInferenceSetWithoutHostLock(
 
   const { sandboxName, entry, agentName } = resolveTargetSandbox(options.sandboxName, deps);
   if (agentName !== "openclaw" && agentName !== "hermes") {
+    // #6321: Deep Agents Code (langchain-deepagents-code) bakes its model into
+    // the sandbox image at build time (agents/langchain-deepagents-code/Dockerfile
+    // ARG NEMOCLAW_MODEL → ~/.deepagents/config.toml), so — unlike OpenClaw and
+    // Hermes — it has no runtime inference-set config-mutation path. The blunt
+    // "supports OpenClaw and Hermes" message left dcode users with no next step;
+    // point them at the only way to change a Deep Agents model: re-onboard with
+    // a new selection.
+    const dcodeHint =
+      agentName === "langchain-deepagents-code"
+        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        : "";
     throw new InferenceSetError(
-      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.`,
+      `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
       2,
     );
   }
@@ -694,10 +808,15 @@ async function runInferenceSetWithoutHostLock(
     );
   }
   const session = deps.loadSession();
+  const sandboxAlreadyOnProvider = entry.provider === provider;
   const explicitMetadata = await explicitCustomProviderMetadata(
     provider,
     options,
     deps.rewriteConfigUrlsWithDnsPinning,
+    // #6321 facet 2: when the sandbox is already on this provider, an
+    // SSRF-blocked --endpoint-url gets an actionable "omit it to switch model"
+    // hint instead of a dead-end (see explicitCustomProviderMetadata).
+    sandboxAlreadyOnProvider,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
   if (

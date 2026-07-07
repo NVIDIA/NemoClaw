@@ -23,7 +23,6 @@ export const CLI_CREATE_REQUIRE_FILES = [
   "src/lib/actions/sandbox/gateway-state-hints.test.ts",
   "src/lib/actions/sandbox/process-recovery-lock.test.ts",
   "src/lib/actions/sandbox/rebuild-agent-base-image-preflight.test.ts",
-  "src/lib/actions/sandbox/rebuild-gateway-drift.test.ts",
   "src/lib/actions/sandbox/rebuild-local-provider-recreate.test.ts",
   "src/lib/actions/sandbox/rebuild-resume-config.test.ts",
   "src/lib/actions/sandbox/rebuild-resume-reasoning.test.ts",
