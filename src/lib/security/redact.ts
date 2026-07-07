@@ -188,9 +188,34 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     "$1$2<REDACTED>'",
   ],
   [
-    /(\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)((?:(?:basic|bearer|digest)\s+)?)[^\r\n]*/gi,
-    "$1$2<REDACTED>",
+    /("(?:authorization|proxy-authorization|cookie|set-cookie)"[ \t]*[:=])(?![ \t]*"(?:\\.|[^"\\])*")[^\r\n]*/gi,
+    "$1 <REDACTED>",
   ],
+  [
+    /('(?:authorization|proxy-authorization|cookie|set-cookie)'[ \t]*[:=])(?![ \t]*'(?:\\.|[^'\\])*')[^\r\n]*/gi,
+    "$1 <REDACTED>",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=])[^\r\n]*\r(?!\n)[^\r\n]*/gi,
+    "$1 <REDACTED>",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization|cookie|set-cookie)[ \t]*[:=])[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)+/gi,
+    "$1 <REDACTED>",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization)[ \t]*[:=][ \t]*(?:basic|bearer)[ \t]+)\S+/gi,
+    "$1<REDACTED>",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization)[ \t]*[:=][ \t]*digest[ \t]+)[^\r\n]*/gi,
+    "$1<REDACTED>",
+  ],
+  [
+    /(\b(?:authorization|proxy-authorization)[ \t]*[:=])(?![ \t]*(?:basic|bearer|digest)(?:[ \t]|$))[ \t]*[^\r\n]*/gi,
+    "$1 <REDACTED>",
+  ],
+  [/(\b(?:cookie|set-cookie)[ \t]*[:=][ \t]*)[^\r\n]*/gi, "$1<REDACTED>"],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
