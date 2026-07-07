@@ -371,6 +371,8 @@ hermes-box  127.0.0.1  18789  12345  running`;
       return { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" };
     });
 
+    // The gateway retry is under test; host-forward readiness is fully mocked.
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
@@ -455,6 +457,8 @@ hermes-box  127.0.0.1  18789  12345  running`;
       stderr,
     }));
 
+    // Preserve managed recovery retries without sleeping between mocked supervisor attempts.
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS", "0");
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
         const shellCommand = getSandboxExecShellCommand(rawArgs);
@@ -847,6 +851,8 @@ hermes-box  127.0.0.1  8642  12346  running`;
       stderr: "",
     }));
 
+    // Forward visibility is fixed by mocks, so the production settle window is unnecessary.
+    vi.stubEnv("NEMOCLAW_FORWARD_RECOVERY_WAIT_MS", "0");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",

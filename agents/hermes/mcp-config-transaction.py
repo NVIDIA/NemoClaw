@@ -116,10 +116,18 @@ def _load_credential_boundary_manifest() -> dict[str, object]:
     # sourceBoundary: NemoClaw owns one reviewed manifest installed beside this
     # helper in images; the second path is the deterministic source-checkout layout.
     # whyNotSourceFix: OpenShell v0.0.72 has no machine-readable child-env contract.
+    # It also deliberately hides the supervisor identity mount from workload
+    # children and the Hermes image contains no OpenShell CLI. Executing
+    # ``openshell --version`` here would therefore either fail every real
+    # transaction or verify an unrelated in-image stub. The host MCP lifecycle
+    # gate verifies the selected OpenShell CLI before provider mutation; the
+    # exact loaded MCP policy remains the running-supervisor capability proof.
     # regressionTest: hermes-mcp-config-transaction and image packaging tests cover
     # both layouts, strict parsing, version alignment, and reserved-name parity.
-    # removalCondition: use an upstream capability manifest once the minimum
-    # supported OpenShell release provides one.
+    # removalCondition: replace this manifest boundary only when the live
+    # supervisor exposes an authenticated, machine-readable attestation binding
+    # both its running version and child-env contract to workload startup; #6256
+    # tracks that upstream capability boundary.
     candidates = (
         Path(__file__).with_name(BOUNDARY_MANIFEST_NAME),
         Path(__file__).resolve().parents[2]
@@ -388,6 +396,85 @@ def _managed_candidate(payload: dict[str, object]) -> dict[str, object]:
     return candidate
 
 
+_MANAGED_CANDIDATE_FIELDS = frozenset(
+    {"url", "enabled", "timeout", "connect_timeout", "tools", "headers"}
+)
+
+
+def _validate_inspection_payload(payload: dict[str, object]) -> None:
+    if set(payload) != {"present", "absent"}:
+        raise ValueError("Hermes MCP inspection payload has invalid fields")
+    present = payload.get("present")
+    absent = payload.get("absent")
+    if not isinstance(present, dict) or not isinstance(absent, list):
+        raise ValueError("Hermes MCP inspection payload has invalid shape")
+    if not all(
+        isinstance(name, str) and SERVER_NAME_RE.fullmatch(name) for name in present
+    ):
+        raise ValueError("Hermes MCP inspection payload has an invalid server name")
+    if not all(
+        isinstance(name, str) and SERVER_NAME_RE.fullmatch(name) for name in absent
+    ):
+        raise ValueError("Hermes MCP inspection payload has an invalid absent server")
+    if len(absent) != len(set(absent)) or set(present).intersection(absent):
+        raise ValueError("Hermes MCP inspection payload has overlapping server state")
+    for server, expected in present.items():
+        if not isinstance(expected, dict):
+            raise ValueError("Hermes MCP inspection expected config must be an object")
+        if not set(expected).issubset(_MANAGED_CANDIDATE_FIELDS):
+            raise ValueError("Hermes MCP inspection expected config has invalid fields")
+        synthetic = {
+            "server": server,
+            "url": expected.get("url"),
+            "headers": expected.get("headers"),
+            "replace_existing": True,
+        }
+        _validate_payload("add", synthetic)
+        if expected != _managed_candidate(synthetic):
+            raise ValueError("Hermes MCP inspection expected config is not canonical")
+
+
+def inspect_managed_config(payload: dict[str, object]) -> dict[str, object]:
+    _validate_inspection_payload(payload)
+    privileged = os.geteuid() == 0
+    guard = _load_guard()
+    hash_path = (
+        STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
+    )
+    compatibility_hash_path = (
+        os.path.join(HERMES_DIR, ".config-hash") if privileged else None
+    )
+    # TOCTOU contract: this call reads config, env, and every hash anchor into
+    # one authenticated snapshot. After comparing the returned config bytes to
+    # host intent, `assert_mcp_integrity_snapshot_current` reopens every path and
+    # requires the same inode/content metadata before any match is reported.
+    integrity = guard.inspect_mcp_integrity_snapshot(
+        HERMES_DIR, hash_path, compatibility_hash_path
+    )
+    if integrity.state != "current":
+        raise RuntimeError("Hermes MCP config does not match applied gateway state")
+    parsed = yaml.safe_load(integrity.config_text)
+    if parsed is None:
+        parsed = {}
+    if not isinstance(parsed, dict):
+        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+    servers = parsed.get("mcp_servers", {})
+    if servers is None:
+        servers = {}
+    if not isinstance(servers, dict):
+        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+    present = payload["present"]
+    absent = payload["absent"]
+    if not isinstance(present, dict) or not isinstance(absent, list):
+        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+    matches = all(servers.get(name) == expected for name, expected in present.items())
+    matches = matches and all(name not in servers for name in absent)
+    if not matches:
+        raise RuntimeError("Hermes MCP config does not match persisted managed intent")
+    guard.assert_mcp_integrity_snapshot_current(integrity)
+    return {"ok": True, "state": "matched"}
+
+
 def _mutate(data: object, action: str, payload: dict[str, object]) -> tuple[dict, bool]:
     if not isinstance(data, dict):
         raise ValueError("Invalid Hermes config: expected a YAML object")
@@ -435,14 +522,32 @@ def _managed_hash_paths(privileged: bool) -> tuple[str, ...]:
     return (STRICT_HASH_PATH, compatibility) if privileged else (compatibility,)
 
 
-def _refresh_and_verify_hashes(guard: ModuleType, privileged: bool) -> None:
+def _refresh_and_verify_hashes(
+    guard: ModuleType, privileged: bool, mcp_transition: str = "preserve"
+) -> None:
     if privileged:
-        guard.refresh_hashes(HERMES_DIR, STRICT_HASH_PATH, "strict")
-    guard.refresh_hashes(HERMES_DIR, STRICT_HASH_PATH, "compat")
+        guard.refresh_hashes(
+            HERMES_DIR,
+            STRICT_HASH_PATH,
+            "strict",
+            mcp_transition=mcp_transition,
+        )
+    guard.refresh_hashes(
+        HERMES_DIR,
+        STRICT_HASH_PATH,
+        "compat",
+        mcp_transition=mcp_transition,
+    )
     compat_text, _ = guard._read_text(os.path.join(HERMES_DIR, ".config-hash"))
+    _config_digest, _env_digest, mcp_state = guard._parse_config_hash(
+        compat_text,
+        os.path.join(HERMES_DIR, "config.yaml"),
+        os.path.join(HERMES_DIR, ".env"),
+    )
     expected_text, _, _ = guard._hash_text(
         os.path.join(HERMES_DIR, "config.yaml"),
         os.path.join(HERMES_DIR, ".env"),
+        mcp_state,
     )
     if compat_text != expected_text:
         raise RuntimeError("Hermes compatibility config hash is stale")
@@ -452,6 +557,16 @@ def _refresh_and_verify_hashes(guard: ModuleType, privileged: bool) -> None:
         strict_text = compat_text
     if strict_text != compat_text:
         raise RuntimeError("Hermes strict and compatibility config hashes differ")
+    state = guard.inspect_mcp_integrity(
+        HERMES_DIR,
+        STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash"),
+    )
+    expected_state = {
+        "apply": "current",
+        "rollback": "pending",
+    }.get(mcp_transition)
+    if expected_state is not None and state != expected_state:
+        raise RuntimeError("Hermes MCP applied hash state is stale")
 
 
 def _restore_hash_snapshots(
@@ -479,13 +594,17 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
     hash_originals = {
         path: guard._read_text(path) for path in _managed_hash_paths(privileged)
     }
+    integrity_path = (
+        STRICT_HASH_PATH if privileged else os.path.join(HERMES_DIR, ".config-hash")
+    )
+    guard.inspect_mcp_integrity(HERMES_DIR, integrity_path)
     parsed = yaml.safe_load(original_text)
     if parsed is None:
         parsed = {}
     updated, changed = _mutate(parsed, action, payload)
     if not changed:
         try:
-            _refresh_and_verify_hashes(guard, privileged)
+            _refresh_and_verify_hashes(guard, privileged, "intend")
         except Exception as hash_error:
             try:
                 _restore_hash_snapshots(guard, hash_originals)
@@ -507,7 +626,7 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
             mode=original_snapshot.mode,
         )
         _, replacement_snapshot = guard._read_text(CONFIG_PATH)
-        _refresh_and_verify_hashes(guard, privileged)
+        _refresh_and_verify_hashes(guard, privileged, "intend")
     except Exception as mutation_error:
         if replacement_snapshot is None:
             raise
@@ -518,7 +637,7 @@ def apply_transaction(action: str, payload: dict[str, object]) -> bool:
                 replacement_snapshot,
                 mode=original_snapshot.mode,
             )
-            _refresh_and_verify_hashes(guard, privileged)
+            _restore_hash_snapshots(guard, hash_originals)
         except Exception as rollback_error:
             raise RuntimeError(
                 f"Hermes MCP config update failed ({mutation_error}); rollback also failed ({rollback_error})"
@@ -535,9 +654,6 @@ def apply_transaction_and_reload(
     privileged = os.geteuid() == 0
     guard = _load_guard()
     original_text, original_snapshot = guard._read_text(CONFIG_PATH)
-    hash_originals = {
-        path: guard._read_text(path) for path in _managed_hash_paths(privileged)
-    }
     parsed = yaml.safe_load(original_text)
     if parsed is None:
         parsed = {}
@@ -551,6 +667,14 @@ def apply_transaction_and_reload(
     changed = apply_transaction(action, payload)
     try:
         reloaded = reload_gateway()
+        if not reloaded:
+            raise RuntimeError("Hermes gateway stopped before managed MCP reload")
+        current_text, _current_snapshot = guard._read_text(CONFIG_PATH)
+        if current_text != expected_text:
+            raise RuntimeError(
+                "Hermes config changed concurrently after MCP reload; refusing applied-state commit"
+            )
+        _refresh_and_verify_hashes(guard, privileged, "apply")
     except Exception as reload_error:
         if not changed:
             raise RuntimeError(
@@ -569,11 +693,11 @@ def apply_transaction_and_reload(
                 current_snapshot,
                 mode=int(getattr(original_snapshot, "mode")),
             )
-            try:
-                _refresh_and_verify_hashes(guard, privileged)
-            except Exception:
-                _restore_hash_snapshots(guard, hash_originals)
-                raise
+            # Do not restore the original current/current anchors before the
+            # old config is proven live.  Record a pending rollback anchor so
+            # startup and host reconciliation remain fail-closed if this
+            # second reload also fails.
+            _refresh_and_verify_hashes(guard, privileged, "rollback")
         except Exception as rollback_error:
             rollback_errors.append(f"config/hash rollback failed: {rollback_error}")
         else:
@@ -583,6 +707,8 @@ def apply_transaction_and_reload(
                     rollback_errors.append(
                         "old-config runtime reload was not verified because the gateway stopped"
                     )
+                else:
+                    _refresh_and_verify_hashes(guard, privileged, "apply")
             except Exception as rollback_reload_error:
                 rollback_errors.append(
                     f"old-config runtime reload failed: {rollback_reload_error}"
@@ -768,6 +894,10 @@ def _gateway_identity() -> tuple[int, object] | None:
         raise PermissionError(
             "Hermes gateway PID does not identify the trusted launcher"
         )
+    if not _gateway_has_managed_parent(numeric_pid):
+        raise PermissionError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
     start_time = get_process_start_time(numeric_pid)
     if start_time is None:
         raise PermissionError("Hermes gateway process start identity is unavailable")
@@ -845,13 +975,22 @@ def reload_gateway() -> bool:
         if now >= deadline:
             break
         current = _gateway_identity()
-        if current is not None and current != previous:
+        observed_phase = "waiting-for-replacement-identity"
+        if (
+            current is not None
+            and current != previous
+            and _gateway_has_managed_parent(current[0])
+        ):
             healthy, observed_phase = _gateway_health_phase(deadline)
             if phase_order[observed_phase] > phase_order[last_safe_phase]:
                 last_safe_phase = observed_phase
             if healthy:
                 confirmed = _gateway_identity()
-                if confirmed == current and time.monotonic() < deadline:
+                if (
+                    confirmed == current
+                    and _gateway_has_managed_parent(current[0])
+                    and time.monotonic() < deadline
+                ):
                     return True
 
         # A pinned Hermes gateway can remain alive without converging after the
@@ -864,6 +1003,10 @@ def reload_gateway() -> bool:
             not re_kick_attempted
             and now >= re_kick_not_before
             and now < deadline
+            # The managed supervisor owns the public socat relay. Once the
+            # replacement gateway is internally healthy, another gateway
+            # signal cannot repair that relay and only creates crash churn.
+            and observed_phase != "waiting-for-public-relay-health-on-8642"
             and current is not None
             and _gateway_has_managed_parent(current[0])
             and _gateway_identity() == current
@@ -944,7 +1087,7 @@ def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=("add", "remove", "probe"))
+    parser.add_argument("action", choices=("add", "remove", "inspect", "probe"))
     parser.add_argument("--payload")
     args = parser.parse_args()
     payload: dict[str, object] | None = None
@@ -953,6 +1096,11 @@ def main() -> int:
             if args.payload is not None:
                 raise ValueError("Hermes MCP lifecycle probe does not accept --payload")
             result = probe()
+        elif args.action == "inspect":
+            if args.payload is None:
+                raise ValueError("Hermes MCP inspection requires --payload")
+            payload = _parse_payload(args.payload)
+            result = inspect_managed_config(payload)
         elif args.payload is None:
             raise ValueError("Hermes MCP mutation requires --payload")
         else:

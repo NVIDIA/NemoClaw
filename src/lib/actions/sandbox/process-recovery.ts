@@ -43,6 +43,10 @@ import {
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
 import {
+  inspectHermesMcpReconciliationRefusal,
+  processRecoveryMcpReconciliationRefusal,
+} from "./mcp-bridge-recovery";
+import {
   buildSandboxExecMarkedCommand,
   extractSandboxExecCommandStdout,
 } from "./sandbox-exec-output";
@@ -547,6 +551,7 @@ export function restartSandboxGateway(
         recoverMessagingHostForward,
         recoverDeclaredAgentForwardPorts,
         printGatewayWedgeDiagnostics,
+        inspectHermesMcpReconciliationRefusal,
         ...deps,
       },
     }),
@@ -760,6 +765,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
         secretBoundaryReason: enforcement.reason,
       };
     }
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, true);
+    if (mcpRefusal) return mcpRefusal;
   }
   if (running) {
     // Gateway is alive but the host-side forward can still be dead or
@@ -911,6 +918,8 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
     }
+    const mcpRefusal = processRecoveryMcpReconciliationRefusal(sandboxName, false);
+    if (mcpRefusal) return mcpRefusal;
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
     const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });

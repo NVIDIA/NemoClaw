@@ -6,10 +6,18 @@ import { parseGatewayInference } from "../inference/config";
 type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string | null;
 
 export function createInferenceRouteHelpers(runCaptureOpenshell: RunCaptureOpenshell) {
-  function verifyInferenceRoute(_provider: string, _model: string): void {
-    const output = runCaptureOpenshell(["inference", "get"], { ignoreError: true });
-    if (!output || /Gateway inference:\s*[\r\n]+\s*Not configured/i.test(output)) {
+  function verifyInferenceRoute(provider: string, model: string): void {
+    const live = parseGatewayInference(
+      runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
+    );
+    if (!live) {
       console.error("  OpenShell inference route was not configured.");
+      process.exit(1);
+    }
+    if (live.provider !== provider || live.model !== model) {
+      console.error(
+        `  OpenShell inference route does not match provider '${provider}' and model '${model}'.`,
+      );
       process.exit(1);
     }
   }

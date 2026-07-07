@@ -2,11 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
-import {
-  detectOpenShellStateRpcPreflightIssue,
-  detectOpenShellStateRpcResultIssue,
-  printOpenShellStateRpcIssue,
-} from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
 import {
@@ -14,10 +9,8 @@ import {
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
-import {
-  captureSandboxListWithGatewayRecovery,
-  printSandboxListFailureWithRecoveryContext,
-} from "../openshell-sandbox-list";
+import { SANDBOX_IMAGE_REPOS } from "../domain/sandbox/image-tag";
+import { captureSandboxListWithGatewayPreflightOrExit } from "../openshell-sandbox-list";
 import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
@@ -42,32 +35,14 @@ export async function backupAll(): Promise<void> {
     return;
   }
 
-  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
-  if (preflightIssue) {
-    printOpenShellStateRpcIssue(preflightIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-
-  const liveListRecovery = await captureSandboxListWithGatewayRecovery();
-  const liveList = liveListRecovery.result;
-  const resultIssue = detectOpenShellStateRpcResultIssue(liveList);
-  if (resultIssue) {
-    printOpenShellStateRpcIssue(resultIssue, {
-      action: "backing up registered sandboxes",
-      command: `${CLI_NAME} backup-all`,
-    });
-    process.exit(1);
-  }
-  if (liveList.status !== 0) {
-    printSandboxListFailureWithRecoveryContext(liveListRecovery);
-    process.exit(liveList.status || 1);
-  }
+  const liveList = await captureSandboxListWithGatewayPreflightOrExit({
+    action: "backing up registered sandboxes",
+    command: `${CLI_NAME} backup-all`,
+  });
   const readyNames = parseReadySandboxNames(liveList.output || "");
 
   const skipUnreachable = shouldSkipUnreachableSandboxBackup(process.env);
+  const requireAll = process.env.NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS === "1";
   let backed = 0;
   let failed = 0;
   let skipped = 0;
@@ -154,15 +129,28 @@ export async function backupAll(): Promise<void> {
       console.error(
         `  ${unreachableRunning} running sandbox(es) could not be backed up because their in-sandbox SSH endpoint did not answer.`,
       );
-      console.error(
-        `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
-      );
-      console.error(
-        `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
-      );
+      if (requireAll) {
+        console.error(
+          `  Strict pre-upgrade backup cannot skip these sandboxes. Restore their gateway health, then run '${CLI_NAME} backup-all' again.`,
+        );
+      } else {
+        console.error(
+          `  To upgrade now and recover them afterwards from their latest validated backup, re-run with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1. Any uncommitted state since the last successful backup will be lost.`,
+        );
+        console.error(
+          `  To preserve their current state first, stop the affected container (so it is skipped as not running) or restore its gateway health, then run '${CLI_NAME} backup-all' again.`,
+        );
+      }
     }
-    process.exit(1);
   }
+  if (requireAll && skipped > 0) {
+    console.error("");
+    console.error(
+      `  Strict pre-upgrade backup requires every registered sandbox to be backed up; ${skipped} sandbox(es) were skipped.`,
+    );
+    console.error("  Resolve each skipped sandbox using its reason above and retry.");
+  }
+  if (failed > 0 || (requireAll && skipped > 0)) process.exit(1);
 }
 
 export async function garbageCollectImages(
@@ -174,10 +162,11 @@ export async function garbageCollectImages(
 
   let imagesOutput = "";
   try {
-    imagesOutput = dockerListImagesFormat(
-      "openshell/sandbox-from",
-      "{{.Repository}}:{{.Tag}}\t{{.Size}}",
-    );
+    // Scan every sandbox image repo, not just sandbox-from; see
+    // SANDBOX_IMAGE_REPOS for why local prebuilds were missed (#6301).
+    imagesOutput = SANDBOX_IMAGE_REPOS.map((repo) =>
+      dockerListImagesFormat(repo, "{{.Repository}}:{{.Tag}}\t{{.Size}}"),
+    ).join("\n");
   } catch {
     console.error("  Failed to query Docker images. Is Docker running?");
     process.exit(1);

@@ -50,6 +50,8 @@ export type ConnectHarnessOptions = {
     forwardRecoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
+    mcpReconciliationRefused?: boolean;
+    mcpReconciliationReason?: string;
   };
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;

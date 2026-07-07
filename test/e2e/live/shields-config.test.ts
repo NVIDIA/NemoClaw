@@ -13,8 +13,8 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -45,10 +45,6 @@ const TIMER_POLL_TIMEOUT_MS = 75_000;
 const TIMER_POLL_INTERVAL_MS = 5_000;
 
 validateSandboxName(SANDBOX_NAME);
-
-function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -228,9 +224,8 @@ RUN_SHIELDS_TEST(
   "shields-config: live shields up/down locks config and detects drift",
   { timeout: TEST_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "shields-config",
-      runner: "vitest",
       boundary: "live-sandbox-shields-config",
       contracts: [
         "source install creates a live OpenClaw sandbox",
@@ -632,7 +627,7 @@ RUN_SHIELDS_TEST(
     expect(doubleDown.exitCode, resultText(doubleDown)).not.toBe(0);
     expect(resultText(doubleDown)).toContain("already unlocked");
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "shields-config",
       sandboxName: SANDBOX_NAME,
       assertions: {

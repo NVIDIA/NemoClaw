@@ -1202,11 +1202,9 @@ describe("Hermes sandbox provisioning", () => {
     const bashrcPath = path.join(etcDir, "bash.bashrc");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const buildMcpDigestPath = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
-    const mcpCredentialBoundaryPath = path.join(
-      localLib,
-      "openshell-child-visible-credentials.v0.0.72.json",
-    );
+    const mcpManifest = path.join(localLib, "openshell-child-visible-credentials.v0.0.72.json");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -1214,10 +1212,12 @@ describe("Hermes sandbox provisioning", () => {
       gatewayControlPath,
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
+      path.join(localLib, "patch-hermes-session-list-preview.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
+      buildMcpDigestPath,
       mcpConfigTransactionPath,
-      mcpCredentialBoundaryPath,
+      mcpManifest,
       gatewaySupervisorPath,
       stateDirGuardPath,
       managedGatewayControlPath,
@@ -1232,7 +1232,6 @@ describe("Hermes sandbox provisioning", () => {
       .replaceAll("/usr/local/lib/nemoclaw", localLib)
       .replaceAll("/etc/profile.d", profileDir)
       .replaceAll("/etc/bash.bashrc", bashrcPath);
-
     try {
       fs.mkdirSync(localBin, { recursive: true });
       fs.mkdirSync(localLib, { recursive: true });
@@ -1246,11 +1245,12 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${mcpCredentialBoundaryPath}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath} ${buildMcpDigestPath} ${mcpManifest}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
-      expect((fs.statSync(mcpCredentialBoundaryPath).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(mcpManifest).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(buildMcpDigestPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");

@@ -11,7 +11,11 @@ import os from "node:os";
 import path from "node:path";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { shellQuote } from "../fixtures/clients/command.ts";
+import {
+  assertExitZero as expectExitZero,
+  resultText,
+  shellQuote,
+} from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -19,6 +23,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { testHomeEnvironment } from "../fixtures/environment-profiles.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import {
@@ -98,10 +103,6 @@ interface MockBedrockRuntime {
   close(): Promise<void>;
 }
 
-function resultText(result: CommandText): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function redactedResultText(
   result: Pick<RawRunResult, "redactedStdout" | "redactedStderr">,
 ): string {
@@ -110,10 +111,6 @@ function redactedResultText(
 
 function evidenceTail(text: string): string {
   return text.slice(-4_000);
-}
-
-function expectExitZero(result: CommandText & { exitCode: number | null }, label: string): void {
-  expect(result.exitCode, `${label} failed:\n${resultText(result)}`).toBe(0);
 }
 
 function isMissingSandboxCleanupOutput(text: string): boolean {
@@ -134,16 +131,7 @@ function assertAgent(value: string): asserts value is AgentName {
 }
 
 function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const base = buildAvailabilityProbeEnv({ ...process.env, HOME: home });
-  return {
-    ...base,
-    HOME: home,
-    PATH: [path.join(home, ".local", "bin"), base.PATH].filter(Boolean).join(":"),
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
-    ...extra,
-  };
+  return testHomeEnvironment(home, extra);
 }
 
 function onboardEnv(home: string, agent: AgentName): NodeJS.ProcessEnv {
@@ -1149,7 +1137,7 @@ async function skipPreContractEndpointValidationRateLimit(options: {
     redactedStdoutTail: evidenceTail(options.onboarding.redactedStdout),
     redactedStderrTail: evidenceTail(options.onboarding.redactedStderr),
   });
-  await options.artifacts.writeJson("target-result.json", {
+  await options.artifacts.target.complete({
     id: "bedrock-runtime-compatible-anthropic",
     status: "skipped",
     reason: BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SKIP_REASON,
@@ -1253,9 +1241,8 @@ RUN_BEDROCK_TEST(
       }
     });
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "bedrock-runtime-compatible-anthropic",
-      runner: "vitest",
       refs: ["#3767", "#5098"],
       agent: AGENT,
       sandboxName: SANDBOX_NAME,
@@ -1364,7 +1351,7 @@ RUN_BEDROCK_TEST(
       redact: (text, extraValues) => secrets.redact(text, extraValues),
     });
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "bedrock-runtime-compatible-anthropic",
       agent: AGENT,
       assertions: {

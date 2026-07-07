@@ -12,16 +12,25 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
-
-import { describe, it } from "vitest";
+import { resultText } from "../fixtures/clients/command.ts";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  closeServer,
+  writeJsonResponse as jsonResponse,
+  listenServer,
+  readRequestBody,
+  writeSseBody as sseResponse,
+} from "../fixtures/http-protocol.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  COMPAT_AGENT_PROMPT,
+  COMPAT_AGENT_REPLY,
+} from "../support/messaging-endpoint-classifiers.ts";
 import {
   cleanupMessagingState,
   commandEnv,
@@ -55,10 +64,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-const COMPAT_AGENT_REPLY = "COMPAT_MOCK_ROUTE_5098_OK";
-const COMPAT_AGENT_PROMPT =
-  "Call the configured model and report the compatible endpoint route token.";
-
 function nodeEvalArg(source: string): string {
   const encoded = Buffer.from(source, "utf8").toString("base64");
   return `eval(Buffer.from(${JSON.stringify(encoded)}, "base64").toString("utf8"))`;
@@ -82,10 +87,6 @@ interface CompatibleMock {
 
 type ProcessResult = { exitCode?: number | null; stdout: string; stderr: string };
 
-function resultText(result: ProcessResult): string {
-  return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -94,34 +95,6 @@ function redactionValues(): string[] {
   return [COMPATIBLE_KEY, TELEGRAM_TOKEN, process.env.GITHUB_TOKEN].filter(
     (value): value is string => typeof value === "string" && value.length > 0,
   );
-}
-
-function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    "Content-Type": "application/json",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function sseResponse(res: http.ServerResponse, body: string): void {
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Content-Length": Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function readRequestBody(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve) => {
-    let body = "";
-    req.setEncoding("utf8");
-    req.on("data", (chunk: string) => {
-      body += chunk;
-    });
-    req.on("end", () => resolve(body));
-  });
 }
 
 function parseJsonBody(raw: string): Record<string, unknown> {
@@ -270,27 +243,12 @@ async function startCompatibleMock(
     jsonResponse(res, 404, { error: { message: "not found" } });
   });
 
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, "0.0.0.0", () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-
-  const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("compatible endpoint mock did not bind to a TCP port");
-  }
-  const boundPort = (address as AddressInfo).port;
+  const boundPort = await listenServer(server, port);
   const mock = {
     requests,
     hopHeaderLogs,
     localBaseUrl: `http://127.0.0.1:${boundPort}/v1`,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
+    close: () => closeServer(server),
   };
 
   for (let attempt = 1; attempt <= 30; attempt += 1) {
@@ -608,18 +566,6 @@ async function assertOpenClawAgentTurn(
   expect(leaked, `Proxy hop headers leaked to upstream: ${leaked.join(",")}`).toEqual([]);
 }
 
-describe("messaging-compatible-endpoint live test local classifiers", () => {
-  it("does not satisfy the agent reply assertion with echoed prompt text", () => {
-    expect(COMPAT_AGENT_PROMPT).not.toContain(COMPAT_AGENT_REPLY);
-    expect(
-      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_PROMPT } })),
-    ).not.toContain(COMPAT_AGENT_REPLY);
-    expect(
-      parseOpenClawAgentText(JSON.stringify({ result: { content: COMPAT_AGENT_REPLY } })),
-    ).toContain(COMPAT_AGENT_REPLY);
-  });
-});
-
 liveTest(
   "messaging compatible endpoint routes Telegram-enabled OpenClaw through inference.local",
   { timeout: TEST_TIMEOUT_MS },
@@ -638,9 +584,8 @@ liveTest(
       skip("Docker is required for messaging compatible endpoint E2E");
     }
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "messaging-compatible-endpoint",
-      runner: "vitest",
       boundary: "direct-cli-onboard-openshell-compatible-endpoint",
       refs: ["#2766", "#2572", "#5098"],
       contract: [
@@ -718,7 +663,7 @@ liveTest(
         : "Live Telegram-compatible round trip secrets not fully set",
     });
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "messaging-compatible-endpoint",
       runner,
       endpointUrl,

@@ -1,133 +1,92 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { findLayerImportBoundaryViolations } from "../scripts/checks/layer-import-boundaries";
+
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
-const BOUNDARY_SCRIPT = path.join(REPO_ROOT, "scripts", "checks", "layer-import-boundaries.ts");
+let fixtureCounter = 0;
 
-describe("CLI layer import boundaries", () => {
-  it("keeps domain, adapter, action, and command layers separated", () => {
-    const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-    });
+function fixturePath(dir: string, label: string): string {
+  fixtureCounter += 1;
+  return path.join(REPO_ROOT, dir, `__boundary-${label}-${process.pid}-${fixtureCounter}.ts`);
+}
 
-    expect(`${result.stdout}${result.stderr}`).toContain("Layer import boundaries passed.");
-    expect(result.status).toBe(0);
+function scanFixture(fixture: string, source: string) {
+  try {
+    fs.writeFileSync(fixture, source);
+    return findLayerImportBoundaryViolations(fixture);
+  } finally {
+    fs.rmSync(fixture, { force: true });
+  }
+}
+
+describe("CLI layer import boundaries (#6245)", () => {
+  it("keeps domain, adapter, action, and command layers separated (#6245)", () => {
+    expect(findLayerImportBoundaryViolations()).toEqual([]);
   });
 
-  it("collects TypeScript import-equals references", () => {
-    const fixture = path.join(
-      REPO_ROOT,
-      "src",
-      "lib",
-      "domain",
-      `__boundary-import-equals-${process.pid}.ts`,
+  it("collects TypeScript import-equals references (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/domain", "import-equals"),
+      'import adapter = require("../adapters/openshell/client");\nexport const value = adapter;\n',
     );
-    try {
-      fs.writeFileSync(
-        fixture,
-        'import adapter = require("../adapters/openshell/client");\nexport const value = adapter;\n',
-      );
-      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-      });
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "domain must not import src/lib/adapters/openshell/client.ts",
-      );
-    } finally {
-      fs.rmSync(fixture, { force: true });
-    }
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "domain must not import src/lib/adapters/openshell/client.ts",
+        }),
+      ]),
+    );
   });
 
-  it("keeps messaging manifests isolated from side-effect layers", () => {
-    const fixture = path.join(
-      REPO_ROOT,
-      "src",
-      "lib",
-      "messaging",
-      "manifest",
-      `__boundary-fs-${process.pid}.ts`,
+  it("keeps messaging manifests isolated from side-effect layers (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/messaging/manifest", "fs"),
+      'import { readFileSync } from "node:fs";\nexport const value = readFileSync;\n',
     );
-    try {
-      fs.writeFileSync(
-        fixture,
-        'import { readFileSync } from "node:fs";\nexport const value = readFileSync;\n',
-      );
-      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-      });
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "messaging manifest modules must not import node:fs",
-      );
-    } finally {
-      fs.rmSync(fixture, { force: true });
-    }
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "messaging manifest modules must not import node:fs",
+        }),
+      ]),
+    );
   });
 
-  it("blocks bare fs imports in messaging manifests", () => {
-    const fixture = path.join(
-      REPO_ROOT,
-      "src",
-      "lib",
-      "messaging",
-      "manifest",
-      `__boundary-bare-fs-${process.pid}.ts`,
+  it("blocks bare fs imports in messaging manifests (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/lib/messaging/manifest", "bare-fs"),
+      'import { readFile } from "fs/promises";\nexport const value = readFile;\n',
     );
-    try {
-      fs.writeFileSync(
-        fixture,
-        'import { readFile } from "fs/promises";\nexport const value = readFile;\n',
-      );
-      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-      });
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "messaging manifest modules must not import fs",
-      );
-    } finally {
-      fs.rmSync(fixture, { force: true });
-    }
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "messaging manifest modules must not import fs",
+        }),
+      ]),
+    );
   });
 
-  it("counts only classes that extend Command as oclif command classes", () => {
-    const fixture = path.join(
-      REPO_ROOT,
-      "src",
-      "commands",
-      `__boundary-implements-${process.pid}.ts`,
+  it("counts only classes that extend Command as oclif command classes (#6245)", () => {
+    const violations = scanFixture(
+      fixturePath("src/commands", "implements"),
+      'import { Command } from "@oclif/core";\nclass NotACommand implements Command {}\n',
     );
-    try {
-      fs.writeFileSync(
-        fixture,
-        'import { Command } from "@oclif/core";\nclass NotACommand implements Command {}\n',
-      );
-      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
-        cwd: REPO_ROOT,
-        encoding: "utf-8",
-      });
 
-      expect(result.status).toBe(1);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        "command files must define exactly one registered oclif command class; found 0",
-      );
-    } finally {
-      fs.rmSync(fixture, { force: true });
-    }
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          detail: "command files must define exactly one registered oclif command class; found 0",
+        }),
+      ]),
+    );
   });
 });

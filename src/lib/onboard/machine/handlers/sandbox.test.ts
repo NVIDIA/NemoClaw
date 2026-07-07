@@ -164,6 +164,59 @@ describe("handleSandboxState", () => {
     expect(result.session).toBe(skippedSession);
   });
 
+  it("recreates a resumed Hermes sandbox when its compatible Anthropic frontend is stale", async () => {
+    const session = createSession({
+      agent: "hermes",
+      sandboxName: "saved",
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      preferredInferenceApi: "anthropic-messages",
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({
+        name,
+        agent: "hermes",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        toolDisclosure: "progressive",
+      }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      agent: { name: "hermes", displayName: "Hermes" },
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+      preferredInferenceApi: "openai-completions",
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  [resume] Hermes inference route configuration changed; recreating sandbox.",
+    );
+    expect(calls.removeSandbox).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledWith(
+      expect.anything(),
+      "claude-sonnet-proxy",
+      "compatible-anthropic-endpoint",
+      "openai-completions",
+      "saved",
+      null,
+      [],
+      null,
+      { name: "hermes", displayName: "Hermes" },
+      null,
+      expect.anything(),
+      null,
+      [],
+      null,
+      { recreate: true, toolDisclosure: "progressive" },
+    );
+  });
+
   it("backfills absent rebuild fidelity after validated sandbox reuse", async () => {
     const session = createSession({
       sandboxName: "saved",

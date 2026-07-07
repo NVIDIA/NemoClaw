@@ -747,9 +747,8 @@ liveTest(
     let removeManagedImage = false;
     let removeBaseImage = false;
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "hermes-sandbox-secret-boundary",
-      runner: "vitest",
       boundary: "docker-hermes-image-and-startup",
       image,
       baseImage,
@@ -843,7 +842,7 @@ liveTest(
       RAW_REFRESH_TOKEN,
     );
 
-    await artifacts.writeJson("target-result.json", {
+    await artifacts.target.complete({
       id: "hermes-sandbox-secret-boundary",
       image,
       managedImage,

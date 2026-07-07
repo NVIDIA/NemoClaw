@@ -68,7 +68,7 @@ export function mcporterHeaderMatcherSource(): string {
   return `const mcporterHeadersMatchExpected = ${mcporterHeadersMatchExpected.toString()};`;
 }
 
-function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
+export function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
   const headers = entryHeaders(entry);
   return {
     url: entry.url,
@@ -78,6 +78,25 @@ function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknow
     tools: { resources: true, prompts: true },
     ...(Object.keys(headers).length > 0 ? { headers } : {}),
   };
+}
+
+export interface HermesMcpIntentPayload {
+  present: Record<string, Record<string, unknown>>;
+  absent: string[];
+}
+
+/** Render the host registry into the credential-safe shape persisted by Hermes. */
+export function buildHermesMcpIntentPayload(
+  entries: readonly McpBridgeEntry[],
+  managedServerNames: readonly string[],
+): HermesMcpIntentPayload {
+  const sortedEntries = [...entries].sort((left, right) => left.server.localeCompare(right.server));
+  const present = Object.fromEntries(
+    sortedEntries.map((entry) => [entry.server, hermesManagedServerConfig(entry)]),
+  );
+  const presentNames = new Set(Object.keys(present));
+  const absent = [...new Set(managedServerNames)].filter((name) => !presentNames.has(name)).sort();
+  return { present, absent };
 }
 
 export function deepAgentsManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {

@@ -406,8 +406,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const rlimitLib = path.join(localLib, "sandbox-rlimits.sh");
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
+    const sessionListPreviewPatcher = path.join(localLib, "patch-hermes-session-list-preview.py");
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
+    const buildMcpDigest = path.join(localLib, "build-hermes-mcp-digest.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
     const mcpCredentialBoundary = path.join(
       localLib,
@@ -430,8 +432,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       copyRlimitFixture(rlimitLib);
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
+      fs.writeFileSync(sessionListPreviewPatcher, "# session list preview patcher fixture\n");
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
+      fs.writeFileSync(buildMcpDigest, "# build MCP digest fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
       fs.writeFileSync(mcpCredentialBoundary, "{}\n");
       fs.mkdirSync(preloadDir, { mode: 0o777 });
@@ -457,8 +461,13 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
+        .replaceAll(
+          "/usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py",
+          sessionListPreviewPatcher,
+        )
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
+        .replaceAll("/usr/local/lib/nemoclaw/build-hermes-mcp-digest.py", buildMcpDigest)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
         .replaceAll(
           "/usr/local/lib/nemoclaw/openshell-child-visible-credentials.v0.0.72.json",
@@ -491,6 +500,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
       expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
       expect(fs.statSync(mcpCredentialBoundary).mode & 0o777).toBe(0o444);
+      expect(fs.statSync(buildMcpDigest).mode & 0o777).toBe(0o444);
       expect(hardenedDir.uid).toBe(fixtureOwner.uid);
       expect(hardenedDir.gid).toBe(fixtureOwner.gid);
       expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);

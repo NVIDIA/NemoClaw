@@ -563,6 +563,39 @@ The auto-pair watcher automatically approves device pairing requests from recogn
 | Risk if relaxed | Approving all device types without validation lets rogue or unexpected clients pair with the gateway unchallenged. |
 | Recommendation | No action needed. NemoClaw handles this automatically at startup and during `connect` for late scope upgrades. If you see `[auto-pair] rejected unknown client=...` in the logs, investigate the source of the unexpected connection. |
 
+#### Approve administrative scopes manually
+
+NemoClaw automatically approves only the `operator.pairing`, `operator.read`, and `operator.write` scopes.
+It never automatically approves `operator.admin`.
+Operations that require that scope, such as creating a cron job, need your explicit approval.
+
+From the host, open the prepared connect shell:
+
+```bash
+$$nemoclaw <name> connect
+```
+
+In that shell, run the administrative command once to create the pending request, and note the exact `requestId` in the failure.
+Then inspect the pending requests:
+
+```bash
+openclaw devices list --json
+```
+
+Find that exact `requestId`, and verify that its client, device, and requested scopes match the operation you just attempted.
+Approve that request by its `requestId`:
+
+```bash
+openclaw devices approve <requestId>
+```
+
+Retry the original administrative command after the approval succeeds.
+
+<Warning>
+Approve only the exact `requestId` emitted by your command and only the client, device, and scopes you expect.
+Do not approve an unexpected client or an unrelated `operator.admin` request.
+</Warning>
+
 </AgentOnly>
 <AgentOnly variant="hermes">
 

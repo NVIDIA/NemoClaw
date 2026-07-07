@@ -175,6 +175,90 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
     }
   });
 
+  // ── Recovery warning must reach the gateway log, not just stderr (#6065) ──
+  //
+  // #5874 moved recovery to a docker-IPC path where the warning was written to
+  // PID 1 stderr only; the live `issue-2478-crash-loop-recovery` E2E polls
+  // /tmp/gateway.log and went red. That target does not run on PR CI, so this
+  // mocked unit pins the file write (via the _NEMOCLAW_GATEWAY_LOG seam) in the
+  // PR gate to keep a refactor from silently regressing to stderr-only.
+  it("mirrors the guard-chain restore warning into the gateway log file", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-warn-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    try {
+      const script = [
+        "set -uo pipefail",
+        `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
+        // Force the chain-incomplete branch so the warning fires, and stub the
+        // downstream restore steps so this isolates the warning emission alone.
+        "openclaw_runtime_guard_chain_complete() { return 1; }",
+        "install_core_runtime_preloads() { return 0; }",
+        "write_messaging_runtime_setup_plan() { return 0; }",
+        "install_messaging_runtime_preloads() { return 0; }",
+        "verify_messaging_runtime_secret_scans() { return 0; }",
+        "write_runtime_shell_env() { return 0; }",
+        "validate_nemoclaw_tmp_permissions() { return 0; }",
+        extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
+        "rc=0; restore_openclaw_runtime_guard_chain || rc=$?",
+        'printf "rc:%s\\n" "$rc"',
+      ].join("\n");
+
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("rc:0\n");
+      // The marker must appear on stderr (operator console) AND in the gateway
+      // log file the recovery E2E observes.
+      expect(result.stderr).toContain("restoring library guards from packaged preloads");
+      expect(fs.existsSync(gatewayLog)).toBe(true);
+      expect(fs.readFileSync(gatewayLog, "utf8")).toContain(
+        "[gateway-recovery] WARNING: /tmp guard chain missing or unsafe",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not emit the recovery warning when the guard chain is already complete", () => {
+    // Fence the branch: a healthy chain must stay silent so the log marker
+    // remains a true recovery signal rather than startup noise.
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-quiet-"));
+    const gatewayLog = path.join(tmpDir, "gateway.log");
+    try {
+      const script = [
+        "set -uo pipefail",
+        `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
+        "openclaw_runtime_guard_chain_complete() { return 0; }",
+        "install_core_runtime_preloads() { return 0; }",
+        "write_messaging_runtime_setup_plan() { return 0; }",
+        "install_messaging_runtime_preloads() { return 0; }",
+        "verify_messaging_runtime_secret_scans() { return 0; }",
+        "write_runtime_shell_env() { return 0; }",
+        "validate_nemoclaw_tmp_permissions() { return 0; }",
+        extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
+        "rc=0; restore_openclaw_runtime_guard_chain || rc=$?",
+        'printf "rc:%s\\n" "$rc"',
+      ].join("\n");
+
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("rc:0\n");
+      expect(result.stderr).not.toContain("restoring library guards");
+      expect(fs.existsSync(gatewayLog)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an automatic respawn when guard restoration fails", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf8");
     const script = [

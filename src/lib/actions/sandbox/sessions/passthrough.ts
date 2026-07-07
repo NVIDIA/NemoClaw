@@ -3,6 +3,7 @@
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../../cli/branding";
+import * as registry from "../../../state/registry";
 import { buildOpenshellExecArgs, computeExitCode, execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
@@ -27,15 +28,26 @@ export function hasSessionsPassthroughHelpToken(args: readonly string[]): boolea
 
 export function printSessionsPassthroughHelp(verb?: SessionsPassthroughVerb): void {
   const usageSuffix = verb ? ` ${verb}` : "";
-  const flagsToken = verb ? `openclaw-sessions-${verb}-flags` : "openclaw-sessions-flags";
+  const hermesUsageSuffix = verb ? ` ${verb}` : " list";
+  const flagsToken = verb ? `sessions-${verb}-flags` : "sessions-flags";
   console.log("");
   console.log(`  Usage: ${CLI_NAME} <name> sessions${usageSuffix} [${flagsToken}...]`);
   console.log("");
   console.log(
-    `  Pass-through to \`openclaw sessions${usageSuffix} ...\` inside the sandbox via \`openshell sandbox exec\`.`,
+    `  Pass-through to the sandbox agent's \`sessions${usageSuffix} ...\` command inside the sandbox`,
   );
-  console.log("  Internal NemoClaw onboard warm-up sessions are hidden from default list output.");
-  console.log("  All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim.");
+  console.log("  via `openshell sandbox exec` — `openclaw sessions ...` for OpenClaw sandboxes,");
+  console.log(
+    `  \`hermes sessions${hermesUsageSuffix} ...\` for Hermes sandboxes; the in-sandbox binary is picked`,
+  );
+  console.log("  from the sandbox's agent.");
+  console.log(
+    "  On OpenClaw sandboxes, internal NemoClaw onboard warm-up sessions are hidden from default",
+  );
+  console.log(
+    "  list output and OpenClaw-specific flags are forwarded verbatim. Hermes sandboxes pass",
+  );
+  console.log("  through their native output unchanged.");
   console.log("");
 }
 
@@ -202,10 +214,22 @@ export async function runSessionsPassthrough(
   { verb, extraArgs = [] }: SessionsPassthroughOptions = {},
 ): Promise<void> {
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
-  const command = ["openclaw", "sessions"];
+  // Hermes sandboxes ship the `hermes` binary in place of OpenClaw's
+  // `openclaw` binary, and `openclaw` does not exist inside them (#6247).
+  // Route the passthrough at the in-sandbox agent's own binary name and
+  // bypass the OpenClaw-specific warm-up filter for non-OpenClaw agents.
+  //
+  // Trust boundary: `registry.getSandbox()` reads the host-side, user-owned
+  // `~/.nemoclaw/sandboxes.json` registry (`REGISTRY_FILE`). Sandbox processes
+  // cannot access the host filesystem to change this agent selection; unknown
+  // or missing values deliberately default to `openclaw` below.
+  const sandboxAgent = registry.getSandbox(sandboxName)?.agent;
+  const inSandboxBinary = sandboxAgent === "hermes" ? "hermes" : "openclaw";
+  const command = [inSandboxBinary, "sessions"];
   if (verb) command.push(verb);
+  else if (inSandboxBinary === "hermes") command.push("list");
   for (const arg of extraArgs) command.push(arg);
-  if (isFilterableListPassthrough(verb)) {
+  if (isFilterableListPassthrough(verb) && inSandboxBinary === "openclaw") {
     const result = captureOpenshell(buildOpenshellExecArgs(sandboxName, command), {
       ignoreError: true,
       includeStreams: true,

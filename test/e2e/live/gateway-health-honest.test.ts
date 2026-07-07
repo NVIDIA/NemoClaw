@@ -41,9 +41,8 @@ test.skipIf(!shouldRunLiveE2E())(
     const gatewayLog = path.join(stateDir, "openshell-gateway.log");
     const gatewayPidFile = path.join(stateDir, "openshell-gateway.pid");
 
-    await artifacts.writeJson("target.json", {
+    await artifacts.target.declare({
       id: "gateway-health-honest",
-      runner: "vitest",
       boundary: "real-startGateway-openshell-docker-driver-process",
       contracts: [
         "startGateway() invokes a real OpenShell Docker-driver gateway child process",

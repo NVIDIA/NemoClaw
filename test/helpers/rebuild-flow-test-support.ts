@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { type MockInstance, vi } from "vitest";
+import type { SandboxGatewayState } from "../../src/lib/actions/sandbox/gateway-state";
 import type { RebuildImagePreflightResult } from "../../src/lib/actions/sandbox/rebuild-custom-image-preflight";
 import type { RebuildRecreateOnboardOpts } from "../../src/lib/actions/sandbox/rebuild-gpu-opt-out";
 import type { SandboxRemovalReceipt } from "../../src/lib/state/registry";
@@ -64,6 +65,7 @@ export type RebuildFlowOverrides = {
   ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
   managedImageEvidence?: boolean;
   staleRecovery?: boolean;
+  reconciledSandboxGatewayState?: SandboxGatewayState;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
     detachedProviderEntries: Array<Record<string, unknown>>;
