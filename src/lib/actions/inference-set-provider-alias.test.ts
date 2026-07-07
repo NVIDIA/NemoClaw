@@ -11,7 +11,8 @@
 //     next step. dcode bakes its model at image-build time, so the fix is an
 //     actionable error pointing at re-onboard.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { ConfigValue } from "../security/credential-filter";
 import {
   INFERENCE_SET_INSTALLER_PROVIDER_ALIASES,
   INFERENCE_SET_SUPPORTED_PROVIDER_NAMES,
@@ -19,6 +20,14 @@ import {
   runInferenceSet,
 } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
+
+// onboard's provider config is the source of truth the local alias map must
+// stay in sync with. Imported here (test only — not into the inference-set hot
+// path) to drive the parity check below. providers.ts is a CJS module.
+import * as onboardProvidersNs from "../onboard/providers";
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const onboardProviders: any =
+  (onboardProvidersNs as unknown as { default?: unknown }).default ?? onboardProvidersNs;
 
 describe("normalizeInferenceSetProvider — facet 1 provider-name drift (#6321)", () => {
   it("maps the installer name onboard uses to its OpenShell provider name", () => {
@@ -149,5 +158,150 @@ describe("runInferenceSet dcode refusal message — facet 3 (#6321)", () => {
         deps,
       ),
     ).rejects.toThrow(/supports OpenClaw and Hermes sandboxes; 'spark-sb' uses 'spark'\.$/);
+  });
+});
+
+describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
+  // A stand-in DNS-pinning guard: rejects any URL whose host resolves internal
+  // (mirrors rewriteConfigUrlsWithDnsPinning blocking an RFC1918 address).
+  function ssrfGuard() {
+    return vi.fn(async (value: ConfigValue): Promise<ConfigValue> => {
+      if (String(value).includes("inference-api.nvidia.com") || String(value).includes("10.")) {
+        throw new Error(
+          `URL hostname "inference-api.nvidia.com" resolves to private/internal address "10.48.203.205". This could expose internal services to the sandbox.`,
+        );
+      }
+      return value;
+    });
+  }
+
+  it("keeps the SSRF guard AND adds an actionable hint when the sandbox is already on this provider", async () => {
+    // The reporter's case: a sandbox onboarded on compatible-endpoint against an
+    // internal Hub. `inference set --endpoint-url <internal>` still (correctly)
+    // trips the SSRF guard — but the message now tells the operator they can
+    // omit --endpoint-url to switch only the model.
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/model-b",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        noVerify: true,
+      },
+      deps,
+    );
+    // Guard still fires (no security relaxation) ...
+    await expect(attempt).rejects.toThrow(
+      /endpoint-url is not allowed:.*private\/internal address/,
+    );
+    // ... but the message now guides toward the working same-provider path.
+    await expect(attempt).rejects.toThrow(/already configured for 'compatible-endpoint'/);
+    await expect(attempt).rejects.toThrow(/omit --endpoint-url/);
+  });
+
+  it("switches the model WITHOUT --endpoint-url on a same-provider sandbox (the guided path works, guard never runs)", async () => {
+    // Proves the hint's advice is real: dropping --endpoint-url reuses the
+    // established route and the model switch succeeds without touching the guard.
+    const deps = createDeps({
+      config: {
+        agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+        models: { providers: { inference: { api: "openai-completions", models: [] } } },
+      },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/model-a",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "nvidia/model-b", noVerify: true },
+        deps,
+      ),
+    ).resolves.toBeTruthy();
+    // No --endpoint-url supplied → the SSRF guard is never consulted.
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
+  });
+
+  it("does NOT add the same-provider hint when switching to a DIFFERENT provider (bare SSRF error stands)", async () => {
+    // entry.provider is nvidia-prod; the operator is switching to
+    // compatible-endpoint with an internal URL. There is no established route to
+    // fall back to, so the guard's bare message stands with no "omit" hint.
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      rewriteConfigUrlsWithDnsPinning: ssrfGuard(),
+    });
+
+    const attempt = runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/model-b",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        noVerify: true,
+      },
+      deps,
+    );
+    await expect(attempt).rejects.toThrow(
+      /endpoint-url is not allowed:.*private\/internal address/,
+    );
+    await expect(attempt).rejects.not.toThrow(/omit --endpoint-url/);
+  });
+});
+
+describe("installer alias parity with onboard provider config — facet 1 drift guard (#6321)", () => {
+  it("matches onboard's getEffectiveProviderName for every shared provider key", () => {
+    // Bind the local alias map to onboard's source of truth: for every installer
+    // key onboard accepts that resolves to a provider inference set supports,
+    // normalizeInferenceSetProvider must produce the exact same OpenShell name.
+    // If onboard renames a provider or adds an alias, this fails until the local
+    // map is updated — closing the drift gap CodeRabbit / the PR advisor flagged.
+    const supported = new Set<string>(INFERENCE_SET_SUPPORTED_PROVIDER_NAMES);
+    const aliasKeys: string[] = Object.keys(
+      onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES ?? {},
+    );
+    const directKeys: string[] = Array.from(
+      (onboardProviders.NON_INTERACTIVE_PROVIDER_KEYS ?? new Set()) as Iterable<string>,
+    );
+    const onboardKeys = [...new Set([...aliasKeys, ...directKeys])];
+    // Sanity: onboard exposes a non-trivial key set (guards against an import
+    // that silently resolved to an empty object).
+    expect(onboardKeys.length).toBeGreaterThan(5);
+
+    const checked: string[] = [];
+    for (const key of onboardKeys) {
+      const canonical = onboardProviders.NON_INTERACTIVE_PROVIDER_ALIASES?.[key] ?? key;
+      const onboardResolved: string | null = onboardProviders.getEffectiveProviderName(canonical);
+      if (!onboardResolved || !supported.has(onboardResolved)) continue; // not an inference-set target
+      checked.push(key);
+      expect(
+        normalizeInferenceSetProvider(key),
+        `inference set must map onboard key '${key}' to '${onboardResolved}'`,
+      ).toBe(onboardResolved);
+    }
+    // We actually exercised a meaningful set (anthropicCompatible, build, etc.).
+    expect(checked.length).toBeGreaterThan(3);
   });
 });

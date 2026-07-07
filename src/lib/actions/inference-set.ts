@@ -4,6 +4,7 @@
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshell, getOpenshellBinary } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { shellQuote } from "../core/shell-quote";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import { isBedrockRuntimeEndpoint } from "../inference/bedrock-runtime";
 import {
@@ -145,7 +146,15 @@ const INSTALLER_PROVIDER_ALIASES: Readonly<Record<string, string>> = {
   openai: "openai-api",
   anthropic: "anthropic-prod",
   gemini: "gemini-api",
+  // Hermes Provider (Nous portal) is reachable under several onboard synonyms;
+  // accept the same set here so a sandbox onboarded with any of them can be
+  // switched under the same name. (`hermes-provider` is already an OpenShell
+  // provider name and passes through without an entry, but is listed for
+  // parity clarity.)
   hermesprovider: "hermes-provider",
+  hermes: "hermes-provider",
+  nous: "hermes-provider",
+  "nous-portal": "hermes-provider",
   custom: "compatible-endpoint",
   ollama: "ollama-local",
   vllm: "vllm-local",
@@ -624,6 +633,7 @@ async function explicitCustomProviderMetadata(
   provider: string,
   options: InferenceSetOptions,
   rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
+  sandboxAlreadyOnProvider: boolean,
 ): Promise<RegistryInferenceMetadata | null> {
   if (!hasExplicitCustomMetadata(options)) return null;
   if (!isCustomCompatibleProvider(provider)) {
@@ -638,8 +648,35 @@ async function explicitCustomProviderMetadata(
   // trust guarantee. Treat these explicit flags as the durable metadata source
   // for this switch, after URL and credential-env validation, instead of
   // borrowing from an unrelated onboard session or global OpenShell provider.
+  let endpointUrl: string;
+  try {
+    endpointUrl = await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning);
+  } catch (error) {
+    // #6321 facet 2 — guidance, not relaxation. The SSRF guard correctly
+    // blocks an endpoint that resolves to an internal/RFC1918 address; do NOT
+    // weaken it. But when the sandbox is ALREADY on this provider, the caller
+    // almost always only wants to switch the model — which does not require
+    // --endpoint-url at all (the OpenShell gateway keeps the endpoint onboard
+    // registered; `inference set` never repoints it). onboard establishes that
+    // route without this host-side guard, so re-supplying the same internal URL
+    // here just trips a guard that changes nothing. Turn the dead-end into an
+    // actionable path: tell the operator to drop --endpoint-url for a
+    // same-provider model switch. Genuinely changing to a different endpoint
+    // still (correctly) goes through onboard/rebuild, where the change is
+    // reviewed against the intended provider setup.
+    if (sandboxAlreadyOnProvider && error instanceof InferenceSetError) {
+      throw new InferenceSetError(
+        `${error.message} This sandbox is already configured for '${provider}'. ` +
+          `To switch only the model, omit --endpoint-url — inference set reuses the endpoint ` +
+          `onboarding already established (the gateway route is not changed by inference set). ` +
+          `To point the sandbox at a different endpoint, re-run onboarding or rebuild.`,
+        error.exitCode,
+      );
+    }
+    throw error;
+  }
   return {
-    endpointUrl: await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning),
+    endpointUrl,
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
     preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
@@ -732,7 +769,7 @@ async function runInferenceSetWithoutHostLock(
     // a new selection.
     const dcodeHint =
       agentName === "langchain-deepagents-code"
-        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${sandboxName} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
+        ? ` Deep Agents Code bakes its model into the sandbox image at build time, so it has no runtime inference-set path. To change the model, re-onboard with the new selection: \`${CLI_NAME} onboard --agent dcode --name ${shellQuote(sandboxName)} --fresh\` (set NEMOCLAW_PROVIDER / NEMOCLAW_MODEL for the target model).`
         : "";
     throw new InferenceSetError(
       `nemoclaw inference set supports OpenClaw and Hermes sandboxes; '${sandboxName}' uses '${agentName}'.${dcodeHint}`,
@@ -758,6 +795,10 @@ async function runInferenceSetWithoutHostLock(
     provider,
     options,
     deps.rewriteConfigUrlsWithDnsPinning,
+    // #6321 facet 2: when the sandbox is already on this provider, an
+    // SSRF-blocked --endpoint-url gets an actionable "omit it to switch model"
+    // hint instead of a dead-end (see explicitCustomProviderMetadata).
+    entry.provider === provider,
   );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
   if (
