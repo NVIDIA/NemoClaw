@@ -196,10 +196,10 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--enable-auto-tool-choice");
     expect(cmd).toContain("--tool-call-parser qwen3_coder");
     // The tool-call flags must appear paired: the parser value comes as a single
-    // shell token immediately after `--tool-call-parser`, not somewhere else in the
-    // command, and the switch is only listed once.
-    const parserMatches = cmd.match(/--tool-call-parser qwen3_coder/g);
-    expect(parserMatches).toHaveLength(1);
+    // shell token immediately after `--tool-call-parser`, and each switch is listed
+    // only once.
+    expect(cmd.match(/--enable-auto-tool-choice/g)).toHaveLength(1);
+    expect(cmd.match(/--tool-call-parser/g)).toHaveLength(1);
   });
 
   it("registers the Qwen3.6-35B NVFP4 checkpoint for DGX Spark", () => {
