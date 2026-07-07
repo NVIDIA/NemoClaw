@@ -102,7 +102,9 @@ const fs = require("node:fs");
 const argv = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(commandLogPath)}, JSON.stringify({ argv, env: process.env }) + "\\n");
 if (argv[0] === "inference" && argv[1] === "get") {
-  process.stdout.write("Gateway inference:\\n  Provider: configured\\n  Model: configured\\n");
+  process.stdout.write(${JSON.stringify(
+    `Gateway inference:\n  Provider: ${options.provider}\n  Model: ${options.model}\n`,
+  )});
 }
 process.exit(0);
 `,

@@ -4441,8 +4441,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
       process.exit(1);
     }
 
-    type CoreOnboardFlowContext = InitialOnboardFlowContext;
-    const coreFlowContext: CoreOnboardFlowContext = {
+    const coreFlowContext: InitialOnboardFlowContext = {
       ...initialContext,
       session,
       sandboxName,
@@ -4453,9 +4452,9 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     };
 
     const [providerInferencePhase, sandboxPhase] =
-      createCoreOnboardFlowPhases<CoreOnboardFlowContext>({
+      createCoreOnboardFlowPhases<InitialOnboardFlowContext>({
         forceProviderSelection: forceProviderSelectionForAgentChange,
-        authoritativeResumeConfig: opts.authoritativeResumeConfig === true,
+        ...authoritativeRebuildTarget.rebuildProviderFlowOptions(opts, coreFlowContext),
         env: process.env,
         constants: {
           hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
@@ -4596,7 +4595,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let webSearchConfig = coreContext.webSearchConfig as WebSearchConfig | null;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const finalFlowContext: CoreOnboardFlowContext = {
+    const finalFlowContext: InitialOnboardFlowContext = {
       ...coreContext,
       session,
       sandboxName,
@@ -4614,7 +4613,7 @@ async function runOnboard(opts: OnboardOptions = {}): Promise<void> {
     let liveFinalFlowContext = finalFlowContext;
 
     const [branchSetupPhase, policiesPhase, finalizationPhase] = createFinalOnboardFlowPhases<
-      CoreOnboardFlowContext,
+      InitialOnboardFlowContext,
       import("./dashboard/contract").DashboardDeliveryChain,
       import("./verify-deployment").VerifyDeploymentResult
     >({

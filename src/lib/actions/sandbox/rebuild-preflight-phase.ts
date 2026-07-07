@@ -82,10 +82,13 @@ export async function runRebuildPreflightPhase(
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const allowLegacyManagedImageRecovery =
+    opts.recoveryManifest !== undefined && opts.allowLegacyManagedImageRecovery === true;
   const recoveryManifest = validatePreparedRecoveryManifest(
     sandboxName,
     sandboxEntry,
     opts.recoveryManifest,
+    allowLegacyManagedImageRecovery,
     bail,
   );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
@@ -149,6 +152,11 @@ export async function runRebuildPreflightPhase(
         autoYes: true,
         requestedToolDisclosure,
         requestedObservabilityEnabled,
+        allowLegacyManagedImageRecovery,
+        // A validated prepared backup is the only path allowed to reconstruct
+        // a missing gateway provider and route during recreate. The exact
+        // endpoint, credential, image, and registry checks still run before
+        // deletion; ordinary rebuilds continue to require the live bindings.
         preparedBackupRecovery: recoveryManifest !== null,
         log,
         bail,

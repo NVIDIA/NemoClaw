@@ -117,10 +117,14 @@ After the installer launches `nemoclaw onboard`, the wizard runs preflight check
 It prints a review summary before it registers the provider with OpenShell.
 After you confirm, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
-If registered sandboxes already exist, the installer runs `nemoclaw backup-all` when the installed CLI supports it, then runs `nemoclaw upgrade-sandboxes --auto` before generic onboarding.
-For a registered sandbox that is non-Ready after the host upgrade, the installer restores its validated latest backup only when the backup identity matches and its registry entry has a NemoClaw-managed image fingerprint.
-Pre-fingerprint and custom-image sandboxes are not recreated automatically because matching agent versions do not prove image provenance.
-If an automatic rebuild fails, or a non-Ready recovery is blocked or fails, the installer exits with a nonzero status and does not start generic onboarding.
+If registered sandboxes already exist, the installer prepares the current NemoClaw CLI without replacing OpenShell, then requires a fresh backup of every registered sandbox before it changes the gateway.
+After the host upgrade, it runs `nemoclaw upgrade-sandboxes --auto` to rebuild stale sandboxes and restore validated backups for registered sandboxes that are not Ready.
+Successful recovery completes the existing-sandbox upgrade and skips generic onboarding, so the installer does not create an extra sandbox or ask for a new provider credential.
+For pre-fingerprint OpenClaw and Hermes registry entries, the installer asks you to confirm that every listed sandbox used a NemoClaw-managed image before it permits recovery onto the current managed image.
+In non-interactive runs, set `NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE` to the exact JSON array of names printed by the installer, such as `["my-assistant","preserve-hermes"]`, only after you verify every named sandbox used a managed image.
+Registry entries with recorded custom-image evidence remain blocked from automatic recreation.
+If any backup is skipped or fails, the installer exits with a nonzero status before it changes the gateway.
+If an automatic rebuild fails or a non-Ready recovery is blocked or fails, the installer exits with a nonzero status and does not start generic onboarding.
 
 The inference provider prompt presents a numbered list.
 
