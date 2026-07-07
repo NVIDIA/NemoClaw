@@ -138,6 +138,46 @@ describe("showSandboxStatus flow", () => {
     expect(output).toContain("http://127.0.0.1:11434/api/tags");
   });
 
+  it("reports inference unhealthy in text when the inference.local route is broken (#6192)", async () => {
+    // Mirrors what collectSandboxStatusSnapshot now produces for a cloud
+    // provider whose upstream endpoint is reachable but whose inference.local
+    // route is broken: the aggregate is degraded so the top-level line does not
+    // render a bare "healthy" that contradicts `connect`.
+    const harness = createStatusFlowHarness({
+      currentProvider: "nvidia-prod",
+      inferenceHealth: {
+        ok: false,
+        probed: true,
+        providerLabel: "NVIDIA Cloud",
+        endpoint: "https://integrate.api.nvidia.com/v1/models",
+        detail:
+          "Provider endpoint is reachable, but the inference.local route the agent uses is broken. " +
+          "Inference gateway unreachable on https://inference.local/v1/models",
+        failureLabel: "unreachable",
+        subprobes: [
+          {
+            ok: false,
+            probed: true,
+            providerLabel: "Inference gateway chain",
+            endpoint: "https://inference.local/v1/models",
+            detail: "Inference gateway unreachable on https://inference.local/v1/models",
+            probeLabel: "gateway",
+            failureLabel: "unreachable",
+          },
+        ],
+      },
+      sandboxEntry: { provider: "nvidia-prod" },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.flat().join("\n");
+    expect(output).not.toContain("Inference: healthy");
+    expect(output).toContain("Inference: unreachable");
+    expect(output).toContain("Inference (gateway):");
+    expect(output).toContain("the inference.local route the agent uses is broken");
+  });
+
   it("renders fresh shields posture as not configured rather than down", async () => {
     const harness = createStatusFlowHarness({
       shieldsPosture: {

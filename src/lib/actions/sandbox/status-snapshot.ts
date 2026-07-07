@@ -157,6 +157,8 @@ interface CollectSandboxStatusSnapshotDeps {
   probeProviderHealthImpl?: ProbeProviderHealth;
   probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   reconcile?: ReconcileSandboxGatewayState;
+  captureLiveInference?: typeof captureOpenshellForStatus;
+  probeInferenceGateway?: typeof probeSandboxInferenceGatewayHealth;
 }
 
 export async function collectSandboxStatusSnapshot(
@@ -173,6 +175,9 @@ export async function collectSandboxStatusSnapshot(
         getState: getSandboxGatewayStateForStatus,
       }));
   const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const captureLiveInference = opts.deps?.captureLiveInference ?? captureOpenshellForStatus;
+  const probeInferenceGateway =
+    opts.deps?.probeInferenceGateway ?? probeSandboxInferenceGatewayHealth;
   const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
@@ -187,7 +192,7 @@ export async function collectSandboxStatusSnapshot(
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   if (lookup.state === "present") {
     try {
-      liveResult = await captureOpenshellForStatus(["inference", "get"]);
+      liveResult = await captureLiveInference(["inference", "get"]);
     } catch {
       liveResult = null;
     }
@@ -226,12 +231,23 @@ export async function collectSandboxStatusSnapshot(
   // in-sandbox gateway / auth proxy, so upstream reachability alone must not
   // report the route as healthy when `inference.local` is broken (#6192).
   if (inferenceHealth && lookup.state === "present" && currentProvider !== "unknown") {
-    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+    const gatewayChain = await probeInferenceGateway(sandboxName);
     if (gatewayChain) {
-      inferenceHealth.subprobes = [
-        ...(inferenceHealth.subprobes ?? []),
-        buildInferenceGatewaySubprobe(gatewayChain),
-      ];
+      const gatewaySubprobe = buildInferenceGatewaySubprobe(gatewayChain);
+      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
+      if (!gatewaySubprobe.ok) {
+        // The agent's real route (`inference.local`) is broken even though the
+        // upstream provider endpoint is reachable. The aggregate must not stay
+        // `ok: true`, or `status` (text and --json) would report healthy while
+        // `connect` reports the route BROKEN — the exact contradiction #6192
+        // set out to fix. Degrade the top-level result and explain the cause.
+        inferenceHealth.ok = false;
+        inferenceHealth.failureLabel =
+          inferenceHealth.failureLabel ?? gatewaySubprobe.failureLabel ?? "unreachable";
+        inferenceHealth.detail =
+          "Provider endpoint is reachable, but the inference.local route the agent " +
+          `uses is broken. ${gatewaySubprobe.detail}`;
+      }
     }
   }
   const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
