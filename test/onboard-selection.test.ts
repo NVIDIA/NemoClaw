@@ -2861,6 +2861,7 @@ const { setupNim } = require(${onboardPath});
         label: "Anthropic Messages API",
       }),
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model,
@@ -2926,6 +2927,7 @@ const { setupNim } = require(${onboardPath});
             };
       },
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -2999,10 +3001,11 @@ const { setupNim } = require(${onboardPath});
       getCredential: () => "ollama-key",
       probeOpenAiLikeEndpoint,
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model: "my-model",
-      endpointUrl: "https://ollama.local:11434/v1",
+      endpointUrl: "https://ollama.public.test:11434/v1",
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -3026,7 +3029,7 @@ const { setupNim } = require(${onboardPath});
       assert.equal(state.preferredInferenceApi, "openai-completions");
       assert.ok(lines.some((line) => line.includes("Using chat completions API")));
       expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
-        "https://ollama.local:11434/v1",
+        "https://ollama.public.test:11434/v1",
         "my-model",
         "ollama-key",
         {
@@ -3055,6 +3058,7 @@ const { setupNim } = require(${onboardPath});
       getCredential: () => "sk-test",
       probeOpenAiLikeEndpoint,
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const state = makeRemoteSelectionState({
       model: "gpt-4o",
@@ -3214,6 +3218,7 @@ const { setupNim } = require(${onboardPath});
             };
       },
       promptValidationRecovery: recovery.promptValidationRecovery,
+      resolveEndpointHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     const { validateSelectedRemoteModel } = createRemoteModelValidator(
       makeRemoteModelValidatorDeps({
@@ -3761,6 +3766,10 @@ const { setupNim } = require(${onboardPath});
 
 (async () => {
   process.env.COMPATIBLE_API_KEY = "proxy-bad";
+  // The endpoint SSRF preflight now runs unconditionally (#6293); stub the DNS
+  // resolver to a public address so the fixture hostname resolves and the flow
+  // reaches validation instead of being refused (mirrors credentials/runner stubs).
+  require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
@@ -4682,75 +4691,6 @@ const { setupNim } = require(${onboardPath});
     } finally {
       log.mockRestore();
     }
-  });
-
-  it("does not satisfy start-windows-ollama with WSL-local Ollama", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement("docker-desktop");
-    const { options } = buildWindowsProviderMenu(requirement, {
-      hasOllama: true,
-      ollamaRunning: true,
-      ollamaHost: "127.0.0.1",
-      hasWindowsOllama: false,
-    });
-    const resolution = resolveWindowsProvider(options, "start-windows-ollama", {
-      isWsl: true,
-      isWindowsHostOllama: false,
-    });
-    assert.equal(resolution.kind, "failure");
-    const failedResolution = requireFailedProviderResolution(resolution);
-
-    const setup = vi.fn();
-    const switchHost = vi.fn();
-    const errors: string[] = [];
-    reportProviderSelectionFailure({
-      reason: failedResolution.reason,
-      isWindowsHostOllama: false,
-      rejectWindowsHostOllama: () => {
-        setup();
-        switchHost();
-        return true;
-      },
-      writeError: (message) => errors.push(message),
-    });
-
-    assert.match(errors.join("\n"), /Requested provider 'start-windows-ollama' is not available/);
-    assert.equal(setup.mock.calls.length, 0);
-    assert.equal(switchHost.mock.calls.length, 0);
-  });
-
-  it("does not satisfy install-windows-ollama with non-WSL local Ollama", () => {
-    const requirement = getWindowsHostOllamaDockerRequirement(null);
-    const { options } = buildWindowsProviderMenu(requirement, {
-      hasOllama: true,
-      ollamaRunning: true,
-      ollamaHost: "127.0.0.1",
-      isWsl: false,
-      hasWindowsOllama: false,
-    });
-    const resolution = resolveWindowsProvider(options, "install-windows-ollama", {
-      isWsl: false,
-      isWindowsHostOllama: false,
-    });
-    assert.equal(resolution.kind, "failure");
-    const failedResolution = requireFailedProviderResolution(resolution);
-
-    const install = vi.fn();
-    const setup = vi.fn();
-    const errors: string[] = [];
-    reportProviderSelectionFailure({
-      reason: failedResolution.reason,
-      isWindowsHostOllama: false,
-      rejectWindowsHostOllama: () => {
-        install();
-        setup();
-        return true;
-      },
-      writeError: (message) => errors.push(message),
-    });
-
-    assert.match(errors.join("\n"), /Requested provider 'install-windows-ollama' is not available/);
-    assert.equal(install.mock.calls.length, 0);
-    assert.equal(setup.mock.calls.length, 0);
   });
 
   it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {

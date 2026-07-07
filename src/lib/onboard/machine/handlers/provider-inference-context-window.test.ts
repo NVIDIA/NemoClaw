@@ -27,9 +27,10 @@ afterEach(() => {
 describe("handleProviderInferenceState context window", () => {
   it("clears a stale auto-detected compatible-endpoint context window before re-selecting (#6177)", async () => {
     // Simulate an earlier compatible-endpoint pass auto-detecting a window.
-    applyCompatibleEndpointContextWindow("https://endpoint-a.example/v1", "model-a", {
+    await applyCompatibleEndpointContextWindow("https://endpoint-a.example/v1", "model-a", {
       env: process.env,
       fetchModels: () => ({ data: [{ id: "model-a", max_model_len: 65_536 }] }),
+      resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     expect(process.env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
 

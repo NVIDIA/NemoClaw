@@ -522,7 +522,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config.model.context_window).toBeUndefined();
   });
 
-  it("chains the endpoint probe through to model.context_length in the generated config (#6177)", () => {
+  it("chains the endpoint probe through to model.context_length in the generated config (#6177)", async () => {
     // Source-level regression across the boundary: the same probe onboarding
     // calls resolves a compatible endpoint's max_model_len into
     // NEMOCLAW_CONTEXT_WINDOW, and the real generator must bake it as
@@ -532,9 +532,10 @@ describe("agents/hermes/generate-config.ts", () => {
     const model = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4";
     fs.mkdirSync(path.join(tmpDir, ".hermes"), { recursive: true });
     const env = buildHermesTestEnv({ NEMOCLAW_MODEL: model });
-    applyCompatibleEndpointContextWindow("https://endpoint.example/v1", model, {
+    await applyCompatibleEndpointContextWindow("https://endpoint.example/v1", model, {
       env,
       fetchModels: () => ({ data: [{ id: model, max_model_len: 65_536 }] }),
+      resolveHost: async () => [{ address: "93.184.216.34", family: 4 }],
     });
     expect(env.NEMOCLAW_CONTEXT_WINDOW).toBe("65536");
 

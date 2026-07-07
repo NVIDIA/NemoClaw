@@ -66,6 +66,10 @@ const { setupNim } = require(${onboardPath});
 (async () => {
   process.env.COMPATIBLE_API_KEY = "proxy-key";
   process.env.NEMOCLAW_REASONING = "yes";
+  // The endpoint SSRF preflight now runs unconditionally (#6293); stub the DNS
+  // resolver to a public address so the fixture hostname resolves and the flow
+  // reaches validation instead of being refused (mirrors credentials/runner stubs).
+  require("node:dns/promises").lookup = async () => [{ address: "93.184.216.34", family: 4 }];
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
