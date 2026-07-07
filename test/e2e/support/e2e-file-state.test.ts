@@ -77,4 +77,13 @@ describe("E2E file state", () => {
       });
     });
   });
+
+  it("does not hide non-parse JSON read failures", () => {
+    withTempDir((root) => {
+      const directory = path.join(root, "state-directory.json");
+      fs.mkdirSync(directory);
+
+      expect(() => readJsonFileOrFallback(directory, { source: "unused" })).toThrow();
+    });
+  });
 });

@@ -39,8 +39,11 @@ export function readJsonFileOr<T>(file: string, fallback: T): T {
 export function readJsonFileOrFallback<T>(file: string, fallback: T): T {
   try {
     return readJsonFileOr(file, fallback);
-  } catch {
-    return fallback;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return fallback;
+    }
+    throw error;
   }
 }
 
