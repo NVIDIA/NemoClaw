@@ -390,10 +390,10 @@ describe("runInferenceSet SSRF-block guidance — facet 2 (#6321)", () => {
   });
 
   it("still blocks a DIFFERENT internal endpoint even on a same-provider sandbox (no blanket exemption) (#6321)", async () => {
-    // The identity match is exact: `entry.endpointUrl` is inference-api.nvidia.com,
-    // but the operator supplies a *different* internal URL. That is not the
-    // established endpoint, so the SSRF guard must still block it — the fix does
-    // not hand the sandbox a way to reach arbitrary internal services.
+    // Every supplied `--endpoint-url` goes through the SSRF guard (no bypass),
+    // so a *different* internal URL than the recorded one is blocked. Pinned as a
+    // regression: the fix does not hand the sandbox a way to reach arbitrary
+    // internal services.
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
       entry: {
