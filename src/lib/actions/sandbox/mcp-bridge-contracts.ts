@@ -50,6 +50,17 @@ export interface McpBridgeStatus {
     attached: boolean | null;
     credentialReady: boolean | null;
     detail?: string;
+    /**
+     * Wire-level placeholder-resolution probe outcome (#6379). Present only
+     * when the probe was requested for this entry; `ok: null` with a detail
+     * means the probe ran or was skipped without a verdict.
+     */
+    credentialResolution?: {
+      ok: boolean | null;
+      httpStatus?: number;
+      controlHttpStatus?: number;
+      detail?: string;
+    };
   };
   policy: {
     name?: string;

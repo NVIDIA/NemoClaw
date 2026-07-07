@@ -30,7 +30,7 @@ describe("SandboxExecCommand oclif parse path", () => {
     expect(execSandboxMock).toHaveBeenCalledWith(
       "alpha",
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
-      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+      { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
   });
 
@@ -58,6 +58,7 @@ describe("SandboxExecCommand oclif parse path", () => {
       workdir: "/sandbox/workspace",
       tty: null,
       timeoutSeconds: undefined,
+      stdin: undefined,
     });
   });
 
@@ -71,6 +72,7 @@ describe("SandboxExecCommand oclif parse path", () => {
       workdir: undefined,
       tty: null,
       timeoutSeconds: undefined,
+      stdin: undefined,
     });
   });
 
@@ -82,7 +84,7 @@ describe("SandboxExecCommand oclif parse path", () => {
     expect(execSandboxMock).toHaveBeenCalledWith(
       "alpha",
       ["bash", "-lc", "echo line1; echo line2"],
-      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+      { workdir: undefined, tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
   });
 
@@ -94,7 +96,7 @@ describe("SandboxExecCommand oclif parse path", () => {
     expect(execSandboxMock).toHaveBeenCalledWith(
       "alpha",
       ["bash", "-lc", "echo line1; echo line2"],
-      { workdir: "/sandbox", tty: null, timeoutSeconds: undefined },
+      { workdir: "/sandbox", tty: null, timeoutSeconds: undefined, stdin: undefined },
     );
   });
 
@@ -104,6 +106,7 @@ describe("SandboxExecCommand oclif parse path", () => {
       workdir: undefined,
       tty: true,
       timeoutSeconds: 30,
+      stdin: undefined,
     });
     execSandboxMock.mockReset();
 
@@ -112,6 +115,37 @@ describe("SandboxExecCommand oclif parse path", () => {
       workdir: undefined,
       tty: false,
       timeoutSeconds: undefined,
+      stdin: undefined,
+    });
+  });
+
+  it("parses --stdin as explicit stdin forwarding", async () => {
+    await SandboxExecCommand.run(["alpha", "--stdin", "--", "cat"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["cat"], {
+      workdir: undefined,
+      tty: null,
+      timeoutSeconds: undefined,
+      stdin: true,
+    });
+  });
+
+  it("parses --no-stdin as explicit stdin closure", async () => {
+    await SandboxExecCommand.run(["alpha", "--no-stdin", "--", "pwd"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["pwd"], {
+      workdir: undefined,
+      tty: null,
+      timeoutSeconds: undefined,
+      stdin: false,
+    });
+  });
+
+  it("leaves stdin mode unset for the production spawner to auto-detect", async () => {
+    await SandboxExecCommand.run(["alpha", "--", "bash"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["bash"], {
+      workdir: undefined,
+      tty: null,
+      timeoutSeconds: undefined,
+      stdin: undefined,
     });
   });
 });

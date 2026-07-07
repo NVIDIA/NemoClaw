@@ -64,7 +64,9 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 During interactive NVIDIA Endpoints onboarding, NemoClaw loads NVIDIA's public featured model catalog once per onboarding session and reports progress before displaying the model picker.
 It excludes retired or unsafe choices and corrects known catalog lag before displaying the result.
 If the catalog is unavailable, malformed, or contains no safe model IDs, the wizard warns you and uses the bundled fallback list shown below.
-Nemotron 3 Super remains the default when it is present; otherwise, the first live featured model becomes the interactive default.
+Nemotron 3 Super remains the shared default for OpenClaw and Hermes when it is present.
+LangChain Deep Agents Code uses Nemotron 3 Ultra as its NVIDIA Endpoints default.
+If an agent's default is unavailable, the first live featured model becomes the interactive default.
 If you set `NEMOCLAW_MODEL` to a safe custom model ID that is absent from the live catalog, it does not replace the live menu default.
 Choose **Other** to use that value as the pre-filled manual entry; NemoClaw validates it against NVIDIA Endpoints before continuing.
 NemoClaw neither displays nor accepts an unsafe `NEMOCLAW_MODEL` value as the manual-entry prefill.
