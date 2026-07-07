@@ -157,7 +157,7 @@ runner.runCapture = (command) => {
       "  Provider: nvidia-router",
       "  Model: nvidia-routed",
       "  Version: 1",
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
   }
   return "";
 };
@@ -414,7 +414,7 @@ runner.runCapture = (command) => {
       "  Provider: nvidia-router",
       "  Model: nvidia-routed",
       "  Version: 1",
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
   }
   return "";
 };
@@ -612,7 +612,7 @@ runner.runCapture = (command) => {
       "  Provider: nvidia-router",
       "  Model: nvidia-routed",
       "  Version: 1",
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
   }
   return "";
 };
@@ -846,7 +846,7 @@ runner.runCapture = (command) => {
       "  Provider: nvidia-router",
       "  Model: nvidia-routed",
       "  Version: 1",
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
   }
   return "";
 };
@@ -1059,7 +1059,7 @@ runner.runCapture = (command) => {
       "  Provider: nvidia-router",
       "  Model: nvidia-routed",
       "  Version: 1",
-    ].join("\\n");
+    ].join(String.fromCharCode(10));
   }
   return "";
 };

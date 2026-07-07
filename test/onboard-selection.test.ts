@@ -7,8 +7,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-
 import { normalizeProviderBaseUrl } from "../src/lib/core/url-utils.js";
+import { resetOllamaHostCache } from "../src/lib/inference/local.js";
 import {
   promptCloudModel,
   promptInputModel,
@@ -16,14 +16,34 @@ import {
 } from "../src/lib/inference/model-prompts.js";
 import { parseNvidiaFeaturedModels } from "../src/lib/inference/nvidia-featured-models.js";
 import {
+  applyOllamaRuntimeContextWindow,
+  resetOllamaRuntimeContextWindowAutoState,
+} from "../src/lib/inference/ollama-runtime-context.js";
+import {
   validateAnthropicModel,
   validateOpenAiLikeModel,
 } from "../src/lib/inference/provider-models.js";
+import { resolveNonInteractiveBuildCredential } from "../src/lib/onboard/build-credential-reuse.js";
+import {
+  isBackToSelection,
+  returningToProviderSelection,
+} from "../src/lib/onboard/credential-navigation.js";
 import { createInferenceSelectionValidationHelpers } from "../src/lib/onboard/inference-selection-validation.js";
+import {
+  type InstallOllamaLinuxOptions,
+  installOllamaOnLinux,
+} from "../src/lib/onboard/install-ollama-linux.js";
 import { getWindowsHostOllamaDockerRequirement } from "../src/lib/onboard/local-inference-topology.js";
+import {
+  assertOllamaUpgradeApplied,
+  resolveOllamaInstallMenuEntry,
+} from "../src/lib/onboard/ollama-install-menu.js";
+import { ensureOllamaLoopbackSystemdOverride } from "../src/lib/onboard/ollama-systemd.js";
+import type { InferenceProviderHostState } from "../src/lib/onboard/provider-host-state.js";
 import { buildInferenceProviderMenu } from "../src/lib/onboard/provider-menu.js";
 import { resolveRequestedProviderSelection } from "../src/lib/onboard/provider-selection.js";
 import { reportProviderSelectionFailure } from "../src/lib/onboard/provider-selection-failure.js";
+import { createSetupNim, type SetupNimFlowDeps } from "../src/lib/onboard/setup-nim-flow.js";
 import { createSetupNimOllamaHandlers } from "../src/lib/onboard/setup-nim-ollama.js";
 import {
   createRemoteModelValidator,
@@ -32,6 +52,7 @@ import {
 } from "../src/lib/onboard/setup-nim-selection.js";
 import { createValidationRecoveryPromptHelpers } from "../src/lib/onboard/validation-recovery-prompt.js";
 import { detectWindowsHostOllama } from "../src/lib/onboard/windows-host-ollama.js";
+import { getTransportRecoveryMessage } from "../src/lib/validation-recovery.js";
 
 import { testTimeout } from "./helpers/timeouts";
 import {
@@ -66,10 +87,155 @@ const TEST_REMOTE_PROVIDER_CONFIG = {
   gemini: { label: "Google Gemini", providerName: "gemini-api" },
 };
 
+const TEST_SETUP_NIM_REMOTE_PROVIDER_CONFIG: SetupNimFlowDeps["remoteProviderConfig"] = {
+  build: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.build,
+    endpointUrl: "https://integrate.api.nvidia.com/v1",
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+  },
+  openai: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.openai,
+    endpointUrl: "https://api.openai.com/v1",
+    credentialEnv: "OPENAI_API_KEY",
+  },
+  custom: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.custom,
+    endpointUrl: "",
+    credentialEnv: "COMPATIBLE_API_KEY",
+  },
+  anthropic: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.anthropic,
+    endpointUrl: "https://api.anthropic.com",
+    credentialEnv: "ANTHROPIC_API_KEY",
+  },
+  anthropicCompatible: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.anthropicCompatible,
+    endpointUrl: "",
+    credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+  },
+  gemini: {
+    ...TEST_REMOTE_PROVIDER_CONFIG.gemini,
+    endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    credentialEnv: "GEMINI_API_KEY",
+  },
+};
+
 type WindowsRequirement = ReturnType<typeof getWindowsHostOllamaDockerRequirement>;
 type ProviderMenuOverrides = Partial<Parameters<typeof buildInferenceProviderMenu>[0]>;
 type SetupNimOllamaDeps = Parameters<typeof createSetupNimOllamaHandlers>[0];
 type RemoteModelValidatorDeps = Parameters<typeof createRemoteModelValidator>[0];
+
+function unexpected(name: string): never {
+  throw new Error(`Unexpected ${name} call`);
+}
+
+function makeSetupNimHostState(
+  overrides: Partial<InferenceProviderHostState> = {},
+): InferenceProviderHostState {
+  return {
+    hasOllama: false,
+    ollamaHost: null,
+    ollamaRunning: false,
+    isWindowsHostOllama: false,
+    isWsl: false,
+    hasWindowsOllama: false,
+    winOllamaInstalledPath: "",
+    winOllamaLoopbackOnly: false,
+    windowsOllamaReachable: false,
+    windowsHostOllamaDockerRequirement: getWindowsHostOllamaDockerRequirement(null),
+    vllmRunning: false,
+    vllmProfile: null,
+    hasVllmImage: false,
+    vllmEntries: [],
+    ollamaInstallMenu: { entry: null, hasUpgradableOllama: false },
+    gpuNimCapable: false,
+    ...overrides,
+  };
+}
+
+function makeSetupNimFlowDeps(overrides: Partial<SetupNimFlowDeps> = {}): SetupNimFlowDeps {
+  return {
+    remoteProviderConfig: TEST_SETUP_NIM_REMOTE_PROVIDER_CONFIG,
+    experimental: false,
+    ollamaPort: 11434,
+    vllmPort: 8000,
+    step: () => {},
+    isNonInteractive: () => false,
+    getNonInteractiveProvider: () => null,
+    getNonInteractiveModel: () => null,
+    createNvidiaFeaturedModelSession: () => ({
+      select: async () => unexpected("featured model selection"),
+    }),
+    detectInferenceProviderHostState: () => makeSetupNimHostState(),
+    getAgentInferenceProviderOptions: () => [],
+    loadRoutedProfile: () => null,
+    readRecordedProvider: () => null,
+    readRecordedNimContainer: () => null,
+    readRecordedModel: () => null,
+    rejectWindowsHostOllama: () => false,
+    prompt: async () => "",
+    selectFromNumberedMenu: (rawChoice, defaultIndex, options) => {
+      const index = Number(rawChoice || defaultIndex) - 1;
+      return options[index] ?? unexpected(`provider menu choice ${rawChoice}`);
+    },
+    note: () => {},
+    log: () => {},
+    error: () => {},
+    exitProcess: (code) => unexpected(`exitProcess(${code})`),
+    abortNonInteractive: (message) => unexpected(`abortNonInteractive(${message})`),
+    handleRemoteProviderSelection: async () => unexpected("remote provider selection"),
+    handleNimLocalSelection: async () => unexpected("local NIM selection"),
+    handleRunningOllamaSelection: async () => unexpected("running Ollama selection"),
+    handleWindowsHostOllamaSelection: async () => unexpected("Windows Ollama selection"),
+    handleInstallOllamaSelection: async () => unexpected("Ollama install selection"),
+    installVllm: async () => unexpected("vLLM install"),
+    handleVllmSelection: async () => unexpected("vLLM selection"),
+    handleRoutedSelection: async () => unexpected("routed selection"),
+    coerceAgentInferenceApi: (_agent, preferredInferenceApi) => preferredInferenceApi,
+    clearCompatibleEndpointReasoning: () => null,
+    maybePromptForInferenceInputCapability: async () => {},
+    ...overrides,
+  };
+}
+
+function makeInstallOllamaLinuxOptions(
+  overrides: Partial<InstallOllamaLinuxOptions> = {},
+): InstallOllamaLinuxOptions {
+  return {
+    isNonInteractive: () => false,
+    getEuid: () => 1000,
+    isTty: () => true,
+    homedir: () => "/home/test",
+    arch: () => "arm64",
+    canSudoNonInteractive: () => false,
+    runCaptureImpl: vi.fn().mockReturnValue(""),
+    runCaptureExImpl: vi
+      .fn()
+      .mockReturnValue({ stdout: "", stderr: "", exitCode: 0, timedOut: false }),
+    runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
+    waitForHttpImpl: vi.fn().mockReturnValue(true),
+    sleepSecondsImpl: vi.fn(),
+    ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
+    fileExistsImpl: vi.fn().mockReturnValue(false),
+    readFileImpl: vi.fn().mockReturnValue(""),
+    log: vi.fn(),
+    errorLog: vi.fn(),
+    ...overrides,
+  };
+}
+
+function successfulRunShellResult(): ReturnType<
+  NonNullable<InstallOllamaLinuxOptions["runShellImpl"]>
+> {
+  return {
+    pid: 1,
+    output: [null, "", ""],
+    stdout: "",
+    stderr: "",
+    status: 0,
+    signal: null,
+  };
+}
 
 const TEST_OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const TEST_ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
@@ -346,58 +512,6 @@ printf '%s' "$status"
   );
 }
 
-function writeAnthropicStyleAuthRetryCurl(
-  fakeBin: string,
-  goodToken: string,
-  models = ["claude-sonnet-4-6"],
-) {
-  fs.writeFileSync(
-    path.join(fakeBin, "curl"),
-    `#!/usr/bin/env bash
-body='{"error":{"message":"forbidden"}}'
-status="403"
-outfile=""
-auth=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -H)
-      if echo "$2" | grep -q '^x-api-key: '; then
-        auth="$2"
-      fi
-      shift 2
-      ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q '/v1/models$'; then
-  body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
-  status="200"
-elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/v1/messages$'; then
-  body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-    { mode: 0o755 },
-  );
-}
-
-type CredentialBackScenario = {
-  name: string;
-  answers: string[];
-  menuSelections?: string[];
-  credentialEnv: string;
-  promptPattern: RegExp;
-  expectedOutcome?: "back" | "exit";
-  env?: Record<string, string>;
-  agent?: "hermes";
-  gpu?: Record<string, unknown> | null;
-  stubNim?: boolean;
-};
-
 function writeAlwaysOkCurl(fakeBin: string, body = '{"id":"resp_123"}') {
   fs.writeFileSync(
     path.join(fakeBin, "curl"),
@@ -430,14 +544,121 @@ printf '%s' "$status"
   );
 }
 
-function runCredentialBackScenario(scenario: CredentialBackScenario) {
+type ProcessCredentialBackScenario = {
+  name: string;
+  label: string;
+  answers: string[];
+  menuSelections?: string[];
+  credentialEnv: string;
+  promptPattern: RegExp;
+  expectedOutcome?: "back" | "exit";
+  env?: Record<string, string>;
+  agent?: "hermes";
+  gpu?: Record<string, unknown> | null;
+  stubNim?: boolean;
+};
+
+const PROCESS_CREDENTIAL_BACK_SCENARIOS: readonly ProcessCredentialBackScenario[] = [
+  {
+    name: "OpenAI",
+    label: "OpenAI API key",
+    answers: ["2", "back", "1", ""],
+    credentialEnv: "OPENAI_API_KEY",
+    promptPattern: /OpenAI API key: /,
+  },
+  {
+    name: "Anthropic",
+    label: "Anthropic API key",
+    answers: ["4", "back", "1", ""],
+    credentialEnv: "ANTHROPIC_API_KEY",
+    promptPattern: /Anthropic API key: /,
+  },
+  {
+    name: "Anthropic exit",
+    label: "Anthropic API key",
+    answers: ["4", "exit"],
+    credentialEnv: "ANTHROPIC_API_KEY",
+    promptPattern: /Anthropic API key: /,
+    expectedOutcome: "exit",
+  },
+  {
+    name: "Google Gemini",
+    label: "Google Gemini API key",
+    answers: ["6", "back", "1", ""],
+    credentialEnv: "GEMINI_API_KEY",
+    promptPattern: /Google Gemini API key: /,
+  },
+  {
+    name: "Other OpenAI-compatible endpoint",
+    label: "Other OpenAI-compatible endpoint API key",
+    answers: ["3", "https://proxy.example.com/v1", "back", "1", ""],
+    credentialEnv: "COMPATIBLE_API_KEY",
+    promptPattern: /Other OpenAI-compatible endpoint API key: /,
+  },
+  {
+    name: "Other Anthropic-compatible endpoint",
+    label: "Other Anthropic-compatible endpoint API key",
+    answers: ["5", "https://proxy.example.com", "back", "1", ""],
+    credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+    promptPattern: /Other Anthropic-compatible endpoint API key: /,
+  },
+  {
+    name: "Model Router",
+    label: "Model Router API key",
+    answers: ["back", ""],
+    menuSelections: ["Model Router", "NVIDIA Endpoints"],
+    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    promptPattern: /Model Router API key: /,
+  },
+  {
+    name: "Hermes Provider Nous API key",
+    label: "Nous API Key",
+    answers: ["back", ""],
+    menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
+    credentialEnv: "NOUS_API_KEY",
+    promptPattern: /Nous API Key: /,
+    agent: "hermes",
+  },
+  {
+    name: "Local NIM NGC API key",
+    label: "NGC API Key",
+    answers: ["", "back", ""],
+    menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
+    credentialEnv: "NGC_API_KEY",
+    promptPattern: /NGC API Key: /,
+    env: { NEMOCLAW_EXPERIMENTAL: "1" },
+    gpu: {
+      type: "nvidia",
+      name: "test-gpu",
+      count: 1,
+      totalMemoryMB: 999999,
+      perGpuMB: 999999,
+      nimCapable: true,
+    },
+    stubNim: true,
+  },
+];
+
+type CredentialBackPayload = {
+  name: string;
+  outcome: "completed" | "exit";
+  result?: { provider?: string };
+  exitCode?: number;
+  messages: string[];
+  prompts: Array<{ message: string; secret: boolean }>;
+  lines: string[];
+  saved: Array<{ key: string; value: string }>;
+  menuSelectionIndex: number;
+  credentialValue: string | null;
+};
+
+let credentialBackBatchResults: Map<string, CredentialBackPayload> | undefined;
+
+function runCredentialBackScenarioBatch(): Map<string, CredentialBackPayload> {
   const repoRoot = path.join(import.meta.dirname, "..");
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-batch-"));
   const fakeBin = path.join(tmpDir, "bin");
-  const scriptPath = path.join(
-    tmpDir,
-    `${scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.js`,
-  );
+  const scriptPath = path.join(tmpDir, "credential-back-batch.js");
   const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
     path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
@@ -445,50 +666,37 @@ function runCredentialBackScenario(scenario: CredentialBackScenario) {
   const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
   const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
   const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
+  const childScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.map(
+    ({ promptPattern: _promptPattern, ...scenario }) => scenario,
+  );
 
   fs.mkdirSync(fakeBin, { recursive: true });
   writeAlwaysOkCurl(fakeBin);
 
   const script = String.raw`
-const answers = ${JSON.stringify(scenario.answers)};
-const menuSelections = ${JSON.stringify(scenario.menuSelections || [])};
-let menuSelectionIndex = 0;
-const expectedOutcome = ${JSON.stringify(scenario.expectedOutcome || "back")};
-const scenarioEnv = ${JSON.stringify(scenario.env || {})};
-const messages = [];
-const prompts = [];
-const saved = [];
-const lines = [];
+const scenarios = ${JSON.stringify(childScenarios)};
 const clearCredentialEnv = [
-  "NVIDIA_API_KEY", "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "COMPATIBLE_API_KEY",
-  "COMPATIBLE_ANTHROPIC_API_KEY",
-  "NOUS_API_KEY",
-  "NVIDIA_INFERENCE_API_KEY",
-  "NGC_API_KEY",
-  "NEMOCLAW_PROVIDER_KEY",
+  "NVIDIA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY", "COMPATIBLE_ANTHROPIC_API_KEY", "NOUS_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY",
 ];
 const clearOnboardControlEnv = [
-  "NEMOCLAW_NON_INTERACTIVE",
-  "NEMOCLAW_PROVIDER",
-  "NEMOCLAW_MODEL",
-  "NEMOCLAW_YES",
-  "NEMOCLAW_PREFERRED_API",
-  "NEMOCLAW_EXPERIMENTAL",
+  "NEMOCLAW_NON_INTERACTIVE", "NEMOCLAW_PROVIDER", "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES", "NEMOCLAW_PREFERRED_API", "NEMOCLAW_EXPERIMENTAL",
 ];
-
-for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
-  delete process.env[key];
-}
-Object.assign(process.env, scenarioEnv);
+let answers = [];
+let menuSelections = [];
+let menuSelectionIndex = 0;
+let messages = [];
+let prompts = [];
+let saved = [];
+let lines = [];
 
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nim = require(${nimPath});
 
-function selectRecentMenuOption(patternText, lines) {
+function selectRecentMenuOption(patternText) {
   const pattern = new RegExp(patternText, "i");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const match = /^\s*(\d+)\)\s+(.+)$/.exec(lines[index]);
@@ -506,13 +714,11 @@ credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
   prompts.push({ message, secret: opts.secret === true });
   if (/Choose \[/.test(message) && menuSelectionIndex < menuSelections.length) {
-    return selectRecentMenuOption(menuSelections[menuSelectionIndex++], lines);
+    return selectRecentMenuOption(menuSelections[menuSelectionIndex++]);
   }
   return answers.shift() || "";
 };
-credentials.ensureApiKey = async () => {
-  return { kind: "credential", value: "nvapi-good" };
-};
+credentials.ensureApiKey = async () => ({ kind: "credential", value: "nvapi-good" });
 const originalSaveCredential = credentials.saveCredential;
 credentials.saveCredential = (key, value) => {
   saved.push({ key, value });
@@ -520,28 +726,43 @@ credentials.saveCredential = (key, value) => {
 };
 runner.runCapture = () => "";
 
-if (${JSON.stringify(scenario.stubNim === true)}) {
-  nim.isNgcLoggedIn = () => false;
-  nim.dockerLoginNgc = () => {
-    throw new Error("NGC login should not run after back navigation");
-  };
-  nim.pullNimImage = () => "image";
-  nim.startNimContainerByName = () => "container";
-  nim.waitForNimHealth = () => true;
-}
+nim.isNgcLoggedIn = () => false;
+nim.dockerLoginNgc = () => {
+  throw new Error("NGC login should not run after back navigation");
+};
+nim.pullNimImage = () => {
+  throw new Error("NIM image pull should not run after back navigation");
+};
+nim.startNimContainerByName = () => {
+  throw new Error("NIM container startup should not run after back navigation");
+};
+nim.waitForNimHealth = () => {
+  throw new Error("NIM health wait should not run after back navigation");
+};
 
 const { setupNim } = require(${onboardPath});
-const agent = ${JSON.stringify(scenario.agent || null)}
-  ? require(${agentDefsPath}).loadAgent(${JSON.stringify(scenario.agent || null)})
-  : null;
+const { loadAgent } = require(${agentDefsPath});
+const hostLog = console.log;
 
-(async () => {
+async function runScenario(scenario) {
+  for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
+    delete process.env[key];
+  }
+  Object.assign(process.env, scenario.env || {});
+  answers = [...scenario.answers];
+  menuSelections = [...(scenario.menuSelections || [])];
+  menuSelectionIndex = 0;
+  messages = [];
+  prompts = [];
+  saved = [];
+  lines = [];
+
   const originalLog = console.log;
   const originalError = console.error;
   const originalExit = process.exit;
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
-  if (expectedOutcome === "exit") {
+  if (scenario.expectedOutcome === "exit") {
     process.exit = (code) => {
       const error = new Error("process.exit:" + code);
       error.exitCode = code;
@@ -549,8 +770,10 @@ const agent = ${JSON.stringify(scenario.agent || null)}
     };
   }
   try {
-    const result = await setupNim(${JSON.stringify(scenario.gpu ?? null)}, null, agent);
-    originalLog(JSON.stringify({
+    const agent = scenario.agent ? loadAgent(scenario.agent) : null;
+    const result = await setupNim(scenario.gpu || null, null, agent);
+    return {
+      name: scenario.name,
       outcome: "completed",
       result,
       messages,
@@ -558,13 +781,14 @@ const agent = ${JSON.stringify(scenario.agent || null)}
       lines,
       saved,
       menuSelectionIndex,
-      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
-    }));
+      credentialValue: process.env[scenario.credentialEnv] || null,
+    };
   } catch (error) {
-    if (expectedOutcome !== "exit" || error.exitCode === undefined) {
+    if (scenario.expectedOutcome !== "exit" || error.exitCode === undefined) {
       throw error;
     }
-    originalLog(JSON.stringify({
+    return {
+      name: scenario.name,
       outcome: "exit",
       exitCode: error.exitCode,
       messages,
@@ -572,61 +796,212 @@ const agent = ${JSON.stringify(scenario.agent || null)}
       lines,
       saved,
       menuSelectionIndex,
-      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
-    }));
+      credentialValue: process.env[scenario.credentialEnv] || null,
+    };
   } finally {
     console.log = originalLog;
     console.error = originalError;
     process.exit = originalExit;
   }
+}
+
+(async () => {
+  const results = [];
+  for (const scenario of scenarios) {
+    results.push(await runScenario(scenario));
+  }
+  hostLog(JSON.stringify(results));
 })().catch((error) => {
   console.error(error && error.stack ? error.stack : String(error));
   process.exit(1);
 });
 `;
-  fs.writeFileSync(scriptPath, script);
 
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    env: {
-      ...process.env,
-      HOME: tmpDir,
-      PATH: `${fakeBin}:${process.env.PATH || ""}`,
-    },
-    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-  });
+  try {
+    fs.writeFileSync(scriptPath, script);
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+      timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+    });
 
-  assert.equal(result.status, 0, result.stderr);
-  const payload = JSON.parse(result.stdout.trim());
-  assert.equal(payload.menuSelectionIndex, scenario.menuSelections?.length || 0);
-  if (scenario.expectedOutcome === "exit") {
-    assert.equal(payload.outcome, "exit");
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.credentialValue, null);
-    assert.deepEqual(payload.saved, []);
-    assert.ok(payload.lines.some((line: string) => line.includes("Exiting onboarding.")));
-    assert.ok(
-      payload.prompts.some(
-        (entry: { message: string; secret: boolean }) =>
-          scenario.promptPattern.test(entry.message) && entry.secret,
-      ),
-    );
-    return;
+    assert.equal(result.status, 0, result.stderr);
+    const payloads = JSON.parse(result.stdout.trim()) as CredentialBackPayload[];
+    assert.equal(payloads.length, PROCESS_CREDENTIAL_BACK_SCENARIOS.length);
+    return new Map(payloads.map((payload) => [payload.name, payload]));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
-  assert.equal(payload.outcome, "completed");
-  assert.equal(payload.result.provider, "nvidia-prod");
-  assert.ok(
-    payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+}
+
+function runCredentialBackScenarioProcess(scenario: ProcessCredentialBackScenario): void {
+  const payload = (credentialBackBatchResults ??= runCredentialBackScenarioBatch()).get(
+    scenario.name,
   );
-  assert.ok(
-    payload.prompts.some(
-      (entry: { message: string; secret: boolean }) =>
-        scenario.promptPattern.test(entry.message) && entry.secret,
-    ),
+  assert.ok(payload, `Missing credential-back payload for ${scenario.name}`);
+  assert.equal(payload.menuSelectionIndex, scenario.menuSelections?.length || 0);
+  switch (scenario.expectedOutcome) {
+    case "exit":
+      assert.equal(payload.outcome, "exit");
+      assert.equal(payload.exitCode, 1);
+      assert.equal(payload.credentialValue, null);
+      assert.deepEqual(payload.saved, []);
+      assert.ok(payload.lines.some((line) => line.includes("Exiting onboarding.")));
+      assert.ok(
+        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+      );
+      return;
+    default:
+      assert.equal(payload.outcome, "completed");
+      assert.equal(payload.result?.provider, "nvidia-prod");
+      assert.ok(payload.lines.some((line) => line.includes("Returning to provider selection.")));
+      assert.ok(
+        payload.prompts.some((entry) => scenario.promptPattern.test(entry.message) && entry.secret),
+      );
+      assert.ok(payload.saved.every((entry) => entry.value !== "back"));
+      assert.equal(payload.credentialValue, null);
+  }
+}
+
+type CredentialRetryScenario = {
+  label: string;
+  selectedKey: "build" | "openai" | "anthropic" | "gemini" | "custom" | "anthropicCompatible";
+  state: SetupNimSelectionState;
+  credentialEnv: string;
+  badCredential: string;
+  goodCredential: string;
+  successApi: "openai-completions" | "openai-responses" | "anthropic-messages";
+  probeKind: "openai" | "anthropic";
+  retryAnswer?: string;
+  authMode?: "query-param";
+};
+
+async function runCredentialRetryScenario(scenario: CredentialRetryScenario) {
+  const previousCredential = process.env[scenario.credentialEnv];
+  process.env[scenario.credentialEnv] = scenario.badCredential;
+  const answers = [scenario.retryAnswer ?? "retry", scenario.goodCredential];
+  const prompts: Array<{ message: string; secret: boolean }> = [];
+  const probedCredentials: Array<string | null> = [];
+  const prompt = async (message: string, options: { secret?: boolean } = {}) => {
+    prompts.push({ message, secret: options.secret === true });
+    return answers.shift() ?? "";
+  };
+  const recovery = createValidationRecoveryPromptHelpers({
+    isNonInteractive: () => false,
+    prompt,
+    validateNvidiaApiKeyValue: (value, credentialEnv) =>
+      credentialEnv === "NVIDIA_INFERENCE_API_KEY" && !value.startsWith("nvapi-")
+        ? "  NVIDIA API key must start with nvapi-."
+        : null,
+    getTransportRecoveryMessage: () => "  Validation hit a network or transport error.",
+    exitOnboardFromPrompt(): never {
+      throw new Error("Unexpected onboarding exit");
+    },
+  });
+  const success = {
+    ok: true as const,
+    api: scenario.successApi,
+    label:
+      scenario.successApi === "anthropic-messages"
+        ? "Anthropic Messages API"
+        : scenario.successApi === "openai-responses"
+          ? "Responses API"
+          : "Chat Completions API",
+  };
+  const credentialFailure = {
+    ok: false as const,
+    failures: [{ name: success.label, httpStatus: 403, message: "forbidden" }],
+  };
+  const probeOpenAiLikeEndpoint = vi.fn(
+    (_endpointUrl: string, _model: string, credential: string | null | undefined) => {
+      probedCredentials.push(credential ?? null);
+      return credential === scenario.goodCredential ? success : credentialFailure;
+    },
   );
-  assert.ok(payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"));
-  assert.equal(payload.credentialValue, null);
+  const probeAnthropicEndpoint = vi.fn(
+    (_endpointUrl: string, _model: string, credential: string | null | undefined) => {
+      probedCredentials.push(credential ?? null);
+      return credential === scenario.goodCredential ? success : credentialFailure;
+    },
+  );
+  const validation = createInferenceSelectionValidationHelpers({
+    isNonInteractive: () => false,
+    agentProductName: () => "OpenClaw",
+    getCredential: (name) => process.env[name] ?? null,
+    probeOpenAiLikeEndpoint,
+    probeAnthropicEndpoint,
+    promptValidationRecovery: recovery.promptValidationRecovery,
+  });
+  const { validateSelectedRemoteModel } = createRemoteModelValidator(
+    makeRemoteModelValidatorDeps({
+      validateOpenAiLikeSelection: validation.validateOpenAiLikeSelection,
+      validateAnthropicSelectionWithRetryMessage:
+        validation.validateAnthropicSelectionWithRetryMessage,
+      validateCustomOpenAiLikeSelection: validation.validateCustomOpenAiLikeSelection,
+      validateCustomAnthropicSelection: validation.validateCustomAnthropicSelection,
+      getProbeAuthMode: () => scenario.authMode,
+    }),
+  );
+  const remoteConfig = {
+    label: scenario.label,
+    endpointUrl: scenario.state.endpointUrl ?? "",
+    helpUrl: null,
+  };
+
+  try {
+    const captured = await captureConsoleOutput(async () => {
+      const first = await validateSelectedRemoteModel({
+        selected: { key: scenario.selectedKey },
+        remoteConfig,
+        state: scenario.state,
+        selectedCredentialEnv: scenario.credentialEnv,
+      });
+      const second = await validateSelectedRemoteModel({
+        selected: { key: scenario.selectedKey },
+        remoteConfig,
+        state: scenario.state,
+        selectedCredentialEnv: scenario.credentialEnv,
+      });
+      return { first, second };
+    });
+
+    assert.deepEqual(captured.result, { first: "retry-model", second: "selected" });
+    assert.equal(process.env[scenario.credentialEnv], scenario.goodCredential);
+    assert.deepEqual(probedCredentials, [scenario.badCredential, scenario.goodCredential]);
+    assert.equal(
+      probeOpenAiLikeEndpoint.mock.calls.length,
+      scenario.probeKind === "openai" ? 2 : 0,
+    );
+    assert.equal(
+      probeAnthropicEndpoint.mock.calls.length,
+      scenario.probeKind === "anthropic" ? 2 : 0,
+    );
+    assert.ok(
+      captured.lines.some((line) => line.includes(`${scenario.label} authorization failed`)),
+    );
+    assert.ok(prompts.some(({ message }) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
+    assert.ok(prompts.some(({ message }) => message.includes(`${scenario.label} API key: `)));
+    assert.deepEqual(
+      prompts.find(({ message }) => CREDENTIAL_RETRY_PROMPT_RE.test(message)),
+      { message: CREDENTIAL_RETRY_PROMPT, secret: true },
+    );
+    assert.ok(prompts.every(({ secret }) => secret));
+    assert.ok(
+      captured.lines.every(
+        (line) => !line.includes(scenario.badCredential) && !line.includes(scenario.goodCredential),
+      ),
+      "credential values must not appear in validation output",
+    );
+    return { ...captured, prompts, probedCredentials };
+  } finally {
+    restoreProcessEnvValue(scenario.credentialEnv, previousCredential);
+  }
 }
 
 describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
@@ -986,89 +1361,44 @@ const { setupNim } = require(${onboardPath});
   });
 
   it("re-resolves auto-detected Ollama context windows across model selections", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-context-"));
-    const scriptPath = path.join(tmpDir, "ollama-context-check.js");
-    const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const previousContextWindow = process.env.NEMOCLAW_CONTEXT_WINDOW;
+    let runtimeModels: Array<{ name: string; context_length: number }> = [];
+    const runCapture = () => JSON.stringify({ models: runtimeModels });
+    const apply = (model: string) =>
+      applyOllamaRuntimeContextWindow(model, () => "127.0.0.1", {
+        runCaptureImpl: runCapture,
+        logger: { log: () => {}, warn: () => {} },
+      });
 
-    const script = String.raw`
-const runner = require(${runnerPath});
+    try {
+      resetOllamaRuntimeContextWindowAutoState();
+      delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+      runtimeModels = [{ name: "qwen3.6:35b", context_length: 262144 }];
+      apply("qwen3.6:35b");
+      assert.equal(process.env.NEMOCLAW_CONTEXT_WINDOW, "262144");
 
-let models = [];
-runner.runCapture = (command) => {
-  const rendered = Array.isArray(command) ? command.join(" ") : command;
-  if (rendered.includes("/api/ps")) {
-    return JSON.stringify({ models });
-  }
-  return "";
-};
+      runtimeModels = [{ name: "qwen2.5:7b", context_length: 32768 }];
+      apply("qwen2.5:7b");
+      assert.equal(process.env.NEMOCLAW_CONTEXT_WINDOW, "32768");
 
-const {
-  applyOllamaRuntimeContextWindow,
-  resetOllamaRuntimeContextWindowAutoState,
-} = require(${localInferencePath});
+      runtimeModels = [];
+      apply("qwen2.5:7b");
+      assert.equal(process.env.NEMOCLAW_CONTEXT_WINDOW, undefined);
 
-const result = {};
-const originalWarn = console.warn;
-const originalLog = console.log;
-console.warn = () => {};
-console.log = () => {};
-try {
-  resetOllamaRuntimeContextWindowAutoState();
-  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+      resetOllamaRuntimeContextWindowAutoState();
+      process.env.NEMOCLAW_CONTEXT_WINDOW = "262144";
+      runtimeModels = [{ name: "qwen2.5:7b", context_length: 32768 }];
+      apply("qwen2.5:7b");
+      assert.equal(process.env.NEMOCLAW_CONTEXT_WINDOW, "262144");
 
-  models = [{ name: "qwen3.6:35b", context_length: 262144 }];
-  applyOllamaRuntimeContextWindow("qwen3.6:35b");
-  result.initial = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
-
-  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
-  applyOllamaRuntimeContextWindow("qwen2.5:7b");
-  result.updated = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
-
-  models = [];
-  applyOllamaRuntimeContextWindow("qwen2.5:7b");
-  result.cleared = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
-
-  resetOllamaRuntimeContextWindowAutoState();
-  process.env.NEMOCLAW_CONTEXT_WINDOW = "262144";
-  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
-  applyOllamaRuntimeContextWindow("qwen2.5:7b");
-  result.userOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
-
-  resetOllamaRuntimeContextWindowAutoState();
-  process.env.NEMOCLAW_CONTEXT_WINDOW = "bogus";
-  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
-  applyOllamaRuntimeContextWindow("qwen2.5:7b");
-  result.invalidOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
-} finally {
-  console.warn = originalWarn;
-  console.log = originalLog;
-}
-
-console.log(JSON.stringify(result));
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout.trim()), {
-      initial: "262144",
-      updated: "32768",
-      cleared: null,
-      userOverride: "262144",
-      invalidOverride: "bogus",
-    });
+      resetOllamaRuntimeContextWindowAutoState();
+      process.env.NEMOCLAW_CONTEXT_WINDOW = "bogus";
+      apply("qwen2.5:7b");
+      assert.equal(process.env.NEMOCLAW_CONTEXT_WINDOW, "bogus");
+    } finally {
+      resetOllamaRuntimeContextWindowAutoState();
+      restoreProcessEnvValue("NEMOCLAW_CONTEXT_WINDOW", previousContextWindow);
+    }
   });
 
   it("starts managed Ollama on loopback before exposing the auth proxy", () => {
@@ -1606,46 +1936,35 @@ console.log(JSON.stringify({ result, shellCommands }));
     );
   });
 
-  it("rejects unsupported non-interactive sudo mode values", { timeout: 10_000 }, () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-invalid-"));
-    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-invalid-check.js");
-    const ollamaSystemdPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "ollama-systemd.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-
-    const script = String.raw`
-const runner = require(${runnerPath});
-const platform = require(${platformPath});
-
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
-  return "";
-};
-platform.isWsl = () => false;
-Object.defineProperty(process, "platform", { value: "linux" });
-
-const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
-ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "foo",
-      },
+  it("rejects unsupported non-interactive sudo mode values", () => {
+    const previousMode = process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
+    process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE = "foo";
+    const exitError = new Error("process.exit:1");
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw exitError;
+    }) as never);
+    const errors: string[] = [];
+    const error = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args.join(" "));
     });
 
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Unsupported NEMOCLAW_NON_INTERACTIVE_SUDO_MODE value: foo/);
+    try {
+      assert.throws(
+        () =>
+          ensureOllamaLoopbackSystemdOverride({
+            platformImpl: () => "linux",
+            hasOllamaSystemdUnitImpl: () => true,
+            isNonInteractive: () => true,
+          }),
+        (thrown) => thrown === exitError,
+      );
+      assert.equal(exit.mock.calls.length, 1);
+      assert.match(errors.join("\n"), /Unsupported NEMOCLAW_NON_INTERACTIVE_SUDO_MODE value: foo/);
+    } finally {
+      error.mockRestore();
+      exit.mockRestore();
+      restoreProcessEnvValue("NEMOCLAW_NON_INTERACTIVE_SUDO_MODE", previousMode);
+    }
   });
 
   it("repairs already-loopback systemd Ollama without starting a duplicate daemon", {
@@ -1901,89 +2220,54 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
-  it("returns to provider selection when Ollama manual entry chooses back", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "ollama-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+  it("returns to provider selection when Ollama manual entry chooses back", async () => {
+    const answers = ["7", "1"];
+    const messages: string[] = [];
+    const lines: string[] = [];
+    const stateSelections: string[] = [];
+    const { handleRunningOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        selectAndValidateOllamaModel: async () => {
+          stateSelections.push("ollama-model");
+          lines.push("  Returning to provider selection.");
+          return { outcome: "back-to-selection" };
+        },
+      }),
     );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["7", "2", "back", "1", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
-runner.run = () => ({ status: 0 });
-runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  // Once onboard.ts is migrated to argv (#1889), these mocks can assert Array.isArray.
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
-  if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
-  return "";
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    const handleRemoteProviderSelection = vi.fn<SetupNimFlowDeps["handleRemoteProviderSelection"]>(
+      async ({ selected }, state) => {
+        assert.equal(selected.key, "build");
+        state.model = "nvidia/nemotron-3-super-120b-a12b";
+        state.provider = "nvidia-prod";
+        state.endpointUrl = "https://integrate.api.nvidia.com/v1";
+        state.credentialEnv = "NVIDIA_INFERENCE_API_KEY";
+        return "selected";
       },
-    });
+    );
+    const setupNim = createSetupNim(
+      makeSetupNimFlowDeps({
+        detectInferenceProviderHostState: () =>
+          makeSetupNimHostState({
+            hasOllama: true,
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+          }),
+        prompt: async (message) => {
+          messages.push(message);
+          return answers.shift() ?? "";
+        },
+        handleRunningOllamaSelection,
+        handleRemoteProviderSelection,
+      }),
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
-    assert.equal(
-      payload.messages.filter((message: string) => /Ollama model id: /.test(message)).length,
-      1,
-    );
+    const result = await setupNim(null);
+
+    assert.equal(result.provider, "nvidia-prod");
+    assert.ok(lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.deepEqual(stateSelections, ["ollama-model"]);
+    assert.equal(messages.filter((message) => /Choose \[/.test(message)).length, 2);
+    assert.equal(handleRemoteProviderSelection.mock.calls.length, 1);
   });
 
   it("offers starter Ollama models when none are installed and pulls the selected model", () => {
@@ -2989,699 +3273,265 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("lets users type back at a lower-level model prompt to return to provider selection", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-model-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "model-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin);
-
-    const script = String.raw`
-for (const key of [
-  "NVIDIA_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY",
-  "COMPATIBLE_API_KEY", "COMPATIBLE_ANTHROPIC_API_KEY", "NOUS_API_KEY",
-  "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY",
-  "NEMOCLAW_NON_INTERACTIVE", "NEMOCLAW_PROVIDER", "NEMOCLAW_MODEL", "NEMOCLAW_YES",
-  "NEMOCLAW_PREFERRED_API", "NEMOCLAW_EXPERIMENTAL",
-]) delete process.env[key];
-
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["3", "https://proxy.example.com/v1", "back", "1", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_API_KEY = "proxy-key";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    try {
-      fs.writeFileSync(scriptPath, script);
-
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        },
-        timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-      });
-
-      assert.equal(result.status, 0, result.stderr);
-      const payload = JSON.parse(result.stdout.trim());
-      assert.equal(payload.result.provider, "nvidia-prod");
-      assert.ok(
-        payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+  it("lets users type back at a lower-level model prompt to return to provider selection", async () => {
+    const messages: string[] = [];
+    const endpointUrl = await resolveCompatibleEndpointInput({
+      kind: "openai",
+      envUrl: null,
+      recoveredEndpointUrl: null,
+      nonInteractive: false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "https://proxy.example.com/v1";
+      },
+    });
+    const model = await promptInputModel(TEST_CUSTOM_OPENAI_CONFIG.label, "custom-model", null, {
+      promptFn: async (message) => {
+        messages.push(message);
+        return "back";
+      },
+    });
+    const { lines } = await captureConsoleOutput(async () => {
+      assert.equal(
+        returningToProviderSelection(model, (): never => {
+          throw new Error("Unexpected onboarding exit");
+        }),
+        true,
       );
-      const promptCount = (pattern: RegExp) =>
-        payload.messages.filter((message: string) => pattern.test(message)).length;
-      assert.equal(promptCount(/Choose \[/), 2);
-      assert.equal(promptCount(/OpenAI-compatible base URL/), 1);
-      assert.equal(promptCount(/Other OpenAI-compatible endpoint model/), 1);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    });
+
+    assert.equal(endpointUrl, "https://proxy.example.com/v1");
+    assert.ok(isBackToSelection(model));
+    assert.ok(lines.some((line) => line.includes("Returning to provider selection.")));
+    assert.equal(
+      messages.filter((message) => /OpenAI-compatible base URL/.test(message)).length,
+      1,
+    );
+    assert.equal(
+      messages.filter((message) => /Other OpenAI-compatible endpoint model/.test(message)).length,
+      1,
+    );
   });
 
   it("lets users type back at a secret provider credential prompt to return to provider selection", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "credential-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin);
-
-    const script = String.raw`
-const clearCredentialEnv = [
-  "NVIDIA_API_KEY", "OPENAI_API_KEY",
-  "ANTHROPIC_API_KEY",
-  "GEMINI_API_KEY",
-  "COMPATIBLE_API_KEY",
-  "COMPATIBLE_ANTHROPIC_API_KEY",
-  "NOUS_API_KEY",
-  "NVIDIA_INFERENCE_API_KEY",
-  "NGC_API_KEY",
-  "NEMOCLAW_PROVIDER_KEY",
-];
-const clearOnboardControlEnv = [
-  "NEMOCLAW_NON_INTERACTIVE",
-  "NEMOCLAW_PROVIDER",
-  "NEMOCLAW_MODEL",
-  "NEMOCLAW_YES",
-  "NEMOCLAW_PREFERRED_API",
-  "NEMOCLAW_EXPERIMENTAL",
-];
-
-for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
-  delete process.env[key];
-}
-
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["2", "back", "1", ""];
-const messages = [];
-const prompts = [];
-const saved = [];
-
-credentials.prompt = async (message, opts = {}) => {
-  messages.push(message);
-  prompts.push({ message, secret: opts.secret === true });
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => {
-  return { kind: "credential", value: "nvapi-good" };
-};
-const originalSaveCredential = credentials.saveCredential;
-credentials.saveCredential = (key, value) => {
-  saved.push({ key, value });
-  return originalSaveCredential(key, value);
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({
-      result,
-      messages,
-      prompts,
-      lines,
-      saved,
-      openaiKey: process.env.OPENAI_API_KEY || null,
-    }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-      timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.openaiKey, null);
-    assert.ok(
-      payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
-    );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
-    );
-    assert.ok(
-      payload.prompts.some(
-        (entry: { message: string; secret: boolean }) =>
-          /OpenAI API key: /.test(entry.message) && entry.secret,
-      ),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+    runCredentialBackScenarioProcess(PROCESS_CREDENTIAL_BACK_SCENARIOS[0]!);
   });
 
-  const secretCredentialBackScenarios: CredentialBackScenario[] = [
-    {
-      name: "Anthropic",
-      answers: ["4", "back", "1", ""],
-      credentialEnv: "ANTHROPIC_API_KEY",
-      promptPattern: /Anthropic API key: /,
-    },
-    {
-      name: "Anthropic exit",
-      answers: ["4", "exit"],
-      credentialEnv: "ANTHROPIC_API_KEY",
-      promptPattern: /Anthropic API key: /,
-      expectedOutcome: "exit",
-    },
-    {
-      name: "Google Gemini",
-      answers: ["6", "back", "1", ""],
-      credentialEnv: "GEMINI_API_KEY",
-      promptPattern: /Google Gemini API key: /,
-    },
-    {
-      name: "Other OpenAI-compatible endpoint",
-      answers: ["3", "https://proxy.example.com/v1", "back", "1", ""],
-      credentialEnv: "COMPATIBLE_API_KEY",
-      promptPattern: /Other OpenAI-compatible endpoint API key: /,
-    },
-    {
-      name: "Other Anthropic-compatible endpoint",
-      answers: ["5", "https://proxy.example.com", "back", "1", ""],
-      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
-      promptPattern: /Other Anthropic-compatible endpoint API key: /,
-    },
-    {
-      name: "Model Router",
-      answers: ["back", ""],
-      menuSelections: ["Model Router", "NVIDIA Endpoints"],
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
-      promptPattern: /Model Router API key: /,
-    },
-    {
-      name: "Hermes Provider Nous API key",
-      answers: ["back", ""],
-      menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
-      credentialEnv: "NOUS_API_KEY",
-      promptPattern: /Nous API Key: /,
-      agent: "hermes",
-    },
-    {
-      name: "Local NIM NGC API key",
-      answers: ["", "back", ""],
-      menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
-      credentialEnv: "NGC_API_KEY",
-      promptPattern: /NGC API Key: /,
-      env: { NEMOCLAW_EXPERIMENTAL: "1" },
-      gpu: {
-        type: "nvidia",
-        name: "test-gpu",
-        count: 1,
-        totalMemoryMB: 999999,
-        perGpuMB: 999999,
-        nimCapable: true,
-      },
-      stubNim: true,
-    },
-  ];
+  const secretCredentialBackScenarios = PROCESS_CREDENTIAL_BACK_SCENARIOS.slice(1, -1);
 
   for (const scenario of secretCredentialBackScenarios) {
     const action = scenario.expectedOutcome === "exit" ? "exit" : "back";
     it(`lets users type ${action} at the ${scenario.name} secret credential prompt`, () => {
-      runCredentialBackScenario(scenario);
+      runCredentialBackScenarioProcess(scenario);
     });
   }
 
-  it("lets users type back after a transport validation failure to return to provider selection", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "transport-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  it("lets users type back at the Local NIM NGC API key secret credential prompt", () => {
+    runCredentialBackScenarioProcess(PROCESS_CREDENTIAL_BACK_SCENARIOS.at(-1)!);
+  });
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
-  esac
-done
-if echo "$url" | grep -q 'api.openai.com'; then
-  printf '%s' 'curl: (6) Could not resolve host: api.openai.com' >&2
-  exit 6
-fi
-printf '%s' '{"id":"resp_123"}' > "$outfile"
-printf '200'
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["2", "", "back", "1", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENAI_API_KEY = "sk-test";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+  it("lets users type back after a transport validation failure to return to provider selection", async () => {
+    const messages: string[] = [];
+    const recovery = createValidationRecoveryPromptHelpers({
+      isNonInteractive: () => false,
+      prompt: async (message) => {
+        messages.push(message);
+        return "back";
+      },
+      validateNvidiaApiKeyValue: () => null,
+      getTransportRecoveryMessage,
+      exitOnboardFromPrompt(): never {
+        throw new Error("Unexpected onboarding exit");
       },
     });
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "sk-test",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        failures: [
+          {
+            name: "Responses API",
+            curlStatus: 6,
+            message: "Could not resolve host: api.openai.com",
+          },
+        ],
+      }),
+      promptValidationRecovery: recovery.promptValidationRecovery,
+    });
+    const state = makeRemoteSelectionState({
+      model: "gpt-5.4",
+      provider: "openai-api",
+      endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateOpenAiLikeSelection: validation.validateOpenAiLikeSelection,
+      }),
+    );
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("could not resolve the provider hostname"),
-      ),
+    const { result, lines } = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "openai" },
+        remoteConfig: {
+          label: "OpenAI",
+          endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "OPENAI_API_KEY",
+      }),
     );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
-    );
+
+    assert.equal(result, "retry-selection");
+    assert.ok(lines.some((line) => line.includes("could not resolve the provider hostname")));
+    assert.ok(lines.some((line) => line.includes("Returning to provider selection.")));
     assert.equal(
-      payload.messages.filter((message: string) =>
-        /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message),
-      ).length,
+      messages.filter((message) => /Type 'retry', 'back', or 'exit' \[retry\]: /.test(message))
+        .length,
       1,
     );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
   });
 
-  it("returns to provider selection when endpoint validation fails interactively", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "selection-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-body='{"error":{"message":"bad request"}}'
-status="400"
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    *)
-      url="$1"
-      shift
-      ;;
-  esac
-done
-if echo "$url" | grep -q 'generativelanguage.googleapis.com' && echo "$url" | grep -q '/responses$'; then
-  body='{"id":"ok"}'
-  status="200"
-elif echo "$url" | grep -q 'generativelanguage.googleapis.com' && echo "$url" | grep -q '/chat/completions$'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-elif echo "$url" | grep -q 'integrate.api.nvidia.com' && echo "$url" | grep -q '/responses$'; then
-  body='{"id":"resp_123"}'
-  status="200"
-elif echo "$url" | grep -q 'integrate.api.nvidia.com' && echo "$url" | grep -q '/chat/completions$'; then
-  body='{"id":"chatcmpl-123","choices":[{"message":{"content":"OK"}}]}'
-  status="200"
-fi
-printf '%s' "$body" > "$outfile"
-printf '%s' "$status"
-`,
-      { mode: 0o755 },
-    );
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["2", "", "back", "1", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-credentials.ensureApiKey = async () => { process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-good"; };
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENAI_API_KEY = "sk-test";
-  process.env.GEMINI_API_KEY = "gemini-test";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("returns to provider selection when endpoint validation fails interactively", async () => {
+    const recovery = makeInteractiveValidationRecovery();
+    const validation = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "sk-test",
+      probeOpenAiLikeEndpoint: () => ({
+        ok: false,
+        failures: [{ name: "Responses API", httpStatus: 400, message: "bad request" }],
+      }),
+      promptValidationRecovery: recovery.promptValidationRecovery,
     });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("OpenAI endpoint validation failed")),
-    );
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Please choose a provider/model again")),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
-  });
-
-  it("fails early in non-interactive mode when explicit cloud provider key is not nvapi-", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-noninteractive-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-noninteractive-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const prompts = [];
-credentials.prompt = async (message) => {
-  prompts.push(message);
-  throw new Error("unexpected prompt");
-};
-credentials.ensureApiKey = async () => {
-  throw new Error("unexpected ensureApiKey");
-};
-runner.runCapture = () => "";
-
-process.env.NVIDIA_INFERENCE_API_KEY = "sk-test";
-process.env.NEMOCLAW_PROVIDER = "cloud";
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const originalExit = process.exit;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  process.exit = (code) => {
-    const error = new Error("process.exit:" + code);
-    error.exitCode = code;
-    throw error;
-  };
-  try {
-    await setupNim(null);
-    originalLog(JSON.stringify({ completed: true, prompts, lines }));
-  } catch (error) {
-    originalLog(
-      JSON.stringify({
-        completed: false,
-        prompts,
-        lines,
-        message: error.message,
-        exitCode: error.exitCode ?? null,
+    const state = makeRemoteSelectionState({
+      model: "gpt-5.4",
+      provider: "openai-api",
+      endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    const { validateSelectedRemoteModel } = createRemoteModelValidator(
+      makeRemoteModelValidatorDeps({
+        validateOpenAiLikeSelection: validation.validateOpenAiLikeSelection,
       }),
     );
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-    process.exit = originalExit;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.completed, false);
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.prompts.length, 0);
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Invalid NVIDIA API key. Must start with nvapi-"),
-      ),
-    );
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
-      ),
-    );
-  });
-
-  it("fails early in non-interactive mode with copy-paste recovery hints when no NVIDIA_INFERENCE_API_KEY is set", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-missingkey-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-missingkey-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    // Fake openshell: report the inference provider as absent so the
-    // gateway-credential-reuse fallback does NOT swallow the missing-key
-    // error path under test.
-    fs.writeFileSync(path.join(fakeBin, "openshell"), `#!${process.execPath}\nprocess.exit(1);\n`, {
-      mode: 0o755,
-    });
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const prompts = [];
-credentials.prompt = async (message) => {
-  prompts.push(message);
-  throw new Error("unexpected prompt");
-};
-credentials.ensureApiKey = async () => {
-  throw new Error("unexpected ensureApiKey");
-};
-runner.runCapture = () => "";
-
-for (const key of ["NVIDIA_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NGC_API_KEY", "NEMOCLAW_PROVIDER_KEY"]) delete process.env[key];
-process.env.NEMOCLAW_NON_INTERACTIVE = "1";
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const originalError = console.error;
-  const originalExit = process.exit;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  process.exit = (code) => {
-    const error = new Error("process.exit:" + code);
-    error.exitCode = code;
-    throw error;
-  };
-  try {
-    await setupNim(null);
-    originalLog(JSON.stringify({ completed: true, prompts, lines }));
-  } catch (error) {
-    originalLog(
-      JSON.stringify({
-        completed: false,
-        prompts,
-        lines,
-        message: error.message,
-        exitCode: error.exitCode ?? null,
+    const { result, lines } = await captureConsoleOutput(() =>
+      validateSelectedRemoteModel({
+        selected: { key: "openai" },
+        remoteConfig: {
+          label: "OpenAI",
+          endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+          helpUrl: null,
+        },
+        state,
+        selectedCredentialEnv: "OPENAI_API_KEY",
       }),
     );
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-    process.exit = originalExit;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
 
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
+    assert.equal(result, "retry-selection");
+    assert.ok(lines.some((line) => line.includes("OpenAI endpoint validation failed")));
+    assert.ok(lines.some((line) => line.includes("Please choose a provider/model again")));
+  });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.completed, false);
-    assert.equal(payload.exitCode, 1);
-    assert.equal(payload.prompts.length, 0);
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes(
-          "NVIDIA_INFERENCE_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
+  it("fails early in non-interactive mode when explicit cloud provider key is not nvapi-", async () => {
+    const previousCredential = process.env.NVIDIA_INFERENCE_API_KEY;
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw Object.assign(new Error(`process.exit:${String(code)}`), { exitCode: code });
+    }) as never);
+    process.env.NVIDIA_INFERENCE_API_KEY = "sk-test";
+
+    try {
+      const { result, lines } = await captureConsoleOutput(async () => {
+        try {
+          resolveNonInteractiveBuildCredential({
+            provider: "nvidia-prod",
+            helpUrl: "https://build.nvidia.com/settings/api-keys",
+            recoveredFromSandbox: false,
+            providerExistsInGateway: () => false,
+          });
+          return null;
+        } catch (error) {
+          return error;
+        }
+      });
+
+      assert.equal((result as { exitCode?: number }).exitCode, 1);
+      assert.equal(exit.mock.calls.length, 1);
+      assert.ok(
+        lines.some((line) => line.includes("Invalid NVIDIA API key. Must start with nvapi-")),
+      );
+      assert.ok(
+        lines.some((line) =>
+          line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
         ),
-      ),
-    );
-    const setWithIndex = payload.lines.findIndex((line: string) => line.trim() === "Set with:");
-    assert.ok(setWithIndex >= 0, "expected a standalone 'Set with:' line");
-    assert.equal(
-      payload.lines[setWithIndex + 1].trim(),
-      "export NVIDIA_INFERENCE_API_KEY=nvapi-...",
-      "expected the export command on its own line so it can be copy-pasted",
-    );
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
-      ),
-    );
+      );
+    } finally {
+      exit.mockRestore();
+      restoreProcessEnvValue("NVIDIA_INFERENCE_API_KEY", previousCredential);
+    }
+  });
+
+  it("fails early in non-interactive mode with copy-paste recovery hints when no NVIDIA_INFERENCE_API_KEY is set", async () => {
+    const envNames = [
+      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
+      "NGC_API_KEY",
+      "NEMOCLAW_PROVIDER_KEY",
+      "HOME",
+    ] as const;
+    const previousEnv = new Map(envNames.map((name) => [name, process.env[name]]));
+    const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-missing-build-key-"));
+    for (const name of envNames) delete process.env[name];
+    process.env.HOME = isolatedHome;
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw Object.assign(new Error(`process.exit:${String(code)}`), { exitCode: code });
+    }) as never);
+
+    try {
+      const { result, lines } = await captureConsoleOutput(async () => {
+        try {
+          resolveNonInteractiveBuildCredential({
+            provider: "nvidia-prod",
+            helpUrl: "https://build.nvidia.com/settings/api-keys",
+            recoveredFromSandbox: false,
+            providerExistsInGateway: () => false,
+          });
+          return null;
+        } catch (error) {
+          return error;
+        }
+      });
+
+      assert.equal((result as { exitCode?: number }).exitCode, 1);
+      assert.equal(exit.mock.calls.length, 1);
+      assert.ok(
+        lines.some((line) =>
+          line.includes(
+            "NVIDIA_INFERENCE_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
+          ),
+        ),
+      );
+      const setWithIndex = lines.findIndex((line) => line.trim() === "Set with:");
+      assert.ok(setWithIndex >= 0, "expected a standalone 'Set with:' line");
+      assert.equal(
+        lines[setWithIndex + 1].trim(),
+        "export NVIDIA_INFERENCE_API_KEY=nvapi-...",
+        "expected the export command on its own line so it can be copy-pasted",
+      );
+      assert.ok(
+        lines.some((line) =>
+          line.includes("Get a key from https://build.nvidia.com/settings/api-keys"),
+        ),
+      );
+    } finally {
+      exit.mockRestore();
+      for (const [name, value] of previousEnv) restoreProcessEnvValue(name, value);
+      fs.rmSync(isolatedHome, { recursive: true, force: true });
+    }
   });
 
   it("lets users re-enter an NVIDIA API key after authorization failure without restarting selection", () => {
@@ -3803,316 +3653,79 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-nvidia-paste-guard-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "nvidia-paste-guard-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOpenAiStyleAuthRetryCurl(fakeBin, "nvapi-good", ["nim/meta/llama-3.1-70b-instruct"]);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["1", "", "nvapi-fake-key-value", "nvapi-good", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-bad";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.NVIDIA_INFERENCE_API_KEY }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("treats a pasted NVIDIA API key at the retry prompt as retry and re-prompts securely", async () => {
+    const state = makeRemoteSelectionState({
+      model: "nim/meta/llama-3.1-70b-instruct",
+      provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    });
+    const { lines, prompts } = await runCredentialRetryScenario({
+      label: "NVIDIA Endpoints",
+      selectedKey: "build",
+      state,
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      badCredential: "nvapi-bad",
+      goodCredential: "nvapi-good",
+      successApi: "openai-completions",
+      probeKind: "openai",
+      retryAnswer: "nvapi-fake-key-value",
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.equal(payload.key, "nvapi-good");
-    assert.ok(payload.lines.some((line: string) => line.includes("That looks like an API key")));
-    assert.ok(payload.lines.some((line: string) => line.includes("Treating as 'retry'")));
-    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(
-      payload.messages.some((message: string) => /NVIDIA Endpoints API key: /.test(message)),
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-    assert.equal(
-      payload.messages.filter((message: string) => /Choose model \[2\]/.test(message)).length,
-      1,
-    );
+    assert.equal(state.provider, "nvidia-prod");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.ok(lines.some((line) => line.includes("That looks like an API key")));
+    assert.ok(lines.some((line) => line.includes("Treating as 'retry'")));
+    assert.ok(prompts.some(({ message }) => /NVIDIA Endpoints API key: /.test(message)));
   });
 
-  it("lets users re-enter an OpenAI API key after authorization failure", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-auth-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "openai-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOpenAiStyleAuthRetryCurl(fakeBin, "sk-good", ["gpt-5.4"]);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["2", "", "retry", "sk-good", ""];
-const messages = [];
-const prompts = [];
-
-credentials.prompt = async (message, opts = {}) => {
-  messages.push(message);
-  prompts.push({ message, secret: opts.secret === true });
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.OPENAI_API_KEY = "sk-bad";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, prompts, lines, key: process.env.OPENAI_API_KEY }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("lets users re-enter an OpenAI API key after authorization failure", async () => {
+    const state = makeRemoteSelectionState({
+      model: "gpt-5.4",
+      provider: "openai-api",
+      endpointUrl: TEST_OPENAI_ENDPOINT_URL,
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    const { prompts } = await runCredentialRetryScenario({
+      label: "OpenAI",
+      selectedKey: "openai",
+      state,
+      credentialEnv: "OPENAI_API_KEY",
+      badCredential: "sk-bad",
+      goodCredential: "sk-good",
+      successApi: "openai-responses",
+      probeKind: "openai",
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "openai-api");
-    assert.equal(payload.result.model, "gpt-5.4");
-    assert.equal(payload.result.preferredInferenceApi, "openai-responses");
-    assert.equal(payload.key, "sk-good");
-    assert.ok(payload.lines.some((line: string) => line.includes("OpenAI authorization failed")));
-    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message: string) => /OpenAI API key: /.test(message)));
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-    assert.equal(
-      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
-      2,
-    );
+    assert.equal(state.provider, "openai-api");
+    assert.equal(state.model, "gpt-5.4");
+    assert.equal(state.preferredInferenceApi, "openai-responses");
+    assert.ok(prompts.some(({ message }) => /OpenAI API key: /.test(message)));
   });
 
-  it("lets users re-enter an Anthropic API key after authorization failure", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-auth-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "anthropic-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-good", ["claude-sonnet-4-6"]);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["4", "", "retry", "anthropic-good", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.ANTHROPIC_API_KEY = "anthropic-bad";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.ANTHROPIC_API_KEY }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
+  it("lets users re-enter a Gemini API key after authorization failure", async () => {
+    const state = makeRemoteSelectionState({
+      model: "gemini-2.5-flash",
+      provider: "gemini-api",
+      endpointUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      credentialEnv: "GEMINI_API_KEY",
+    });
+    const { prompts } = await runCredentialRetryScenario({
+      label: "Google Gemini",
+      selectedKey: "gemini",
+      state,
+      credentialEnv: "GEMINI_API_KEY",
+      badCredential: "gemini-bad",
+      goodCredential: "gemini-good",
+      successApi: "openai-completions",
+      probeKind: "openai",
+      authMode: "query-param",
     });
 
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "anthropic-prod");
-    assert.equal(payload.result.model, "claude-sonnet-4-6");
-    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
-    assert.equal(payload.key, "anthropic-good");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Anthropic authorization failed")),
-    );
-    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message: string) => /Anthropic API key: /.test(message)));
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-    assert.equal(
-      payload.messages.filter((message: string) => /Choose model \[1\]/.test(message)).length,
-      2,
-    );
-  });
-
-  it("lets users re-enter a Gemini API key after authorization failure", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-gemini-auth-retry-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "gemini-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeOpenAiStyleAuthRetryCurl(fakeBin, "gemini-good", ["gemini-2.5-flash"]);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["6", "", "retry", "gemini-good", ""];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.GEMINI_API_KEY = "gemini-bad";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.GEMINI_API_KEY }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "gemini-api");
-    assert.equal(payload.result.model, "gemini-2.5-flash");
-    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
-    assert.equal(payload.key, "gemini-good");
-    assert.ok(
-      payload.lines.some((line: string) => line.includes("Google Gemini authorization failed")),
-    );
-    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(payload.messages.some((message: string) => /Google Gemini API key: /.test(message)));
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-    assert.equal(
-      payload.messages.filter((message: string) => /Choose model \[5\]/.test(message)).length,
-      2,
-    );
+    assert.equal(state.provider, "gemini-api");
+    assert.equal(state.model, "gemini-2.5-flash");
+    assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.ok(prompts.some(({ message }) => /Google Gemini API key: /.test(message)));
   });
 
   it("lets users re-enter a custom OpenAI-compatible API key without re-entering the endpoint URL", () => {
@@ -4203,100 +3816,6 @@ const { setupNim } = require(${onboardPath});
     assert.equal(
       payload.messages.filter((message: string) =>
         /Other OpenAI-compatible endpoint model/.test(message),
-      ).length,
-      2,
-    );
-    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
-  });
-
-  it("lets users re-enter a custom Anthropic-compatible API key without re-entering the endpoint URL", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-custom-anthropic-auth-retry-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "custom-anthropic-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAnthropicStyleAuthRetryCurl(fakeBin, "anthropic-proxy-good", ["claude-proxy"]);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-
-const answers = ["5", "https://proxy.example.com/v1/messages?token=secret#frag", "claude-proxy", "retry", "anthropic-proxy-good", "claude-proxy"];
-const messages = [];
-
-credentials.prompt = async (message) => {
-  messages.push(message);
-  return answers.shift() || "";
-};
-runner.runCapture = () => "";
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  process.env.COMPATIBLE_ANTHROPIC_API_KEY = "anthropic-proxy-bad";
-  const originalLog = console.log;
-  const originalError = console.error;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  console.error = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, key: process.env.COMPATIBLE_ANTHROPIC_API_KEY }));
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-      },
-    });
-
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.equal(payload.result.provider, "compatible-anthropic-endpoint");
-    assert.equal(payload.result.model, "claude-proxy");
-    assert.equal(payload.result.endpointUrl, "https://proxy.example.com");
-    assert.equal(payload.result.preferredInferenceApi, "anthropic-messages");
-    assert.equal(payload.key, "anthropic-proxy-good");
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Other Anthropic-compatible endpoint authorization failed"),
-      ),
-    );
-    assert.ok(payload.messages.some((message: string) => CREDENTIAL_RETRY_PROMPT_RE.test(message)));
-    assert.ok(
-      payload.messages.some((message: string) =>
-        /Other Anthropic-compatible endpoint API key: /.test(message),
-      ),
-    );
-    assert.equal(
-      payload.messages.filter((message: string) => /Anthropic-compatible base URL/.test(message))
-        .length,
-      1,
-    );
-    assert.equal(
-      payload.messages.filter((message: string) =>
-        /Other Anthropic-compatible endpoint model/.test(message),
       ).length,
       2,
     );
@@ -4521,238 +4040,87 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("tool-call-parser requires")));
   });
 
-  it("offers install-ollama option on Linux when Ollama is not installed", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-ollama-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "install-ollama-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
-
-    // Fake curl binary that returns a successful response — needed because
-    // runCurlProbe and validateOllamaModel spawn real curl via child_process.
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-
-    // Simulate: no Ollama installed, no Ollama running, no vLLM on native
-    // Linux, so cloud + install-ollama should appear.
-    const installOptionIndex = "7";
-    const expectedInstallLabel = "Install Ollama (Linux)";
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const wait = require(${waitPath});
-
-// Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
-const child_process = require("child_process");
-const originalSpawn = child_process.spawn;
-child_process.spawn = (...args) => {
-  // Return a fake ChildProcess with a pid and unref()
-  return { pid: 99999, unref() {}, on() {} };
-};
-
-// Mock spawnSync for ollama pull (real ollama is not installed) and ps checks.
-const originalSpawnSync = child_process.spawnSync;
-child_process.spawnSync = (cmd, args, opts) => {
-  const cmdStr = [cmd, ...(args || [])].join(" ");
-  if (cmd === "nc" && args?.includes("11435")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  // ollama pull — pretend it succeeds
-  if (cmd === "ollama" && args && args[0] === "pull") {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  // ps check for isOllamaProxyProcess — pretend the proxy is running
-  if (cmd === "ps") {
-    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
-  }
-  // Everything else (curl for probes) — use real spawnSync so fake curl binary handles it
-  return originalSpawnSync(cmd, args, opts);
-};
-
-let promptCalls = 0;
-const messages = [];
-const updates = [];
-const runCommands = [];
-const events = [];
-
-credentials.prompt = async (message) => {
-  promptCalls += 1;
-  messages.push(message);
-  // Select install-ollama on first prompt, default on model prompt.
-  if (promptCalls === 1) return "${installOptionIndex}";
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  // Normalize: onboard.ts still sends strings, local-inference.ts sends arrays.
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  // No ollama installed
-  if (cmd.includes("command -v ollama")) return "";
-  // No ollama running
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  // No vLLM running
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  // After install, ollama list returns a model
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
-  // isOllamaProxyProcess — ps check for auth proxy
-  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
-  // validateOllamaModel probe via local-inference — return a valid JSON response
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = (command, opts) => {
-  const rendered = typeof command === "string" ? command : command.join(" ");
-  runCommands.push(rendered);
-  events.push({ type: "command", value: rendered });
-};
-runner.runShell = (command, opts = {}) => {
-  runCommands.push(command);
-  events.push({ type: "command", value: command, stdio: opts.stdio || null });
-};
-registry.updateSandbox = (_name, update) => updates.push(update);
-
-// Force platform to linux for this test
-Object.defineProperty(process, 'platform', { value: 'linux' });
-platform.isWsl = () => false;
-wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
-wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => {
-    const line = args.join(" ");
-    lines.push(line);
-    events.push({ type: "log", value: line });
-  };
-  try {
-    const result = await setupNim("install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands, events }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        // See #4114: Vitest spawns child processes without a TTY, which
-        // would otherwise route the install through the sudo-free
-        // user-local fallback.  This case asserts the system-install path.
-        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
-      },
+  it("offers install-ollama option on Linux when Ollama is not installed", async () => {
+    const menu = resolveOllamaInstallMenuEntry({
+      hasOllama: false,
+      ollamaRunning: false,
+      hasWindowsOllama: false,
+      installedOllamaVersion: null,
+      platform: "linux",
+      isWsl: false,
     });
+    const { options } = buildProviderMenu({ ollamaInstallEntry: menu.entry });
+    assert.ok(options.some(({ label }) => label.includes("Install Ollama (Linux)")));
 
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    // Should have shown the install-ollama menu option (label varies on WSL).
-    assert.ok(
-      payload.lines.some((line: string) => line.includes(expectedInstallLabel)),
-      `Should show ${expectedInstallLabel} option`,
+    const events: Array<{ type: "command" | "log"; value: string; stdio?: unknown }> = [];
+    const runShellImpl = vi.fn((command: string, options: { stdio?: unknown } = {}) => {
+      events.push({ type: "command", value: command, stdio: options.stdio });
+      return successfulRunShellResult();
+    });
+    const installResult = installOllamaOnLinux(
+      makeInstallOllamaLinuxOptions({
+        modeOverride: "system",
+        runCaptureImpl: () => "",
+        runShellImpl,
+        ensureManagedOllamaLoopbackSystemdOverrideImpl: () => "not-applicable",
+        waitForHttpImpl: (_url, tries) => (tries ?? 0) > 1,
+        log: (message) => events.push({ type: "log", value: message }),
+      }),
+    );
+    const state = makeOllamaSelectionState();
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        installOllamaOnLinux: () => installResult,
+      }),
     );
 
-    // Should have selected ollama-local provider after install
-    assert.equal(payload.result.provider, "ollama-local");
+    try {
+      assert.equal(await handleInstallOllamaSelection(null, null, null, state, menu), "selected");
+      assert.equal(state.provider, "ollama-local");
 
-    // Should have run the curl installer (not brew)
-    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
-      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
-    );
-    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
-      cmd.includes("ollama.com/install.sh"),
-    );
-    assert.ok(zstdPreflightIndex >= 0, "Should preflight zstd before the Ollama installer");
-    assert.ok(
-      ollamaInstallerIndex > zstdPreflightIndex,
-      "Should install zstd before running the Ollama installer",
-    );
-    const zstdWarningEventIndex = payload.events.findIndex(
-      (event: { type: string; value: string }) =>
-        event.type === "log" && event.value.includes("requires zstd for archive extraction"),
-    );
-    const zstdCommandEventIndex = payload.events.findIndex(
-      (event: { type: string; value: string }) =>
-        event.type === "command" &&
-        event.value.includes("apt-get install -y -qq --no-install-recommends zstd"),
-    );
-    const installerWarningEventIndex = payload.events.findIndex(
-      (event: { type: string; value: string }) =>
-        event.type === "log" &&
-        event.value.includes("creates a system user, a systemd service, and writes to /usr/local"),
-    );
-    const installerCommandEventIndex = payload.events.findIndex(
-      (event: { type: string; value: string }) =>
-        event.type === "command" && event.value.includes("ollama.com/install.sh"),
-    );
-    const installerProgressEventIndex = payload.events.findIndex(
-      (event: { type: string; value: string }) =>
-        event.type === "log" && event.value.includes("installer output will stream below"),
-    );
-    const installerCommandEvent = payload.events.find(
-      (event: { type: string; value: string }) =>
-        event.type === "command" && event.value.includes("ollama.com/install.sh"),
-    );
-    assert.ok(
-      zstdWarningEventIndex >= 0 && zstdWarningEventIndex < zstdCommandEventIndex,
-      "Should explain the zstd sudo install before running apt-get",
-    );
-    assert.ok(
-      installerWarningEventIndex >= 0 && installerWarningEventIndex < installerCommandEventIndex,
-      "Should explain the Ollama installer sudo usage before running it",
-    );
-    assert.ok(
-      installerProgressEventIndex >= 0 && installerProgressEventIndex < installerCommandEventIndex,
-      "Should warn that the Ollama installer can take a few minutes before running it",
-    );
-    assert.equal(
-      installerCommandEvent?.stdio,
-      "inherit",
-      "Should stream Ollama installer output live",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
-      "Should use curl installer on Linux",
-    );
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("brew install")),
-      "Should NOT use brew on Linux",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) =>
-        cmd.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-      ),
-      "Linux install fallback should start Ollama on loopback",
-    );
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
-      "Linux install path must not expose raw Ollama on all interfaces",
-    );
+      const commands = events.filter(({ type }) => type === "command").map(({ value }) => value);
+      const zstdPreflightIndex = commands.findIndex((command) =>
+        command.includes("apt-get install -y -qq --no-install-recommends zstd"),
+      );
+      const installerIndex = commands.findIndex((command) =>
+        command.includes("ollama.com/install.sh"),
+      );
+      assert.ok(zstdPreflightIndex >= 0);
+      assert.ok(installerIndex > zstdPreflightIndex);
+      const zstdWarningIndex = events.findIndex(
+        ({ type, value }) =>
+          type === "log" && value.includes("requires zstd for archive extraction"),
+      );
+      const zstdCommandIndex = events.findIndex(
+        ({ type, value }) =>
+          type === "command" &&
+          value.includes("apt-get install -y -qq --no-install-recommends zstd"),
+      );
+      const installerWarningIndex = events.findIndex(
+        ({ type, value }) =>
+          type === "log" &&
+          value.includes("creates a system user, a systemd service, and writes to /usr/local"),
+      );
+      const installerCommandIndex = events.findIndex(
+        ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
+      );
+      assert.ok(zstdWarningIndex >= 0 && zstdWarningIndex < zstdCommandIndex);
+      assert.ok(installerWarningIndex >= 0 && installerWarningIndex < installerCommandIndex);
+      assert.equal(
+        events.find(
+          ({ type, value }) => type === "command" && value.includes("ollama.com/install.sh"),
+        )?.stdio,
+        "inherit",
+      );
+      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
+      assert.ok(!commands.some((command) => command.includes("brew install")));
+      assert.ok(
+        commands.some((command) => command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve")),
+      );
+      assert.ok(!commands.some((command) => command.includes("OLLAMA_HOST=0.0.0.0:11434")));
+    } finally {
+      resetOllamaHostCache();
+    }
   });
 
   it("fails closed when the Linux systemd loopback override cannot be applied", () => {
@@ -4850,638 +4218,269 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
-  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-noninteractive-install-ollama-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "noninteractive-install-ollama-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const wait = require(${waitPath});
-const child_process = require("child_process");
-
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
-
-const originalSpawnSync = child_process.spawnSync;
-child_process.spawnSync = (cmd, args, opts) => {
-  const command = [cmd, ...(args || [])].join(" ");
-  if (cmd === "nc" && args?.includes("11435")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (command.includes("ollama pull")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (cmd === "ps") {
-    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
-  }
-  return originalSpawnSync(cmd, args, opts);
-};
-
-let promptCalls = 0;
-const updates = [];
-const runCommands = [];
-const runShellCalls = [];
-
-credentials.prompt = async () => {
-  promptCalls += 1;
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
-  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = (command) => {
-  runCommands.push(typeof command === "string" ? command : command.join(" "));
-};
-runner.runShell = (command, opts = {}) => {
-  runCommands.push(command);
-  runShellCalls.push({ command, stdio: opts.stdio || null });
-};
-registry.updateSandbox = (_name, update) => updates.push(update);
-
-Object.defineProperty(process, "platform", { value: "linux" });
-platform.isWsl = () => false;
-wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
-wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("noninteractive-install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands, runShellCalls }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_YES: "1",
-        // See #4114: assert the historical system-install path explicitly.
-        // The non-interactive default without this override now routes to
-        // the sudo-free user-local fallback (covered by the test below).
-        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
-      },
+  it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", async () => {
+    const menu = resolveOllamaInstallMenuEntry({
+      hasOllama: false,
+      ollamaRunning: false,
+      hasWindowsOllama: false,
+      installedOllamaVersion: null,
+      platform: "linux",
+      isWsl: false,
     });
-
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    assert.equal(payload.promptCalls, 0);
-    assert.equal(payload.result.provider, "ollama-local");
-    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
-      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
-    );
-    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
-      cmd.includes("ollama.com/install.sh"),
-    );
-    assert.ok(
-      zstdPreflightIndex >= 0,
-      "Should preflight zstd before the non-interactive Ollama installer",
-    );
-    assert.ok(
-      ollamaInstallerIndex > zstdPreflightIndex,
-      "Should install zstd before running the non-interactive Ollama installer",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
-      "Should use the Ollama installer when requested non-interactively on a fresh host",
-    );
-    const ollamaInstallShellCall = payload.runShellCalls.find((call: { command: string }) =>
-      call.command.includes("ollama.com/install.sh"),
-    );
-    assert.equal(
-      ollamaInstallShellCall?.stdio,
-      "inherit",
-      "non-interactive Ollama install should stream installer output live",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) =>
-        cmd.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
-      ),
-      "non-interactive install fallback should start Ollama on loopback",
-    );
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
-      "non-interactive install path must not expose raw Ollama on all interfaces",
-    );
-  });
-
-  it("falls back to a user-local Ollama install when non-interactive lacks passwordless sudo (#4114)", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-userlocal-install-ollama-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "userlocal-install-ollama-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    // Fake curl + zstd binaries on PATH. The install module uses curl to
-    // probe the release tarball (HEAD) and zstd to decompress; both must
-    // exist on PATH for the user-local path to choose the .tar.zst asset.
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-    fs.writeFileSync(path.join(fakeBin, "zstd"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const child_process = require("child_process");
-
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
-
-const originalSpawnSync = child_process.spawnSync;
-child_process.spawnSync = (cmd, args, opts) => {
-  const command = [cmd, ...(args || [])].join(" ");
-  if (cmd === "nc" && args?.includes("11435")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (command.includes("ollama pull")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (cmd === "ps") {
-    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
-  }
-  return originalSpawnSync(cmd, args, opts);
-};
-
-let promptCalls = 0;
-const updates = [];
-const runCommands = [];
-const runShellCalls = [];
-
-credentials.prompt = async () => {
-  promptCalls += 1;
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  // hostCommandExists() shells out as ["sh", "-c", 'command -v "$1"', "--", name],
-  // so match on the trailing target rather than a "command -v <name>" substring.
-  if (cmd.endsWith(" -- ollama")) return "";
-  if (cmd.endsWith(" -- zstd")) return "/usr/bin/zstd";
-  if (cmd.endsWith(" -- sudo")) return "/usr/bin/sudo";
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
-  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-const originalRunCaptureEx = runner.runCaptureEx;
-runner.runCaptureEx = (command, opts) => {
-  // Refuse passwordless sudo so the install path takes the #4114 fallback.
-  if (Array.isArray(command) && command[0] === "sudo" && command[1] === "-n") {
-    return { stdout: "", exitCode: 1, timedOut: false };
-  }
-  // Pretend the .tar.zst asset exists so the user-local install picks the
-  // zstd path (instead of falling back to .tgz).
-  if (Array.isArray(command) && command.includes("--head")) {
-    return { stdout: "", exitCode: 0, timedOut: false };
-  }
-  // Hand every other capture (curl probes, etc.) back to the real implementation
-  // so the fake-curl shim on PATH can answer the local-model probe.
-  return originalRunCaptureEx(command, opts);
-};
-runner.run = (command) => {
-  runCommands.push(typeof command === "string" ? command : command.join(" "));
-};
-runner.runShell = (command, opts = {}) => {
-  runCommands.push(command);
-  runShellCalls.push({ command, stdio: opts.stdio || null });
-};
-registry.updateSandbox = (_name, update) => updates.push(update);
-
-Object.defineProperty(process, "platform", { value: "linux" });
-Object.defineProperty(process, "getuid", { value: () => 1000 });
-platform.isWsl = () => false;
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("userlocal-install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands, runShellCalls }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "ollama",
-        NEMOCLAW_YES: "1",
-        // No NEMOCLAW_OLLAMA_INSTALL_MODE — auto-detect routes through
-        // user-local because the stubbed `sudo -n true` returns exit 1.
-      },
+    const runShellCalls: Array<{ command: string; stdio?: unknown }> = [];
+    const runShellImpl = vi.fn((command: string, options: { stdio?: unknown } = {}) => {
+      runShellCalls.push({ command, stdio: options.stdio });
+      return successfulRunShellResult();
     });
-
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
-      "User-local install must NOT run the official curl|sh installer",
+    const prompt = vi.fn(async () => "");
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        isNonInteractive: () => true,
+        installOllamaOnLinux: () =>
+          installOllamaOnLinux(
+            makeInstallOllamaLinuxOptions({
+              modeOverride: "system",
+              isNonInteractive: () => true,
+              runCaptureImpl: () => "",
+              runShellImpl,
+              ensureManagedOllamaLoopbackSystemdOverrideImpl: () => "not-applicable",
+              waitForHttpImpl: (_url, tries) => (tries ?? 0) > 1,
+            }),
+          ),
+      }),
     );
-    assert.ok(
-      payload.runCommands.some(
-        (cmd: string) => cmd.includes("ollama-linux-") && cmd.includes(".tar.zst"),
-      ),
-      "User-local install should download the release tarball directly",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) => cmd.includes("zstd -d") && cmd.includes("/.local")),
-      "User-local install should extract under ${HOME}/.local without sudo",
-    );
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("sudo")),
-      "User-local install must not invoke sudo on any extraction or start command",
-    );
-    assert.ok(
-      payload.runCommands.some(
-        (cmd: string) => cmd.includes("nohup") && cmd.includes("/.local/bin/ollama"),
-      ),
-      "User-local install should launch the daemon from ${HOME}/.local/bin/ollama",
-    );
-    assert.ok(
-      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
-      "User-local install path must not expose raw Ollama on all interfaces",
-    );
-  });
-
-  it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-upgrade-old-ollama-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "upgrade-old-ollama-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
-
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
-    // Fake passwordless sudo so the upgrade gate doesn't short-circuit
-    // before the official installer runs in this non-interactive scenario.
-    fs.writeFileSync(path.join(fakeBin, "sudo"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
-
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const wait = require(${waitPath});
-const child_process = require("child_process");
-
-child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
-
-const originalSpawnSync = child_process.spawnSync;
-child_process.spawnSync = (cmd, args, opts) => {
-  const command = [cmd, ...(args || [])].join(" ");
-  if (cmd === "nc" && args?.includes("11435")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (command.includes("ollama pull")) {
-    return { status: 0, stdout: "", stderr: "", signal: null };
-  }
-  if (cmd === "ps") {
-    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
-  }
-  return originalSpawnSync(cmd, args, opts);
-};
-
-let promptCalls = 0;
-let installerRan = false;
-const updates = [];
-const runCommands = [];
-
-credentials.prompt = async () => {
-  promptCalls += 1;
-  return "";
-};
-credentials.ensureApiKey = async () => {};
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  // hostCommandExists shells out as ["sh","-c",'command -v "$1"',"--",name].
-  // Match the trailing argv form rather than the original "command -v ollama" string.
-  if (cmd.startsWith("sh -c command -v") && cmd.endsWith(" ollama")) {
-    return "/usr/local/bin/ollama";
-  }
-  // canRunSudoNonInteractive looks up sudo the same way; report it as
-  // available so the upgrade gate doesn't short-circuit before the
-  // installer runs.
-  if (cmd.startsWith("sh -c command -v") && cmd.endsWith(" sudo")) {
-    return "/usr/bin/sudo";
-  }
-  // Pre-upgrade host reports 0.6.2; once install.sh runs we flip both the
-  // CLI and the /api/version daemon probe to a fresh version.
-  if (cmd.includes("ollama --version")) {
-    return installerRan ? "ollama version is 0.24.0" : "ollama version is 0.6.2";
-  }
-  if (cmd.includes("/api/version")) {
-    return installerRan ? '{"version":"0.24.0"}' : '{"version":"0.6.2"}';
-  }
-  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
-  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = (command) => {
-  const rendered = typeof command === "string" ? command : command.join(" ");
-  if (rendered.includes("ollama.com/install.sh")) installerRan = true;
-  runCommands.push(rendered);
-};
-runner.runShell = (command) => {
-  if (command.includes("ollama.com/install.sh")) installerRan = true;
-  runCommands.push(command);
-};
-registry.updateSandbox = (_name, update) => updates.push(update);
-
-Object.defineProperty(process, "platform", { value: "linux" });
-platform.isWsl = () => false;
-wait.sleepSeconds = () => {};
-// installOllamaSystem probes loopback at tries=1 before launching, then
-// waits at tries=10 after launch. The fake curl in these tests answers 200
-// to any URL, so real waitForHttp would short-circuit the manual launch.
-// Differentiate by tries count.
-wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("upgrade-old-ollama-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-ollama",
-        NEMOCLAW_YES: "1",
-        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
-      },
-    });
-
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    assert.equal(payload.promptCalls, 0);
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("[non-interactive] Provider: install-ollama"),
-      ),
-      "install-ollama should be resolved directly, not collapsed to plain ollama via the fallback",
-    );
-    assert.ok(
-      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
-      "install-ollama with outdated host Ollama should run the official installer for the upgrade",
-    );
-  });
-
-  it("restarts Windows-host Ollama after install when installer auto-start is not reachable", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-install-restart-"),
-    );
-    const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "windows-ollama-install-restart-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
-    const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
-    );
-    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
-    const topologyPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
-    );
-    const localPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "local.ts"));
-    const windowsPath = JSON.stringify(
-      path.join(repoRoot, "src", "lib", "inference", "ollama", "windows.ts"),
+    const setupNim = createSetupNim(
+      makeSetupNimFlowDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "ollama",
+        getNonInteractiveModel: () => "qwen3:8b",
+        prompt,
+        detectInferenceProviderHostState: () => makeSetupNimHostState({ ollamaInstallMenu: menu }),
+        handleInstallOllamaSelection,
+      }),
     );
 
-    fs.mkdirSync(fakeBin, { recursive: true });
-    writeAlwaysOkCurl(fakeBin, OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE);
+    try {
+      const result = await setupNim(null);
 
-    const script = String.raw`
-const credentials = require(${credentialsPath});
-const runner = require(${runnerPath});
-const registry = require(${registryPath});
-const platform = require(${platformPath});
-const topology = require(${topologyPath});
-platform.isWsl = () => true;
-topology.getContainerRuntime = () => "docker-desktop";
-
-const installedPath = "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
-const installCalls = [];
-const awaitCalls = [];
-const restartCalls = [];
-const updates = [];
-const runCommands = [];
-credentials.prompt = async () => "";
-credentials.ensureApiKey = async () => {};
-registry.updateSandbox = (_name, update) => updates.push(update);
-runner.runCapture = (command) => {
-  const cmd = Array.isArray(command) ? command.join(" ") : command;
-  if (cmd.includes("command -v ollama")) return "";
-  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
-  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
-  if (cmd.includes("api/tags")) {
-    if (restartCalls.length > 0) {
-      return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+      assert.equal(prompt.mock.calls.length, 0);
+      assert.equal(result.provider, "ollama-local");
+      const zstdPreflightIndex = runShellCalls.findIndex(({ command }) =>
+        command.includes("apt-get install -y -qq --no-install-recommends zstd"),
+      );
+      const installerIndex = runShellCalls.findIndex(({ command }) =>
+        command.includes("ollama.com/install.sh"),
+      );
+      assert.ok(zstdPreflightIndex >= 0);
+      assert.ok(installerIndex > zstdPreflightIndex);
+      assert.equal(runShellCalls[installerIndex]?.stdio, "inherit");
+      assert.ok(
+        runShellCalls.some(({ command }) =>
+          command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+        ),
+      );
+      assert.ok(
+        !runShellCalls.some(({ command }) => command.includes("OLLAMA_HOST=0.0.0.0:11434")),
+      );
+    } finally {
+      resetOllamaHostCache();
     }
-    return "";
-  }
-  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
-  if (cmd.includes("api/generate")) return '{"response":"hello"}';
-  return "";
-};
-runner.run = (command) => {
-  runCommands.push(Array.isArray(command) ? command.join(" ") : String(command));
-  return { status: 0 };
-};
-runner.runShell = (command) => {
-  runCommands.push(command);
-  return { status: 0 };
-};
+  });
 
-const local = require(${localPath});
-local.resetOllamaHostCache();
-local.getOllamaModelOptions = () => ["qwen3:8b"];
-
-const windows = require(${windowsPath});
-windows.installOllamaOnWindowsHost = async () => {
-  installCalls.push(true);
-  return { ok: true, path: installedPath };
-};
-windows.awaitWindowsOllamaReady = () => {
-  awaitCalls.push(true);
-  return false;
-};
-windows.setupWindowsOllamaWith0000Binding = (opts) => {
-  restartCalls.push(opts || {});
-  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-  return true;
-};
-windows.switchToWindowsOllamaHost = () => {
-  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
-};
-
-const { setupNim } = require(${onboardPath});
-
-(async () => {
-  const originalLog = console.log;
-  const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
-  try {
-    const result = await setupNim("windows-install-restart-test", null);
-    originalLog(JSON.stringify({
-      result,
-      installCalls,
-      awaitCalls,
-      restartCalls,
-      updates,
-      lines,
-      runCommands,
-    }));
-  } finally {
-    console.log = originalLog;
-  }
-})().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
-`;
-    fs.writeFileSync(scriptPath, script);
-
-    const result = spawnSync(process.execPath, [scriptPath], {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        HOME: tmpDir,
-        PATH: `${fakeBin}:${process.env.PATH || ""}`,
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_PROVIDER: "install-windows-ollama",
-        NEMOCLAW_MODEL: "qwen3:8b",
-        NEMOCLAW_YES: "1",
-      },
+  it("falls back to a user-local Ollama install when non-interactive lacks passwordless sudo (#4114)", async () => {
+    const commands: string[] = [];
+    const runShellImpl = vi.fn((command: string) => {
+      commands.push(command);
+      return successfulRunShellResult();
     });
-
-    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
-    assert.notEqual(result.stdout.trim(), "", result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-
-    assert.equal(payload.result.provider, "ollama-local");
-    assert.equal(payload.result.model, "qwen3:8b");
-    assert.equal(payload.installCalls.length, 1);
-    assert.equal(payload.awaitCalls.length, 1);
-    assert.deepEqual(payload.restartCalls, [
-      {
-        installedPath:
-          "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
-      },
-    ]);
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Using Ollama on host.docker.internal:11434"),
-      ),
+    const installResult = installOllamaOnLinux(
+      makeInstallOllamaLinuxOptions({
+        isNonInteractive: () => true,
+        isTty: () => false,
+        canSudoNonInteractive: () => false,
+        runCaptureImpl: (command) => (command.at(-1) === "zstd" ? "/usr/bin/zstd" : ""),
+        runCaptureExImpl: () => ({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          timedOut: false,
+        }),
+        runShellImpl,
+        waitForHttpImpl: () => true,
+      }),
     );
+    const state = makeOllamaSelectionState();
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        isNonInteractive: () => true,
+        installOllamaOnLinux: () => installResult,
+      }),
+    );
+
+    try {
+      assert.equal(installResult.mode, "user-local");
+      assert.equal(
+        await handleInstallOllamaSelection(null, "qwen3:8b", null, state, {
+          hasUpgradableOllama: false,
+        }),
+        "selected",
+      );
+      assert.equal(state.provider, "ollama-local");
+      assert.ok(!commands.some((command) => command.includes("ollama.com/install.sh")));
+      assert.ok(
+        commands.some(
+          (command) => command.includes("ollama-linux-") && command.includes(".tar.zst"),
+        ),
+      );
+      assert.ok(
+        commands.some((command) => command.includes("zstd -d") && command.includes("/.local")),
+      );
+      assert.ok(!commands.some((command) => command.includes("sudo")));
+      assert.ok(
+        commands.some(
+          (command) => command.includes("nohup") && command.includes("/.local/bin/ollama"),
+        ),
+      );
+      assert.ok(!commands.some((command) => command.includes("OLLAMA_HOST=0.0.0.0:11434")));
+    } finally {
+      resetOllamaHostCache();
+    }
+  });
+
+  it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", async () => {
+    const menu = resolveOllamaInstallMenuEntry({
+      hasOllama: true,
+      ollamaRunning: true,
+      ollamaHost: "127.0.0.1",
+      hasWindowsOllama: false,
+      installedOllamaVersion: "0.6.2",
+      runningOllamaVersion: "0.6.2",
+      platform: "linux",
+      isWsl: false,
+    });
+    assert.equal(menu.hasUpgradableOllama, true);
+    const commands: string[] = [];
+    let installerRan = false;
+    const runCapture = (command: readonly string[]) => {
+      const rendered = command.join(" ");
+      switch (true) {
+        case rendered.includes("ollama --version"):
+          return installerRan ? "ollama version is 0.24.0" : "ollama version is 0.6.2";
+        case rendered.includes("/api/version"):
+          return installerRan ? '{"version":"0.24.0"}' : '{"version":"0.6.2"}';
+        case command.at(-1) === "zstd":
+          return "/usr/bin/zstd";
+        default:
+          return "";
+      }
+    };
+    const install = () =>
+      installOllamaOnLinux(
+        makeInstallOllamaLinuxOptions({
+          modeOverride: "system",
+          isUpgrade: true,
+          isNonInteractive: () => true,
+          runCaptureImpl: runCapture,
+          runShellImpl: (command) => {
+            installerRan ||= command.includes("ollama.com/install.sh");
+            commands.push(command);
+            return successfulRunShellResult();
+          },
+          ensureManagedOllamaLoopbackSystemdOverrideImpl: () => "not-applicable",
+          waitForHttpImpl: (_url, tries) => (tries ?? 0) > 1,
+        }),
+      );
+    const prompt = vi.fn(async () => "");
+    const notes: string[] = [];
+    const { handleInstallOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        isNonInteractive: () => true,
+        installOllamaOnLinux: install,
+        assertOllamaUpgradeApplied: (selection) => {
+          const outcome = assertOllamaUpgradeApplied(selection, runCapture);
+          return outcome.ok
+            ? { ok: true as const }
+            : { ok: false as const, message: outcome.message ?? "Ollama upgrade failed." };
+        },
+      }),
+    );
+    const setupNim = createSetupNim(
+      makeSetupNimFlowDeps({
+        isNonInteractive: () => true,
+        getNonInteractiveProvider: () => "install-ollama",
+        getNonInteractiveModel: () => "qwen3:8b",
+        prompt,
+        note: (message) => notes.push(message),
+        detectInferenceProviderHostState: () =>
+          makeSetupNimHostState({
+            hasOllama: true,
+            ollamaHost: "127.0.0.1",
+            ollamaRunning: true,
+            ollamaInstallMenu: menu,
+          }),
+        handleInstallOllamaSelection,
+      }),
+    );
+
+    try {
+      const result = await setupNim(null);
+
+      assert.equal(prompt.mock.calls.length, 0);
+      assert.equal(result.provider, "ollama-local");
+      assert.ok(notes.some((line) => line.includes("[non-interactive] Provider: install-ollama")));
+      assert.ok(commands.some((command) => command.includes("ollama.com/install.sh")));
+    } finally {
+      resetOllamaHostCache();
+    }
+  });
+
+  it("restarts Windows-host Ollama after install when installer auto-start is not reachable", async () => {
+    const installedPath = "C:\\Users\\tester\\AppData\\Local\\Programs\\Ollama\\ollama.exe";
+    const install = vi.fn(async () => ({ ok: true, path: installedPath }));
+    const awaitReady = vi.fn(() => false);
+    const setup = vi.fn<SetupNimOllamaDeps["setupWindowsOllamaWith0000Binding"]>(() => true);
+    const lines: string[] = [];
+    const log = vi.spyOn(console, "log").mockImplementation((...args) => {
+      lines.push(args.join(" "));
+    });
+    const state = makeOllamaSelectionState();
+    const { handleWindowsHostOllamaSelection } = createSetupNimOllamaHandlers(
+      makeSetupNimOllamaDeps({
+        installOllamaOnWindowsHost: install,
+        awaitWindowsOllamaReady: awaitReady,
+        setupWindowsOllamaWith0000Binding: setup,
+      }),
+    );
+
+    try {
+      const result = await handleWindowsHostOllamaSelection(
+        null,
+        "install-windows-ollama",
+        "qwen3:8b",
+        false,
+        false,
+        null,
+        state,
+      );
+
+      assert.equal(result, "selected");
+      assert.equal(state.provider, "ollama-local");
+      assert.equal(state.model, "qwen3:8b");
+      assert.equal(install.mock.calls.length, 1);
+      assert.equal(awaitReady.mock.calls.length, 1);
+      assert.deepEqual(
+        setup.mock.calls.map(([options]) => options),
+        [{ installedPath }],
+      );
+      assert.ok(
+        lines.some((line) =>
+          line.includes("Installer did not leave a reachable Ollama daemon; restarting it"),
+        ),
+      );
+      assert.ok(lines.some((line) => line.includes("Using Ollama on host.docker.internal:11434")));
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("shows Windows-host Ollama in the menu with a Docker Desktop requirement on native Docker WSL", () => {

@@ -5,9 +5,7 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
-
-const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
-const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+import { CLI_ENTRYPOINT } from "../fixtures/paths.ts";
 
 export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {

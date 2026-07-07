@@ -544,7 +544,16 @@ print_done() {
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
-  if [[ "$ONBOARD_RAN" == true ]]; then
+  if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+    printf "  ${C_GREEN}Existing sandboxes were recovered and upgraded.${C_RESET}\n"
+    if [[ "$_needs_cli_refresh" == true ]]; then
+      printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
+    fi
+    printf "  ${C_DIM}No new sandbox onboarding was needed.${C_RESET}\n"
+  elif [[ "$ONBOARD_RAN" == true ]]; then
     local agent_name
     agent_name="$(resolve_onboarded_agent)"
     if [[ "$_needs_cli_refresh" == true ]]; then
@@ -623,6 +632,8 @@ usage() {
   printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
   printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
   printf "                                  Continue after manually backing up and retiring old gateway\n"
+  printf "    NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE\n"
+  printf "                                  Exact JSON array of pre-fingerprint managed sandbox names\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG          Git ref to install (default: %s)\n" "$DEFAULT_INSTALL_REF"
   printf "                                  In curl pipes, set this on bash or export it first.\n"
@@ -913,6 +924,8 @@ ONBOARD_RAN=false
 # auto-onboarding (#3276).
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
+_PREEXISTING_SANDBOX_RECOVERY_RAN=false
+_LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
 # #5735: set when automatic recovery/upgrade of pre-existing sandboxes
 # reported a failure. A failed/destructive rebuild must not be reported as a
 # clean install, so print_done downgrades the final banner when this is true.
@@ -1666,20 +1679,55 @@ verify_nemoclaw() {
   error "Installation failed: ${_CLI_BIN} binary not found."
 }
 
+inspect_sandbox_registry_for_upgrade() {
+  local reg_file="$1" field="$2"
+  node - "$reg_file" "$field" <<'NODE'
+const fs = require("node:fs");
+
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+let registry;
+try {
+  registry = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+} catch {
+  process.exit(1);
+}
+if (!isRecord(registry) || !isRecord(registry.sandboxes)) process.exit(1);
+
+const entries = Object.entries(registry.sandboxes);
+if (entries.some(([name, entry]) => !name || !isRecord(entry) || entry.name !== name)) {
+  process.exit(1);
+}
+
+if (process.argv[3] === "count") {
+  process.stdout.write(String(entries.length));
+  process.exit(0);
+}
+if (process.argv[3] !== "ambiguous-names") process.exit(1);
+
+const ambiguous = entries
+  .filter(([, entry]) => {
+    const version = entry.nemoclawVersion;
+    const hasFingerprint = typeof version === "string" && version.trim().length > 0;
+    const hasNoCustomImageEvidence =
+      entry.fromDockerfile === undefined || entry.fromDockerfile === null;
+    return !hasFingerprint && hasNoCustomImageEvidence;
+  })
+  .map(([name]) => name)
+  .sort();
+process.stdout.write(JSON.stringify(ambiguous));
+NODE
+}
+
 registered_sandbox_count() {
   local reg_file="${HOME}/.nemoclaw/sandboxes.json"
   if [ ! -f "$reg_file" ]; then
     printf "0"
     return
   fi
-  python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('sandboxes', {})))
-except Exception:
-    print(0)
-" "$reg_file" 2>/dev/null || printf "0"
+  inspect_sandbox_registry_for_upgrade "$reg_file" count
 }
 
 resolve_existing_cli_runner() {
@@ -1706,7 +1754,7 @@ resolve_existing_cli_runner() {
 
 prepare_current_cli_for_preupgrade_backup() {
   local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
-  info "Preparing current ${_CLI_DISPLAY} CLI for legacy OpenShell backup retry…"
+  info "Preparing current ${_CLI_DISPLAY} CLI for pre-upgrade backup…"
   export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
   install_nemoclaw
   if [[ "$old_defer" == "__unset__" ]]; then
@@ -1726,26 +1774,18 @@ resolve_prepared_cli_runner() {
 }
 
 run_preupgrade_backup() {
-  local old_cli_runner="$1"
-
-  if "$old_cli_runner" backup-all 2>&1; then
-    return 0
-  fi
-
-  warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
-  warn "Retrying with the current ${_CLI_DISPLAY} CLI, which supports NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP."
   if ! prepare_current_cli_for_preupgrade_backup; then
-    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
+    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for pre-upgrade backup."
     return 1
   fi
 
-  local retry_cli_runner=""
-  if ! retry_cli_runner="$(resolve_prepared_cli_runner)"; then
-    warn "Could not locate the current ${_CLI_BIN} CLI for backup retry."
+  local current_cli_runner=""
+  if ! current_cli_runner="$(resolve_prepared_cli_runner)"; then
+    warn "Could not locate the current ${_CLI_BIN} CLI for pre-upgrade backup."
     return 1
   fi
 
-  "$retry_cli_runner" backup-all 2>&1
+  NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 "$current_cli_runner" backup-all 2>&1
 }
 
 installed_openshell_version() {
@@ -1765,52 +1805,123 @@ legacy_openshell_gateway_upgrade_needed() {
   [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
 }
 
-existing_cli_supports_backup_all() {
-  local cli_runner="$1" help_output
-  [[ -n "$cli_runner" ]] || return 1
-  help_output="$("$cli_runner" --help 2>/dev/null || true)"
-  grep -Eq '(^|[[:space:]])backup-all([[:space:]]|$)' <<<"$help_output"
-}
-
 installer_non_interactive() {
   [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
 }
 
+legacy_ambiguous_sandbox_names_json() {
+  local reg_file="$1"
+  inspect_sandbox_registry_for_upgrade "$reg_file" ambiguous-names
+}
+
+normalize_legacy_managed_confirmation_json() {
+  node -e '
+    let names;
+    try {
+      names = JSON.parse(process.argv[1]);
+    } catch {
+      process.exit(1);
+    }
+    if (
+      !Array.isArray(names) ||
+      names.some((name) => typeof name !== "string" || name.length === 0) ||
+      new Set(names).size !== names.length
+    ) {
+      process.exit(1);
+    }
+    process.stdout.write(JSON.stringify([...names].sort()));
+  ' "$1"
+}
+
+confirm_legacy_managed_image_recovery() {
+  local reg_file="$1" ambiguous_json="" ambiguous_count="0"
+  if ! ambiguous_json="$(legacy_ambiguous_sandbox_names_json "$reg_file")"; then
+    error "Could not inspect legacy sandbox image provenance. Existing sandboxes were left unchanged."
+  fi
+  ambiguous_count="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$ambiguous_json")"
+  if [ "$ambiguous_count" -eq 0 ] 2>/dev/null; then
+    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="[]"
+    return 0
+  fi
+
+  cat <<EOF
+
+  ${ambiguous_count} existing sandbox(es) predate managed-image provenance tracking:
+EOF
+  while IFS= read -r sandbox_name; do
+    [[ -n "$sandbox_name" ]] && printf "    %s\n" "$sandbox_name"
+  done < <(node -e 'for (const name of JSON.parse(process.argv[1])) console.log(JSON.stringify(name))' "$ambiguous_json")
+  cat <<EOF
+
+  Continue only if every sandbox above was created with NemoClaw's standard
+  managed image. Recovery will replace it with the current managed image. A
+  custom --from image cannot be inferred from this legacy registry format.
+
+EOF
+
+  if [[ -n "${NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE:-}" ]]; then
+    local confirmed_json=""
+    if ! confirmed_json="$(normalize_legacy_managed_confirmation_json "$NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE")"; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must be a JSON array containing the exact sandbox names listed above."
+    fi
+    if [[ "$confirmed_json" != "$ambiguous_json" ]]; then
+      error "NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE must exactly match the listed sandbox names: ${ambiguous_json}"
+    fi
+    info "Confirmed ${ambiguous_count} exact pre-fingerprint sandbox name(s) used NemoClaw-managed images."
+    _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
+    return 0
+  fi
+
+  if installer_non_interactive; then
+    error "Legacy sandbox recovery requires explicit confirmation. Set NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE='${ambiguous_json}' only after verifying those exact sandboxes used managed images."
+  fi
+
+  local answer=""
+  if [ -t 0 ]; then
+    printf "  Confirm these were managed-image sandboxes? [y/N]: "
+    IFS= read -r answer || answer=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; prompting for legacy sandbox recovery on /dev/tty..."
+    printf "  Confirm these were managed-image sandboxes? [y/N]: "
+    IFS= read -r answer <&3 || answer=""
+    exec 3<&-
+  else
+    error "Legacy sandbox recovery requires a TTY prompt or an exact JSON name array in NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE."
+  fi
+
+  answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+  case "$answer" in
+    y | yes)
+      _LEGACY_MANAGED_RECOVERY_NAMES_JSON="$ambiguous_json"
+      info "Confirmed legacy managed-image recovery."
+      ;;
+    *)
+      error "Aborting before backup or OpenShell changes. Existing gateway and sandboxes were left unchanged."
+      ;;
+  esac
+}
+
 print_openshell_upgrade_manual_commands() {
   cat <<EOF
-  Manual upgrade path:
-    ${_CLI_BIN} backup-all
+  Manual upgrade path (after installing the current CLI with OpenShell deferred):
+    NEMOCLAW_REQUIRE_ALL_SANDBOX_BACKUPS=1 ${_CLI_BIN} backup-all
     openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
     sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
+
+  The prepared installer rerun lists pre-fingerprint sandboxes and asks you to
+  confirm their managed-image provenance. For a non-interactive rerun, set
+  NEMOCLAW_CONFIRM_LEGACY_MANAGED_RECREATE to the exact JSON array printed by
+  the installer only after verifying every listed sandbox used a managed image.
 
   Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
   to run the backup, gateway retirement, and restore preparation automatically.
 EOF
 }
 
-abort_unsupported_automatic_openshell_upgrade() {
-  local old_openshell_version="$1"
-  warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but the current ${_CLI_BIN} CLI does not support '${_CLI_BIN} backup-all'."
-  cat <<EOF
-  The automatic legacy OpenShell gateway upgrade is disabled for this install.
-  Upgrade from a ${_CLI_BIN} version that supports '${_CLI_BIN} backup-all', or
-  manually preserve sandbox state before retiring the old OpenShell gateway.
-
-EOF
-  print_openshell_upgrade_manual_commands
-  error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
-}
-
 confirm_experimental_openshell_gateway_upgrade() {
   local sandbox_count="$1" old_openshell_version="$2"
-
-  if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
-    info "Using manually prepared OpenShell gateway upgrade state."
-    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
-    return 1
-  fi
 
   if truthy_env "${NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE:-}"; then
     info "Accepted experimental OpenShell gateway upgrade for ${sandbox_count} existing sandbox(es)."
@@ -1824,10 +1935,11 @@ confirm_experimental_openshell_gateway_upgrade() {
   different gateway layout than pre-0.0.37 gateways.
 
   NemoClaw can run the new automatic upgrade path now:
-    1. back up registered sandbox state
-    2. retire the old OpenShell gateway while the old CLI is still available
-    3. install the current supported OpenShell
-    4. recreate and restore the registered sandbox during onboarding
+    1. install the current CLI without replacing OpenShell
+    2. back up every registered sandbox with the current state manifest
+    3. retire the old OpenShell gateway
+    4. install the current supported OpenShell
+    5. recreate and restore the registered sandbox
 
   This upgrade path is new. Durable workspace and agent configuration state
   should be preserved, but running processes may be interrupted.
@@ -1870,7 +1982,9 @@ preinstall_backup_and_retire_legacy_gateway() {
   [ -f "$reg_file" ] || return 0
 
   local sandbox_count
-  sandbox_count="$(registered_sandbox_count)"
+  if ! sandbox_count="$(registered_sandbox_count)"; then
+    error "Could not inspect the existing sandbox registry. Existing gateway and sandboxes were left unchanged."
+  fi
   _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
   [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
   command_exists openshell || return 0
@@ -1881,37 +1995,26 @@ preinstall_backup_and_retire_legacy_gateway() {
 
   local old_openshell_version=""
   old_openshell_version="$(installed_openshell_version || true)"
-  local old_cli_runner=""
-  if ! old_cli_runner="$(resolve_existing_cli_runner)"; then
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
-      info "Using manually prepared OpenShell gateway upgrade state."
-      export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
-      return 0
-    fi
-    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-      warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
-      print_openshell_upgrade_manual_commands
-      error "Aborting before OpenShell gateway upgrade. Restore a working ${_CLI_BIN} CLI or manually back up and retire the old gateway first."
-    fi
-    warn "Existing sandbox sessions detected, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+  if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+    confirm_legacy_managed_image_recovery "$reg_file"
+    info "Using manually prepared OpenShell gateway upgrade state."
+    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
     return 0
   fi
 
   if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
-    if ! existing_cli_supports_backup_all "$old_cli_runner"; then
-      abort_unsupported_automatic_openshell_upgrade "$old_openshell_version"
-    fi
     if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
       return 0
     fi
   fi
 
+  confirm_legacy_managed_image_recovery "$reg_file"
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! run_preupgrade_backup "$old_cli_runner"; then
+  if ! run_preupgrade_backup; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    error "Pre-upgrade backup failed. If the failures are running sandboxes whose in-sandbox SSH endpoint is unreachable, rerun the installer with NEMOCLAW_SKIP_UNREACHABLE_SANDBOX_BACKUP=1 to continue and recover them after the upgrade (any uncommitted state since the last successful backup will be lost); otherwise restore the affected sandbox or stop its container, then rerun '${_CLI_BIN} backup-all'."
+    error "Pre-upgrade backup failed. Resolve every reported sandbox backup failure and rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -2159,7 +2262,9 @@ recover_preexisting_sandboxes_before_onboard() {
   # pre-upgrade backup signal is present, the CLI also recovers registered
   # non-Ready sandboxes from their validated latest backup. It attempts every
   # eligible sandbox before returning non-zero for any failure.
-  if "$cli_runner" upgrade-sandboxes --auto 2>&1; then
+  if NEMOCLAW_CONFIRMED_LEGACY_MANAGED_SANDBOXES="${_LEGACY_MANAGED_RECOVERY_NAMES_JSON:-[]}" \
+    "$cli_runner" upgrade-sandboxes --auto 2>&1; then
+    _PREEXISTING_SANDBOX_RECOVERY_RAN=true
     return 0
   fi
 
@@ -2752,9 +2857,13 @@ main() {
         finalize_install
         return 1
       fi
-      run_onboard || error "Onboarding did not complete successfully."
-      ONBOARD_RAN=true
-      restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+      if [[ "${_PREEXISTING_SANDBOX_RECOVERY_RAN:-false}" == true ]]; then
+        info "Existing sandboxes recovered; skipping generic onboarding."
+      else
+        run_onboard || error "Onboarding did not complete successfully."
+        ONBOARD_RAN=true
+        restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+      fi
     elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
       error "Skipping onboarding until the host prerequisites above are fixed."
     else

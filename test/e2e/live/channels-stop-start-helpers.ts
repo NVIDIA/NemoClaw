@@ -429,7 +429,7 @@ export async function runChannelsStopStartTarget({
   });
   const redactions = redactionValues(apiKey, tokens);
 
-  await artifacts.writeJson("target.json", {
+  await artifacts.target.declare({
     id: "channels-stop-start",
     boundary:
       "install.sh messaging onboard + channels stop/start CLI + rebuild + sandbox config probes",
