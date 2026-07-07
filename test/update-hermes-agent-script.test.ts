@@ -15,6 +15,7 @@ const HERMES_BASE_DOCKERFILE = path.join(
   "hermes",
   "Dockerfile.base",
 );
+const HERMES_DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
 const HERMES_MANIFEST = path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml");
 const TARGET_TAG = "v2026.6.19";
 
@@ -54,6 +55,21 @@ function writeExecutable(file: string, body: string) {
 }
 
 describe("scripts/update-hermes-agent.sh", () => {
+  it("keeps the final #5254 workaround-removal guard tied to the installed Hermes version", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const guardStart = dockerfile.indexOf(
+      "installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds",
+    );
+    const guardBlock = dockerfile.slice(Math.max(0, guardStart - 900), guardStart + 500);
+
+    expect(dockerfile).not.toMatch(/^ARG HERMES_SEMVER=/m);
+    expect(guardStart).toBeGreaterThanOrEqual(0);
+    expect(guardBlock).toContain("/usr/local/bin/hermes --version");
+    expect(guardBlock).toContain("hermes_semver=");
+    expect(guardBlock).toContain("_translate_resumed_oneshot");
+    expect(guardBlock).toContain("patch-session-list-preview");
+  });
+
   it("pins rebuild overrides to the accepted full image-ID local tag family", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-rebuild-"));
     const repo = path.join(tmp, "repo");

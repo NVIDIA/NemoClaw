@@ -11,8 +11,6 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:d6ce792eb302a7
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
-ARG HERMES_SEMVER=0.17.0
-
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
 RUN set -eu; \
@@ -226,10 +224,16 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
-RUN if [ "$HERMES_SEMVER" != "0.17.0" ] \
+RUN hermes_version_output="$(/usr/local/bin/hermes --version)" \
+    && hermes_semver="$(printf '%s\n' "$hermes_version_output" | sed -n 's/.*v\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\).*/\1/p; s/^\([0-9][0-9]*[.][0-9][0-9]*[.][0-9][0-9]*\)$/\1/p' | head -1)" \
+    && if [ -z "$hermes_semver" ]; then \
+        echo "ERROR: could not parse Hermes semver from: $hermes_version_output" >&2; \
+        exit 1; \
+    fi \
+    && if [ "$hermes_semver" != "0.17.0" ] \
         && { grep -q '_translate_resumed_oneshot' /usr/local/lib/nemoclaw/hermes-wrapper.py \
           || grep -q 'patch-session-list-preview' /usr/local/lib/nemoclaw/patch-hermes-session-list-preview.py; }; then \
-        echo "ERROR: HERMES_SEMVER=${HERMES_SEMVER} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
+        echo "ERROR: installed Hermes ${hermes_semver} but Hermes v0.17.0 compatibility workarounds are still installed; re-review #5254 workaround removal before upgrading Hermes" >&2; \
         exit 1; \
     fi
 # This runs before `/usr/local/bin/hermes` is moved to `hermes.real`, so the
