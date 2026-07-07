@@ -393,9 +393,12 @@ def _translate_resumed_oneshot(argv: list[str]) -> list[str] | None:
                 return None
             if i + 1 >= len(argv) or argv[i + 1].startswith("-"):
                 return None
+            value = argv[i + 1]
+            if not value:
+                return None
             saw_continue = True
             resume_args.append("--continue")
-            resume_args.append(argv[i + 1])
+            resume_args.append(value)
             i += 2
             continue
 

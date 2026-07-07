@@ -416,6 +416,10 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.realArgs).toBe("--continue= -z Repeat it");
   });
 
+  it("passes separated --continue with an empty value through instead of translating an invalid selector (#5254)", () => {
+    const run = runWrapper(["--continue", "", "-z", "Repeat it"], {});
+    expect(run.realArgs).toBe("--continue  -z Repeat it");
+  });
   it("passes empty --resume values through instead of translating an invalid selector (#5254)", () => {
     const run = runWrapper(["--resume=", "-z", "Repeat it"], {});
 
