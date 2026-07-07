@@ -218,6 +218,14 @@ function parseProbeResult(stdout: string, label: string): QrProbeResult {
   };
 }
 
+function parseCompactProbeResult(stdout: string, label: string): QrProbeResult {
+  const parsed = JSON.parse(stdout.trim()) as Partial<QrProbeResult>;
+  return {
+    loginDefault: expectCompactProfile(parsed.loginDefault, `${label} loginDefault`),
+    explicitSmall: expectCompactProfile(parsed.explicitSmall, `${label} explicitSmall`),
+  };
+}
+
 async function compileProductionPreload(workdir: string): Promise<string> {
   const outDir = path.join(workdir, "compiled-runtime-preloads");
   const compile = await runCommand(
@@ -298,12 +306,17 @@ test(
         timeoutMs: PROBE_TIMEOUT_MS,
       });
       expect(patched.status, `patched probe failed\n${patched.stderr}`).toBe(0);
-      const patchedProbe = parseProbeResult(patched.stdout, "patched");
+      const patchedProbe = parseCompactProbeResult(patched.stdout, "patched");
       expect(
         patchedProbe.loginDefault.rows,
         `compact QR should fit the scan frame (${patchedProbe.loginDefault.rows} rows)`,
       ).toBeLessThanOrEqual(COMPACT_MAX_ROWS);
       expect(patchedProbe.loginDefault.rows).toBeLessThan(baselineProbe.loginDefault.rows);
+      expect(patchedProbe.loginDefault.leftModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.rightModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.topModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.bottomModules).toBeGreaterThanOrEqual(4);
+      expect(patchedProbe.loginDefault.dataImageFallback).toBe(false);
       expect(patchedProbe.explicitSmall.leftModules).toBeGreaterThanOrEqual(4);
       expect(patchedProbe.explicitSmall.rightModules).toBeGreaterThanOrEqual(4);
       expect(patchedProbe.explicitSmall.topModules).toBeGreaterThanOrEqual(4);

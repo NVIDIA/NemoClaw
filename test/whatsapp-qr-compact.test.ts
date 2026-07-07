@@ -25,7 +25,8 @@ const PRELOAD_SOURCE = path.join(
 // `openclaw`), NOT `qrcode-terminal`. The plugin's onQr callback calls
 // renderQrTerminal() → qrcode.toString(text, { type: "terminal", small }) and
 // the bundled @openclaw/whatsapp passes NO `small`, so it defaults to full
-// size. These tests prove the preload patches that real package shape. End-to-
+// size. These tests prove the preload intercepts that real package shape and
+// renders via qrcode.create() with a four-module quiet zone. End-to-
 // end proof that this shrinks a *real* rendered QR lives in
 // test/e2e/live/whatsapp-qr-compact.test.ts, which drives the actual
 // upstream renderer at the version bundled in Dockerfile.base. Ref: NemoClaw#4522.
@@ -163,6 +164,7 @@ await dyn.toString("payload", { type: "terminal", small: true });  // already sm
 await dyn.toString("payload", { type: "svg" });                // non-terminal
 await dyn.toString("payload");                                 // no opts at all
 result.qrcode = dyn.__calls;
+result.qrcodeCreate = dyn.__createCalls;
 
 // 2) CommonJS require — same module object, same patch.
 const cjs = require("qrcode");
@@ -198,26 +200,27 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
     expect(baseline.qrcode[0].small).toBeUndefined();
   });
 
-  it("forces small:true on a terminal render with no small option", () => {
-    expect(patched.qrcode[0]).toEqual({ type: "terminal", small: true });
+  it("renders terminal output through qrcode.create instead of qrcode.toString small mode", () => {
+    expect(patched.qrcodeCreate).toEqual([{}, {}, {}]);
+    expect(patched.qrcode).toEqual([{ type: "svg" }, {}]);
   });
 
-  it("overrides an explicit small:false terminal render back to compact", () => {
-    expect(patched.qrcode[1]).toEqual({ type: "terminal", small: true });
+  it("keeps explicit small:false terminal renders on the custom compact path", () => {
+    expect(patched.qrcodeCreate[1]).toEqual({});
   });
 
-  it("leaves an already-compact terminal render unchanged", () => {
-    expect(patched.qrcode[2]).toEqual({ type: "terminal", small: true });
+  it("keeps already-compact terminal renders on the custom compact path", () => {
+    expect(patched.qrcodeCreate[2]).toEqual({});
   });
 
   it("does NOT touch non-terminal renders (svg/png/utf8 data URIs)", () => {
     // svg render — small must not be injected; other channels/flows rely on it.
-    expect(patched.qrcode[3]).toEqual({ type: "svg" });
-    expect(patched.qrcode[3].small).toBeUndefined();
+    expect(patched.qrcode[0]).toEqual({ type: "svg" });
+    expect(patched.qrcode[0].small).toBeUndefined();
   });
 
   it("does NOT inject small when no type is given (defaults to non-terminal)", () => {
-    expect(patched.qrcode[4]).toEqual({});
+    expect(patched.qrcode[1]).toEqual({});
   });
 
   it("patches the same module object for require() and dynamic import()", () => {
@@ -253,7 +256,8 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
       );
       expect(r.status).toBe(0);
       const twice = JSON.parse(r.stdout.trim());
-      expect(twice.qrcode[0]).toEqual({ type: "terminal", small: true });
+      expect(twice.qrcodeCreate).toEqual([{}, {}, {}]);
+      expect(twice.qrcode).toEqual([{ type: "svg" }, {}]);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
